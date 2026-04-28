@@ -1,0 +1,35 @@
+# ── Python ──────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+
+# ── Bases de datos (cada entorno tiene la suya) ──
+*.db
+*.sqlite3
+
+# ── Uploads (binarios, no van en git) ────────────
+backend/uploads/
+backend/uploads_dev/
+backend/uploads_sandbox/
+
+# ── Variables de entorno (secretos) ─────────────
+# Los archivos .env.dev / .env.sandbox / .env.prod SÍ se versionan
+# Solo se ignora el .env genérico y los overrides locales
+backend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# ── Node / Frontend ──────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ── Sistema operativo ────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo

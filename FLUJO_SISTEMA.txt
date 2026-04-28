@@ -1,0 +1,677 @@
+================================================================
+SISTEMA OPERATIVO CAFETERIAS — FLUJO DETALLADO
+Fecha: Abril 2026 (actualizado 2026-04-19 — version empresarial)
+Stack: FastAPI + SQLite + React + TypeScript + TailwindCSS
+Prefijo API: /api/v1
+================================================================
+
+----------------------------------------------------------------
+1. CONTEXTO DEL NEGOCIO
+----------------------------------------------------------------
+- Cafeterias de mediano tamanio (2 sedes actualmente)
+- Personal: 1 administrador, multiples baristas por sede
+- Operacion diaria: turno unico o doble por sede
+- Ventas mixtas: efectivo + datafono Bold + vales + notas credito
+- Registro contable externo en Siigo (software de facturacion)
+- Consignaciones bancarias periodicas del efectivo acumulado
+- Pasteleria/panaderia propia con control de frescura y rotacion
+
+----------------------------------------------------------------
+2. ROLES Y ACCESO
+----------------------------------------------------------------
+
+ADMINISTRADOR:
+- Accede via email + contrasenia (o PIN de 4 digitos)
+- Ve todas las tiendas activas
+- Gestiona bandeja de aprobacion (pedidos y sencillas)
+- Consulta informes historicos y KPIs
+- Ve dashboard con checklist, alertas inteligentes y cuadres de llegada
+- Puede confirmar consignaciones
+- Accede a audit log, notificaciones, comparativo multi-tienda
+- No opera caja directamente
+
+BARISTA:
+- Accede solo con PIN de 4 digitos (sin email)
+- Accede solo a su tienda asignada
+- Flujo principal: abrir caja -> conteo -> ventas -> conteo cierre -> cierre
+- Acciones secundarias: mermas, pasteleria, consignaciones, pedidos, sencillas
+
+----------------------------------------------------------------
+3. FLUJO PRINCIPAL DEL BARISTA (OBLIGATORIO Y SECUENCIAL)
+----------------------------------------------------------------
+
+PASO 1 — APERTURA DE CAJA (/apertura)
+- Barista cuenta el efectivo fisico con contador de denominaciones:
+  Billetes: $2.000 / $5.000 / $10.000 / $20.000 / $50.000 / $100.000
+  Monedas: $50 / $100 / $200 / $500 / $1.000
+  El contador auto-suma y llena el campo "total en caja"
+- Sistema muestra base esperada = efectivo_final_real del turno anterior
+- Si hay diferencia => justificacion OBLIGATORIA antes de continuar
+- Al abrir: crea CajaTurno (estado=abierto, tiene_conteo_apertura=False)
+- Si ya hay turno abierto => redirige directo al Hub sin mostrar formulario
+- Validacion backend: si diferencia != 0 y no hay justificacion => HTTP 400
+- Efecto lateral: apertura_realizada del checklist => True
+- Efecto auditoria: registra accion "apertura_caja" en audit_log
+
+PASO 2 — CONTEO DE APERTURA (/conteo-apertura)
+- Barista registra el stock fisico actual de cada producto
+- Sistema muestra stock_actual del inventario como referencia
+- Barista ingresa cantidad_real contada por producto
+- Sistema calcula diferencia = real - sistema por producto
+- Al guardar: turno.tiene_conteo_apertura = True
+              turno.ts_conteo_apertura = timestamp UTC
+              checklist.inventario_check = True
+- Sin conteo de apertura: no se pueden registrar ventas (bloqueo backend)
+
+PASO 3 — VENTAS (/ventas)
+- Se pueden registrar multiples veces durante el turno
+- Campos por registro:
+  * venta_total (obligatorio, > 0): total bruto del cierre Siigo
+  * tarjetas: ventas por datafono Bold
+  * vales: descuentos o vales internos
+  * nota_credito: notas de credito emitidas
+  * nota: comentario libre (opcional)
+- Sistema calcula: efectivo = venta_total - tarjetas - vales - nota_credito
+- Si efectivo_calculado < 0 => HTTP 400
+- Se acumula en turno: total_ventas, total_efectivo, total_tarjeta
+- Primera venta del turno: turno.tiene_ventas = True
+                            turno.ts_primera_venta = timestamp UTC
+- Efecto auditoria: registra accion "registro_venta" en audit_log
+
+PASO 4 — CONTEO DE CIERRE (/conteo-cierre)
+- Identico al conteo de apertura en estructura
+- Requisito: turno.tiene_ventas = True (sin ventas no se puede hacer)
+- Registra el estado del inventario al final del turno
+- Al guardar: turno.tiene_conteo_cierre = True
+              turno.ts_conteo_cierre = timestamp UTC
+
+PASO 5 — CIERRE DE CAJA (/cierre)
+- Solo disponible si tiene_conteo_cierre = True
+- Barista cuenta nuevamente todo el efectivo (mismo contador de denominaciones)
+- Ingresa total que muestra el datafono Bold
+- Sistema calcula y muestra en tiempo real:
+  * Efectivo esperado = base_real + total_efectivo + ingresos_mov - egresos_mov
+  * Diferencia efectivo = contado - esperado
+  * Diferencia Bold = datafono_ingresado - total_tarjeta_sistema
+- Si hay CUALQUIER diferencia => justificacion OBLIGATORIA
+- Si hay ventas con tarjeta => datafono OBLIGATORIO
+- Al cerrar: turno.estado=cerrado, guarda diferencia_cierre, diferencia_tarjeta
+- Efecto lateral: cierre_realizado del checklist => True
+- Efecto notificacion: si diferencia != 0 => crea Notificacion automatica
+- Efecto auditoria: registra accion "cierre_caja" en audit_log
+
+FORMULAS DE CUADRE:
+  efectivo_esperado  = base_real + total_efectivo + sum(ingresos) - sum(egresos)
+  diferencia_cierre  = efectivo_final_real - efectivo_esperado
+  diferencia_tarjeta = datafono_real - total_tarjeta_sistema
+
+----------------------------------------------------------------
+4. FLUJO DE CUADRE DE LLEGADA (MID-TURNO)
+----------------------------------------------------------------
+
+Escenario: Turno largo con cambio de barista sin cerrar caja.
+El barista entrante registra un "cuadre de llegada" para dejar
+constancia del estado de la caja al momento de su llegada.
+
+CUADRE DE LLEGADA (/entrega):
+- Disponible en cualquier momento con turno abierto
+- Requiere que conteo de apertura este completado
+- El barista entrante ingresa:
+  1. Efectivo real contado en caja
+  2. Ventas efectivo Siigo — DEBE coincidir EXACTAMENTE con sistema
+  3. Ventas tarjeta Bold (puede diferir del sistema)
+  4. Foto evidencia (opcional pero recomendada)
+- Sistema calcula automaticamente:
+  * efectivo_esperado = base_real + total_efectivo + ingresos - egresos
+  * diferencia_efectivo = efectivo_real - efectivo_esperado
+  * diferencia_tarjeta = ventas_tarjeta_bold - total_tarjeta_sistema
+- NO cierra el turno — solo registra para auditoria
+- Se pueden registrar multiples cuadres de llegada por turno
+- Efecto auditoria: registra accion "entrega_turno" en audit_log
+
+Estado del boton en Hub segun ultimo cuadre:
+  Sin cuadre registrado    => boton naranja prominente + texto explicativo
+  Ultimo con diferencia    => alerta roja con mensaje
+  Cuadre hace mas de 4h   => boton amber (sugerencia de nuevo cuadre)
+  Cuadre reciente sin diff => boton verde discreto
+
+----------------------------------------------------------------
+5. HUB — PANTALLA PRINCIPAL BARISTA (/hub)
+----------------------------------------------------------------
+
+Centro de operaciones. Muestra en orden de importancia:
+
+A) PASTELERIA ACTIVA
+- Lista lotes activos (activo=True) de los ultimos 5 dias
+- Por cada lote:
+  * Nombre del producto y cantidad en unidades
+  * Dias en stock desde que se registro
+  * Badge de frescura basado en fecha de vencimiento (parseado en UTC):
+    - VENCIDO (rojo): fecha_frescura ya paso
+    - Xmin (naranja): vence en menos de 2 horas
+    - Xh (verde): horas restantes
+    - Fresco (verde): mas de 24 horas restantes
+  * Badge naranja "Xd" si lleva mas de 3 dias en stock (alerta rotacion)
+- Header del bloque en naranja si alguno tiene alerta de rotacion
+- Boton "Marcar como terminado" por lote => activo = False, desaparece de lista
+- Boton "+ Registrar" => navega a /pasteleria
+
+B) STOCK CRITICO
+- Solo visible si hay productos con stock <= stock_minimo
+- Seccion "Agotados" (stock <= 0): fondo rojo, texto en rojo
+- Seccion "Por agotarse" (0 < stock <= stock_minimo): fondo amber
+- Muestra: nombre, stock_actual, unidad_medida
+- Boton "Pedir ->" => navega a /pedido
+
+C) FLUJO DEL TURNO
+- Barra de progreso 5 pasos: Apertura / Conteo apertura / Ventas / Conteo cierre / Cierre
+- Cada paso tiene icono: check verde (completado), circulo amber (actual), gris (pendiente)
+- Grid 3 columnas: Ventas totales / Efectivo / Tarjeta del turno actual
+- Historial de ventas colapsable (solo si tiene_ventas=True)
+  * Por cada venta: hora (parseada en UTC), total, desglose efectivo/tarjeta/NC/vales, nota
+- Boton "Siguiente paso" (amber, prominente) => lleva al paso pendiente
+- Boton "Cerrar turno" (negro) => solo visible si tiene_conteo_cierre=True
+
+D) ALERTA CUADRE DE LLEGADA (ver seccion 4)
+
+E) MOVIMIENTO DE CAJA (modal de pantalla completa)
+- Tipo: ingreso o egreso
+- Concepto (obligatorio, texto libre)
+- Valor (obligatorio, > 0)
+- Afecta directamente el efectivo_esperado del cuadre
+- Solo disponible si el turno esta abierto y sin conteo de cierre
+- Efecto auditoria: registra accion "movimiento_caja" en audit_log
+
+F) GRID DE ACCIONES (8 tiles 4x2)
+- Ventas, Inventario, Mermas, Pasteleria
+- Consignacion, Pedido, Sencilla, Conteos
+- Tile Inventario muestra badge rojo con numero de productos agotados
+
+----------------------------------------------------------------
+6. HERRAMIENTAS BARISTA (ACCESO DESDE GRID HUB)
+----------------------------------------------------------------
+
+INVENTARIO (/inventario) — accesible tambien para admin:
+- Ver stock actual de todos los productos (nombre, unidad, categoria, stock)
+- Registrar movimientos:
+  * Entrada: suma stock, crea lote FIFO, requiere cantidad > 0
+  * Salida: resta stock via FIFO, valida que haya suficiente stock
+  * Ajuste: establece stock exacto (para correcciones manuales), >= 0
+            SINCRONIZA lotes FIFO: si sube crea lote nuevo, si baja consume FIFO
+- Alerta visual si stock <= stock_minimo
+- Efecto auditoria: registra accion "inventario_<tipo>" en audit_log
+
+MERMAS (/mermas):
+- Registrar perdida: producto, cantidad, motivo (texto libre)
+- Automaticamente crea MovimientoInventario tipo=salida
+- Descuenta stock con logica FIFO
+- Historial del dia visible en la misma pagina
+- Efecto auditoria: registra accion "registro_merma" en audit_log
+
+PASTELERIA (/pasteleria):
+- Registrar nuevo lote: producto, cantidad, fecha y hora de vencimiento
+- Fecha default: hora_local + 8 horas (configurable por barista)
+- Al registrar: si el producto existe en inventario y tiene stock suficiente,
+  se descuenta automaticamente (MovimientoInventario tipo=salida,
+  motivo="Preparacion pasteleria"). Si no hay stock o no esta en inventario: omite.
+- Historial del dia con badges de frescura
+- Marcado manual como "terminado" (activo=False)
+
+CONSIGNACIONES (/consignaciones) — accesible tambien para admin:
+- Registrar consignacion bancaria: monto + foto obligatoria
+- Estado inicial: pendiente
+- Admin confirma desde dashboard => estado: realizada
+
+PEDIDO (/pedido):
+- Solicitar reabastecimiento al admin
+- Lista de productos con indicador de stock critico
+- Cantidad sugerida = max(1, round(stock_minimo - stock_actual + stock_minimo))
+- Admin aprueba o rechaza desde bandeja
+- Pedido aprobado no actualiza stock automaticamente (proceso fisico separado)
+
+SENCILLA (/sencilla):
+- Solicitar cambio de denominaciones
+- Detalle estructurado: denominacion, cantidad, subtotal por fila (JSON)
+- Admin puede modificar el detalle y monto al aprobar
+
+CONTEOS (/conteos):
+- Historial de conteos fisicos del turno (apertura y cierre)
+- Ver items y diferencias por producto
+
+----------------------------------------------------------------
+7. PANEL ADMIN
+----------------------------------------------------------------
+
+DASHBOARD (/dashboard) — GET /api/v1/dashboard/{tienda_id}:
+- KPIs visuales del dia:
+  * Ventas del dia (del turno abierto o ultimo del dia)
+  * Diferencia de caja (prioriza diferencia_cierre si existe; si no, apertura)
+  * Productos en stock critico (count)
+  * Consignaciones pendientes (count)
+- Estado de caja: sin_turno / cuadrado / diferencia
+- Checklist diario con porcentaje de cumplimiento (6 items):
+  * 4 automaticos (read-only en UI): apertura, inventario, pasteleria, cierre
+  * 2 manuales (toggle interactivo): siigo_check y limpieza_check
+    - Optimistic update + reversion automatica en error de red
+    - Endpoint: PATCH /dashboard/{tienda_id}/checklist {campo, valor}
+- Cuadres de llegada del dia: tabla con diferencias + link a foto
+- Alertas basicas automaticas:
+  * Sin turno abierto
+  * Productos en stock critico
+  * Consignaciones pendientes
+  * Pasteleria no registrada (si son las 11am o mas)
+- Accesos rapidos: bandeja / inventario / pasteleria / consignaciones
+
+DASHBOARD KPIs — GET /api/v1/dashboard/{tienda_id}/kpis:
+- Requiere: fecha_desde, fecha_hasta (query params)
+- KPIs calculados sobre turnos cerrados del periodo:
+  * n_turnos: cantidad de turnos cerrados
+  * porcentaje_descuadre: % turnos con diferencia en efectivo
+  * n_turnos_con_diferencia_efectivo / tarjeta
+  * diferencia_promedio_efectivo: promedio de diferencias absolutas
+  * horas_operadas: suma de duraciones de turnos
+  * total_ventas: acumulado del periodo
+  * ventas_por_hora: total_ventas / horas_operadas
+  * n_registros_venta: cantidad de registros individuales de venta
+  * ticket_promedio: total_ventas / n_registros_venta
+  * n_mermas: cantidad de registros de merma del periodo
+  * tiempo_promedio_apertura_a_venta_min: minutos entre conteo apertura y 1a venta
+  * duracion_promedio_turno_horas: duracion promedio de turno
+
+DASHBOARD COMPARATIVO — GET /api/v1/dashboard/comparativo:
+- Sin parametros (usa dia actual)
+- Retorna KPIs del dia para TODAS las tiendas activas
+- Permite al admin comparar desempeno entre sedes en tiempo real
+
+ALERTAS INTELIGENTES — GET /api/v1/alertas/{tienda_id}:
+- Motor de deteccion de patrones anomalos (6 alertas):
+  1. Turno largo: abierto >16h sin cierre (nivel critico)
+  2. Sin cuadre de llegada: >8h desde ultimo cuadre (advertencia)
+  3. Diferencias repetidas: barista con >=3 turnos con diferencia en 30 dias
+  4. Merma anormal: >50% mas que semana anterior por producto (advertencia)
+  5. Stock critico recurrente: critico sin reabastecimiento (entrada) en 7 dias
+  6. Caida de ventas: >30% menos que semana anterior (advertencia)
+- Retorna: {alertas: [...], total: n}
+
+NOTIFICACIONES — GET/PATCH /api/v1/notificaciones/{tienda_id}:
+- Creadas automaticamente por el sistema al detectar diferencias en cierre
+  * Diferencia > $10.000: nivel critico
+  * Diferencia <= $10.000: nivel advertencia
+- Endpoints:
+  * GET ?solo_no_leidas=bool
+  * PATCH /{notif_id}/leer
+  * PATCH /leer-todas
+
+AUDIT LOG — GET /api/v1/audit-log/{tienda_id}:
+- Filtros: fecha_desde, fecha_hasta, usuario_id, tabla, accion, limit (max 500)
+- Acciones registradas: apertura_caja, cierre_caja, movimiento_caja,
+  entrega_turno, registro_venta, inventario_entrada/salida/ajuste, registro_merma
+
+BANDEJA (/bandeja) — GET /api/v1/solicitudes/bandeja/{tienda_id}:
+- Tab Pedidos: ver solicitudes pendientes, aprobar/rechazar
+- Tab Sencillas: ver solicitudes, aprobar con posible ajuste de monto
+- Contador de pendientes totales en el titulo
+
+INFORMES (/informes) — GET /api/v1/informes/*:
+- Filtro de fechas con rango configurable (default: mes actual)
+- 5 reportes JSON:
+  1. /ventas: por dia, columnas total/efectivo/tarjeta/NC/vales/n_registros
+  2. /mermas: por producto, con detalle expandible por fecha
+  3. /inventario-consumido: movimientos tipo=salida por producto
+  4. /entregas: cuadres de llegada con diferencias y fotos
+  5. /turnos: historial cerrados con diferencias, justificaciones, desglose
+- Exportacion CSV: GET /informes/export?tipo=ventas|mermas|inventario|turnos|entregas
+  Descarga directa, archivo nombrado tipo_fechadesde_fechahasta.csv
+
+----------------------------------------------------------------
+8. INVENTARIO Y LOTES FIFO
+----------------------------------------------------------------
+
+Estructura de datos:
+- Inventario: 1 registro por (producto, tienda) con stock_actual y stock_minimo
+- LoteInventario: registro historico FIFO
+  * Campos: fecha_entrada, cantidad_inicial, cantidad_restante, fecha_vencimiento
+  * Solo consultable por admin: GET /inventario/lotes/{tienda_id}/{producto_id}
+
+Logica FIFO en detalle:
+  Entrada    => nuevo lote, suma stock_actual
+  Salida     => consume lotes por fecha_entrada ASC, resta stock_actual
+               Si lotes no cubren: continua silenciosamente (stock pre-FIFO)
+  Ajuste     => sobreescribe stock_actual Y sincroniza lotes:
+               - ajuste > stock_actual: crea lote con la diferencia positiva
+               - ajuste < stock_actual: consume diferencia de lotes via FIFO
+               - ajuste == stock_actual: sin cambios en lotes
+  Merma      => igual que salida (MovimientoInventario tipo=salida + FIFO)
+  Pasteleria => igual que salida (si producto existe en inventario con stock)
+
+Invariante garantizada: stock_actual == suma de lotes activos en todo momento.
+
+----------------------------------------------------------------
+9. PASTELERIA — CONTROL DE ROTACION E INVENTARIO
+----------------------------------------------------------------
+
+Modelo PasteleriaDiaria:
+- Por cada lote: tienda, producto, cantidad, fecha_frescura, fecha_registro, activo
+
+Constantes de negocio:
+- DIAS_ROTACION = 5: ventana maxima para buscar lotes activos
+- DIAS_ALERTA = 3: dias en stock que disparan alerta naranja
+
+Calculo de frescura (en UTC — parseUTC() en frontend):
+  dias_en_stock   = (now_UTC - fecha_registro_UTC).total_seconds / 86400
+  alerta_rotacion = dias_en_stock >= DIAS_ALERTA
+  badge frescura  = segun diferencia entre ahora_UTC y fecha_frescura_UTC
+
+Ciclo de vida de un lote:
+  1. Barista registra lote => activo=True
+     => Si producto en inventario con stock: descuenta via FIFO automaticamente
+  2. Aparece en Hub con badge de frescura y dias en stock
+  3. Despues de 3 dias => badge naranja de rotacion
+  4. Al vencer => badge VENCIDO
+  5. Barista marca como terminado => activo=False, desaparece de Hub
+  6. Despues de 5 dias => desaparece automaticamente del Hub
+     aunque activo=True (filtra por fecha_registro >= ahora - 5dias)
+
+----------------------------------------------------------------
+10. CHECKLIST AUTOMATICO DIARIO
+----------------------------------------------------------------
+
+ChecklistDiario: 1 registro por (tienda, dia_UTC)
+
+Efectos secundarios automaticos (marcado a True sin accion del usuario):
+  apertura_realizada  => POST /caja/abrir exitoso
+  inventario_check    => POST /conteos tipo=apertura O cualquier movimiento inventario
+  pasteleria_check    => POST /pasteleria/ exitoso
+  cierre_realizado    => POST /caja/{id}/cerrar exitoso
+
+Marcado manual (solo admin en dashboard):
+  siigo_check    => confirma que se cargo en Siigo
+  limpieza_check => confirma que se hizo limpieza del dia
+  Endpoint: PATCH /dashboard/{tienda_id}/checklist {campo, valor}
+  Campo invalido => HTTP 400
+  Si no hay checklist del dia: se crea al primer evento manual
+
+Comportamiento:
+  - Si no existe el checklist de hoy => se crea al primer evento
+  - Es idempotente: marcar True sobre True no rompe nada
+  - El porcentaje de cumplimiento = (True count / 6) * 100
+
+----------------------------------------------------------------
+11. FLUJO FINANCIERO COMPLETO — EJEMPLO REAL
+----------------------------------------------------------------
+
+Turno del dia: 09:00 a 17:00 (8 horas)
+
+  09:00 - Apertura de caja
+    base_sistema    = 50.000 (efectivo final del turno anterior)
+    base_real       = 50.000 (contado fisicamente)
+    diferencia_ap   = 0 (cuadrado)
+    audit_log: "apertura_caja" registrado
+
+  09:15 - Conteo de apertura
+    Producto A: sistema=10, real=10, diferencia=0
+    Producto B: sistema=5,  real=4,  diferencia=-1
+    ts_conteo_apertura = 09:15 UTC
+
+  10:00 - Venta 1 (turno maniana)
+    venta_total  = 45.000
+    tarjetas     = 20.000
+    efectivo     = 25.000
+    ts_primera_venta = 10:00 UTC
+    turno acumula: total_ventas=45.000, total_ef=25.000, total_tarj=20.000
+    audit_log: "registro_venta" registrado
+
+  12:30 - Venta 2 (ultimo registro antes de cambio turno)
+    venta_total  = 30.000
+    tarjetas     = 0
+    efectivo     = 30.000
+    turno acumula: total_ventas=75.000, total_ef=55.000, total_tarj=20.000
+
+  13:00 - Cuadre de llegada (barista tarde llega)
+    efectivo_esperado = 50.000 + 55.000 = 105.000
+    efectivo_real     = 105.000 (cuenta y confirma)
+    ventas_siigo_ef   = 55.000 (DEBE coincidir exactamente con sistema)
+    tarjeta_bold      = 20.000
+    diferencia_ef     = 0 (cuadrado)
+    diferencia_tarj   = 0 (cuadrado)
+    => foto del datafono adjunta
+    audit_log: "entrega_turno" registrado
+
+  14:00 - Venta 3 (turno tarde)
+    venta_total  = 15.000
+    tarjetas     = 15.000
+    efectivo     = 0
+    turno acumula: total_ventas=90.000, total_ef=55.000, total_tarj=35.000
+
+  15:00 - Egreso de caja (pago a proveedor)
+    tipo      = egreso
+    concepto  = "Pago proveedor leche"
+    valor     = 10.000
+    efectivo_esperado ahora = 50.000 + 55.000 - 10.000 = 95.000
+    audit_log: "movimiento_caja" registrado
+
+  16:30 - Conteo de cierre
+    Registra stock actual post-turno
+    ts_conteo_cierre = 16:30 UTC
+
+  17:00 - Cierre de caja
+    efectivo_esperado = 50.000 + 55.000 + 0 - 10.000 = 95.000
+    datafono_bold     = 35.000
+    efectivo_contado  = 96.000
+    diferencia_ef     = +1.000 (sobrante de $1.000)
+    diferencia_tarj   = 0 (cuadrado)
+    => justificacion obligatoria por el sobrante en efectivo
+    => Notificacion automatica: "Diferencia de $1.000 en cierre de turno" (advertencia)
+    audit_log: "cierre_caja" registrado
+
+  KPIs del turno:
+    horas_operadas             = 8.0h
+    ventas_por_hora            = $11.250
+    ticket_promedio            = $30.000
+    tiempo_apertura_a_venta    = 45 min
+
+----------------------------------------------------------------
+12. MODELO DE DATOS — TABLAS PRINCIPALES
+----------------------------------------------------------------
+
+Tienda          id, nombre, direccion, activa
+
+Usuario         id, nombre, email, password_hash, pin_hash, rol, tienda_id,
+                activo, ultimo_acceso
+
+CajaTurno       id, tienda_id, usuario_apertura_id, usuario_cierre_id
+                fecha_apertura, fecha_cierre
+                base_sistema, base_real, diferencia_apertura, justificacion_apertura
+                total_ventas, total_efectivo, total_tarjeta (acumulados)
+                efectivo_final_real, datafono_real, diferencia_cierre, diferencia_tarjeta
+                justificacion_cierre, estado (abierto|cerrado)
+                tiene_conteo_apertura, tiene_ventas, tiene_conteo_cierre (flags flujo)
+                ts_conteo_apertura, ts_primera_venta, ts_conteo_cierre (timestamps)
+
+VentaDiaria     id, tienda_id, turno_id, venta_total, nota_credito, vales
+                tarjetas, efectivo_calculado, nota, usuario_id, fecha_registro
+
+MovimientoCaja  id, caja_turno_id, tipo (ingreso|egreso), concepto, valor, usuario_id
+
+ConteoFisico    id, tienda_id, turno_id, tipo (apertura|cierre), usuario_id
+ConteoFisicoItem id, conteo_id, producto_id, cantidad_sistema, cantidad_real, diferencia
+
+EntregaTurno    id, turno_id, tienda_id, usuario_id, fecha_hora
+                efectivo_esperado, efectivo_real, ventas_efectivo_siigo
+                ventas_tarjeta_bold, diferencia_efectivo, diferencia_tarjeta, imagen_url
+
+Producto        id, nombre, categoria (pasteleria|bebida|insumo), unidad_medida, controla_stock
+Inventario      id, producto_id, tienda_id, stock_actual, stock_minimo
+LoteInventario  id, producto_id, tienda_id, cantidad_inicial, cantidad_restante
+                fecha_entrada, fecha_vencimiento, usuario_id
+MovimientoInventario id, producto_id, tienda_id, tipo, cantidad, motivo, usuario_id, fecha
+
+Merma           id, tienda_id, producto_id, cantidad, motivo, usuario_id, fecha_registro
+
+PasteleriaDiaria id, tienda_id, producto_id, cantidad, fecha_frescura,
+                  fecha_registro, usuario_id, activo
+
+Consignacion    id, tienda_id, valor, imagen_url, usuario_id, estado, fecha
+
+SolicitudPedido      id, tienda_id, usuario_id, estado, nota, items[]
+SolicitudPedidoItem  id, solicitud_id, producto_id, cantidad_solicitada
+SolicitudSencilla    id, tienda_id, usuario_id, monto_solicitado, motivo, detalle (JSON), estado
+
+ChecklistDiario id, tienda_id, fecha, apertura_realizada, inventario_check,
+                pasteleria_check, siigo_check, limpieza_check, cierre_realizado
+
+AuditLog        id, usuario_id, tienda_id, accion, tabla_afectada, registro_id,
+                datos_antes (JSON), datos_despues (JSON), fecha
+
+Notificacion    id, tienda_id, tipo, mensaje, nivel, leida, fecha, referencia_id
+
+----------------------------------------------------------------
+13. AUTENTICACION Y SEGURIDAD
+----------------------------------------------------------------
+
+Sesion:
+- JWT HS256, expiracion 8 horas
+- Token almacenado en localStorage del browser
+- Al expirar: interceptor Axios limpia storage y redirige a /login
+
+Login barista:
+- Selecciona nombre de una lista (GET /auth/usuarios — publica)
+- Ingresa PIN 4 digitos en teclado numerico tactil
+- POST /auth/login-pin => {token, user}
+- Registra ultimo_acceso del usuario en la BD
+
+Login admin:
+- Misma pantalla, selecciona usuario admin
+- PIN de 4 digitos (mismo mecanismo)
+- Registra ultimo_acceso del usuario en la BD
+
+Control de acceso:
+- ProtectedRoute en React: verifica sesion y rol
+- Backend: ensure_tienda_access verifica que barista acceda solo a su tienda
+- Admin puede acceder a cualquier tienda
+- Usuario sin tienda asignada => HTTP 403
+- GET /auth/me: verifica token activo y retorna datos del usuario + ultimo_acceso
+
+Auditable:
+- Todas las acciones criticas quedan en audit_log con usuario_id + timestamp
+
+----------------------------------------------------------------
+14. ENDPOINTS COMPLETOS — REFERENCIA RAPIDA
+----------------------------------------------------------------
+
+AUTH
+  POST /auth/login              Ingreso con email + contrasenia
+  POST /auth/login-pin          Ingreso con user_id + PIN
+  GET  /auth/usuarios           Lista usuarios activos (publica)
+  GET  /auth/me                 Verifica sesion activa
+
+CAJA
+  POST /caja/abrir              Abre nuevo turno
+  POST /caja/{id}/cerrar        Cierra turno con cuadre
+  POST /caja/{id}/movimiento    Ingreso/egreso de caja
+  POST /caja/{id}/entrega       Cuadre de llegada (con foto)
+  GET  /caja/activo/{tienda_id} Turno activo con datos calculados
+  GET  /caja/historial/{tienda_id} Ultimos 30 turnos
+  GET  /caja/{id}/entregas      Cuadres del turno
+  GET  /caja/entregas/tienda/{tienda_id} Cuadres de la tienda
+
+INVENTARIO
+  GET  /inventario/tienda/{tienda_id}        Stock actual
+  POST /inventario/movimiento                Entrada/salida/ajuste
+  GET  /inventario/alertas/{tienda_id}       Productos criticos
+  GET  /inventario/productos                 Todos los productos
+  GET  /inventario/lotes/{tienda}/{producto} Lotes FIFO (admin)
+
+VENTAS
+  POST /ventas/                Registrar ventas del turno
+  GET  /ventas/turno/{id}      Historial del turno
+
+CONTEOS
+  POST /conteos/               Registrar conteo fisico
+  GET  /conteos/turno/{id}     Conteos del turno
+
+MERMAS
+  POST /mermas/                Registrar merma
+  GET  /mermas/tienda/{id}     Ultimas 50 mermas
+
+PASTELERIA
+  POST /pasteleria/                           Registrar lote
+  GET  /pasteleria/tienda/{id}/activos        Lotes activos (Hub)
+  PATCH /pasteleria/{lote_id}/cerrar          Marcar terminado
+  GET  /pasteleria/tienda/{id}                Por fecha
+
+CONSIGNACIONES
+  POST /consignaciones/                       Registrar con foto
+  GET  /consignaciones/tienda/{id}            Por tienda
+  PATCH /consignaciones/{id}/confirmar        Confirmar (admin)
+
+SOLICITUDES
+  POST /solicitudes/pedido                    Crear pedido
+  GET  /solicitudes/pedido/tienda/{id}        Pedidos de tienda
+  PATCH /solicitudes/pedido/{id}/aprobar      Aprobar pedido
+  PATCH /solicitudes/pedido/{id}/rechazar     Rechazar pedido
+  POST /solicitudes/sencilla                  Crear sencilla
+  GET  /solicitudes/sencilla/tienda/{id}      Sencillas de tienda
+  PATCH /solicitudes/sencilla/{id}/aprobar    Aprobar sencilla
+  PATCH /solicitudes/sencilla/{id}/rechazar   Rechazar sencilla
+  GET  /solicitudes/bandeja/{tienda_id}       Bandeja admin
+
+DASHBOARD
+  GET  /dashboard/{tienda_id}                 Dashboard del dia
+  GET  /dashboard/{tienda_id}/kpis            KPIs del periodo
+  GET  /dashboard/comparativo                 Comparativo multi-tienda
+  PATCH /dashboard/{tienda_id}/checklist      Marcar siigo/limpieza
+
+INFORMES
+  GET  /informes/ventas                       Reporte ventas
+  GET  /informes/mermas                       Reporte mermas
+  GET  /informes/inventario-consumido         Reporte consumo
+  GET  /informes/entregas                     Reporte cuadres
+  GET  /informes/turnos                       Reporte turnos
+  GET  /informes/export                       Descarga CSV
+
+ALERTAS
+  GET  /alertas/{tienda_id}                   Alertas inteligentes
+
+NOTIFICACIONES
+  GET  /notificaciones/{tienda_id}            Ver notificaciones
+  PATCH /notificaciones/{tienda_id}/{id}/leer Marcar leida
+  PATCH /notificaciones/{tienda_id}/leer-todas Marcar todas leidas
+
+AUDIT LOG
+  GET  /audit-log/{tienda_id}                 Historial de acciones
+
+----------------------------------------------------------------
+15. LIMITACIONES ACTUALES CONOCIDAS
+----------------------------------------------------------------
+
+Base de datos y escalabilidad:
+1. SQLite monousuario: no apto para alta concurrencia o multiples servidores
+2. Sin migraciones formales (Alembic): ALTER TABLE inline al arrancar
+3. Sin backup automatico de la base de datos
+4. Sin paginacion en historial de turnos/ventas (limite fijo de 30-50)
+
+Funcionalidad pendiente:
+5. Sin notificaciones push externas (email/SMS/WhatsApp) al admin
+6. Sin integracion directa con Siigo (carga es manual por el barista)
+7. Sin registro de precios por producto: ventas son totales, no por item
+8. Pedido aprobado no actualiza stock automaticamente (proceso fisico separado)
+9. Sin permisos granulares dentro del rol barista
+10. Fotos almacenadas en disco local (sin cloud storage)
+11. Sin config de timezone por sede (backend UTC, frontend convierte)
+12. Checklist no distingue entre dias con y sin operacion
+
+Funcionalidad resuelta (antes listada como limitacion):
+- [OK] Exportacion CSV para 5 tipos de informe
+- [OK] Ajuste de inventario sincroniza lotes FIFO
+- [OK] Pasteleria vinculada a inventario
+- [OK] Audit trail para acciones criticas
+- [OK] Notificaciones internas de diferencias de caja
+- [OK] KPIs y metricas operativas
+- [OK] Comparativo multi-tienda
+- [OK] Control de tiempos operativos por turno
+- [OK] Registro de ultimo acceso por usuario
+
+================================================================
+FIN DEL DOCUMENTO — version 2.0 empresarial
+================================================================

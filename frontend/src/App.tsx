@@ -6,6 +6,8 @@ import ProtectedRoute from './components/ProtectedRoute'
 
 // Barista flow pages
 import Login from './pages/Login'
+import SeleccionarTurno from './pages/SeleccionarTurno'
+import CuadreLlegada from './pages/CuadreLlegada'
 import Apertura from './pages/Apertura'
 import ConteoApertura from './pages/ConteoApertura'
 import Hub from './pages/Hub'
@@ -34,21 +36,29 @@ import Recetas from './pages/Recetas'
 
 // ─── Smart redirect basado en estado del turno ───────────────────────────────
 function SmartRedirect() {
-  const { user } = useAuth()
+  const { user, tipo_turno, cuadre_llegada_turno_id } = useAuth()
   const { turno, loading } = useTurno()
 
   if (!user) return <Navigate to="/login" replace />
   if (user.rol === 'admin') return <Navigate to="/dashboard" replace />
 
-  // Barista
+  // Barista debe elegir tipo de turno primero
+  if (!tipo_turno) return <Navigate to="/seleccionar-turno" replace />
+
   if (loading) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <p className="text-sm text-gray-400 animate-pulse">Consultando turno...</p>
     </div>
   )
 
-  if (!turno)                     return <Navigate to="/apertura" replace />
-  if (turno.estado === 'abierto') return <Navigate to="/hub" replace />
+  if (tipo_turno === 'apertura') {
+    if (!turno) return <Navigate to="/apertura" replace />
+    return <Navigate to="/hub" replace />
+  }
+
+  // intermedio o cierre: debe haber turno activo y haber hecho cuadre de llegada
+  if (!turno) return <Navigate to="/seleccionar-turno" replace />
+  if (cuadre_llegada_turno_id !== turno.id) return <Navigate to="/cuadre-llegada" replace />
   return <Navigate to="/hub" replace />
 }
 
@@ -64,6 +74,14 @@ function AppRoutes() {
       {/* Smart redirect */}
       <Route path="/" element={
         <ProtectedRoute><SmartRedirect /></ProtectedRoute>
+      } />
+
+      {/* ── Selección de tipo de turno ── */}
+      <Route path="/seleccionar-turno" element={
+        <ProtectedRoute role="barista"><SeleccionarTurno /></ProtectedRoute>
+      } />
+      <Route path="/cuadre-llegada" element={
+        <ProtectedRoute role="barista"><CuadreLlegada /></ProtectedRoute>
       } />
 
       {/* ── Flujo de turno barista (sin nav lateral) ── */}

@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { BarChart2, Trash2, Package, ChevronDown, ChevronUp, UserCheck, Clock, TrendingUp, AlertTriangle } from 'lucide-react'
+import { BarChart2, Trash2, Package, ChevronDown, ChevronUp, UserCheck, Clock, TrendingUp, AlertTriangle, Users } from 'lucide-react'
 import DifferenceBadge from '../components/DifferenceBadge'
 
-type Tab = 'ventas' | 'mermas' | 'inventario' | 'cuadres' | 'turnos' | 'kpi' | 'rotacion'
+interface Sede { id: number; nombre: string }
+
+type Tab = 'ventas' | 'mermas' | 'inventario' | 'cuadres' | 'turnos' | 'kpi' | 'rotacion' | 'baristas'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 const fmtN = (v: number, dec = 2) => v.toLocaleString('es-CO', { minimumFractionDigits: dec, maximumFractionDigits: dec })
@@ -725,26 +727,168 @@ function TabRotacion({ tiendaId }: { tiendaId: number }) {
   )
 }
 
+// ─── Baristas ─────────────────────────────────────────────────────────────────
+interface FilaBarista {
+  usuario_id: number; nombre: string
+  n_recibos: number; n_cierres: number
+  n_diff_efectivo: number; n_diff_tarjeta: number
+  suma_diff_efectivo: number; peor_diferencia: number
+  ultimo_cuadre: string | null
+}
+interface TotalesBaristas { n_baristas: number; total_cuadres: number; con_diferencia: number }
+
+function TabBaristas({ tiendaId }: { tiendaId: number }) {
+  const [desde, setDesde] = useState(inicioMes())
+  const [hasta, setHasta] = useState(hoy())
+  const [filas, setFilas] = useState<FilaBarista[] | null>(null)
+  const [totales, setTotales] = useState<TotalesBaristas | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const cargar = async () => {
+    setLoading(true)
+    try {
+      const { data } = await api.get('/informes/baristas', { params: { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta } })
+      setFilas(data.filas)
+      setTotales(data.totales)
+    } finally { setLoading(false) }
+  }
+
+  const totalCuadres = (f: FilaBarista) => f.n_recibos + f.n_cierres
+  const pctDiff = (f: FilaBarista) => totalCuadres(f) > 0
+    ? Math.round((f.n_diff_efectivo / totalCuadres(f)) * 100)
+    : 0
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2 flex-wrap items-end">
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Desde</label>
+          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Hasta</label>
+          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+        </div>
+        <button onClick={cargar} disabled={loading}
+          className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
+          {loading ? 'Cargando...' : 'Consultar'}
+        </button>
+      </div>
+
+      {totales && (
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+            <p className="text-xs text-gray-400">Baristas</p>
+            <p className="text-lg font-bold text-gray-800">{totales.n_baristas}</p>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+            <p className="text-xs text-gray-400">Total cuadres</p>
+            <p className="text-lg font-bold text-gray-800">{totales.total_cuadres}</p>
+          </div>
+          <div className={`border rounded-xl p-3 text-center ${totales.con_diferencia > 0 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+            <p className="text-xs text-gray-400">Con diferencias</p>
+            <p className={`text-lg font-bold ${totales.con_diferencia > 0 ? 'text-red-700' : 'text-green-700'}`}>{totales.con_diferencia}</p>
+          </div>
+        </div>
+      )}
+
+      {filas !== null && filas.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
+          {filas.map((f, i) => (
+            <div key={f.usuario_id} className="px-4 py-3 flex items-center gap-3">
+              <span className="text-sm font-mono text-gray-300 w-5 shrink-0">{i + 1}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-gray-800">{f.nombre}</p>
+                <p className="text-xs text-gray-400">
+                  {f.n_recibos} llegadas · {f.n_cierres} cierres
+                  {f.ultimo_cuadre && <span> · último {f.ultimo_cuadre}</span>}
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                {f.n_diff_efectivo === 0 ? (
+                  <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full">Sin diferencias</span>
+                ) : (
+                  <>
+                    <span className="text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full">
+                      {f.n_diff_efectivo} diff · {pctDiff(f)}%
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      Σ {fmt(f.suma_diff_efectivo)} · peor {fmt(f.peor_diferencia)}
+                    </span>
+                  </>
+                )}
+                {f.n_diff_tarjeta > 0 && (
+                  <span className="text-xs text-blue-500">{f.n_diff_tarjeta} diff Bold</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {filas !== null && filas.length === 0 && !loading && (
+        <p className="text-sm text-gray-400 text-center py-6">Sin cuadres registrados en el período.</p>
+      )}
+    </div>
+  )
+}
+
+
 // ─── Página principal ─────────────────────────────────────────────────────────
 export default function Informes() {
   const { user } = useAuth()
+  const isAdmin = user?.rol === 'admin'
   const [tab, setTab] = useState<Tab>('ventas')
+  const [sedes, setSedes] = useState<Sede[]>([])
+  const [tiendaId, setTiendaId] = useState<number | null>(user?.tienda_id ?? null)
 
-  if (!user?.tienda_id) return null
+  useEffect(() => {
+    if (isAdmin) {
+      api.get('/auth/tiendas').then(({ data }) => {
+        setSedes(data)
+        if (!tiendaId && data.length > 0) setTiendaId(data[0].id)
+      }).catch(() => {})
+    }
+  }, [isAdmin])
+
+  if (!tiendaId) return (
+    <div className="text-center py-12 text-sm text-gray-400">Cargando sedes…</div>
+  )
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'ventas',    label: 'Ventas',        icon: <BarChart2 size={14} /> },
-    { id: 'kpi',       label: 'KPI Mermas',    icon: <TrendingUp size={14} /> },
-    { id: 'rotacion',  label: 'Rotación',      icon: <Package size={14} /> },
-    { id: 'mermas',    label: 'Mermas detalle',icon: <Trash2 size={14} /> },
-    { id: 'inventario',label: 'Inv. consumido',icon: <Package size={14} /> },
-    { id: 'cuadres',   label: 'Cuadres',       icon: <UserCheck size={14} /> },
-    { id: 'turnos',    label: 'Turnos',        icon: <Clock size={14} /> },
+    { id: 'ventas',    label: 'Ventas',         icon: <BarChart2 size={14} /> },
+    { id: 'baristas',  label: 'Baristas',       icon: <Users size={14} /> },
+    { id: 'turnos',    label: 'Turnos',         icon: <Clock size={14} /> },
+    { id: 'cuadres',   label: 'Cuadres',        icon: <UserCheck size={14} /> },
+    { id: 'kpi',       label: 'KPI Mermas',     icon: <TrendingUp size={14} /> },
+    { id: 'rotacion',  label: 'Rotación',       icon: <Package size={14} /> },
+    { id: 'mermas',    label: 'Mermas detalle', icon: <Trash2 size={14} /> },
+    { id: 'inventario',label: 'Inv. consumido', icon: <Package size={14} /> },
   ]
 
   return (
     <div className="space-y-4">
-      <h1 className="text-base font-bold text-gray-800">Informes</h1>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h1 className="text-base font-bold text-gray-800">Informes</h1>
+
+        {/* Selector de sede (solo admin) */}
+        {isAdmin && sedes.length > 1 && (
+          <div className="flex gap-1.5">
+            {sedes.map(s => (
+              <button key={s.id} onClick={() => setTiendaId(s.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                  tiendaId === s.id
+                    ? 'bg-amber-600 text-white border-amber-600'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-amber-400'
+                }`}>
+                {s.nombre}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
@@ -758,13 +902,14 @@ export default function Informes() {
         ))}
       </div>
 
-      {tab === 'ventas'     && <TabVentas    tiendaId={user.tienda_id} />}
-      {tab === 'kpi'        && <TabKpi       tiendaId={user.tienda_id} />}
-      {tab === 'rotacion'   && <TabRotacion  tiendaId={user.tienda_id} />}
-      {tab === 'mermas'     && <TabMermas    tiendaId={user.tienda_id} />}
-      {tab === 'inventario' && <TabInventario tiendaId={user.tienda_id} />}
-      {tab === 'cuadres'    && <TabCuadres   tiendaId={user.tienda_id} />}
-      {tab === 'turnos'     && <TabTurnos    tiendaId={user.tienda_id} />}
+      {tab === 'ventas'     && <TabVentas    tiendaId={tiendaId} />}
+      {tab === 'baristas'   && <TabBaristas  tiendaId={tiendaId} />}
+      {tab === 'turnos'     && <TabTurnos    tiendaId={tiendaId} />}
+      {tab === 'cuadres'    && <TabCuadres   tiendaId={tiendaId} />}
+      {tab === 'kpi'        && <TabKpi       tiendaId={tiendaId} />}
+      {tab === 'rotacion'   && <TabRotacion  tiendaId={tiendaId} />}
+      {tab === 'mermas'     && <TabMermas    tiendaId={tiendaId} />}
+      {tab === 'inventario' && <TabInventario tiendaId={tiendaId} />}
     </div>
   )
 }

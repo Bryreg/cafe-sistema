@@ -31,6 +31,7 @@ interface Comparativo {
   tienda_id: number; tienda_nombre: string
   total_ventas: number; ticket_promedio: number; n_mermas: number; n_turnos: number
 }
+interface Sede { id: number; nombre: string }
 
 const CHECKLIST_ITEMS = [
   { campo: 'apertura_realizada', label: 'Apertura de turno',   manual: false },
@@ -47,9 +48,9 @@ export default function Dashboard() {
   const { user } = useAuth()
   const navigate = useNavigate()
 
+  const [sedes, setSedes] = useState<Sede[]>([])
   const [tiendaSeleccionada, setTiendaSeleccionada] = useState<number>(user?.tienda_id ?? 1)
-  const [data, setData] = useState<DashboardData | null>(null)
-  const [data2, setData2] = useState<DashboardData | null>(null)
+  const [dashData, setDashData] = useState<Record<number, DashboardData>>({})
   const [comparativo, setComparativo] = useState<Comparativo[]>([])
   const [entregas, setEntregas] = useState<Entrega[]>([])
   const [mermasKpi, setMermasKpi] = useState<{ total_registros: number } | null>(null)
@@ -71,66 +72,79 @@ export default function Dashboard() {
   useEffect(() => {
     setLoading(true)
     setError('')
-    Promise.all([
-      loadTienda(1).catch(() => null),
-      loadTienda(2).catch(() => null),
-      api.get('/dashboard/comparativo').catch(() => ({ data: [] })),
-    ]).then(([t1, t2, comp]) => {
-      if (t1) setData(t1.dash)
-      if (t2) setData2(t2.dash)
-      setComparativo(comp.data ?? [])
-      const sel = tiendaSeleccionada === 1 ? t1 : t2
-      if (sel) { setEntregas(sel.ent); setMermasKpi(sel.mermas) }
-    }).catch(e => setError(e?.response?.data?.detail || 'Error al cargar dashboard'))
-    .finally(() => setLoading(false))
+    api.get('/auth/tiendas').then(({ data: sedesData }) => {
+      setSedes(sedesData)
+      const firstId = sedesData[0]?.id ?? 1
+      setTiendaSeleccionada(prev => prev || firstId)
+      Promise.all([
+        ...sedesData.map((s: Sede) => loadTienda(s.id).catch(() => null)),
+        api.get('/dashboard/comparativo').catch(() => ({ data: [] })),
+      ]).then(results => {
+        const comp = results[results.length - 1] as { data: Comparativo[] }
+        setComparativo(comp.data ?? [])
+        sedesData.forEach((s: Sede, i: number) => {
+          const r = results[i] as { dash: DashboardData; ent: Entrega[]; mermas: any } | null
+          if (r) {
+            setDashData(prev => ({ ...prev, [s.id]: r.dash }))
+            if (s.id === (tiendaSeleccionada || firstId)) {
+              setEntregas(r.ent)
+              setMermasKpi(r.mermas)
+            }
+          }
+        })
+      }).catch(e => setError(e?.response?.data?.detail || 'Error al cargar dashboard'))
+      .finally(() => setLoading(false))
+    }).catch(() => {
+      // fallback a tiendas 1 y 2 si el endpoint falla
+      setSedes([{ id: 1, nombre: 'Tienda 1' }, { id: 2, nombre: 'Tienda 2' }])
+      Promise.all([
+        loadTienda(1).catch(() => null),
+        loadTienda(2).catch(() => null),
+        api.get('/dashboard/comparativo').catch(() => ({ data: [] })),
+      ]).then(([t1, t2, comp]) => {
+        const c = comp as { data: Comparativo[] }
+        setComparativo(c.data ?? [])
+        if (t1) { setDashData(prev => ({ ...prev, 1: t1.dash })); setEntregas(t1.ent); setMermasKpi(t1.mermas) }
+        if (t2) setDashData(prev => ({ ...prev, 2: t2.dash }))
+      }).finally(() => setLoading(false))
+    })
   }, [])
 
   useEffect(() => {
-    if (!data && !data2) return
+    if (Object.keys(dashData).length === 0) return
     loadTienda(tiendaSeleccionada)
       .then(({ dash, ent, mermas }) => {
-        if (tiendaSeleccionada === 1) setData(dash)
-        else setData2(dash)
+        setDashData(prev => ({ ...prev, [tiendaSeleccionada]: dash }))
         setEntregas(ent)
         setMermasKpi(mermas)
       }).catch(() => {})
   }, [tiendaSeleccionada])
 
   const toggleChecklist = async (campo: string, valorActual: boolean) => {
-    if (!data) return
+    if (!active) return
     const tid = tiendaSeleccionada
     const nuevoValor = !valorActual
-    const update = (prev: DashboardData | null) => {
-      if (!prev) return prev
-      const updated = { ...prev, [campo]: nuevoValor }
+    const applyUpdate = (d: DashboardData, valor: boolean): DashboardData => {
+      const updated = { ...d, [campo]: valor }
       const campos = CHECKLIST_ITEMS.map(i => updated[i.campo as keyof DashboardData] as boolean)
       updated.cumplimiento_checklist = (campos.filter(Boolean).length / campos.length) * 100
       return updated
     }
-    if (tid === 1) setData(update)
-    else setData2(update)
+    setDashData(prev => ({ ...prev, [tid]: applyUpdate(prev[tid], nuevoValor) }))
     try {
       await api.patch(`/dashboard/${tid}/checklist`, { campo, valor: nuevoValor })
     } catch {
-      const revert = (prev: DashboardData | null) => {
-        if (!prev) return prev
-        const reverted = { ...prev, [campo]: valorActual }
-        const campos = CHECKLIST_ITEMS.map(i => reverted[i.campo as keyof DashboardData] as boolean)
-        reverted.cumplimiento_checklist = (campos.filter(Boolean).length / campos.length) * 100
-        return reverted
-      }
-      if (tid === 1) setData(revert)
-      else setData2(revert)
+      setDashData(prev => ({ ...prev, [tid]: applyUpdate(prev[tid], valorActual) }))
     }
   }
 
-  if (loading && !data && !data2) return (
+  if (loading && Object.keys(dashData).length === 0) return (
     <div className="flex items-center justify-center py-16">
       <p className="text-sm text-warm-400 animate-pulse">Cargando dashboard...</p>
     </div>
   )
 
-  if (error && !data && !data2) return (
+  if (error && Object.keys(dashData).length === 0) return (
     <div className="flex flex-col items-center justify-center py-16 gap-3">
       <AlertTriangle size={24} className="text-red-400" />
       <p className="text-sm text-red-500">{error}</p>
@@ -139,7 +153,7 @@ export default function Dashboard() {
     </div>
   )
 
-  const active = tiendaSeleccionada === 1 ? data : data2
+  const active = dashData[tiendaSeleccionada] ?? null
 
   // ── Tarjeta comparativa de tienda ────────────────────────────────────────────
   const TiendaCard = ({ d, tid }: { d: DashboardData | null; tid: number }) => {
@@ -198,8 +212,9 @@ export default function Dashboard() {
 
       {/* Comparativo de tiendas */}
       <div className="flex gap-3">
-        <TiendaCard d={data} tid={1} />
-        <TiendaCard d={data2} tid={2} />
+        {sedes.map(s => (
+          <TiendaCard key={s.id} d={dashData[s.id] ?? null} tid={s.id} />
+        ))}
       </div>
 
       {!active ? null : (

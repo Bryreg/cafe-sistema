@@ -25,6 +25,11 @@ def crear_pedido(data: CrearSolicitudPedidoRequest, db: Session = Depends(get_db
     return svc.crear_pedido(db, data.tienda_id, data.nota, items, user.id)
 
 
+@router.get("/pedido/todas", response_model=List[SolicitudPedidoOut])
+def listar_pedidos_todas(db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    return svc.get_pedidos_todas(db)
+
+
 @router.get("/pedido/tienda/{tienda_id}", response_model=List[SolicitudPedidoOut])
 def listar_pedidos(tienda_id: int, db: Session = Depends(get_db),
                    user: Usuario = Depends(get_current_user)):
@@ -51,6 +56,11 @@ def crear_sencilla(data: CrearSolicitudSencillaRequest, db: Session = Depends(ge
                    user: Usuario = Depends(get_current_user)):
     ensure_tienda_access(user, data.tienda_id)
     return svc.crear_sencilla(db, data.tienda_id, data.monto_solicitado, data.motivo, user.id, data.detalle)
+
+
+@router.get("/sencilla/todas", response_model=List[SolicitudSencillaOut])
+def listar_sencillas_todas(db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    return svc.get_sencillas_todas(db)
 
 
 @router.get("/sencilla/tienda/{tienda_id}", response_model=List[SolicitudSencillaOut])

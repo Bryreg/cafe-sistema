@@ -4,16 +4,211 @@ import api from '../api/client'
 import { Plus, Minus, X, RefreshCw, AlertTriangle } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
 
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+
 interface InvItem {
   id: number; producto_id: number; producto_nombre: string; categoria: string
   unidad_medida: string; stock_actual: number; stock_minimo: number; alerta: boolean
 }
+
+interface Tienda { id: number; nombre: string }
+interface StockTienda { stock_actual: number; stock_minimo: number; alerta: boolean }
+interface ProductoAdmin {
+  id: number; nombre: string; categoria: string; unidad_medida: string
+  stocks: Record<string, StockTienda>
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function stockColor(item: InvItem) {
   if (item.stock_actual === 0) return { bg: 'bg-red-100', border: 'border-red-300', text: 'text-red-700', dot: 'bg-red-500' }
   if (item.alerta) return { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700', dot: 'bg-amber-400' }
   return { bg: 'bg-white', border: 'border-gray-200', text: 'text-gray-700', dot: 'bg-green-400' }
 }
+
+function stockDot(s: StockTienda) {
+  if (s.stock_actual === 0) return 'bg-red-500'
+  if (s.alerta) return 'bg-amber-400'
+  return 'bg-green-400'
+}
+
+function stockTextColor(s: StockTienda) {
+  if (s.stock_actual === 0) return 'text-red-600 font-bold'
+  if (s.alerta) return 'text-amber-600 font-semibold'
+  return 'text-gray-700'
+}
+
+const CATEGORIAS: Record<string, string> = {
+  pasteleria: 'Pastelería',
+  bebida: 'Bebidas',
+  insumo: 'Insumos',
+}
+
+// ─── Vista admin ──────────────────────────────────────────────────────────────
+
+function InventarioAdmin() {
+  const [tiendas, setTiendas] = useState<Tienda[]>([])
+  const [productos, setProductos] = useState<ProductoAdmin[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState<{ producto: ProductoAdmin; tienda: Tienda } | null>(null)
+  const [tipo, setTipo] = useState<'entrada' | 'salida' | 'ajuste'>('entrada')
+  const [cantidad, setCantidad] = useState('')
+  const [motivo, setMotivo] = useState('')
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [filtro, setFiltro] = useState<'todos' | 'alertas'>('todos')
+
+  const load = async () => {
+    try {
+      const { data } = await api.get('/inventario/admin/resumen')
+      setTiendas(data.tiendas)
+      setProductos(data.productos)
+    } finally { setLoading(false) }
+  }
+
+  useEffect(() => { load() }, [])
+
+  const registrar = async () => {
+    if (!selected) return
+    setError(''); setSaving(true)
+    try {
+      await api.post('/inventario/movimiento', {
+        producto_id: selected.producto.id,
+        tienda_id: selected.tienda.id,
+        tipo, cantidad: Number(cantidad), motivo: motivo || null,
+      })
+      setCantidad(''); setMotivo(''); setSelected(null)
+      load()
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'Error')
+    } finally { setSaving(false) }
+  }
+
+  if (loading) return <div className="flex justify-center py-16"><p className="text-sm text-gray-400">Cargando...</p></div>
+
+  const productosFiltrados = filtro === 'alertas'
+    ? productos.filter(p => Object.values(p.stocks).some(s => s.alerta || s.stock_actual === 0))
+    : productos
+
+  const porCategoria = Object.entries(CATEGORIAS).map(([key, label]) => ({
+    key, label,
+    items: productosFiltrados.filter(p => p.categoria === key),
+  })).filter(g => g.items.length > 0)
+
+  return (
+    <div className="space-y-4">
+      {/* Filtro + refresh */}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
+          {(['todos', 'alertas'] as const).map(f => (
+            <button key={f} onClick={() => setFiltro(f)}
+              className={`text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors ${
+                filtro === f ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}>
+              {f === 'todos' ? 'Todos' : 'Con alertas'}
+            </button>
+          ))}
+        </div>
+        <button onClick={load} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+          <RefreshCw size={15} />
+        </button>
+      </div>
+
+      {/* Cabecera sedes */}
+      {tiendas.length > 0 && (
+        <div className="grid gap-1" style={{ gridTemplateColumns: `1fr repeat(${tiendas.length}, 80px)` }}>
+          <div />
+          {tiendas.map(t => (
+            <div key={t.id} className="text-center text-xs font-bold text-gray-500 uppercase tracking-wide">{t.nombre}</div>
+          ))}
+        </div>
+      )}
+
+      {/* Modal movimiento */}
+      {selected && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
+          <div className="bg-white w-full max-w-md rounded-t-3xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-base font-bold text-gray-800">{selected.producto.nombre}</p>
+                <p className="text-xs text-gray-400">Sede: <span className="font-semibold text-gray-600">{selected.tienda.nombre}</span></p>
+              </div>
+              <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            <p className="text-sm text-gray-500">
+              Stock actual: <strong>{selected.producto.stocks[String(selected.tienda.id)]?.stock_actual ?? 0} {selected.producto.unidad_medida}</strong>
+            </p>
+            {error && (
+              <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 px-3 py-2 rounded-xl">
+                <AlertTriangle size={14} /> {error}
+              </div>
+            )}
+            <div className="flex gap-2">
+              {(['entrada', 'salida', 'ajuste'] as const).map(t => (
+                <button key={t} onClick={() => setTipo(t)}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border-2 transition-colors ${
+                    tipo === t
+                      ? t === 'entrada' ? 'bg-green-100 border-green-400 text-green-700'
+                        : t === 'salida' ? 'bg-red-100 border-red-400 text-red-700'
+                        : 'bg-blue-100 border-blue-400 text-blue-700'
+                      : 'border-gray-200 text-gray-400'
+                  }`}>{t}</button>
+              ))}
+            </div>
+            <input type="number" value={cantidad} onChange={e => setCantidad(e.target.value)}
+              placeholder={`Cantidad (${selected.producto.unidad_medida})`}
+              className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-lg font-bold focus:outline-none focus:border-amber-400"
+              autoFocus />
+            <input value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Motivo (opcional)"
+              className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-amber-400" />
+            <button onClick={registrar} disabled={!cantidad || saving}
+              className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-bold py-3.5 rounded-xl text-sm transition-colors">
+              {saving ? 'Guardando...' : 'Confirmar'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Lista por categoría */}
+      {porCategoria.map(grupo => (
+        <div key={grupo.key} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">{grupo.label}</p>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {grupo.items.map(p => (
+              <div key={p.id}
+                className="grid items-center gap-2 px-4 py-3"
+                style={{ gridTemplateColumns: `1fr repeat(${tiendas.length}, 80px)` }}>
+                <p className="text-sm font-medium text-gray-800 truncate">{p.nombre}</p>
+                {tiendas.map(t => {
+                  const s = p.stocks[String(t.id)] ?? { stock_actual: 0, stock_minimo: 0, alerta: false }
+                  return (
+                    <button key={t.id}
+                      onClick={() => { setSelected({ producto: p, tienda: t }); setTipo('entrada'); setCantidad(''); setMotivo(''); setError('') }}
+                      className="flex flex-col items-center gap-0.5 py-1.5 rounded-xl hover:bg-gray-100 transition-colors">
+                      <div className={`w-2 h-2 rounded-full ${stockDot(s)}`} />
+                      <span className={`text-sm ${stockTextColor(s)}`}>{s.stock_actual}</span>
+                      <span className="text-xs text-gray-400">{p.unidad_medida}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {productosFiltrados.length === 0 && (
+        <p className="text-center text-sm text-gray-400 py-8">Sin productos con alertas.</p>
+      )}
+    </div>
+  )
+}
+
+// ─── Vista barista (sin cambios) ──────────────────────────────────────────────
 
 export default function Inventario() {
   const { user } = useAuth()
@@ -26,6 +221,10 @@ export default function Inventario() {
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
+  if (user?.rol === 'admin') {
+    return <InventarioAdmin />
+  }
+
   const load = async () => {
     if (!user?.tienda_id) return
     try {
@@ -34,6 +233,7 @@ export default function Inventario() {
     } finally { setLoading(false) }
   }
 
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => { load() }, [user])
 
   const registrar = async () => {
@@ -73,7 +273,6 @@ export default function Inventario() {
           </button>
         </div>
 
-        {/* Modal de movimiento */}
         {selected && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
             <div className="bg-white w-full max-w-md rounded-t-3xl p-6 space-y-4">
@@ -115,9 +314,8 @@ export default function Inventario() {
           </div>
         )}
 
-        {/* Lista de productos */}
         <div className="space-y-2">
-          {items.filter(i => i.alerta || i.stock_actual === 0).map(item => {
+          {items.map(item => {
             const c = stockColor(item)
             return (
               <div key={item.id}

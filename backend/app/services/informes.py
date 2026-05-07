@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models.models import (
     VentaDiaria, Merma, MovimientoInventario, TipoMovInvEnum,
-    CajaTurno, EstadoTurnoEnum, EntregaTurno, Inventario, Producto
+    CajaTurno, EstadoTurnoEnum, EntregaTurno, Inventario, Producto, Usuario
 )
 from datetime import datetime, date
 from collections import defaultdict
@@ -302,7 +302,7 @@ def reporte_rotacion(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
             "alerta_min":    stock <= inv.stock_minimo,
         })
 
-    # Ordenar: primero estancados, luego activos, luego sin movimiento
+    # Ordenar: primero bajo mínimo, luego estancados, luego activos
     orden = {"estancado": 0, "agotado": 1, "activo": 2, "sin_movimiento": 3}
     filas.sort(key=lambda x: (orden.get(x["estado"], 9), -x["salidas"]))
 
@@ -361,5 +361,66 @@ def reporte_turnos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
             "total_efectivo": sum(f["total_efectivo"] for f in filas),
             "total_tarjeta": sum(f["total_tarjeta"] for f in filas),
             "con_diferencia": sum(1 for f in filas if f["diferencia_cierre"] != 0),
+        },
+    }
+
+
+def reporte_baristas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date):
+    """Ranking de baristas: cuadres de llegada y cierres con sus diferencias."""
+    desde = datetime.combine(fecha_desde, datetime.min.time())
+    hasta = datetime.combine(fecha_hasta, datetime.max.time())
+
+    entregas = (
+        db.query(EntregaTurno)
+        .filter(
+            EntregaTurno.tienda_id == tienda_id,
+            EntregaTurno.fecha_hora >= desde,
+            EntregaTurno.fecha_hora <= hasta,
+        )
+        .all()
+    )
+
+    por_usuario: dict[int, dict] = {}
+    for e in entregas:
+        uid = e.usuario_id
+        if uid not in por_usuario:
+            por_usuario[uid] = {
+                "usuario_id": uid,
+                "nombre": e.usuario.nombre if e.usuario else str(uid),
+                "n_recibos": 0,
+                "n_cierres": 0,
+                "n_diff_efectivo": 0,
+                "n_diff_tarjeta": 0,
+                "suma_diff_efectivo": 0.0,
+                "peor_diferencia": 0.0,
+                "ultimo_cuadre": None,
+            }
+        d = por_usuario[uid]
+        if e.tipo == "recibo":
+            d["n_recibos"] += 1
+        else:
+            d["n_cierres"] += 1
+        if e.diferencia_efectivo != 0:
+            d["n_diff_efectivo"] += 1
+            d["suma_diff_efectivo"] += e.diferencia_efectivo
+            if abs(e.diferencia_efectivo) > abs(d["peor_diferencia"]):
+                d["peor_diferencia"] = e.diferencia_efectivo
+        if e.diferencia_tarjeta != 0:
+            d["n_diff_tarjeta"] += 1
+        if d["ultimo_cuadre"] is None or e.fecha_hora > datetime.strptime(d["ultimo_cuadre"], "%Y-%m-%d %H:%M"):
+            d["ultimo_cuadre"] = e.fecha_hora.strftime("%Y-%m-%d %H:%M")
+
+    filas = sorted(
+        por_usuario.values(),
+        key=lambda x: (x["n_diff_efectivo"], -abs(x["suma_diff_efectivo"])),
+        reverse=True,
+    )
+
+    return {
+        "filas": filas,
+        "totales": {
+            "n_baristas": len(filas),
+            "total_cuadres": sum(f["n_recibos"] + f["n_cierres"] for f in filas),
+            "con_diferencia": sum(1 for f in filas if f["n_diff_efectivo"] > 0),
         },
     }

@@ -10,6 +10,10 @@ interface Consignacion {
 }
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
+const parseUTC = (f: string) => {
+  const s = f.replace(' ', 'T').replace('+00:00', 'Z')
+  return new Date(s.endsWith('Z') ? s : s + 'Z')
+}
 
 export default function Consignaciones() {
   const { user } = useAuth()
@@ -129,7 +133,7 @@ export default function Consignaciones() {
                   }
                   <div className="flex-1">
                     <p className="text-sm font-bold text-gray-800">{fmt(c.valor)}</p>
-                    <p className="text-xs text-gray-400">{new Date(c.fecha).toLocaleDateString('es-CO')}</p>
+                    <p className="text-xs text-gray-400">{parseUTC(c.fecha).toLocaleDateString('es-CO')}</p>
                   </div>
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${estadoBadge(c.estado)}`}>
                     {c.estado}

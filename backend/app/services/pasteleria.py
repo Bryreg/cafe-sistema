@@ -11,13 +11,42 @@ import logging
 logger = logging.getLogger(__name__)
 
 DIAS_ROTACION = 5
+
+
+def _fmt(r: PasteleriaDiaria) -> dict:
+    venc = r.fecha_vencimiento or r.fecha_frescura
+    ahora = datetime.utcnow()
+    diff_h = (venc - ahora).total_seconds() / 3600 if venc else None
+    if diff_h is None:
+        estado = "sin_fecha"
+    elif diff_h < 0:
+        estado = "vencido"
+    elif diff_h < 24:
+        estado = "por_vencer"
+    else:
+        estado = "vigente"
+    return {
+        "id": r.id, "tienda_id": r.tienda_id,
+        "tienda_nombre": r.tienda.nombre if r.tienda else None,
+        "producto_id": r.producto_id,
+        "producto_nombre": r.producto.nombre if r.producto else str(r.producto_id),
+        "cantidad": r.cantidad,
+        "numero_lote": r.numero_lote,
+        "fecha_vencimiento": venc,
+        "fecha_registro": r.fecha_registro,
+        "activo": r.activo,
+        "estado": estado,
+    }
 DIAS_ALERTA = 3
 
 def registrar(db: Session, tienda_id: int, producto_id: int, cantidad: float,
-               fecha_frescura: datetime, usuario_id: int):
+               fecha_vencimiento: datetime, usuario_id: int, numero_lote: str | None = None):
     reg = PasteleriaDiaria(
         tienda_id=tienda_id, producto_id=producto_id, cantidad=cantidad,
-        fecha_frescura=fecha_frescura, usuario_id=usuario_id, activo=True
+        numero_lote=numero_lote,
+        fecha_vencimiento=fecha_vencimiento,
+        fecha_frescura=fecha_vencimiento,  # legado
+        usuario_id=usuario_id, activo=True
     )
     db.add(reg)
     _tick_checklist(db, tienda_id, pasteleria_check=True)
@@ -47,15 +76,7 @@ def get_por_fecha(db: Session, tienda_id: int, fecha: date):
         PasteleriaDiaria.tienda_id == tienda_id,
         func.date(PasteleriaDiaria.fecha_registro) == fecha
     ).all()
-    return [
-        {
-            "id": r.id, "tienda_id": r.tienda_id, "producto_id": r.producto_id,
-            "producto_nombre": r.producto.nombre, "cantidad": r.cantidad,
-            "fecha_frescura": r.fecha_frescura, "fecha_registro": r.fecha_registro,
-            "activo": r.activo,
-        }
-        for r in regs
-    ]
+    return [_fmt(r) for r in regs]
 
 def get_activos(db: Session, tienda_id: int):
     """Todos los lotes activos (no terminados) de los últimos DIAS_ROTACION días."""
@@ -74,16 +95,31 @@ def get_activos(db: Session, tienda_id: int):
     result = []
     for r in regs:
         dias = (ahora - r.fecha_registro).total_seconds() / 86400
-        result.append({
-            "id": r.id,
-            "producto_id": r.producto_id,
-            "producto_nombre": r.producto.nombre,
-            "cantidad": r.cantidad,
-            "fecha_frescura": r.fecha_frescura,
-            "fecha_registro": r.fecha_registro,
-            "dias_en_stock": round(dias, 1),
-            "alerta_rotacion": dias >= DIAS_ALERTA,  # más de 3 días sin terminar
-        })
+        row = _fmt(r)
+        row["dias_en_stock"] = round(dias, 1)
+        row["alerta_rotacion"] = dias >= DIAS_ALERTA
+        result.append(row)
+    return result
+
+
+def get_admin_lotes(db: Session):
+    """Todos los lotes activos de todas las tiendas — para el admin."""
+    limite = datetime.utcnow() - timedelta(days=DIAS_ROTACION)
+    regs = (
+        db.query(PasteleriaDiaria)
+        .filter(PasteleriaDiaria.activo == True, PasteleriaDiaria.fecha_registro >= limite)
+        .order_by(PasteleriaDiaria.fecha_vencimiento.asc().nullslast(),
+                  PasteleriaDiaria.fecha_frescura.asc())
+        .all()
+    )
+    ahora = datetime.utcnow()
+    result = []
+    for r in regs:
+        row = _fmt(r)
+        dias = (ahora - r.fecha_registro).total_seconds() / 86400
+        row["dias_en_stock"] = round(dias, 1)
+        row["alerta_rotacion"] = dias >= DIAS_ALERTA
+        result.append(row)
     return result
 
 def cerrar_lote(db: Session, lote_id: int, tienda_id: int):

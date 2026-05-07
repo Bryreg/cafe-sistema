@@ -4,7 +4,7 @@ sys.path.append(os.path.dirname(__file__))
 from app.database import SessionLocal, engine, Base
 from app.models import models  # noqa: importa todos los modelos para metadata
 from app.models.models import Tienda, Usuario, Producto, Inventario, CategoriaProductoEnum
-from app.core.security import hash_password, hash_password as hash_pin
+from app.core.security import hash_password
 
 Base.metadata.create_all(bind=engine)
 
@@ -23,15 +23,20 @@ def seed():
 
         # Usuarios
         admin = Usuario(nombre="Administrador", email="admin@cafe.com",
-                        password_hash=hash_password("admin123"), pin_hash=hash_pin("1234"),
+                        password_hash=hash_password("admin123"), pin_hash=hash_password("1234"),
                         rol="admin", tienda_id=t1.id)
-        barista1 = Usuario(nombre="Juan Barista", email="juan@cafe.com",
-                           password_hash=hash_password("barista123"), pin_hash=hash_pin("1111"),
-                           rol="barista", tienda_id=t1.id)
-        barista2 = Usuario(nombre="María Barista", email="maria@cafe.com",
-                           password_hash=hash_password("barista123"), pin_hash=hash_pin("2222"),
-                           rol="barista", tienda_id=t2.id)
-        db.add_all([admin, barista1, barista2])
+        baristas = [
+            Usuario(nombre="Elina",      email="elina@cafe.com",     password_hash=hash_password("barista123"), pin_hash=hash_password("1111"), rol="barista", tienda_id=t1.id),
+            Usuario(nombre="Catherin",   email="catherin@cafe.com",  password_hash=hash_password("barista123"), pin_hash=hash_password("2222"), rol="barista", tienda_id=t1.id),
+            Usuario(nombre="Alejandra",  email="alejandra@cafe.com", password_hash=hash_password("barista123"), pin_hash=hash_password("3333"), rol="barista", tienda_id=t1.id),
+            Usuario(nombre="Ana Maria",  email="anamaria@cafe.com",  password_hash=hash_password("barista123"), pin_hash=hash_password("4444"), rol="barista", tienda_id=t1.id),
+            Usuario(nombre="Esther",     email="esther@cafe.com",    password_hash=hash_password("barista123"), pin_hash=hash_password("5555"), rol="barista", tienda_id=t1.id),
+            Usuario(nombre="Luisa",      email="luisa@cafe.com",     password_hash=hash_password("barista123"), pin_hash=hash_password("6666"), rol="barista", tienda_id=t1.id),
+            Usuario(nombre="Nicole",     email="nicole@cafe.com",    password_hash=hash_password("barista123"), pin_hash=hash_password("7777"), rol="barista", tienda_id=t1.id),
+            Usuario(nombre="Laura",      email="laura@cafe.com",     password_hash=hash_password("barista123"), pin_hash=hash_password("8888"), rol="barista", tienda_id=t1.id),
+        ]
+        db.add(admin)
+        db.add_all(baristas)
         db.flush()
 
         # Productos
@@ -63,8 +68,14 @@ def seed():
         db.commit()
         print("Seed completado exitosamente")
         print("   Administrador  PIN: 1234")
-        print("   Juan Barista   PIN: 1111")
-        print("   María Barista  PIN: 2222")
+        print("   Elina          PIN: 1111")
+        print("   Catherin       PIN: 2222")
+        print("   Alejandra      PIN: 3333")
+        print("   Ana Maria      PIN: 4444")
+        print("   Esther         PIN: 5555")
+        print("   Luisa          PIN: 6666")
+        print("   Nicole         PIN: 7777")
+        print("   Laura          PIN: 8888")
     except Exception as e:
         db.rollback()
         print(f"Error en seed: {e}")

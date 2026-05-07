@@ -36,6 +36,11 @@ def listar(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depend
     ensure_tienda_access(user, tienda_id)
     return svc.get_por_tienda(db, tienda_id)
 
+@router.get("/resumen-admin")
+def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    return svc.get_resumen_admin(db)
+
+
 @router.patch("/{consignacion_id}/confirmar")
 def confirmar(consignacion_id: int, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
     return svc.confirmar(db, consignacion_id)

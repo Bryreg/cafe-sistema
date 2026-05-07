@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import os, logging
 from app.database import engine
 from app.models.models import Base
@@ -43,6 +44,10 @@ with engine.connect() as _conn:
         "ALTER TABLE mermas ADD COLUMN tienda_destino_id INTEGER",
         "ALTER TABLE mermas ADD COLUMN recibido BOOLEAN DEFAULT 0",
         "ALTER TABLE mermas ADD COLUMN fecha_recibido DATETIME",
+        "ALTER TABLE movimientos_caja ADD COLUMN imagen_url VARCHAR(300)",
+        "ALTER TABLE entregas_turno ADD COLUMN tipo VARCHAR(20) DEFAULT 'entrega' NOT NULL",
+        "ALTER TABLE pasteleria_diaria ADD COLUMN numero_lote VARCHAR(100)",
+        "ALTER TABLE pasteleria_diaria ADD COLUMN fecha_vencimiento DATETIME",
     ]:
         try:
             _conn.execute(_text(_sql))
@@ -82,6 +87,27 @@ app.include_router(notificaciones.router, prefix="/api/v1")
 app.include_router(limpieza.router, prefix="/api/v1")
 app.include_router(recetas.router, prefix="/api/v1")
 
+# ─── Servir frontend React (solo en producción) ────────────────────────────────
+_frontend_dist = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "frontend", "dist")
+)
+_spa_mode = os.path.isdir(_frontend_dist)
+
+if _spa_mode:
+    app.mount("/assets", StaticFiles(directory=os.path.join(_frontend_dist, "assets")), name="assets")
+
 @app.get("/")
 def root():
+    if _spa_mode:
+        return FileResponse(os.path.join(_frontend_dist, "index.html"))
     return {"status": "ok", "app": "Sistema Café v1.0"}
+
+if _spa_mode:
+    @app.get("/{full_path:path}")
+    def serve_spa(full_path: str):
+        """SPA fallback: cualquier ruta que no sea /api/* devuelve index.html."""
+        if full_path.startswith("api/"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404)
+        index = os.path.join(_frontend_dist, "index.html")
+        return FileResponse(index)

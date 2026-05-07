@@ -9,18 +9,6 @@ class MovimientoInvRequest(BaseModel):
     cantidad: float
     motivo: Optional[str] = None
 
-class InventarioOut(BaseModel):
-    id: int
-    producto_id: int
-    tienda_id: int
-    stock_actual: float
-    stock_minimo: float
-    producto_nombre: str
-    categoria: str
-    unidad_medida: str
-    alerta: bool
-    class Config: from_attributes = True
-
 class ProductoCreate(BaseModel):
     nombre: str
     categoria: str   # pasteleria | bebida | insumo

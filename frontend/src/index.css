@@ -13,4 +13,9 @@
     background-color: oklch(98% 0.006 75);
     color: oklch(22% 0.01 60);
   }
+
+  /* Evita el zoom automático de iOS Safari al enfocar inputs */
+  input, select, textarea {
+    font-size: 16px;
+  }
 }

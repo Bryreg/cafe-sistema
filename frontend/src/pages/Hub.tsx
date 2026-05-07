@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTurno } from '../contexts/TurnoContext'
@@ -8,9 +8,8 @@ import {
   Banknote, ShoppingCart, Coins, CheckCircle2, Circle,
   AlertTriangle, ChevronRight, Lock, TrendingUp, TrendingDown,
   Plus, ClipboardList, UserCheck, ChevronDown, ChevronUp, Sparkles,
+  Upload, ImageIcon, X as XIcon,
 } from 'lucide-react'
-
-const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 
 function parseUTC(s: string): Date {
   const t = s.replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1').replace('+00:00', 'Z')
@@ -38,19 +37,43 @@ function saludo() {
   return 'Buenas noches'
 }
 
+interface Movimiento {
+  id: number; tipo: string; concepto: string; valor: number
+  fecha: string; imagen_url: string | null
+}
+
+const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
+
 function MovimientoCaja({ turnoId, onClose }: { turnoId: number; onClose: () => void }) {
   const { refresh } = useTurno()
   const [tipo, setTipo] = useState<'ingreso' | 'egreso'>('ingreso')
   const [concepto, setConcepto] = useState('')
   const [valor, setValor] = useState('')
+  const [archivo, setArchivo] = useState<File | null>(null)
+  const [preview, setPreview] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setArchivo(f)
+    setPreview(URL.createObjectURL(f))
+  }
 
   const guardar = async () => {
     setError(''); setLoading(true)
     try {
-      await api.post(`/caja/${turnoId}/movimiento`, { tipo, concepto, valor: Number(valor) })
-      setConcepto(''); setValor('')
+      const form = new FormData()
+      form.append('tipo', tipo)
+      form.append('concepto', concepto)
+      form.append('valor', valor)
+      if (archivo) form.append('imagen', archivo)
+      await api.post(`/caja/${turnoId}/movimiento`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      setConcepto(''); setValor(''); setArchivo(null); setPreview(null)
       await refresh()
       onClose()
     } catch (e: any) { setError(e.response?.data?.detail || 'Error') }
@@ -83,6 +106,28 @@ function MovimientoCaja({ turnoId, onClose }: { turnoId: number; onClose: () => 
           className="w-full border-2 border-warm-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-forest transition-colors" />
         <input type="number" value={valor} onChange={e => setValor(e.target.value)} placeholder="Valor"
           className="w-full border-2 border-warm-200 rounded-xl px-4 py-3 text-lg font-bold focus:outline-none focus:border-forest transition-colors font-mono" />
+
+        {/* Foto soporte */}
+        <div>
+          <p className="text-xs font-semibold text-warm-400 uppercase tracking-wide mb-2">Foto soporte (opcional)</p>
+          <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+          {preview ? (
+            <div className="relative">
+              <img src={preview} alt="preview" className="w-full h-28 object-cover rounded-xl border-2 border-amber-300" />
+              <button onClick={() => { setArchivo(null); setPreview(null) }}
+                className="absolute top-2 right-2 bg-black/60 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs">
+                <XIcon size={12} />
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => fileRef.current?.click()}
+              className="w-full h-20 border-2 border-dashed border-warm-200 rounded-xl flex flex-col items-center justify-center gap-1.5 hover:border-amber-400 hover:bg-amber-50 transition-colors">
+              <Upload size={16} className="text-warm-400" />
+              <span className="text-xs text-warm-400">Toca para subir foto</span>
+            </button>
+          )}
+        </div>
+
         <button onClick={guardar} disabled={!concepto || !valor || loading}
           className="w-full disabled:opacity-40 text-white font-bold py-3.5 rounded-xl text-sm transition-colors"
           style={{ background: 'oklch(35% 0.05 155)' }}>
@@ -106,6 +151,8 @@ export default function Hub() {
   const [alertas, setAlertas] = useState<AlertaStock[]>([])
   const [pasteleria, setPasteleria] = useState<ItemPasteleria[]>([])
   const [showMov, setShowMov] = useState(false)
+  const [movimientos, setMovimientos] = useState<Movimiento[]>([])
+  const [showMovimientos, setShowMovimientos] = useState(false)
   const [time, setTime] = useState(hora())
   const [ventas, setVentas] = useState<Venta[]>([])
   const [showVentas, setShowVentas] = useState(false)
@@ -131,6 +178,14 @@ export default function Hub() {
       setVentas([])
     }
   }, [turno?.id, turno?.tiene_ventas])
+
+  useEffect(() => {
+    if (turno?.id) {
+      api.get(`/caja/${turno.id}/movimientos`).then(r => setMovimientos(r.data)).catch(() => null)
+    } else {
+      setMovimientos([])
+    }
+  }, [turno?.id, showMov])
 
   const pasos = [
     { label: 'Apertura',        done: !!turno,                           accion: () => navigate('/apertura') },
@@ -500,6 +555,51 @@ export default function Hub() {
             }
           </div>
         </button>
+
+        {/* ── Movimientos del turno ── */}
+        {turno && movimientos.length > 0 && (
+          <div className="bg-white border border-warm-200 rounded-2xl overflow-hidden">
+            <button
+              onClick={() => setShowMovimientos(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3"
+            >
+              <div className="flex items-center gap-2">
+                <TrendingUp size={14} className="text-warm-500" />
+                <span className="text-xs font-bold text-warm-600 uppercase tracking-wide">
+                  Movimientos del turno
+                </span>
+                <span className="bg-warm-100 text-warm-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                  {movimientos.length}
+                </span>
+              </div>
+              {showMovimientos ? <ChevronUp size={14} className="text-warm-400" /> : <ChevronDown size={14} className="text-warm-400" />}
+            </button>
+            {showMovimientos && (
+              <div className="border-t border-warm-100 divide-y divide-warm-50">
+                {movimientos.map(m => (
+                  <div key={m.id} className="flex items-center gap-3 px-4 py-3">
+                    {m.imagen_url ? (
+                      <img src={m.imagen_url} alt="" className="w-10 h-10 rounded-lg object-cover border border-warm-200 shrink-0" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-warm-100 flex items-center justify-center shrink-0">
+                        <ImageIcon size={14} className="text-warm-400" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-warm-700 truncate">{m.concepto}</p>
+                      <p className="text-xs text-warm-400">
+                        {parseUTC(m.fecha).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                    <span className={`text-sm font-bold font-mono shrink-0 ${m.tipo === 'ingreso' ? 'text-green-600' : 'text-red-500'}`}>
+                      {m.tipo === 'ingreso' ? '+' : '−'}{fmt(m.valor)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Quick movement ── */}
         {turno && !turno.tiene_conteo_cierre && (

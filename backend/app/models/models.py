@@ -135,6 +135,7 @@ class MovimientoCaja(Base):
     valor = Column(Float, nullable=False)
     fecha = Column(DateTime, default=datetime.utcnow)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    imagen_url = Column(String(300), nullable=True)
     turno = relationship("CajaTurno", back_populates="movimientos")
     usuario = relationship("Usuario")
 
@@ -325,6 +326,7 @@ class EntregaTurno(Base):
     diferencia_efectivo = Column(Float, nullable=False)
     diferencia_tarjeta = Column(Float, nullable=False)
     imagen_url = Column(String(300), nullable=True)
+    tipo = Column(String(20), default="entrega", nullable=False, server_default="entrega")
     turno = relationship("CajaTurno", back_populates="entregas")
     usuario = relationship("Usuario")
 
@@ -335,10 +337,12 @@ class PasteleriaDiaria(Base):
     tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
     producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
     cantidad = Column(Float, nullable=False)
-    fecha_frescura = Column(DateTime, nullable=False)
+    fecha_frescura = Column(DateTime, nullable=False)     # legado — igual a fecha_vencimiento
+    numero_lote = Column(String(100), nullable=True)      # número o código del lote
+    fecha_vencimiento = Column(DateTime, nullable=True)   # fecha límite de venta
     fecha_registro = Column(DateTime, default=datetime.utcnow)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
-    activo = Column(Boolean, default=True)   # False cuando el lote se termina
+    activo = Column(Boolean, default=True)
     tienda = relationship("Tienda", back_populates="pastelerias")
     producto = relationship("Producto", back_populates="pastelerias")
     usuario = relationship("Usuario")

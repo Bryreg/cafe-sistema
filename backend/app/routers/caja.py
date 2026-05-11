@@ -5,9 +5,8 @@ from app.core.deps import ensure_tienda_access, ensure_turno_access, get_current
 from app.models.models import Usuario, CajaTurno
 from app.schemas.caja import AbrirCajaRequest, CerrarCajaRequest, MovimientoCajaRequest, TurnoOut, EntregaTurnoOut
 from app.services import caja as svc
-from app.config import settings
+from app.core.storage import upload_imagen
 from typing import List, Optional
-import os, uuid, shutil
 
 router = APIRouter(prefix="/caja", tags=["caja"])
 
@@ -32,15 +31,7 @@ async def movimiento(
     user: Usuario = Depends(get_current_user),
 ):
     ensure_turno_access(db, user, turno_id)
-    imagen_url = None
-    if imagen and imagen.filename:
-        os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-        ext = os.path.splitext(imagen.filename)[1] or ".jpg"
-        filename = f"mov_{uuid.uuid4().hex}{ext}"
-        path = os.path.join(settings.UPLOAD_DIR, filename)
-        with open(path, "wb") as f:
-            f.write(await imagen.read())
-        imagen_url = f"/uploads/{filename}"
+    imagen_url = await upload_imagen(imagen)
     return svc.registrar_movimiento(db, turno_id, tipo, concepto, valor, user.id, imagen_url)
 
 @router.get("/{turno_id}/movimientos")
@@ -69,14 +60,7 @@ async def registrar_entrega(
     user: Usuario = Depends(get_current_user),
 ):
     ensure_turno_access(db, user, turno_id)
-    imagen_url = None
-    if imagen and imagen.filename:
-        ext = os.path.splitext(imagen.filename)[1] or ".jpg"
-        filename = f"entrega_{uuid.uuid4().hex}{ext}"
-        path = os.path.join(settings.UPLOAD_DIR, filename)
-        with open(path, "wb") as f:
-            shutil.copyfileobj(imagen.file, f)
-        imagen_url = f"/uploads/{filename}"
+    imagen_url = await upload_imagen(imagen)
     return svc.registrar_entrega(db, turno_id, user.id, efectivo_real, ventas_efectivo_siigo, ventas_tarjeta_bold, imagen_url)
 
 @router.post("/{turno_id}/cuadre-llegada", response_model=EntregaTurnoOut)

@@ -34,4 +34,6 @@ export default {
     },
   },
   plugins: [],
+  // Que Tailwind no purgue las clases de safe-area definidas en index.css
+  safelist: ['pt-safe', 'pb-safe', 'header-safe', 'pb-nav'],
 }

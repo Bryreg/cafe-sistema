@@ -6,16 +6,55 @@
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* Sin rubber-band scroll lateral; el vertical lo dejamos para scroll natural */
+    overscroll-behavior-x: none;
+    /* Scroll suave en iOS */
+    -webkit-overflow-scrolling: touch;
+    /* Alto real en móvil (respeta barra del navegador en Safari) */
+    height: -webkit-fill-available;
   }
 
   body {
     font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     background-color: oklch(98% 0.006 75);
     color: oklch(22% 0.01 60);
+    /* Altura real en iOS */
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+    /* Espacio para la barra de inicio del iPhone (home bar) */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Sin highlight azul/gris al tocar en iOS/Android */
+  * {
+    -webkit-tap-highlight-color: transparent;
   }
 
   /* Evita el zoom automático de iOS Safari al enfocar inputs */
   input, select, textarea {
     font-size: 16px;
+  }
+
+  /* Scrollbars invisibles en móvil (no afecta al scroll en sí) */
+  ::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ── Safe-area utilities (para headers pegajosos con notch/Dynamic Island) ── */
+@layer utilities {
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  /* Header sticky que necesita cubrir el área del notch */
+  .header-safe {
+    padding-top: max(0.75rem, calc(env(safe-area-inset-top) + 0.5rem));
+  }
+  /* Espacio para no quedar bajo la bottom nav (64px + safe-area + buffer) */
+  .pb-nav {
+    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
   }
 }

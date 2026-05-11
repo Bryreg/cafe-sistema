@@ -33,6 +33,14 @@ def get_kpis(
     return kpis_svc.get_kpis(db, tienda_id, fecha_desde, fecha_hasta)
 
 
+@router.get("/{tienda_id}/admin-resumen")
+def get_admin_resumen(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    """Resumen financiero + operativo del mes para el admin: ventas, consignaciones,
+    insumos (inicio/cierre/actual), entradas por proveedor y egresos de caja."""
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_admin_resumen(db, tienda_id)
+
+
 @router.get("/{tienda_id}")
 def get_dashboard(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
     ensure_tienda_access(user, tienda_id)

@@ -1,0 +1,39 @@
+version: "3.9"
+
+# ── PRODUCCIÓN ────────────────────────────────────────────────────────────────
+# URL pública: https://app.tudominio.com  (nginx expone 80/443)
+# Deploy: push a rama 'main' → GitHub Actions ejecuta este compose
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_ENV: production
+    image: cafe-sistema:prod
+    container_name: cafe_prod
+    restart: unless-stopped
+    env_file: backend/.env.prod
+    environment:
+      ENV_FILE: /app/backend/.env.prod
+      # Sobrescribe el DATABASE_URL del .env para apuntar al volumen persistente
+      DATABASE_URL: sqlite:////app/backend/data/cafe_sistema.db
+      UPLOAD_DIR: uploads
+    volumes:
+      # SQLite persistente (sobrevive a rebuilds y reinicios)
+      - prod_db:/app/backend/data
+      # Fotos de consignaciones, facturas, etc.
+      - prod_uploads:/app/backend/uploads
+    networks:
+      - cafe_net
+    # Sin 'ports': nginx es el único que habla con este contenedor
+
+networks:
+  cafe_net:
+    external: true   # creada por setup-vps.sh una sola vez
+
+volumes:
+  prod_db:
+  prod_uploads:

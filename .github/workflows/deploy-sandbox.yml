@@ -1,0 +1,46 @@
+name: Deploy → Sandbox
+
+on:
+  push:
+    branches: [sandbox]
+
+jobs:
+  deploy:
+    name: Build & Deploy Sandbox
+    runs-on: ubuntu-latest
+    environment: sandbox          # (opcional) requiere aprobación en GitHub si lo configuras
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy al VPS vía SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/cafe-sistema
+
+            echo "── Pulling rama sandbox ──"
+            git fetch origin sandbox
+            git checkout sandbox
+            git pull origin sandbox
+
+            echo "── Build de imagen sandbox ──"
+            docker compose -f docker-compose.sandbox.yml build --no-cache
+
+            echo "── Reemplazando contenedor ──"
+            docker compose -f docker-compose.sandbox.yml up -d --force-recreate app
+
+            echo "── Health check ──"
+            sleep 15
+            curl -f http://cafe_sandbox:8000/ \
+              || (docker compose -f docker-compose.sandbox.yml logs --tail 50 app && exit 1)
+
+            echo "── Limpieza de imágenes antiguas ──"
+            docker image prune -f
+
+            echo "✅ Sandbox desplegado"

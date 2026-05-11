@@ -26,6 +26,8 @@ import SolicitudPedido from './pages/SolicitudPedido'
 import SolicitudSencilla from './pages/SolicitudSencilla'
 import ConteoFisico from './pages/ConteoFisico'
 import Limpieza from './pages/Limpieza'
+import Ingresos from './pages/Ingresos'
+import ConteoCompras from './pages/ConteoCompras'
 
 // Admin pages
 import Dashboard from './pages/Dashboard'
@@ -33,6 +35,9 @@ import Bandeja from './pages/Bandeja'
 import Informes from './pages/Informes'
 import Catalogo from './pages/Catalogo'
 import Recetas from './pages/Recetas'
+import ComprasAdmin from './pages/ComprasAdmin'
+import Comunicados from './pages/Comunicados'
+import Usuarios from './pages/Usuarios'
 
 // ─── Smart redirect basado en estado del turno ───────────────────────────────
 function SmartRedirect() {
@@ -123,6 +128,12 @@ function AppRoutes() {
       <Route path="/conteos" element={
         <ProtectedRoute role="barista"><ConteoFisico /></ProtectedRoute>
       } />
+      <Route path="/ingresos" element={
+        <ProtectedRoute role="barista"><Ingresos /></ProtectedRoute>
+      } />
+      <Route path="/conteo-compras" element={
+        <ProtectedRoute role="barista"><ConteoCompras /></ProtectedRoute>
+      } />
       <Route path="/limpieza" element={
         <ProtectedRoute>
           {user?.rol === 'admin'
@@ -165,6 +176,15 @@ function AppRoutes() {
       } />
       <Route path="/recetas" element={
         <ProtectedRoute role="admin"><Layout><Recetas /></Layout></ProtectedRoute>
+      } />
+      <Route path="/compras" element={
+        <ProtectedRoute role="admin"><Layout><ComprasAdmin /></Layout></ProtectedRoute>
+      } />
+      <Route path="/comunicados" element={
+        <ProtectedRoute role="admin"><Layout><Comunicados /></Layout></ProtectedRoute>
+      } />
+      <Route path="/usuarios" element={
+        <ProtectedRoute role="admin"><Layout><Usuarios /></Layout></ProtectedRoute>
       } />
 
       <Route path="*" element={<Navigate to="/" replace />} />

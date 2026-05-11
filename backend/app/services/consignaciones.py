@@ -105,6 +105,56 @@ def get_resumen_admin(db: Session):
     return result
 
 
+def get_pendiente(db: Session, tienda_id: int):
+    """
+    Returns pending consignación amount based on closed turns in the last 3 days.
+    For each closed turn: esperado = total_efectivo + ingresos_movimientos - egresos_movimientos.
+    Subtracts what's already been consigned in the same time window.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=3)
+    turnos = (
+        db.query(CajaTurno)
+        .filter(
+            CajaTurno.tienda_id == tienda_id,
+            CajaTurno.estado == EstadoTurnoEnum.cerrado,
+            CajaTurno.fecha_cierre >= cutoff,
+        )
+        .order_by(CajaTurno.fecha_cierre.desc())
+        .all()
+    )
+
+    items = []
+    for t in turnos:
+        movs = db.query(MovimientoCaja).filter(MovimientoCaja.caja_turno_id == t.id).all()
+        total_egresos = sum(m.valor for m in movs if m.tipo == "egreso")
+        total_ingresos_mov = sum(m.valor for m in movs if m.tipo == "ingreso")
+        esperado = (t.total_efectivo or 0) + total_ingresos_mov - total_egresos
+
+        ventana_fin = t.fecha_cierre + timedelta(hours=20)
+        consigs = db.query(Consignacion).filter(
+            Consignacion.tienda_id == tienda_id,
+            Consignacion.fecha >= t.fecha_apertura,
+            Consignacion.fecha <= ventana_fin,
+        ).all()
+        total_consignado = sum(c.valor for c in consigs)
+        pendiente = max(0, round(esperado - total_consignado, 2))
+
+        if esperado > 0:
+            items.append({
+                "turno_id": t.id,
+                "fecha_apertura": t.fecha_apertura,
+                "fecha_cierre": t.fecha_cierre,
+                "esperado": round(esperado, 2),
+                "consignado": round(total_consignado, 2),
+                "pendiente": pendiente,
+            })
+
+    return {
+        "items": items,
+        "total_pendiente": round(sum(i["pendiente"] for i in items), 2),
+    }
+
+
 def confirmar(db: Session, consignacion_id: int):
     c = db.query(Consignacion).filter(Consignacion.id == consignacion_id).first()
     if not c:

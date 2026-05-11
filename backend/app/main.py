@@ -7,7 +7,8 @@ from app.database import engine
 from app.models.models import Base
 from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
                           dashboard, ventas, conteos, mermas, solicitudes,
-                          informes, audit, alertas, notificaciones, limpieza, recetas)
+                          informes, audit, alertas, notificaciones, limpieza, recetas,
+                          facturas, compras, comunicados)
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -48,6 +49,13 @@ with engine.connect() as _conn:
         "ALTER TABLE entregas_turno ADD COLUMN tipo VARCHAR(20) DEFAULT 'entrega' NOT NULL",
         "ALTER TABLE pasteleria_diaria ADD COLUMN numero_lote VARCHAR(100)",
         "ALTER TABLE pasteleria_diaria ADD COLUMN fecha_vencimiento DATETIME",
+        # Facturas de compra
+        "ALTER TABLE facturas_compra ADD COLUMN numero_lote VARCHAR(100)",
+        "ALTER TABLE facturas_compra ADD COLUMN fecha_recibido DATETIME",
+        # Conteos de compras
+        "ALTER TABLE conteos_compras ADD COLUMN nota VARCHAR(300)",
+        "ALTER TABLE conteos_compras ADD COLUMN fecha_ajuste DATETIME",
+        "ALTER TABLE conteos_compras ADD COLUMN usuario_ajuste_id INTEGER",
     ]:
         try:
             _conn.execute(_text(_sql))
@@ -86,6 +94,9 @@ app.include_router(alertas.router, prefix="/api/v1")
 app.include_router(notificaciones.router, prefix="/api/v1")
 app.include_router(limpieza.router, prefix="/api/v1")
 app.include_router(recetas.router, prefix="/api/v1")
+app.include_router(facturas.router, prefix="/api/v1")
+app.include_router(compras.router, prefix="/api/v1")
+app.include_router(comunicados.router, prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────
 _frontend_dist = os.path.abspath(

@@ -16,9 +16,10 @@ backend/uploads_dev/
 backend/uploads_sandbox/
 
 # ── Variables de entorno (secretos) ─────────────
-# Los archivos .env.dev / .env.sandbox / .env.prod SÍ se versionan
-# Solo se ignora el .env genérico y los overrides locales
+# .env.dev y .env.sandbox SÍ se versionan (sin secretos reales)
+# .env.prod NO se versiona — contiene SECRET_KEY de producción
 backend/.env
+backend/.env.prod
 frontend/.env.local
 frontend/.env.*.local
 

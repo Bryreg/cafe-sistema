@@ -30,3 +30,24 @@ class TokenResponse(BaseModel):
     nombre: str
     tienda_id: Optional[int]
     user_id: int
+
+class UsuarioAdmin(BaseModel):
+    id: int
+    nombre: str
+    email: str
+    rol: str
+    tienda_id: Optional[int]
+    tienda_nombre: Optional[str]
+    activo: bool
+    ultimo_acceso: Optional[str]
+    tiene_pin: bool
+    class Config: from_attributes = True
+
+class ActualizarUsuario(BaseModel):
+    nombre: Optional[str] = None
+    rol: Optional[str] = None
+    tienda_id: Optional[int] = None
+    activo: Optional[bool] = None
+
+class SetPinRequest(BaseModel):
+    pin: str

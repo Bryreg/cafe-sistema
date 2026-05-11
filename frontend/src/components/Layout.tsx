@@ -1,15 +1,18 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { Coffee, LayoutDashboard, Package, Banknote, LogOut, Inbox, BarChart2, BookOpen, ChefHat } from 'lucide-react'
+import { Coffee, LayoutDashboard, Package, Banknote, LogOut, Inbox, BarChart2, BookOpen, ChefHat, ShoppingCart, Bell, Users } from 'lucide-react'
 
 const NAV_ADMIN = [
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/inventario', label: 'Inventario', icon: Package },
-  { to: '/catalogo', label: 'Catálogo', icon: BookOpen },
-  { to: '/recetas', label: 'Recetas', icon: ChefHat },
-  { to: '/consignaciones', label: 'Consignaciones', icon: Banknote },
-  { to: '/bandeja', label: 'Bandeja', icon: Inbox },
-  { to: '/informes', label: 'Informes', icon: BarChart2 },
+  { to: '/dashboard',     label: 'Dashboard',     icon: LayoutDashboard },
+  { to: '/inventario',    label: 'Inventario',     icon: Package },
+  { to: '/compras',       label: 'Compras',        icon: ShoppingCart },
+  { to: '/catalogo',      label: 'Catálogo',       icon: BookOpen },
+  { to: '/recetas',       label: 'Recetas',        icon: ChefHat },
+  { to: '/consignaciones',label: 'Consignaciones', icon: Banknote },
+  { to: '/comunicados',   label: 'Comunicados',    icon: Bell },
+  { to: '/bandeja',       label: 'Bandeja',        icon: Inbox },
+  { to: '/informes',      label: 'Informes',       icon: BarChart2 },
+  { to: '/usuarios',      label: 'Usuarios',       icon: Users },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -20,7 +23,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-warm-50 flex flex-col">
-      <header className="bg-white border-b border-warm-200 px-4 py-3 flex items-center justify-between">
+      <header className="bg-white border-b border-warm-200 px-4 pb-3 header-safe flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Coffee size={18} className="text-forest" />
           <span className="font-bold text-warm-700">Sistema Café</span>

@@ -7,7 +7,7 @@ from app.database import engine, SessionLocal
 from app.models.models import Base
 from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
                           dashboard, ventas, conteos, mermas, solicitudes,
-                          informes, audit, alertas, notificaciones, limpieza, recetas,
+                          informes, audit, alertas, notificaciones, limpieza,
                           facturas, compras, comunicados)
 from app.config import settings
 
@@ -156,7 +156,6 @@ app.include_router(audit.router, prefix="/api/v1")
 app.include_router(alertas.router, prefix="/api/v1")
 app.include_router(notificaciones.router, prefix="/api/v1")
 app.include_router(limpieza.router, prefix="/api/v1")
-app.include_router(recetas.router, prefix="/api/v1")
 app.include_router(facturas.router, prefix="/api/v1")
 app.include_router(compras.router, prefix="/api/v1")
 app.include_router(comunicados.router, prefix="/api/v1")

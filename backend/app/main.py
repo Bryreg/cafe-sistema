@@ -136,7 +136,7 @@ def _migrate_productos_reales():
     Elimina productos del seed falso (si no tienen movimientos).
     Idempotente — se puede ejecutar muchas veces sin problema.
     """
-    from app.models.models import Tienda, Producto, Inventario, MovimientoInventario, CategoriaProductoEnum
+    from app.models.models import Tienda, Producto, Inventario, MovimientoInventario, LoteInventario, CategoriaProductoEnum
     db = SessionLocal()
     try:
         # Necesitamos tiendas para crear filas de inventario
@@ -144,10 +144,17 @@ def _migrate_productos_reales():
         if not tiendas:
             return  # No hay tiendas → la base está vacía o en un estado inesperado
 
-        # Nombres falsos del seed inicial que se deben eliminar
+        # Nombres del seed inicial que deben eliminarse (si no tienen movimientos)
         SEED_FALSOS = [
+            # Claramente falsos
             "Café Espresso", "Leche Oat", "Muffin Arándanos", "Brownie",
             "Tarta Limón", "Café Molido", "Jarabe Vainilla", "Vasos 8oz",
+            # Con categoría/unidad incorrectas — se recrean desde la lista real
+            "Leche Entera", "Azúcar", "Cocoa", "Croissant", "Vasos 12oz",
+        ]
+        from app.models.models import (PasteleriaDiaria, Merma, ConteoFisicoItem)
+        _TABLAS_DEPENDIENTES = [
+            PasteleriaDiaria, Merma, ConteoFisicoItem, LoteInventario, Inventario,
         ]
         for nombre_falso in SEED_FALSOS:
             p = db.query(Producto).filter_by(nombre=nombre_falso).first()
@@ -155,11 +162,17 @@ def _migrate_productos_reales():
                 continue
             tiene_mov = db.query(MovimientoInventario).filter_by(producto_id=p.id).first()
             if tiene_mov:
-                continue  # No tocar si ya tiene historia
-            db.query(Inventario).filter_by(producto_id=p.id).delete()
-            db.delete(p)
-            logger.info("Producto seed eliminado: %s", nombre_falso)
-        db.flush()
+                continue  # No tocar si ya tiene historia real
+            try:
+                sp = db.begin_nested()
+                for tabla in _TABLAS_DEPENDIENTES:
+                    db.query(tabla).filter_by(producto_id=p.id).delete()
+                db.delete(p)
+                sp.commit()
+                logger.info("Producto seed eliminado: %s", nombre_falso)
+            except Exception as e:
+                sp.rollback()
+                logger.warning("No se pudo eliminar '%s' (dependencias): %s", nombre_falso, e)
 
         # Lista completa de productos reales
         PRODUCTOS_REALES = [

@@ -107,7 +107,7 @@ def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require
 def eliminar_producto(producto_id: int, db: Session = Depends(get_db),
                       user: Usuario = Depends(require_admin)):
     """Elimina un producto si no tiene movimientos ni conteos relacionados."""
-    from app.models.models import MovimientoInventario
+    from app.models.models import MovimientoInventario, LoteInventario
     p = db.query(Producto).filter_by(id=producto_id).first()
     if not p:
         raise HTTPException(404, "Producto no encontrado")
@@ -115,7 +115,8 @@ def eliminar_producto(producto_id: int, db: Session = Depends(get_db),
     mov = db.query(MovimientoInventario).filter_by(producto_id=producto_id).first()
     if mov:
         raise HTTPException(400, "El producto tiene movimientos registrados y no puede eliminarse")
-    # Eliminar inventario rows y el producto
+    # Eliminar tablas dependientes y el producto
+    db.query(LoteInventario).filter_by(producto_id=producto_id).delete()
     db.query(Inventario).filter_by(producto_id=producto_id).delete()
     db.delete(p)
     db.commit()

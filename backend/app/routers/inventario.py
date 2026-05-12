@@ -107,7 +107,7 @@ def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require
 def eliminar_producto(producto_id: int, db: Session = Depends(get_db),
                       user: Usuario = Depends(require_admin)):
     """Elimina un producto si no tiene movimientos ni conteos relacionados."""
-    from app.models.models import MovimientoInventario, ConteoItem
+    from app.models.models import MovimientoInventario
     p = db.query(Producto).filter_by(id=producto_id).first()
     if not p:
         raise HTTPException(404, "Producto no encontrado")

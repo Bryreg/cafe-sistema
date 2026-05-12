@@ -33,7 +33,6 @@ import ConteoCompras from './pages/ConteoCompras'
 import Dashboard from './pages/Dashboard'
 import Bandeja from './pages/Bandeja'
 import Informes from './pages/Informes'
-import Catalogo from './pages/Catalogo'
 import ComprasAdmin from './pages/ComprasAdmin'
 import Comunicados from './pages/Comunicados'
 import Usuarios from './pages/Usuarios'
@@ -169,9 +168,6 @@ function AppRoutes() {
       } />
       <Route path="/informes" element={
         <ProtectedRoute role="admin"><Layout><Informes /></Layout></ProtectedRoute>
-      } />
-      <Route path="/catalogo" element={
-        <ProtectedRoute role="admin"><Layout><Catalogo /></Layout></ProtectedRoute>
       } />
       <Route path="/compras" element={
         <ProtectedRoute role="admin"><Layout><ComprasAdmin /></Layout></ProtectedRoute>

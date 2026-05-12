@@ -128,6 +128,180 @@ def _seed_if_empty():
 
 _seed_if_empty()
 
+
+# ─── Migración de productos reales (idempotente) ───────────────────────────
+def _migrate_productos_reales():
+    """
+    Añade los productos reales del café si no existen todavía.
+    Elimina productos del seed falso (si no tienen movimientos).
+    Idempotente — se puede ejecutar muchas veces sin problema.
+    """
+    from app.models.models import Tienda, Producto, Inventario, MovimientoInventario, CategoriaProductoEnum
+    db = SessionLocal()
+    try:
+        # Necesitamos tiendas para crear filas de inventario
+        tiendas = db.query(Tienda).all()
+        if not tiendas:
+            return  # No hay tiendas → la base está vacía o en un estado inesperado
+
+        # Nombres falsos del seed inicial que se deben eliminar
+        SEED_FALSOS = [
+            "Café Espresso", "Leche Oat", "Muffin Arándanos", "Brownie",
+            "Tarta Limón", "Café Molido", "Jarabe Vainilla", "Vasos 8oz",
+        ]
+        for nombre_falso in SEED_FALSOS:
+            p = db.query(Producto).filter_by(nombre=nombre_falso).first()
+            if not p:
+                continue
+            tiene_mov = db.query(MovimientoInventario).filter_by(producto_id=p.id).first()
+            if tiene_mov:
+                continue  # No tocar si ya tiene historia
+            db.query(Inventario).filter_by(producto_id=p.id).delete()
+            db.delete(p)
+            logger.info("Producto seed eliminado: %s", nombre_falso)
+        db.flush()
+
+        # Lista completa de productos reales
+        PRODUCTOS_REALES = [
+            # (categoria_enum, nombre, unidad_medida)
+            # ── PASTELERÍA
+            (CategoriaProductoEnum.pasteleria, "Almojábanas",             "und"),
+            (CategoriaProductoEnum.pasteleria, "Croissant Queso",         "und"),
+            (CategoriaProductoEnum.pasteleria, "Croissant Chocolate",     "und"),
+            (CategoriaProductoEnum.pasteleria, "Croissant Mantequilla",   "und"),
+            (CategoriaProductoEnum.pasteleria, "Muffin Mora",             "und"),
+            (CategoriaProductoEnum.pasteleria, "Muffin Vainilla",         "und"),
+            (CategoriaProductoEnum.pasteleria, "Muffin Queso",            "und"),
+            (CategoriaProductoEnum.pasteleria, "Muffin Naranja",          "und"),
+            (CategoriaProductoEnum.pasteleria, "Alfajor",                 "und"),
+            (CategoriaProductoEnum.pasteleria, "Torta Chocolate",         "und"),
+            (CategoriaProductoEnum.pasteleria, "Torta Zanahoria",         "und"),
+            (CategoriaProductoEnum.pasteleria, "Torta Naranja",           "und"),
+            (CategoriaProductoEnum.pasteleria, "Torta Red Velvet",        "und"),
+            (CategoriaProductoEnum.pasteleria, "Brownies",                "und"),
+            (CategoriaProductoEnum.pasteleria, "Cake Zanahoria",          "und"),
+            (CategoriaProductoEnum.pasteleria, "Cake Banano",             "und"),
+            (CategoriaProductoEnum.pasteleria, "Wafles Pandebono",        "und"),
+            (CategoriaProductoEnum.pasteleria, "Pastel Pollo",            "und"),
+            (CategoriaProductoEnum.pasteleria, "Pastel Carne",            "und"),
+            (CategoriaProductoEnum.pasteleria, "Pastel Queso",            "und"),
+            (CategoriaProductoEnum.pasteleria, "Masa Pandebono",          "und"),
+            (CategoriaProductoEnum.pasteleria, "Omelette",                "und"),
+            (CategoriaProductoEnum.pasteleria, "Omelette Queso",          "und"),
+            (CategoriaProductoEnum.pasteleria, "Pan Pollo",               "und"),
+            (CategoriaProductoEnum.pasteleria, "Pan Esponjado",           "und"),
+            (CategoriaProductoEnum.pasteleria, "Dedo de Queso",           "und"),
+            # ── BEBIDA
+            (CategoriaProductoEnum.bebida, "Café Alta Tostión x2500g",    "g"),
+            (CategoriaProductoEnum.bebida, "Café Libra Medium 500g",      "und"),
+            (CategoriaProductoEnum.bebida, "Café Descafeinado",           "g"),
+            (CategoriaProductoEnum.bebida, "Leche Entera",                "und"),
+            (CategoriaProductoEnum.bebida, "Leche Deslactosada",          "und"),
+            (CategoriaProductoEnum.bebida, "Leche Condensada",            "g"),
+            (CategoriaProductoEnum.bebida, "Leche en Polvo",              "g"),
+            (CategoriaProductoEnum.bebida, "Sour Cream",                  "und"),
+            (CategoriaProductoEnum.bebida, "Crema Chantilly",             "und"),
+            (CategoriaProductoEnum.bebida, "Helado Vainilla",             "g"),
+            (CategoriaProductoEnum.bebida, "Helado Chocolate",            "g"),
+            (CategoriaProductoEnum.bebida, "Salsa Caramelo",              "g"),
+            (CategoriaProductoEnum.bebida, "Salsa Chocolate",             "g"),
+            (CategoriaProductoEnum.bebida, "Salsa Frutos Rojos",          "g"),
+            (CategoriaProductoEnum.bebida, "Salsa Maracuyá",              "g"),
+            (CategoriaProductoEnum.bebida, "Agua Normal Botella",         "und"),
+            (CategoriaProductoEnum.bebida, "Agua con Gas Botella",        "und"),
+            (CategoriaProductoEnum.bebida, "Pulpa Mango",                 "und"),
+            (CategoriaProductoEnum.bebida, "Pulpa Lulo",                  "und"),
+            (CategoriaProductoEnum.bebida, "Pulpa Mora",                  "und"),
+            (CategoriaProductoEnum.bebida, "Pulpa Limón",                 "und"),
+            (CategoriaProductoEnum.bebida, "Saborizante Vainilla",        "und"),
+            (CategoriaProductoEnum.bebida, "Saborizante Canela",          "und"),
+            (CategoriaProductoEnum.bebida, "Saborizante Macadamia",       "und"),
+            (CategoriaProductoEnum.bebida, "Saborizante Frutos Amarillos","und"),
+            (CategoriaProductoEnum.bebida, "Saborizante Kiwi Fresa",      "und"),
+            (CategoriaProductoEnum.bebida, "Chai Latte",                  "g"),
+            (CategoriaProductoEnum.bebida, "Azúcar",                      "g"),
+            (CategoriaProductoEnum.bebida, "Azúcar Blanca Tubos",         "und"),
+            (CategoriaProductoEnum.bebida, "Canela Molida",               "g"),
+            (CategoriaProductoEnum.bebida, "Cocoa",                       "g"),
+            (CategoriaProductoEnum.bebida, "Galleta Oreo",                "g"),
+            (CategoriaProductoEnum.bebida, "Milo",                        "g"),
+            (CategoriaProductoEnum.bebida, "Panela",                      "g"),
+            (CategoriaProductoEnum.bebida, "Aromática Toronjil",          "und"),
+            (CategoriaProductoEnum.bebida, "Aromática Limoncillo",        "und"),
+            (CategoriaProductoEnum.bebida, "Aromática Cidrón",            "und"),
+            (CategoriaProductoEnum.bebida, "Aromática Manzanilla",        "und"),
+            (CategoriaProductoEnum.bebida, "Aromática Hierbabuena",       "und"),
+            (CategoriaProductoEnum.bebida, "Licor Amaretto",              "und"),
+            (CategoriaProductoEnum.bebida, "Licor Baileys",               "und"),
+            (CategoriaProductoEnum.bebida, "Licor Black & White",         "und"),
+            # ── INSUMO
+            (CategoriaProductoEnum.insumo, "Vaso Cartón 9oz",             "und"),
+            (CategoriaProductoEnum.insumo, "Vaso Cartón 12oz",            "und"),
+            (CategoriaProductoEnum.insumo, "Vaso Cartón 16oz",            "und"),
+            (CategoriaProductoEnum.insumo, "Vaso Cartón 4oz",             "und"),
+            (CategoriaProductoEnum.insumo, "Vaso Plástico 7oz",           "und"),
+            (CategoriaProductoEnum.insumo, "Tapa Viajera 12oz",           "und"),
+            (CategoriaProductoEnum.insumo, "Tapa Pitillera 16oz",         "und"),
+            (CategoriaProductoEnum.insumo, "Plato Blanco",                "und"),
+            (CategoriaProductoEnum.insumo, "Caja Hamburguesa",            "und"),
+            (CategoriaProductoEnum.insumo, "Bolsa Domicilio",             "und"),
+            (CategoriaProductoEnum.insumo, "Bolsa Antigrasa",             "und"),
+            (CategoriaProductoEnum.insumo, "Bolsa Kraft",                 "und"),
+            (CategoriaProductoEnum.insumo, "Bolsa Basura",                "und"),
+            (CategoriaProductoEnum.insumo, "Pitillo Papel",               "und"),
+            (CategoriaProductoEnum.insumo, "Cuchara Postre Desechable",   "und"),
+            (CategoriaProductoEnum.insumo, "Mezclador Ecológico",         "und"),
+            (CategoriaProductoEnum.insumo, "Servilletas",                 "und"),
+            (CategoriaProductoEnum.insumo, "Endulzante",                  "und"),
+            (CategoriaProductoEnum.insumo, "Gel Antibacterial",           "und"),
+            (CategoriaProductoEnum.insumo, "Guantes Transparentes x100",  "und"),
+            (CategoriaProductoEnum.insumo, "Guantes Monocolor",           "und"),
+            (CategoriaProductoEnum.insumo, "Rollo Impresora",             "und"),
+            (CategoriaProductoEnum.insumo, "Paño Wypall",                 "und"),
+            (CategoriaProductoEnum.insumo, "Esponjilla",                  "und"),
+            (CategoriaProductoEnum.insumo, "Malla Suave",                 "und"),
+            (CategoriaProductoEnum.insumo, "Papel Aluminio",              "g"),
+            (CategoriaProductoEnum.insumo, "Papel Vinilpel",              "g"),
+            (CategoriaProductoEnum.insumo, "Detergente en Polvo",         "g"),
+            (CategoriaProductoEnum.insumo, "Limpiapisos",                 "g"),
+            (CategoriaProductoEnum.insumo, "Jabón Loza",                  "g"),
+            (CategoriaProductoEnum.insumo, "Limpiavidrios",               "g"),
+            (CategoriaProductoEnum.insumo, "Blanqueador",                 "g"),
+            (CategoriaProductoEnum.insumo, "Jabón de Manos",              "g"),
+            (CategoriaProductoEnum.insumo, "Citronela",                   "und"),
+            (CategoriaProductoEnum.insumo, "Trapeador",                   "und"),
+            (CategoriaProductoEnum.insumo, "Escoba",                      "und"),
+        ]
+
+        # Obtener nombres ya existentes (después de las eliminaciones)
+        nombres_existentes = {p.nombre.strip().lower()
+                              for p in db.query(Producto).all()}
+        creados = 0
+        for cat, nombre, unidad in PRODUCTOS_REALES:
+            if nombre.strip().lower() in nombres_existentes:
+                continue
+            p = Producto(nombre=nombre, categoria=cat,
+                         unidad_medida=unidad, controla_stock=True)
+            db.add(p)
+            db.flush()
+            for t in tiendas:
+                db.add(Inventario(producto_id=p.id, tienda_id=t.id,
+                                  stock_actual=0.0, stock_minimo=0.0))
+            nombres_existentes.add(nombre.strip().lower())
+            creados += 1
+
+        db.commit()
+        if creados:
+            logger.info("Migración productos reales: %d productos añadidos.", creados)
+    except Exception as exc:
+        db.rollback()
+        logger.error("Error en migración de productos reales: %s", exc)
+    finally:
+        db.close()
+
+
+_migrate_productos_reales()
+
 app = FastAPI(title="Sistema Café", version="1.0.0")
 
 app.add_middleware(

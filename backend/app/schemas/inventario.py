@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional  # noqa: F401
 from datetime import datetime
 
 class MovimientoInvRequest(BaseModel):
@@ -23,10 +23,3 @@ class ProductoUpdate(BaseModel):
 
 class StockMinimoUpdate(BaseModel):
     stock_minimo: float
-
-class TrasladoRequest(BaseModel):
-    producto_id: int
-    tienda_origen_id: int
-    tienda_destino_id: int
-    cantidad: float
-    motivo: Optional[str] = None

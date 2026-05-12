@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { Plus, Minus, X, RefreshCw, AlertTriangle, ArrowRightLeft, Search } from 'lucide-react'
+import { Plus, Minus, X, RefreshCw, AlertTriangle } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -18,11 +18,6 @@ interface ProductoAdmin {
   stocks: Record<string, StockTienda>
 }
 
-interface Traslado {
-  id: number; fecha: string; producto_id: number; producto_nombre: string
-  unidad_medida: string; cantidad: number; origen: string; destino: string
-  nota: string | null; usuario: string
-}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -64,24 +59,6 @@ function InventarioAdmin() {
   const [saving, setSaving] = useState(false)
   const [filtro, setFiltro] = useState<'todos' | 'alertas'>('todos')
 
-  // ── Tab ──────────────────────────────────────────────────────────────────────
-  const [tab, setTab] = useState<'stock' | 'traslados'>('stock')
-
-  // ── Traslados ─────────────────────────────────────────────────────────────────
-  const [traslados, setTraslados]     = useState<Traslado[]>([])
-  const [tLoading, setTLoading]       = useState(false)
-  const [tProdId, setTProdId]         = useState<number | null>(null)
-  const [tProdNombre, setTProdNombre] = useState('')
-  const [tUnidad, setTUnidad]         = useState('')
-  const [tOrigenId, setTOrigenId]     = useState<number | null>(null)
-  const [tDestinoId, setTDestinoId]   = useState<number | null>(null)
-  const [tCantidad, setTCantidad]     = useState('')
-  const [tMotivo, setTMotivo]         = useState('')
-  const [tSearch, setTSearch]         = useState('')
-  const [tSaving, setTSaving]         = useState(false)
-  const [tError, setTError]           = useState('')
-  const [tExito, setTExito]           = useState('')
-
   const load = async () => {
     try {
       const { data } = await api.get('/inventario/admin/resumen')
@@ -90,17 +67,7 @@ function InventarioAdmin() {
     } finally { setLoading(false) }
   }
 
-  const loadTraslados = async () => {
-    setTLoading(true)
-    try {
-      const { data } = await api.get('/inventario/traslados')
-      setTraslados(data)
-    } catch { /* silencioso */ }
-    finally { setTLoading(false) }
-  }
-
   useEffect(() => { load() }, [])
-  useEffect(() => { if (tab === 'traslados') loadTraslados() }, [tab])
 
   const registrar = async () => {
     if (!selected) return
@@ -118,29 +85,6 @@ function InventarioAdmin() {
     } finally { setSaving(false) }
   }
 
-  const registrarTraslado = async () => {
-    if (!tProdId || !tOrigenId || !tDestinoId || !tCantidad) return
-    setTError(''); setTSaving(true)
-    try {
-      await api.post('/inventario/traslado', {
-        producto_id: tProdId,
-        tienda_origen_id: tOrigenId,
-        tienda_destino_id: tDestinoId,
-        cantidad: Number(tCantidad),
-        motivo: tMotivo || null,
-      })
-      setTProdId(null); setTProdNombre(''); setTUnidad('')
-      setTOrigenId(null); setTDestinoId(null)
-      setTCantidad(''); setTMotivo(''); setTSearch('')
-      setTExito('Traslado registrado correctamente')
-      setTimeout(() => setTExito(''), 3000)
-      load()
-      loadTraslados()
-    } catch (e: any) {
-      setTError(e.response?.data?.detail || 'Error al registrar traslado')
-    } finally { setTSaving(false) }
-  }
-
   if (loading) return <div className="flex justify-center py-16"><p className="text-sm text-gray-400">Cargando...</p></div>
 
   const productosFiltrados = filtro === 'alertas'
@@ -152,289 +96,115 @@ function InventarioAdmin() {
     items: productosFiltrados.filter(p => p.categoria === key),
   })).filter(g => g.items.length > 0)
 
-  const productosBusqueda = productos.filter(p =>
-    !tSearch || p.nombre.toLowerCase().includes(tSearch.toLowerCase())
-  )
-
-  const tCanSave = !!tProdId && !!tOrigenId && !!tDestinoId
-    && tOrigenId !== tDestinoId && !!tCantidad && Number(tCantidad) > 0
-
   return (
     <div className="space-y-4">
-
-      {/* ── Tabs ── */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
-        {([['stock', 'Stock'], ['traslados', 'Traslados']] as const).map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)}
-            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-              tab === key ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}>
-            {key === 'traslados' && <ArrowRightLeft size={12} className="inline mr-1.5" />}
-            {label}
-          </button>
-        ))}
+      {/* Filtro + refresh */}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
+          {(['todos', 'alertas'] as const).map(f => (
+            <button key={f} onClick={() => setFiltro(f)}
+              className={`text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors ${
+                filtro === f ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}>
+              {f === 'todos' ? 'Todos' : 'Con alertas'}
+            </button>
+          ))}
+        </div>
+        <button onClick={load} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+          <RefreshCw size={15} />
+        </button>
       </div>
 
-      {/* ══════════════ TAB STOCK ══════════════ */}
-      {tab === 'stock' && <>
-        {/* Filtro + refresh */}
-        <div className="flex items-center justify-between">
-          <div className="flex gap-2">
-            {(['todos', 'alertas'] as const).map(f => (
-              <button key={f} onClick={() => setFiltro(f)}
-                className={`text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                  filtro === f ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                }`}>
-                {f === 'todos' ? 'Todos' : 'Con alertas'}
-              </button>
-            ))}
-          </div>
-          <button onClick={load} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-            <RefreshCw size={15} />
-          </button>
+      {/* Cabecera sedes */}
+      {tiendas.length > 0 && (
+        <div className="grid gap-1" style={{ gridTemplateColumns: `1fr repeat(${tiendas.length}, 80px)` }}>
+          <div />
+          {tiendas.map(t => (
+            <div key={t.id} className="text-center text-xs font-bold text-gray-500 uppercase tracking-wide">{t.nombre}</div>
+          ))}
         </div>
+      )}
 
-        {/* Cabecera sedes */}
-        {tiendas.length > 0 && (
-          <div className="grid gap-1" style={{ gridTemplateColumns: `1fr repeat(${tiendas.length}, 80px)` }}>
-            <div />
-            {tiendas.map(t => (
-              <div key={t.id} className="text-center text-xs font-bold text-gray-500 uppercase tracking-wide">{t.nombre}</div>
-            ))}
-          </div>
-        )}
-
-        {/* Modal movimiento */}
-        {selected && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
-            <div className="bg-white w-full max-w-md rounded-t-3xl p-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-base font-bold text-gray-800">{selected.producto.nombre}</p>
-                  <p className="text-xs text-gray-400">Sede: <span className="font-semibold text-gray-600">{selected.tienda.nombre}</span></p>
-                </div>
-                <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">
-                  <X size={20} />
-                </button>
+      {/* Modal movimiento */}
+      {selected && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
+          <div className="bg-white w-full max-w-md rounded-t-3xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-base font-bold text-gray-800">{selected.producto.nombre}</p>
+                <p className="text-xs text-gray-400">Sede: <span className="font-semibold text-gray-600">{selected.tienda.nombre}</span></p>
               </div>
-              <p className="text-sm text-gray-500">
-                Stock actual: <strong>{selected.producto.stocks[String(selected.tienda.id)]?.stock_actual ?? 0} {selected.producto.unidad_medida}</strong>
-              </p>
-              {error && (
-                <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 px-3 py-2 rounded-xl">
-                  <AlertTriangle size={14} /> {error}
-                </div>
-              )}
-              <div className="flex gap-2">
-                {(['entrada', 'salida', 'ajuste'] as const).map(t => (
-                  <button key={t} onClick={() => setTipo(t)}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border-2 transition-colors ${
-                      tipo === t
-                        ? t === 'entrada' ? 'bg-green-100 border-green-400 text-green-700'
-                          : t === 'salida' ? 'bg-red-100 border-red-400 text-red-700'
-                          : 'bg-blue-100 border-blue-400 text-blue-700'
-                        : 'border-gray-200 text-gray-400'
-                    }`}>{t}</button>
-                ))}
-              </div>
-              <input type="number" value={cantidad} onChange={e => setCantidad(e.target.value)}
-                placeholder={`Cantidad (${selected.producto.unidad_medida})`}
-                className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-lg font-bold focus:outline-none focus:border-amber-400"
-                autoFocus />
-              <input value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Motivo (opcional)"
-                className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-amber-400" />
-              <button onClick={registrar} disabled={!cantidad || saving}
-                className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-bold py-3.5 rounded-xl text-sm transition-colors">
-                {saving ? 'Guardando...' : 'Confirmar'}
+              <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
               </button>
             </div>
-          </div>
-        )}
-
-        {/* Lista por categoría */}
-        {porCategoria.map(grupo => (
-          <div key={grupo.key} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">{grupo.label}</p>
-            </div>
-            <div className="divide-y divide-gray-50">
-              {grupo.items.map(p => (
-                <div key={p.id}
-                  className="grid items-center gap-2 px-4 py-3"
-                  style={{ gridTemplateColumns: `1fr repeat(${tiendas.length}, 80px)` }}>
-                  <p className="text-sm font-medium text-gray-800 truncate">{p.nombre}</p>
-                  {tiendas.map(t => {
-                    const s = p.stocks[String(t.id)] ?? { stock_actual: 0, stock_minimo: 0, alerta: false }
-                    return (
-                      <button key={t.id}
-                        onClick={() => { setSelected({ producto: p, tienda: t }); setTipo('entrada'); setCantidad(''); setMotivo(''); setError('') }}
-                        className="flex flex-col items-center gap-0.5 py-1.5 rounded-xl hover:bg-gray-100 transition-colors">
-                        <div className={`w-2 h-2 rounded-full ${stockDot(s)}`} />
-                        <span className={`text-sm ${stockTextColor(s)}`}>{s.stock_actual}</span>
-                        <span className="text-xs text-gray-400">{p.unidad_medida}</span>
-                      </button>
-                    )
-                  })}
-                </div>
+            <p className="text-sm text-gray-500">
+              Stock actual: <strong>{selected.producto.stocks[String(selected.tienda.id)]?.stock_actual ?? 0} {selected.producto.unidad_medida}</strong>
+            </p>
+            {error && (
+              <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 px-3 py-2 rounded-xl">
+                <AlertTriangle size={14} /> {error}
+              </div>
+            )}
+            <div className="flex gap-2">
+              {(['entrada', 'salida', 'ajuste'] as const).map(t => (
+                <button key={t} onClick={() => setTipo(t)}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border-2 transition-colors ${
+                    tipo === t
+                      ? t === 'entrada' ? 'bg-green-100 border-green-400 text-green-700'
+                        : t === 'salida' ? 'bg-red-100 border-red-400 text-red-700'
+                        : 'bg-blue-100 border-blue-400 text-blue-700'
+                      : 'border-gray-200 text-gray-400'
+                  }`}>{t}</button>
               ))}
             </div>
-          </div>
-        ))}
-
-        {productosFiltrados.length === 0 && (
-          <p className="text-center text-sm text-gray-400 py-8">Sin productos con alertas.</p>
-        )}
-      </>}
-
-      {/* ══════════════ TAB TRASLADOS ══════════════ */}
-      {tab === 'traslados' && <>
-
-        {/* ── Formulario ── */}
-        <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">
-          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Nuevo traslado</p>
-
-          {/* Producto */}
-          {tProdId ? (
-            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
-              <span className="flex-1 text-sm font-bold text-gray-800 truncate">{tProdNombre}</span>
-              <button onClick={() => { setTProdId(null); setTProdNombre(''); setTUnidad(''); setTSearch('') }}
-                className="text-gray-400 hover:text-gray-600"><X size={14} /></button>
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2.5">
-                <Search size={13} className="text-gray-400 shrink-0" />
-                <input value={tSearch} onChange={e => setTSearch(e.target.value)}
-                  placeholder="Buscar producto…"
-                  className="flex-1 text-sm text-gray-700 bg-transparent outline-none placeholder:text-gray-300" />
-              </div>
-              {tSearch && (
-                <div className="border border-gray-100 rounded-xl overflow-hidden max-h-40 overflow-y-auto">
-                  {productosBusqueda.slice(0, 8).map(p => (
-                    <button key={p.id}
-                      onClick={() => { setTProdId(p.id); setTProdNombre(p.nombre); setTUnidad(p.unidad_medida); setTSearch('') }}
-                      className="w-full text-left px-3 py-2.5 hover:bg-amber-50 border-b border-gray-50 last:border-0 transition-colors">
-                      <p className="text-sm font-semibold text-gray-700">{p.nombre}</p>
-                      <p className="text-xs text-gray-400">{p.categoria} · {p.unidad_medida}</p>
-                    </button>
-                  ))}
-                  {productosBusqueda.length === 0 && (
-                    <p className="text-xs text-gray-400 text-center py-3">Sin resultados</p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Sedes */}
-          <div className="grid grid-cols-2 gap-2">
-            {(['origen', 'destino'] as const).map(dir => {
-              const val = dir === 'origen' ? tOrigenId : tDestinoId
-              const set = dir === 'origen' ? setTOrigenId : setTDestinoId
-              const other = dir === 'origen' ? tDestinoId : tOrigenId
-              return (
-                <div key={dir}>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-1">
-                    {dir === 'origen' ? 'Desde' : 'Hacia'}
-                  </p>
-                  <div className="flex flex-col gap-1">
-                    {tiendas.map(t => (
-                      <button key={t.id}
-                        onClick={() => set(t.id)}
-                        disabled={t.id === other}
-                        className={`py-2 px-3 rounded-lg text-xs font-semibold border-2 transition-all text-left ${
-                          val === t.id
-                            ? 'bg-amber-600 border-amber-600 text-white'
-                            : t.id === other
-                              ? 'border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50'
-                              : 'border-gray-200 text-gray-600 hover:border-amber-300'
-                        }`}>
-                        {t.nombre}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-
-          {/* Cantidad */}
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-1">
-              Cantidad {tUnidad ? `(${tUnidad})` : ''}
-            </p>
-            <input type="number" inputMode="numeric" value={tCantidad}
-              onChange={e => setTCantidad(e.target.value)}
-              placeholder="0"
-              className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-lg font-bold focus:outline-none focus:border-amber-400" />
-          </div>
-
-          {/* Motivo opcional */}
-          <input value={tMotivo} onChange={e => setTMotivo(e.target.value)}
-            placeholder="Motivo (opcional)"
-            className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-amber-400" />
-
-          {tError && (
-            <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 px-3 py-2 rounded-xl">
-              <AlertTriangle size={14} /> {tError}
-            </div>
-          )}
-          {tExito && (
-            <div className="text-sm text-green-700 bg-green-50 px-3 py-2 rounded-xl font-semibold">
-              ✓ {tExito}
-            </div>
-          )}
-
-          <button onClick={registrarTraslado} disabled={!tCanSave || tSaving}
-            className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-bold py-3.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
-            <ArrowRightLeft size={15} />
-            {tSaving ? 'Registrando...' : 'Confirmar traslado'}
-          </button>
-        </div>
-
-        {/* ── Historial ── */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Traslados recientes</p>
-            <button onClick={loadTraslados} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg">
-              <RefreshCw size={13} />
+            <input type="number" value={cantidad} onChange={e => setCantidad(e.target.value)}
+              placeholder={`Cantidad (${selected.producto.unidad_medida})`}
+              className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-lg font-bold focus:outline-none focus:border-amber-400"
+              autoFocus />
+            <input value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Motivo (opcional)"
+              className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-amber-400" />
+            <button onClick={registrar} disabled={!cantidad || saving}
+              className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-bold py-3.5 rounded-xl text-sm transition-colors">
+              {saving ? 'Guardando...' : 'Confirmar'}
             </button>
           </div>
-
-          {tLoading && <p className="text-sm text-gray-400 text-center py-6">Cargando...</p>}
-
-          {!tLoading && traslados.length === 0 && (
-            <p className="text-sm text-gray-400 text-center py-6">Sin traslados registrados.</p>
-          )}
-
-          {!tLoading && traslados.length > 0 && (
-            <div className="space-y-2">
-              {traslados.map(t => (
-                <div key={t.id} className="bg-white rounded-2xl border border-gray-200 px-4 py-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-gray-800 truncate">{t.producto_nombre}</p>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-xs text-gray-500">{t.origen}</span>
-                        <ArrowRightLeft size={10} className="text-amber-500 shrink-0" />
-                        <span className="text-xs font-semibold text-gray-700">{t.destino}</span>
-                      </div>
-                      {t.nota && <p className="text-xs text-gray-400 mt-0.5 italic">{t.nota}</p>}
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-base font-bold text-amber-600">{t.cantidad} <span className="text-xs font-normal text-gray-400">{t.unidad_medida}</span></p>
-                      <p className="text-[10px] text-gray-400">
-                        {new Date(t.fecha).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}
-                      </p>
-                    </div>
-                  </div>
-                  <p className="text-[10px] text-gray-400 mt-1.5">Por {t.usuario}</p>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
-      </>}
+      )}
+
+      {/* Lista por categoría */}
+      {porCategoria.map(grupo => (
+        <div key={grupo.key} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">{grupo.label}</p>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {grupo.items.map(p => (
+              <div key={p.id}
+                className="grid items-center gap-2 px-4 py-3"
+                style={{ gridTemplateColumns: `1fr repeat(${tiendas.length}, 80px)` }}>
+                <p className="text-sm font-medium text-gray-800 truncate">{p.nombre}</p>
+                {tiendas.map(t => {
+                  const s = p.stocks[String(t.id)] ?? { stock_actual: 0, stock_minimo: 0, alerta: false }
+                  return (
+                    <button key={t.id}
+                      onClick={() => { setSelected({ producto: p, tienda: t }); setTipo('entrada'); setCantidad(''); setMotivo(''); setError('') }}
+                      className="flex flex-col items-center gap-0.5 py-1.5 rounded-xl hover:bg-gray-100 transition-colors">
+                      <div className={`w-2 h-2 rounded-full ${stockDot(s)}`} />
+                      <span className={`text-sm ${stockTextColor(s)}`}>{s.stock_actual}</span>
+                      <span className="text-xs text-gray-400">{p.unidad_medida}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {productosFiltrados.length === 0 && (
+        <p className="text-center text-sm text-gray-400 py-8">Sin productos con alertas.</p>
+      )}
     </div>
   )
 }

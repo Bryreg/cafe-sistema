@@ -103,6 +103,24 @@ def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require
         })
     return {"tiendas": [{"id": t.id, "nombre": t.nombre} for t in tiendas], "productos": result}
 
+@router.delete("/productos/{producto_id}")
+def eliminar_producto(producto_id: int, db: Session = Depends(get_db),
+                      user: Usuario = Depends(require_admin)):
+    """Elimina un producto si no tiene movimientos ni conteos relacionados."""
+    from app.models.models import MovimientoInventario, ConteoItem
+    p = db.query(Producto).filter_by(id=producto_id).first()
+    if not p:
+        raise HTTPException(404, "Producto no encontrado")
+    # Chequear dependencias
+    mov = db.query(MovimientoInventario).filter_by(producto_id=producto_id).first()
+    if mov:
+        raise HTTPException(400, "El producto tiene movimientos registrados y no puede eliminarse")
+    # Eliminar inventario rows y el producto
+    db.query(Inventario).filter_by(producto_id=producto_id).delete()
+    db.delete(p)
+    db.commit()
+    return {"ok": True}
+
 @router.get("/lotes/{tienda_id}/{producto_id}")
 def lotes(tienda_id: int, producto_id: int, db: Session = Depends(get_db),
           user: Usuario = Depends(require_admin)):

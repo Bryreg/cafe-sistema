@@ -9,7 +9,7 @@ const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 const fmtSigned = (v: number) => (v === 0 ? '$0' : (v > 0 ? '+' : '') + fmt(Math.abs(v)))
 
 export default function CuadreLlegada() {
-  const { user, logout, tipo_turno, setCuadreLlegadaDone } = useAuth()
+  const { user, tipo_turno, setCuadreLlegadaDone } = useAuth()
   const { turno, loading } = useTurno()
   const navigate = useNavigate()
 
@@ -117,7 +117,7 @@ export default function CuadreLlegada() {
       {/* Header */}
       <header className="flex items-center gap-2.5 px-4 pb-2.5 pt-3 shrink-0" style={{ background: dark.bg }}>
         <button
-          onClick={() => { logout(); navigate('/login') }}
+          onClick={() => navigate('/hub')}
           className="w-7 h-7 rounded-lg flex items-center justify-center"
           style={{ background: 'rgba(255,255,255,0.06)', color: dark.inkMuted }}
         >

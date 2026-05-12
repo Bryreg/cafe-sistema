@@ -155,7 +155,10 @@ export default function Hub() {
               </span>
             </div>
           )}
-          <button onClick={() => { logout(); navigate('/login') }} className="p-1 text-warm-400 hover:text-red-500 transition-colors">
+          <button
+            onClick={() => { if (window.confirm('¿Cerrar sesión?')) { logout(); navigate('/login') } }}
+            className="p-2 text-warm-400 hover:text-red-500 transition-colors"
+          >
             <LogOut size={15} />
           </button>
         </div>

@@ -3,6 +3,7 @@ import api from '../api/client'
 import {
   Banknote, User, ImageIcon, Check, X, ZoomIn,
   ChevronDown, ChevronUp, AlertTriangle, CheckCircle2,
+  Download, FileText,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -34,6 +35,7 @@ interface ResumenDia {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const fmt = (v: number) => `$${Math.round(v).toLocaleString('es-CO')}`
+const fmtNum = (v: number) => Math.round(v).toLocaleString('es-CO')
 
 const parseUTC = (f: string) => {
   const s = f.replace(' ', 'T').replace('+00:00', 'Z')
@@ -45,6 +47,146 @@ const fmtFecha = (f: string) =>
 
 const fmtHora = (f: string) =>
   parseUTC(f).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+
+// ─── Exportar Excel ───────────────────────────────────────────────────────────
+
+async function exportarExcelConsig(dias: ResumenDia[]) {
+  const XLSX = await import('xlsx')
+  const filas = dias.flatMap((d, di) =>
+    d.consignaciones.map((c, ci) => [
+      di * 100 + ci + 1,                               // Nº
+      fmtFecha(d.fecha_cierre),                         // Fecha
+      fmtHora(c.fecha),                                 // Hora
+      d.tienda_nombre,                                  // Sede
+      c.usuario_nombre ?? '—',                          // Barista
+      Math.round(c.valor),                              // Valor (número)
+      c.estado,                                         // Estado
+      c.imagen_url ?? '',                               // URL foto
+    ])
+  )
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['Nº', 'Fecha', 'Hora', 'Sede', 'Barista', 'Valor', 'Estado', 'URL foto'],
+    ...filas,
+  ])
+  ws['!cols'] = [
+    { wch: 4 }, { wch: 22 }, { wch: 8 }, { wch: 12 },
+    { wch: 20 }, { wch: 14 }, { wch: 12 }, { wch: 60 },
+  ]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Consignaciones')
+  XLSX.writeFile(wb, `consignaciones_${new Date().toISOString().slice(0, 10)}.xlsx`)
+}
+
+// ─── Reporte HTML con fotos ────────────────────────────────────────────────────
+
+function descargarReporteHTML(dias: ResumenDia[]) {
+  const totalConsignado = dias.reduce((s, d) => s + d.total_consignado, 0)
+  const conFoto = dias.flatMap(d => d.consignaciones).filter(c => c.imagen_url).length
+  const totalConsig = dias.flatMap(d => d.consignaciones).length
+
+  const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reporte Consignaciones</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f3f4f6; color: #111827; padding: 24px; }
+    .page { max-width: 860px; margin: 0 auto; }
+    h1 { font-size: 1.6rem; font-weight: 800; margin-bottom: 4px; }
+    .resumen-header { color: #6b7280; font-size: 0.9rem; margin-bottom: 20px; }
+    .resumen-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 28px; }
+    .card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 18px; }
+    .card-label { font-size: 0.75rem; color: #9ca3af; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+    .card-value { font-size: 1.4rem; font-weight: 800; margin-top: 4px; }
+    .dia-title { font-size: 1rem; font-weight: 700; color: #374151; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; margin: 28px 0 14px; display: flex; justify-content: space-between; align-items: baseline; }
+    .dia-meta { font-size: 0.8rem; font-weight: 500; color: #6b7280; }
+    .consig { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; gap: 16px; align-items: flex-start; }
+    .foto-wrap { flex-shrink: 0; }
+    .foto { width: 110px; height: 110px; object-fit: cover; border-radius: 8px; border: 1px solid #e5e7eb; display: block; }
+    .sin-foto { width: 110px; height: 110px; border-radius: 8px; border: 1.5px dashed #d1d5db; background: #f9fafb; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; color: #9ca3af; flex-direction: column; gap: 4px; }
+    .datos { flex: 1; min-width: 0; }
+    .valor { font-size: 1.5rem; font-weight: 800; color: #111827; font-variant-numeric: tabular-nums; }
+    .info { font-size: 0.85rem; color: #6b7280; margin-top: 5px; }
+    .badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 10px; border-radius: 999px; margin-top: 8px; }
+    .realizada { background: #dcfce7; color: #166534; }
+    .pendiente  { background: #fef9c3; color: #854d0e; }
+    .foto-link  { display: inline-block; margin-top: 8px; font-size: 0.8rem; color: #2563eb; text-decoration: none; }
+    .foto-link:hover { text-decoration: underline; }
+    .seq { font-size: 0.8rem; color: #d1d5db; font-weight: 700; width: 28px; flex-shrink: 0; padding-top: 2px; }
+    @media print {
+      body { background: white; padding: 0; }
+      .resumen-cards { break-inside: avoid; }
+      .consig { break-inside: avoid; border: 1px solid #ccc; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <h1>Consignaciones</h1>
+  <p class="resumen-header">
+    Reporte generado: ${new Date().toLocaleString('es-CO', { dateStyle: 'long', timeStyle: 'short' })}
+  </p>
+  <div class="resumen-cards">
+    <div class="card">
+      <div class="card-label">Total consignado</div>
+      <div class="card-value" style="color:#166534">$${fmtNum(totalConsignado)}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Consignaciones</div>
+      <div class="card-value">${totalConsig}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Con foto</div>
+      <div class="card-value" style="color:#1d4ed8">${conFoto} / ${totalConsig}</div>
+    </div>
+  </div>
+
+  ${dias.map(d => {
+    const ok = Math.abs(d.diferencia) <= 0.5
+    return `
+  <div class="dia-title">
+    <span>${fmtFecha(d.fecha_cierre)} — ${d.tienda_nombre}</span>
+    <span class="dia-meta" style="color:${ok ? '#16a34a' : '#dc2626'}">
+      ${ok ? '✓ Cuadrado' : `Diff: $${fmtNum(d.diferencia)}`}
+      &nbsp;·&nbsp; $${fmtNum(d.total_consignado)} consignado
+    </span>
+  </div>
+  ${d.consignaciones.length === 0
+    ? '<p style="color:#f59e0b;font-size:0.85rem;margin-bottom:12px">⚠ Sin consignaciones registradas</p>'
+    : d.consignaciones.map((c, i) => `
+  <div class="consig">
+    <div class="seq">#${i + 1}</div>
+    <div class="foto-wrap">
+      ${c.imagen_url
+        ? `<a href="${c.imagen_url}" target="_blank"><img src="${c.imagen_url}" class="foto" loading="lazy" /></a>`
+        : `<div class="sin-foto"><span>📷</span><span>Sin foto</span></div>`
+      }
+    </div>
+    <div class="datos">
+      <div class="valor">$${fmtNum(c.valor)}</div>
+      <div class="info">
+        ${c.usuario_nombre ?? '—'} &nbsp;·&nbsp; ${fmtHora(c.fecha)}
+      </div>
+      <span class="badge ${c.estado}">${c.estado}</span>
+      ${c.imagen_url ? `<br><a href="${c.imagen_url}" target="_blank" class="foto-link">🔗 Ver foto completa</a>` : ''}
+    </div>
+  </div>`).join('')
+  }`
+  }).join('')}
+</div>
+</body>
+</html>`
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `consignaciones_${new Date().toISOString().slice(0, 10)}.html`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
@@ -92,11 +234,32 @@ export default function ConsignacionesAdmin() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Consignaciones</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Reconciliación de efectivo por día — ventas en cash ± movimientos = debe consignarse
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Consignaciones</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Reconciliación de efectivo por día — ventas en cash ± movimientos = debe consignarse
+          </p>
+        </div>
+        {dias.length > 0 && (
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={() => exportarExcelConsig(dias)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-white transition-colors"
+              style={{ background: 'oklch(48% 0.15 155)' }}
+              title="Descargar Excel con fecha, valor y link de foto"
+            >
+              <Download size={14} /> Excel
+            </button>
+            <button
+              onClick={() => descargarReporteHTML(dias)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors"
+              title="Reporte HTML con fotos — abre en el navegador, imprimible a PDF"
+            >
+              <FileText size={14} /> Reporte con fotos
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Resumen global */}

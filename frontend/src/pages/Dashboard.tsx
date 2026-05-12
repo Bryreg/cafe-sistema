@@ -97,7 +97,7 @@ export default function Dashboard() {
     <div className="flex flex-col gap-3">
 
       {/* ── Tienda tabs + KPI strip ───────────────────────────────────────── */}
-      <div className="flex gap-3 items-stretch">
+      <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 sm:items-stretch">
 
         {/* Tabs */}
         <div className="flex gap-1 p-1 bg-white border border-warm-200 rounded-xl shrink-0">
@@ -136,7 +136,7 @@ export default function Dashboard() {
         </div>
 
         {/* KPI strip */}
-        <div className="flex-1 grid grid-cols-4 gap-px bg-warm-200 border border-warm-200 rounded-xl overflow-hidden">
+        <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-px bg-warm-200 border border-warm-200 rounded-xl overflow-hidden">
           {[
             {
               l: 'Ventas mes',
@@ -196,7 +196,7 @@ export default function Dashboard() {
       )}
 
       {/* ── Main grid ──────────────────────────────────────────────────────── */}
-      <div className="grid gap-3" style={{ gridTemplateColumns: '1.6fr 1fr' }}>
+      <div className="grid gap-3 grid-cols-1 md:grid-cols-[1.6fr_1fr]">
 
         {/* ── Inventario table ── */}
         <div className="bg-white border border-warm-200 rounded-xl overflow-hidden flex flex-col">

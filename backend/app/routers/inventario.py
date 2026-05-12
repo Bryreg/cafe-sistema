@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.deps import ensure_tienda_access, get_current_user, require_admin
 from app.models.models import Usuario, Producto, Inventario, Tienda, CategoriaProductoEnum, LoteInventario
-from app.schemas.inventario import MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate
+from app.schemas.inventario import MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate, TrasladoRequest
 from app.services import inventario as svc
 
 router = APIRouter(prefix="/inventario", tags=["inventario"])
@@ -102,6 +102,18 @@ def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require
             "stocks": stocks,
         })
     return {"tiendas": [{"id": t.id, "nombre": t.nombre} for t in tiendas], "productos": result}
+
+@router.post("/traslado")
+def traslado(data: TrasladoRequest, db: Session = Depends(get_db),
+             user: Usuario = Depends(require_admin)):
+    return svc.registrar_traslado(
+        db, data.producto_id, data.tienda_origen_id, data.tienda_destino_id,
+        data.cantidad, data.motivo, user.id,
+    )
+
+@router.get("/traslados")
+def get_traslados(db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    return svc.get_traslados(db)
 
 @router.get("/lotes/{tienda_id}/{producto_id}")
 def lotes(tienda_id: int, producto_id: int, db: Session = Depends(get_db),

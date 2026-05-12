@@ -23,3 +23,10 @@ class ProductoUpdate(BaseModel):
 
 class StockMinimoUpdate(BaseModel):
     stock_minimo: float
+
+class TrasladoRequest(BaseModel):
+    producto_id: int
+    tienda_origen_id: int
+    tienda_destino_id: int
+    cantidad: float
+    motivo: Optional[str] = None

@@ -141,7 +141,7 @@ function PanelCuadre({ label, contado, sistema }: {
 }
 
 export default function Cierre() {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
   const { turno, refresh } = useTurno()
   const navigate = useNavigate()
 
@@ -204,7 +204,7 @@ export default function Cierre() {
       {/* Header */}
       <header className="flex items-center gap-2.5 px-4 pb-2.5 pt-3 shrink-0" style={{ background: dark.bg }}>
         <button
-          onClick={() => { logout(); navigate('/login') }}
+          onClick={() => navigate('/hub')}
           className="w-7 h-7 rounded-lg flex items-center justify-center"
           style={{ background: 'rgba(255,255,255,0.06)', color: dark.inkMuted }}
         >

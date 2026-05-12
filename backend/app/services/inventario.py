@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
-from app.models.models import Inventario, MovimientoInventario, LoteInventario, Producto
+from app.models.models import Inventario, MovimientoInventario, LoteInventario, Producto, Tienda, TipoMovInvEnum
 from datetime import datetime
 from app.services import audit
 
@@ -133,6 +133,97 @@ def get_alertas(db: Session, tienda_id: int):
         "cantidad_sugerida": max(1, round(i.stock_minimo - i.stock_actual + i.stock_minimo)),
         "nivel": "agotado" if i.stock_actual <= 0 else "bajo",
     } for i in items]
+
+
+def registrar_traslado(db: Session, producto_id: int, tienda_origen_id: int,
+                       tienda_destino_id: int, cantidad: float, motivo: str | None,
+                       usuario_id: int):
+    """Traslada stock de una sede a otra en una sola transacción."""
+    if tienda_origen_id == tienda_destino_id:
+        raise HTTPException(400, "Las sedes deben ser distintas")
+    if cantidad <= 0:
+        raise HTTPException(400, "La cantidad debe ser mayor a 0")
+
+    origen  = db.query(Tienda).filter_by(id=tienda_origen_id).first()
+    destino = db.query(Tienda).filter_by(id=tienda_destino_id).first()
+    if not origen or not destino:
+        raise HTTPException(404, "Sede no encontrada")
+
+    inv_origen  = db.query(Inventario).filter_by(producto_id=producto_id, tienda_id=tienda_origen_id).first()
+    inv_destino = db.query(Inventario).filter_by(producto_id=producto_id, tienda_id=tienda_destino_id).first()
+    if not inv_origen:
+        raise HTTPException(404, "Producto no encontrado en la sede origen")
+    if not inv_destino:
+        raise HTTPException(404, "Producto no encontrado en la sede destino")
+    if inv_origen.stock_actual < cantidad:
+        raise HTTPException(400, f"Stock insuficiente en {origen.nombre}: hay {inv_origen.stock_actual} disponibles")
+
+    nota = f" | {motivo}" if motivo else ""
+
+    # ── Salida de origen ──────────────────────────────────────────────────────
+    inv_origen.stock_actual -= cantidad
+    consumir_fifo(db, producto_id, tienda_origen_id, cantidad)
+    db.add(MovimientoInventario(
+        producto_id=producto_id, tienda_id=tienda_origen_id,
+        tipo=TipoMovInvEnum.salida, cantidad=cantidad, usuario_id=usuario_id,
+        motivo=f"Traslado → {destino.nombre}{nota}",
+    ))
+
+    # ── Entrada a destino ─────────────────────────────────────────────────────
+    inv_destino.stock_actual += cantidad
+    agregar_lote(db, producto_id, tienda_destino_id, cantidad, usuario_id)
+    db.add(MovimientoInventario(
+        producto_id=producto_id, tienda_id=tienda_destino_id,
+        tipo=TipoMovInvEnum.entrada, cantidad=cantidad, usuario_id=usuario_id,
+        motivo=f"Traslado ← {origen.nombre}{nota}",
+    ))
+
+    audit.registrar(
+        db, accion="inventario_traslado", tabla="movimientos_inventario",
+        registro_id=None, usuario_id=usuario_id, tienda_id=tienda_origen_id,
+        datos_despues={"producto_id": producto_id, "cantidad": cantidad,
+                       "origen": origen.nombre, "destino": destino.nombre},
+    )
+    db.commit()
+
+    return {
+        "ok": True,
+        "producto_id": producto_id,
+        "cantidad": cantidad,
+        "origen": origen.nombre,
+        "destino": destino.nombre,
+        "stock_origen": inv_origen.stock_actual,
+        "stock_destino": inv_destino.stock_actual,
+    }
+
+
+def get_traslados(db: Session, limit: int = 40):
+    """Traslados recientes — lee los movimientos de salida marcados como traslado."""
+    movs = (
+        db.query(MovimientoInventario)
+        .filter(MovimientoInventario.motivo.like("Traslado →%"))
+        .order_by(MovimientoInventario.fecha.desc())
+        .limit(limit)
+        .all()
+    )
+    result = []
+    for m in movs:
+        partes = m.motivo.split("→", 1)[1].split("|", 1)
+        destino = partes[0].strip()
+        nota    = partes[1].strip() if len(partes) > 1 else None
+        result.append({
+            "id": m.id,
+            "fecha": m.fecha.isoformat(),
+            "producto_id": m.producto_id,
+            "producto_nombre": m.producto.nombre,
+            "unidad_medida": m.producto.unidad_medida,
+            "cantidad": m.cantidad,
+            "origen": m.tienda.nombre,
+            "destino": destino,
+            "nota": nota,
+            "usuario": m.usuario.nombre,
+        })
+    return result
 
 
 def _tick_checklist_inventario(db: Session, tienda_id: int):

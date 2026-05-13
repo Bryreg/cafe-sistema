@@ -114,7 +114,7 @@ export default function ComprasAdmin() {
 
   const generarLista = () => {
     const tienda = tiendas.find(t => t.id === tiendaPanel)
-    const alertas = panel.filter(p => p.nivel !== 'ok' && p.cantidad_sugerida > 0)
+    const alertas = panel.filter(p => p.nivel !== 'ok')
     if (alertas.length === 0) return
 
     const lineas = [
@@ -126,16 +126,33 @@ export default function ComprasAdmin() {
         return [
           `*${label}*`,
           ...items.map(p =>
-            `• ${p.nombre}: ${p.cantidad_sugerida} ${p.unidad_medida} (stock: ${p.stock_actual})`
+            p.cantidad_sugerida > 0
+              ? `• ${p.nombre}: ${p.cantidad_sugerida} ${p.unidad_medida} (stock: ${p.stock_actual})`
+              : `• ${p.nombre}: AGOTADO — definir cantidad`
           ),
           '',
         ]
       }),
     ]
 
-    navigator.clipboard.writeText(lineas.join('\n'))
-    setCopiado(true)
-    setTimeout(() => setCopiado(false), 3000)
+    const texto = lineas.join('\n')
+    navigator.clipboard.writeText(texto).then(() => {
+      setCopiado(true)
+      setTimeout(() => setCopiado(false), 3000)
+    }).catch(() => {
+      // Fallback para navegadores sin permiso de clipboard
+      const ta = document.createElement('textarea')
+      ta.value = texto
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.focus()
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      setCopiado(true)
+      setTimeout(() => setCopiado(false), 3000)
+    })
   }
 
   // ── Render helpers ───────────────────────────────────────────────────────

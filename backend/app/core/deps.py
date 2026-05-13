@@ -21,6 +21,10 @@ def get_current_user(
     user = db.query(Usuario).filter(Usuario.id == user_id, Usuario.activo == True).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
+    # Si el token contiene tienda_id (sede seleccionada al iniciar turno), usarla
+    tienda_override = payload.get("tienda_id")
+    if tienda_override is not None:
+        user.tienda_id = int(tienda_override)
     return user
 
 def require_admin(current_user: Usuario = Depends(get_current_user)) -> Usuario:

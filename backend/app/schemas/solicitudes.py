@@ -26,6 +26,7 @@ class SolicitudPedidoItemOut(BaseModel):
 class SolicitudPedidoOut(BaseModel):
     id: int
     tienda_id: int
+    tienda_nombre: Optional[str] = None
     fecha_solicitud: datetime
     estado: str
     nota: Optional[str]
@@ -48,6 +49,7 @@ class CrearSolicitudSencillaRequest(BaseModel):
 class SolicitudSencillaOut(BaseModel):
     id: int
     tienda_id: int
+    tienda_nombre: Optional[str] = None
     fecha_solicitud: datetime
     estado: str
     monto_solicitado: float

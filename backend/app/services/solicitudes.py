@@ -129,6 +129,20 @@ def get_sencillas_tienda(db: Session, tienda_id: int):
     ).order_by(SolicitudSencilla.fecha_solicitud.desc()).limit(30).all()
 
 
+def get_pedidos_todas(db: Session):
+    rows = db.query(SolicitudPedido).order_by(SolicitudPedido.fecha_solicitud.desc()).limit(100).all()
+    for r in rows:
+        r.tienda_nombre = r.tienda.nombre if r.tienda else None
+    return rows
+
+
+def get_sencillas_todas(db: Session):
+    rows = db.query(SolicitudSencilla).order_by(SolicitudSencilla.fecha_solicitud.desc()).limit(100).all()
+    for r in rows:
+        r.tienda_nombre = r.tienda.nombre if r.tienda else None
+    return rows
+
+
 def get_bandeja_pendientes(db: Session, tienda_id: int):
     pedidos = db.query(SolicitudPedido).filter(
         SolicitudPedido.tienda_id == tienda_id,

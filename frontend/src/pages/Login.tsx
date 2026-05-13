@@ -2,10 +2,18 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { Coffee, Delete } from 'lucide-react'
+import { Coffee, Delete, Store } from 'lucide-react'
 
 interface UsuarioPublic {
   id: number; nombre: string; rol: string; tienda_id: number | null
+}
+
+interface Sede {
+  id: number; nombre: string
+}
+
+interface PendingAuth {
+  token: string; rol: string; nombre: string; tienda_id: number | null; user_id: number
 }
 
 // Unique avatar tints per slot — oklch hues across the spectrum
@@ -25,15 +33,18 @@ const iniciales = (nombre: string) =>
 
 export default function Login() {
   const [usuarios, setUsuarios] = useState<UsuarioPublic[]>([])
+  const [sedes, setSedes] = useState<Sede[]>([])
   const [selected, setSelected] = useState<UsuarioPublic | null>(null)
   const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [pendingAuth, setPendingAuth] = useState<PendingAuth | null>(null)
   const { login } = useAuth()
   const navigate = useNavigate()
 
   useEffect(() => {
     api.get('/auth/usuarios').then(r => setUsuarios(r.data))
+    api.get('/auth/tiendas').then(r => setSedes(r.data))
   }, [])
 
   const seleccionar = (u: UsuarioPublic) => {
@@ -57,17 +68,38 @@ export default function Login() {
     setLoading(true); setError('')
     try {
       const { data } = await api.post('/auth/login-pin', { user_id: selected.id, pin: pinValor })
-      login({
+      const authData: PendingAuth = {
         token: data.access_token, rol: data.rol,
         nombre: data.nombre, tienda_id: data.tienda_id, user_id: data.user_id,
-      })
-      navigate('/', { replace: true })
+      }
+      if (data.rol === 'barista') {
+        setPendingAuth(authData)
+      } else {
+        login({ ...authData, tienda_id: authData.tienda_id })
+        navigate('/', { replace: true })
+      }
     } catch {
       setError('PIN incorrecto')
       setPin('')
     } finally {
       setLoading(false)
     }
+  }
+
+  const elegirSede = async (sedeId: number) => {
+    if (!pendingAuth) return
+    try {
+      const { data } = await api.post(
+        '/auth/seleccionar-sede',
+        { tienda_id: sedeId },
+        { headers: { Authorization: `Bearer ${pendingAuth.token}` } }
+      )
+      login({ token: data.access_token, rol: data.rol, nombre: data.nombre, tienda_id: sedeId, user_id: data.user_id })
+    } catch {
+      // fallback: usar token original con tienda seleccionada
+      login({ ...pendingAuth, tienda_id: sedeId })
+    }
+    navigate('/seleccionar-turno', { replace: true })
   }
 
   const teclas = ['1','2','3','4','5','6','7','8','9','','0','⌫']
@@ -81,7 +113,44 @@ export default function Login() {
         <span className="text-xl font-bold text-warm-50 tracking-tight">Sistema Café</span>
       </div>
 
-      {!selected ? (
+      {pendingAuth ? (
+        /* ── Step 3: sede selection (barista only) ── */
+        <div className="w-full max-w-sm">
+          <div className="flex flex-col items-center mb-7">
+            <div
+              className="w-14 h-14 rounded-full flex items-center justify-center mb-3 shadow-md"
+              style={{ background: TINTS[usuarios.indexOf(selected!) % TINTS.length] }}
+            >
+              <span className="text-xl font-bold text-white">{iniciales(pendingAuth.nombre)}</span>
+            </div>
+            <p className="text-sm font-semibold text-warm-50">{pendingAuth.nombre}</p>
+          </div>
+          <p className="text-xs font-semibold text-warm-500 text-center mb-5 uppercase tracking-[0.12em]">
+            ¿En qué sede estás hoy?
+          </p>
+          <div className="flex flex-col gap-3">
+            {sedes.map(sede => (
+              <button
+                key={sede.id}
+                onClick={() => elegirSede(sede.id)}
+                className="bg-bark-800 border border-bark-700 rounded-xl px-5 py-4 flex items-center gap-4
+                           hover:border-forest-400 active:scale-95 transition-all"
+              >
+                <div className="w-10 h-10 rounded-full bg-forest-400/20 flex items-center justify-center shrink-0">
+                  <Store size={18} className="text-forest-400" />
+                </div>
+                <span className="text-base font-bold text-warm-50">{sede.nombre}</span>
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => { setPendingAuth(null); setPin(''); setSelected(null) }}
+            className="w-full text-xs text-warm-500 hover:text-warm-400 mt-5 transition-colors"
+          >
+            Volver al inicio
+          </button>
+        </div>
+      ) : !selected ? (
         /* ── User selection ── */
         <div className="w-full max-w-sm">
           <p className="text-xs font-semibold text-warm-500 text-center mb-5 uppercase tracking-[0.12em]">

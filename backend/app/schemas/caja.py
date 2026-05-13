@@ -27,6 +27,7 @@ class MovimientoCajaOut(BaseModel):
     concepto: str
     valor: float
     fecha: datetime
+    imagen_url: Optional[str] = None
     class Config: from_attributes = True
 
 
@@ -43,6 +44,7 @@ class EntregaTurnoOut(BaseModel):
     diferencia_efectivo: float
     diferencia_tarjeta: float
     imagen_url: Optional[str]
+    tipo: str = "entrega"
     class Config: from_attributes = True
 
 

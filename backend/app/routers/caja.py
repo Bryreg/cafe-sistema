@@ -5,9 +5,8 @@ from app.core.deps import ensure_tienda_access, ensure_turno_access, get_current
 from app.models.models import Usuario, CajaTurno
 from app.schemas.caja import AbrirCajaRequest, CerrarCajaRequest, MovimientoCajaRequest, TurnoOut, EntregaTurnoOut
 from app.services import caja as svc
-from app.config import settings
+from app.core.storage import upload_imagen
 from typing import List, Optional
-import os, uuid, shutil
 
 router = APIRouter(prefix="/caja", tags=["caja"])
 
@@ -22,9 +21,23 @@ def cerrar(turno_id: int, data: CerrarCajaRequest, db: Session = Depends(get_db)
     return svc.cerrar_caja(db, turno_id, data.efectivo_final_real, data.justificacion_cierre, user.id, data.datafono_real)
 
 @router.post("/{turno_id}/movimiento")
-def movimiento(turno_id: int, data: MovimientoCajaRequest, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+async def movimiento(
+    turno_id: int,
+    tipo: str = Form(...),
+    concepto: str = Form(...),
+    valor: float = Form(...),
+    imagen: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
     ensure_turno_access(db, user, turno_id)
-    return svc.registrar_movimiento(db, turno_id, data.tipo, data.concepto, data.valor, user.id)
+    imagen_url = await upload_imagen(imagen)
+    return svc.registrar_movimiento(db, turno_id, tipo, concepto, valor, user.id, imagen_url)
+
+@router.get("/{turno_id}/movimientos")
+def get_movimientos(turno_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    ensure_turno_access(db, user, turno_id)
+    return svc.get_movimientos(db, turno_id)
 
 @router.get("/activo/{tienda_id}")
 def turno_activo(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
@@ -47,15 +60,21 @@ async def registrar_entrega(
     user: Usuario = Depends(get_current_user),
 ):
     ensure_turno_access(db, user, turno_id)
-    imagen_url = None
-    if imagen and imagen.filename:
-        ext = os.path.splitext(imagen.filename)[1] or ".jpg"
-        filename = f"entrega_{uuid.uuid4().hex}{ext}"
-        path = os.path.join(settings.UPLOAD_DIR, filename)
-        with open(path, "wb") as f:
-            shutil.copyfileobj(imagen.file, f)
-        imagen_url = f"/uploads/{filename}"
+    imagen_url = await upload_imagen(imagen)
     return svc.registrar_entrega(db, turno_id, user.id, efectivo_real, ventas_efectivo_siigo, ventas_tarjeta_bold, imagen_url)
+
+@router.post("/{turno_id}/cuadre-llegada", response_model=EntregaTurnoOut)
+async def cuadre_llegada(
+    turno_id: int,
+    efectivo_real: float = Form(...),
+    tipo_turno: str = Form(...),
+    nota: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    ensure_turno_access(db, user, turno_id)
+    return svc.registrar_cuadre_llegada(db, turno_id, user.id, efectivo_real, tipo_turno, nota)
+
 
 @router.get("/{turno_id}/entregas", response_model=List[EntregaTurnoOut])
 def get_entregas(turno_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):

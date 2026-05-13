@@ -53,6 +53,12 @@ class EstadoSolicitudEnum(str, enum.Enum):
     rechazada = "rechazada"
 
 
+class TipoPagoEnum(str, enum.Enum):
+    contado = "contado"
+    credito = "credito"
+    transferencia = "transferencia"
+
+
 class Tienda(Base):
     __tablename__ = "tiendas"
     id = Column(Integer, primary_key=True)
@@ -71,6 +77,8 @@ class Tienda(Base):
     solicitudes_pedido = relationship("SolicitudPedido", back_populates="tienda")
     solicitudes_sencilla = relationship("SolicitudSencilla", back_populates="tienda")
     notificaciones = relationship("Notificacion", back_populates="tienda")
+    facturas_compra = relationship("FacturaCompra", back_populates="tienda")
+    conteos_compras = relationship("ConteoCompras", back_populates="tienda")
 
 
 class Usuario(Base):
@@ -135,6 +143,7 @@ class MovimientoCaja(Base):
     valor = Column(Float, nullable=False)
     fecha = Column(DateTime, default=datetime.utcnow)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    imagen_url = Column(String(300), nullable=True)
     turno = relationship("CajaTurno", back_populates="movimientos")
     usuario = relationship("Usuario")
 
@@ -325,6 +334,7 @@ class EntregaTurno(Base):
     diferencia_efectivo = Column(Float, nullable=False)
     diferencia_tarjeta = Column(Float, nullable=False)
     imagen_url = Column(String(300), nullable=True)
+    tipo = Column(String(20), default="entrega", nullable=False, server_default="entrega")
     turno = relationship("CajaTurno", back_populates="entregas")
     usuario = relationship("Usuario")
 
@@ -335,10 +345,12 @@ class PasteleriaDiaria(Base):
     tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
     producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
     cantidad = Column(Float, nullable=False)
-    fecha_frescura = Column(DateTime, nullable=False)
+    fecha_frescura = Column(DateTime, nullable=False)     # legado — igual a fecha_vencimiento
+    numero_lote = Column(String(100), nullable=True)      # número o código del lote
+    fecha_vencimiento = Column(DateTime, nullable=True)   # fecha límite de venta
     fecha_registro = Column(DateTime, default=datetime.utcnow)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
-    activo = Column(Boolean, default=True)   # False cuando el lote se termina
+    activo = Column(Boolean, default=True)
     tienda = relationship("Tienda", back_populates="pastelerias")
     producto = relationship("Producto", back_populates="pastelerias")
     usuario = relationship("Usuario")
@@ -348,12 +360,14 @@ class Consignacion(Base):
     __tablename__ = "consignaciones"
     id = Column(Integer, primary_key=True)
     tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
+    caja_turno_id = Column(Integer, ForeignKey("caja_turnos.id"), nullable=True)
     fecha = Column(DateTime, default=datetime.utcnow)
     valor = Column(Float, nullable=False)
     imagen_url = Column(String(300), nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     estado = Column(SAEnum(EstadoConsignacionEnum), default=EstadoConsignacionEnum.pendiente)
     tienda = relationship("Tienda", back_populates="consignaciones")
+    turno = relationship("CajaTurno", foreign_keys=[caja_turno_id])
     usuario = relationship("Usuario")
 
 
@@ -434,3 +448,108 @@ class Notificacion(Base):
     fecha = Column(DateTime, default=datetime.utcnow)
     referencia_id = Column(Integer, nullable=True)    # turno_id, producto_id, etc.
     tienda = relationship("Tienda", back_populates="notificaciones")
+
+
+# ---------------------------------------------------------------------------
+# Comunicados admin → barista
+# ---------------------------------------------------------------------------
+
+class Comunicado(Base):
+    """Mensaje del administrador hacia los baristas. Puede ser para una tienda
+    específica o para todas (tienda_id = None)."""
+    __tablename__ = "comunicados"
+    id              = Column(Integer, primary_key=True)
+    titulo          = Column(String(120), nullable=True)
+    mensaje         = Column(Text, nullable=False)
+    tienda_id       = Column(Integer, ForeignKey("tiendas.id"), nullable=True)  # None = todas
+    activo          = Column(Boolean, default=True)
+    urgente         = Column(Boolean, default=False)   # resalta en rojo en el hub
+    fecha_creacion  = Column(DateTime, default=datetime.utcnow)
+    creado_por      = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+
+    tienda    = relationship("Tienda")
+    creador   = relationship("Usuario", foreign_keys=[creado_por])
+    leidos    = relationship("ComunicadoLeido", back_populates="comunicado",
+                             cascade="all, delete-orphan")
+
+
+class ComunicadoLeido(Base):
+    """Registro de qué barista leyó/descartó qué comunicado."""
+    __tablename__ = "comunicados_leidos"
+    id              = Column(Integer, primary_key=True)
+    comunicado_id   = Column(Integer, ForeignKey("comunicados.id"), nullable=False)
+    usuario_id      = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    fecha_leido     = Column(DateTime, default=datetime.utcnow)
+
+    comunicado  = relationship("Comunicado", back_populates="leidos")
+    usuario     = relationship("Usuario")
+
+
+# ---------------------------------------------------------------------------
+# Facturas de compra (Problema 1: ingreso de mercancía con soporte DIAN)
+# ---------------------------------------------------------------------------
+
+class FacturaCompra(Base):
+    __tablename__ = "facturas_compra"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
+    proveedor = Column(String(150), nullable=False)
+    numero_factura = Column(String(100), nullable=True)
+    numero_lote = Column(String(100), nullable=True)
+    fecha_recibido = Column(DateTime, nullable=False)
+    valor_total = Column(Float, nullable=False)
+    tipo_pago = Column(SAEnum(TipoPagoEnum), nullable=False)
+    imagen_url = Column(String(300), nullable=True)
+    fecha_registro = Column(DateTime, default=datetime.utcnow)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    tienda = relationship("Tienda", back_populates="facturas_compra")
+    usuario = relationship("Usuario")
+    items = relationship("FacturaCompraItem", back_populates="factura", cascade="all, delete-orphan")
+
+
+class FacturaCompraItem(Base):
+    __tablename__ = "facturas_compra_items"
+    id = Column(Integer, primary_key=True)
+    factura_id = Column(Integer, ForeignKey("facturas_compra.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
+    cantidad = Column(Float, nullable=False)
+    precio_unitario = Column(Float, nullable=True)
+    numero_lote = Column(String(100), nullable=True)
+    fecha_vencimiento = Column(DateTime, nullable=True)
+    factura = relationship("FacturaCompra", back_populates="items")
+    producto = relationship("Producto")
+
+
+# ---------------------------------------------------------------------------
+# Conteo de compras (Problema 2: conteo físico independiente para pedidos)
+# ---------------------------------------------------------------------------
+
+class ConteoCompras(Base):
+    """Conteo físico independiente del turno — para sincronizar stock con realidad
+    antes de generar pedidos a proveedores."""
+    __tablename__ = "conteos_compras"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    fecha_conteo = Column(DateTime, nullable=False)
+    ajustado = Column(Boolean, default=False)       # True cuando admin aprueba y ajusta stock
+    fecha_ajuste = Column(DateTime, nullable=True)
+    usuario_ajuste_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    nota = Column(String(300), nullable=True)
+    fecha_registro = Column(DateTime, default=datetime.utcnow)
+    tienda = relationship("Tienda", back_populates="conteos_compras")
+    usuario = relationship("Usuario", foreign_keys=[usuario_id])
+    usuario_ajuste = relationship("Usuario", foreign_keys=[usuario_ajuste_id])
+    items = relationship("ConteoComprasItem", back_populates="conteo", cascade="all, delete-orphan")
+
+
+class ConteoComprasItem(Base):
+    __tablename__ = "conteos_compras_items"
+    id = Column(Integer, primary_key=True)
+    conteo_id = Column(Integer, ForeignKey("conteos_compras.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
+    cantidad_sistema = Column(Float, nullable=False)
+    cantidad_real = Column(Float, nullable=False)
+    diferencia = Column(Float, nullable=False)
+    conteo = relationship("ConteoCompras", back_populates="items")
+    producto = relationship("Producto")

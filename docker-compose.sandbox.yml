@@ -1,0 +1,35 @@
+version: "3.9"
+
+# ── SANDBOX (staging) ─────────────────────────────────────────────────────────
+# URL pública: https://sandbox.tudominio.com  (nginx expone 80/443)
+# Deploy: push a rama 'sandbox' → GitHub Actions ejecuta este compose
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_ENV: sandbox
+    image: cafe-sistema:sandbox
+    container_name: cafe_sandbox
+    restart: unless-stopped
+    env_file: backend/.env.sandbox
+    environment:
+      ENV_FILE: /app/backend/.env.sandbox
+      DATABASE_URL: sqlite:////app/backend/data/cafe_sandbox.db
+      UPLOAD_DIR: uploads_sandbox
+    volumes:
+      - sandbox_db:/app/backend/data
+      - sandbox_uploads:/app/backend/uploads_sandbox
+    networks:
+      - cafe_net
+
+networks:
+  cafe_net:
+    external: true
+
+volumes:
+  sandbox_db:
+  sandbox_uploads:

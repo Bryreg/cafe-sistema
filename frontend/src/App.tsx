@@ -6,6 +6,8 @@ import ProtectedRoute from './components/ProtectedRoute'
 
 // Barista flow pages
 import Login from './pages/Login'
+import SeleccionarTurno from './pages/SeleccionarTurno'
+import CuadreLlegada from './pages/CuadreLlegada'
 import Apertura from './pages/Apertura'
 import ConteoApertura from './pages/ConteoApertura'
 import Hub from './pages/Hub'
@@ -24,31 +26,42 @@ import SolicitudPedido from './pages/SolicitudPedido'
 import SolicitudSencilla from './pages/SolicitudSencilla'
 import ConteoFisico from './pages/ConteoFisico'
 import Limpieza from './pages/Limpieza'
+import Ingresos from './pages/Ingresos'
+import ConteoCompras from './pages/ConteoCompras'
 
 // Admin pages
 import Dashboard from './pages/Dashboard'
 import Bandeja from './pages/Bandeja'
 import Informes from './pages/Informes'
-import Catalogo from './pages/Catalogo'
-import Recetas from './pages/Recetas'
+import ComprasAdmin from './pages/ComprasAdmin'
+import Comunicados from './pages/Comunicados'
+import Usuarios from './pages/Usuarios'
 
 // ─── Smart redirect basado en estado del turno ───────────────────────────────
 function SmartRedirect() {
-  const { user } = useAuth()
+  const { user, tipo_turno, cuadre_llegada_turno_id } = useAuth()
   const { turno, loading } = useTurno()
 
   if (!user) return <Navigate to="/login" replace />
   if (user.rol === 'admin') return <Navigate to="/dashboard" replace />
 
-  // Barista
+  // Barista debe elegir tipo de turno primero
+  if (!tipo_turno) return <Navigate to="/seleccionar-turno" replace />
+
   if (loading) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <p className="text-sm text-gray-400 animate-pulse">Consultando turno...</p>
     </div>
   )
 
-  if (!turno)                     return <Navigate to="/apertura" replace />
-  if (turno.estado === 'abierto') return <Navigate to="/hub" replace />
+  if (tipo_turno === 'apertura') {
+    if (!turno) return <Navigate to="/apertura" replace />
+    return <Navigate to="/hub" replace />
+  }
+
+  // intermedio o cierre: debe haber turno activo y haber hecho cuadre de llegada
+  if (!turno) return <Navigate to="/seleccionar-turno" replace />
+  if (cuadre_llegada_turno_id !== turno.id) return <Navigate to="/cuadre-llegada" replace />
   return <Navigate to="/hub" replace />
 }
 
@@ -64,6 +77,14 @@ function AppRoutes() {
       {/* Smart redirect */}
       <Route path="/" element={
         <ProtectedRoute><SmartRedirect /></ProtectedRoute>
+      } />
+
+      {/* ── Selección de tipo de turno ── */}
+      <Route path="/seleccionar-turno" element={
+        <ProtectedRoute role="barista"><SeleccionarTurno /></ProtectedRoute>
+      } />
+      <Route path="/cuadre-llegada" element={
+        <ProtectedRoute role="barista"><CuadreLlegada /></ProtectedRoute>
       } />
 
       {/* ── Flujo de turno barista (sin nav lateral) ── */}
@@ -105,6 +126,12 @@ function AppRoutes() {
       <Route path="/conteos" element={
         <ProtectedRoute role="barista"><ConteoFisico /></ProtectedRoute>
       } />
+      <Route path="/ingresos" element={
+        <ProtectedRoute role="barista"><Ingresos /></ProtectedRoute>
+      } />
+      <Route path="/conteo-compras" element={
+        <ProtectedRoute role="barista"><ConteoCompras /></ProtectedRoute>
+      } />
       <Route path="/limpieza" element={
         <ProtectedRoute>
           {user?.rol === 'admin'
@@ -142,11 +169,14 @@ function AppRoutes() {
       <Route path="/informes" element={
         <ProtectedRoute role="admin"><Layout><Informes /></Layout></ProtectedRoute>
       } />
-      <Route path="/catalogo" element={
-        <ProtectedRoute role="admin"><Layout><Catalogo /></Layout></ProtectedRoute>
+      <Route path="/compras" element={
+        <ProtectedRoute role="admin"><Layout><ComprasAdmin /></Layout></ProtectedRoute>
       } />
-      <Route path="/recetas" element={
-        <ProtectedRoute role="admin"><Layout><Recetas /></Layout></ProtectedRoute>
+      <Route path="/comunicados" element={
+        <ProtectedRoute role="admin"><Layout><Comunicados /></Layout></ProtectedRoute>
+      } />
+      <Route path="/usuarios" element={
+        <ProtectedRoute role="admin"><Layout><Usuarios /></Layout></ProtectedRoute>
       } />
 
       <Route path="*" element={<Navigate to="/" replace />} />

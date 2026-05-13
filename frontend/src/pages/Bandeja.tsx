@@ -22,8 +22,8 @@ const TODAS = [...BILLETES, ...MONEDAS]
 
 interface DetalleItem { label: string; tipo: string; valor: number; monto: number; cantidad: number }
 interface PedidoItem { producto_id: number; cantidad_solicitada: number; nombre: string; unidad_medida: string }
-interface Pedido { id: number; fecha_solicitud: string; estado: string; nota: string | null; items: PedidoItem[] }
-interface Sencilla { id: number; fecha_solicitud: string; estado: string; monto_solicitado: number; motivo: string; detalle: string | null }
+interface Pedido { id: number; fecha_solicitud: string; estado: string; nota: string | null; items: PedidoItem[]; tienda_nombre?: string }
+interface Sencilla { id: number; fecha_solicitud: string; estado: string; monto_solicitado: number; motivo: string; detalle: string | null; tienda_nombre?: string }
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 
@@ -151,10 +151,15 @@ export default function Bandeja() {
   const tienda_id = user?.tienda_id
 
   const load = async () => {
-    if (!tienda_id) return
+    const isAdmin = user?.rol === 'admin'
+    if (!isAdmin && !tienda_id) return
     const [p, s] = await Promise.all([
-      api.get(`/solicitudes/pedido/tienda/${tienda_id}`),
-      api.get(`/solicitudes/sencilla/tienda/${tienda_id}`),
+      isAdmin
+        ? api.get('/solicitudes/pedido/todas')
+        : api.get(`/solicitudes/pedido/tienda/${tienda_id}`),
+      isAdmin
+        ? api.get('/solicitudes/sencilla/todas')
+        : api.get(`/solicitudes/sencilla/tienda/${tienda_id}`),
     ])
     setPedidos(p.data)
     setSencillas(s.data)
@@ -221,7 +226,12 @@ export default function Bandeja() {
                 <div key={p.id} className="px-4 py-3">
                   <div className="flex items-start justify-between mb-1">
                     <div>
-                      <p className="text-xs text-gray-400">{new Date(p.fecha_solicitud).toLocaleString('es-CO')}</p>
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <p className="text-xs text-gray-400">{new Date(p.fecha_solicitud).toLocaleString('es-CO')}</p>
+                        {p.tienda_nombre && (
+                          <span className="text-xs bg-blue-50 text-blue-600 border border-blue-200 px-1.5 py-0.5 rounded-full font-semibold">{p.tienda_nombre}</span>
+                        )}
+                      </div>
                       <div className="mt-1 space-y-0.5">
                         {p.items.map(item => (
                           <div key={item.producto_id} className="flex items-center justify-between text-xs">
@@ -275,7 +285,12 @@ export default function Bandeja() {
                     {/* Cabecera */}
                     <div className="flex items-start justify-between">
                       <div>
-                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Total a cambiar</p>
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Total a cambiar</p>
+                          {s.tienda_nombre && (
+                            <span className="text-xs bg-blue-50 text-blue-600 border border-blue-200 px-1.5 py-0.5 rounded-full font-semibold">{s.tienda_nombre}</span>
+                          )}
+                        </div>
                         <p className="text-xl font-bold text-amber-700">{fmt(s.monto_solicitado)}</p>
                       </div>
                       {estadoBadge(s.estado)}

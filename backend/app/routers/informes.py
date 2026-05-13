@@ -96,6 +96,18 @@ def rotacion(
     return svc.reporte_rotacion(db, tienda_id, fecha_desde, fecha_hasta)
 
 
+@router.get("/baristas")
+def baristas(
+    tienda_id: int = Query(...),
+    fecha_desde: date = Query(...),
+    fecha_hasta: date = Query(...),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(require_admin),
+):
+    ensure_tienda_access(user, tienda_id)
+    return svc.reporte_baristas(db, tienda_id, fecha_desde, fecha_hasta)
+
+
 @router.get("/export")
 def export_csv(
     tipo: str = Query(..., description="ventas | mermas | inventario | turnos | entregas"),

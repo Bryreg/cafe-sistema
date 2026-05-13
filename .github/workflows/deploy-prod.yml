@@ -1,0 +1,59 @@
+name: Deploy → Producción
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Build & Deploy Producción (zero-downtime)
+    runs-on: ubuntu-latest
+    environment: production        # Requiere aprobación manual en GitHub → Settings → Environments
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy al VPS vía SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/cafe-sistema
+
+            echo "── Pulling rama main ──"
+            git fetch origin main
+            git checkout main
+            git pull origin main
+
+            echo "── Build de imagen producción (el contenedor actual sigue vivo) ──"
+            docker compose -f docker-compose.prod.yml build --no-cache
+
+            echo "── Reemplazando contenedor con downtime mínimo (~3s) ──"
+            docker compose -f docker-compose.prod.yml up -d --force-recreate app
+
+            echo "── Health check (espera hasta 60s) ──"
+            for i in $(seq 1 12); do
+              sleep 5
+              if docker exec cafe_prod curl -sf http://localhost:8000/ > /dev/null 2>&1; then
+                echo "✅ Contenedor healthy"
+                break
+              fi
+              echo "  Intento $i/12..."
+              if [ $i -eq 12 ]; then
+                echo "❌ Health check falló — logs:"
+                docker compose -f docker-compose.prod.yml logs --tail 80 app
+                exit 1
+              fi
+            done
+
+            echo "── Reload nginx (sin downtime) ──"
+            docker exec nginx nginx -s reload 2>/dev/null || nginx -s reload 2>/dev/null || true
+
+            echo "── Limpieza de imágenes antiguas ──"
+            docker image prune -f
+
+            echo "✅ Producción desplegada"

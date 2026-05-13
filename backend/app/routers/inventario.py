@@ -1,8 +1,9 @@
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.deps import ensure_tienda_access, get_current_user, require_admin
-from app.models.models import Usuario, Producto, Inventario, Tienda, CategoriaProductoEnum
+from app.models.models import Usuario, Producto, Inventario, Tienda, CategoriaProductoEnum, LoteInventario
 from app.schemas.inventario import MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate
 from app.services import inventario as svc
 
@@ -102,8 +103,65 @@ def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require
         })
     return {"tiendas": [{"id": t.id, "nombre": t.nombre} for t in tiendas], "productos": result}
 
+@router.delete("/productos/{producto_id}")
+def eliminar_producto(producto_id: int, db: Session = Depends(get_db),
+                      user: Usuario = Depends(require_admin)):
+    """Elimina un producto si no tiene movimientos ni conteos relacionados."""
+    from app.models.models import MovimientoInventario, LoteInventario
+    p = db.query(Producto).filter_by(id=producto_id).first()
+    if not p:
+        raise HTTPException(404, "Producto no encontrado")
+    # Chequear dependencias
+    mov = db.query(MovimientoInventario).filter_by(producto_id=producto_id).first()
+    if mov:
+        raise HTTPException(400, "El producto tiene movimientos registrados y no puede eliminarse")
+    # Eliminar tablas dependientes y el producto
+    db.query(LoteInventario).filter_by(producto_id=producto_id).delete()
+    db.query(Inventario).filter_by(producto_id=producto_id).delete()
+    db.delete(p)
+    db.commit()
+    return {"ok": True}
+
 @router.get("/lotes/{tienda_id}/{producto_id}")
 def lotes(tienda_id: int, producto_id: int, db: Session = Depends(get_db),
           user: Usuario = Depends(require_admin)):
     ensure_tienda_access(user, tienda_id)
     return svc.get_lotes(db, tienda_id, producto_id)
+
+
+@router.get("/pasteleria-impulso/{tienda_id}")
+def pasteleria_impulso(tienda_id: int, db: Session = Depends(get_db),
+                       user: Usuario = Depends(get_current_user)):
+    """
+    Lotes de pastelería con 3+ días en inventario.
+    Se usan para mostrar el pop-up de impulso al barista al entrar al Hub.
+    Rotación objetivo: 5 días desde recepción.
+    """
+    ensure_tienda_access(user, tienda_id)
+    corte = datetime.utcnow() - timedelta(days=3)
+    ahora = datetime.utcnow()
+    lotes_q = (
+        db.query(LoteInventario)
+        .join(Producto, LoteInventario.producto_id == Producto.id)
+        .filter(
+            LoteInventario.tienda_id == tienda_id,
+            LoteInventario.cantidad_restante > 0,
+            LoteInventario.fecha_entrada <= corte,
+            Producto.categoria == CategoriaProductoEnum.pasteleria,
+        )
+        .order_by(LoteInventario.fecha_entrada.asc())
+        .all()
+    )
+    result = []
+    for l in lotes_q:
+        dias = (ahora - l.fecha_entrada).days
+        result.append({
+            "lote_id": l.id,
+            "producto_id": l.producto_id,
+            "producto_nombre": l.producto.nombre,
+            "cantidad_restante": l.cantidad_restante,
+            "fecha_entrada": l.fecha_entrada.isoformat(),
+            "dias_en_inventario": dias,
+            "urgente": dias >= 5,          # 5+ días = ya pasó la ventana de rotación
+        })
+    return result

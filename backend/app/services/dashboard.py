@@ -43,8 +43,8 @@ def get_dashboard(db: Session, tienda_id: int):
     productos_criticos_lista = [
         {
             "nombre": p.nombre,
-            "stock_actual": round(inv.stock_actual, 2),
-            "stock_minimo": round(inv.stock_minimo, 2),
+            "stock_actual": round(inv.stock_actual),
+            "stock_minimo": round(inv.stock_minimo),
             "unidad": p.unidad_medida,
         }
         for inv, p in criticos_q
@@ -112,6 +112,144 @@ def get_dashboard(db: Session, tienda_id: int):
         "siigo_check": checklist.siigo_check if checklist else False,
         "limpieza_check": checklist.limpieza_check if checklist else False,
         "cierre_realizado": checklist.cierre_realizado if checklist else False,
+    }
+
+
+def get_admin_resumen(db: Session, tienda_id: int):
+    """Resumen operativo + financiero del mes en curso para el panel de administrador."""
+    from app.models.models import (
+        VentaDiaria, Consignacion, EstadoConsignacionEnum,
+        Inventario, Producto, ConteoFisico, TipoConteoEnum,
+        FacturaCompra, MovimientoCaja, TipoMovCajaEnum, CajaTurno,
+    )
+
+    ahora = datetime.utcnow()
+    inicio_mes = ahora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # ── 1. Ventas acumuladas del mes ──────────────────────────────────────────
+    ventas_mes = (
+        db.query(func.coalesce(func.sum(VentaDiaria.venta_total), 0.0))
+        .join(CajaTurno, VentaDiaria.turno_id == CajaTurno.id)
+        .filter(
+            CajaTurno.tienda_id == tienda_id,
+            VentaDiaria.fecha_registro >= inicio_mes,
+        )
+        .scalar()
+    ) or 0.0
+
+    # ── 2. Consignaciones pendientes ─────────────────────────────────────────
+    cons_q = db.query(Consignacion).filter(
+        Consignacion.tienda_id == tienda_id,
+        Consignacion.estado == EstadoConsignacionEnum.pendiente,
+    ).all()
+
+    # ── 3. Insumos: último conteo apertura / último conteo cierre + stock ────
+    ultimo_apertura = (
+        db.query(ConteoFisico)
+        .filter(ConteoFisico.tienda_id == tienda_id,
+                ConteoFisico.tipo == TipoConteoEnum.apertura)
+        .order_by(ConteoFisico.fecha_registro.desc())
+        .first()
+    )
+    ultimo_cierre = (
+        db.query(ConteoFisico)
+        .filter(ConteoFisico.tienda_id == tienda_id,
+                ConteoFisico.tipo == TipoConteoEnum.cierre)
+        .order_by(ConteoFisico.fecha_registro.desc())
+        .first()
+    )
+
+    apertura_map = {
+        item.producto_id: item.cantidad_real
+        for item in (ultimo_apertura.items if ultimo_apertura else [])
+    }
+    cierre_map = {
+        item.producto_id: item.cantidad_real
+        for item in (ultimo_cierre.items if ultimo_cierre else [])
+    }
+
+    inv_rows = (
+        db.query(Inventario)
+        .join(Producto, Inventario.producto_id == Producto.id)
+        .filter(
+            Inventario.tienda_id == tienda_id,
+            Producto.controla_stock == True,
+        )
+        .all()
+    )
+
+    insumos = []
+    for inv in inv_rows:
+        p = inv.producto
+        ap = apertura_map.get(inv.producto_id)
+        cl = cierre_map.get(inv.producto_id)
+        diferencia = round(ap - cl, 2) if (ap is not None and cl is not None) else None
+        insumos.append({
+            "producto_id": inv.producto_id,
+            "nombre": p.nombre,
+            "unidad": p.unidad_medida,
+            "categoria": p.categoria.value,
+            "stock_apertura": ap,
+            "stock_cierre": cl,
+            "stock_actual": round(inv.stock_actual),
+            "stock_minimo": round(inv.stock_minimo),
+            "diferencia": diferencia,
+            "bajo_minimo": inv.stock_actual < inv.stock_minimo,
+        })
+    insumos.sort(key=lambda x: (not x["bajo_minimo"], x["nombre"]))
+
+    # ── 4. Entradas por proveedor (facturas del mes) ─────────────────────────
+    facturas = (
+        db.query(FacturaCompra)
+        .filter(
+            FacturaCompra.tienda_id == tienda_id,
+            FacturaCompra.fecha_recibido >= inicio_mes,
+        )
+        .all()
+    )
+    prov_map: dict = {}
+    for f in facturas:
+        entry = prov_map.setdefault(f.proveedor, {"total": 0.0, "count": 0})
+        entry["total"] += f.valor_total
+        entry["count"] += 1
+
+    entradas_por_proveedor = [
+        {"proveedor": k, "total": round(v["total"], 0), "count": v["count"]}
+        for k, v in sorted(prov_map.items(), key=lambda x: -x[1]["total"])
+    ]
+
+    # ── 5. Egresos de caja del mes ───────────────────────────────────────────
+    egresos_q = (
+        db.query(MovimientoCaja)
+        .join(CajaTurno, MovimientoCaja.caja_turno_id == CajaTurno.id)
+        .filter(
+            CajaTurno.tienda_id == tienda_id,
+            MovimientoCaja.tipo == TipoMovCajaEnum.egreso,
+            MovimientoCaja.fecha >= inicio_mes,
+        )
+        .all()
+    )
+
+    return {
+        "tienda_id": tienda_id,
+        "periodo": {
+            "desde": inicio_mes.date().isoformat(),
+            "hasta": ahora.date().isoformat(),
+        },
+        "ventas_mes": round(ventas_mes, 0),
+        "consignaciones": {
+            "count": len(cons_q),
+            "monto": round(sum(c.valor for c in cons_q), 0),
+        },
+        "insumos": insumos,
+        "entradas": {
+            "total": round(sum(f.valor_total for f in facturas), 0),
+            "por_proveedor": entradas_por_proveedor,
+        },
+        "egresos": {
+            "total": round(sum(e.valor for e in egresos_q), 0),
+            "count": len(egresos_q),
+        },
     }
 
 

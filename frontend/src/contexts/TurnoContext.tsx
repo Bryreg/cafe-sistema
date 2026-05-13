@@ -54,8 +54,10 @@ export function TurnoProvider({ children }: { children: ReactNode }) {
   }, [user?.tienda_id])
 
   useEffect(() => {
-    if (user?.rol === 'barista') refresh()
-    else { setTurno(null); setLoading(false) }
+    if (user?.rol !== 'barista') { setTurno(null); setLoading(false); return }
+    refresh()
+    const t = setInterval(refresh, 15_000)
+    return () => clearInterval(t)
   }, [user?.tienda_id, user?.rol])
 
   return (

@@ -93,13 +93,13 @@ export default function SolicitudPedido() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-gray-800">{a.producto}</p>
                     <p className="text-xs text-red-600">
-                      Stock: <span className="font-bold">{a.stock_actual}</span> {a.unidad}
-                      <span className="text-gray-400"> · mín {a.stock_minimo}</span>
+                      Stock: <span className="font-bold">{Math.round(a.stock_actual)}</span> {a.unidad}
+                      <span className="text-gray-400"> · mín {Math.round(a.stock_minimo)}</span>
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-xs text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full font-semibold">
-                      sugerido: {a.cantidad_sugerida}
+                      sugerido: {Math.round(a.cantidad_sugerida)}
                     </span>
                     <button
                       onClick={() => agregar(a.producto_id, a.producto, a.unidad, a.cantidad_sugerida)}

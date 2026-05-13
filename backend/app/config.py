@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     UPLOAD_DIR: str = "uploads"
     ENV: str = "development"
+    CLOUDINARY_URL: str = ""   # cloudinary://api_key:api_secret@cloud_name
 
     class Config:
         env_file = _env_file

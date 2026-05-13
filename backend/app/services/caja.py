@@ -223,14 +223,18 @@ def get_entregas_turno(db: Session, turno_id: int):
     ).order_by(EntregaTurno.fecha_hora.desc()).all()
 
 
-def get_entregas_tienda(db: Session, tienda_id: int, limit: int = 20):
-    return db.query(EntregaTurno).filter(
-        EntregaTurno.tienda_id == tienda_id
-    ).order_by(EntregaTurno.fecha_hora.desc()).limit(limit).all()
+def get_entregas_tienda(db: Session, tienda_id: int, limit: int = 20, solo_hoy: bool = True):
+    q = db.query(EntregaTurno).filter(EntregaTurno.tienda_id == tienda_id)
+    if solo_hoy:
+        hoy = datetime.now().date()
+        desde = datetime.combine(hoy, datetime.min.time())
+        hasta = datetime.combine(hoy, datetime.max.time())
+        q = q.filter(EntregaTurno.fecha_hora >= desde, EntregaTurno.fecha_hora <= hasta)
+    return q.order_by(EntregaTurno.fecha_hora.desc()).limit(limit).all()
 
 
 def registrar_movimiento(db: Session, turno_id: int, tipo: str, concepto: str,
-                         valor: float, usuario_id: int):
+                         valor: float, usuario_id: int, imagen_url: str | None = None):
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
         CajaTurno.estado == EstadoTurnoEnum.abierto
@@ -249,7 +253,8 @@ def registrar_movimiento(db: Session, turno_id: int, tipo: str, concepto: str,
         tipo=tipo,
         concepto=concepto,
         valor=valor,
-        usuario_id=usuario_id
+        usuario_id=usuario_id,
+        imagen_url=imagen_url,
     )
     db.add(mov)
     audit.registrar(
@@ -260,6 +265,59 @@ def registrar_movimiento(db: Session, turno_id: int, tipo: str, concepto: str,
     db.commit()
     db.refresh(mov)
     return mov
+
+
+def registrar_cuadre_llegada(db: Session, turno_id: int, usuario_id: int,
+                              efectivo_real: float, tipo_turno: str, nota: str | None = None):
+    turno = db.query(CajaTurno).filter(
+        CajaTurno.id == turno_id,
+        CajaTurno.estado == EstadoTurnoEnum.abierto
+    ).first()
+    if not turno:
+        raise HTTPException(status_code=404, detail="No hay turno activo")
+    if efectivo_real < 0:
+        raise HTTPException(status_code=400, detail="El valor no puede ser negativo")
+
+    ingresos = db.query(func.sum(MovimientoCaja.valor)).filter(
+        MovimientoCaja.caja_turno_id == turno_id,
+        MovimientoCaja.tipo == "ingreso"
+    ).scalar() or 0.0
+    egresos = db.query(func.sum(MovimientoCaja.valor)).filter(
+        MovimientoCaja.caja_turno_id == turno_id,
+        MovimientoCaja.tipo == "egreso"
+    ).scalar() or 0.0
+    efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
+    diferencia = efectivo_real - efectivo_esperado
+
+    entrega = EntregaTurno(
+        turno_id=turno_id,
+        tienda_id=turno.tienda_id,
+        usuario_id=usuario_id,
+        efectivo_real=efectivo_real,
+        efectivo_esperado=efectivo_esperado,
+        ventas_efectivo_siigo=0.0,
+        ventas_tarjeta_bold=0.0,
+        diferencia_efectivo=diferencia,
+        diferencia_tarjeta=0.0,
+        imagen_url=None,
+        tipo="recibo",
+    )
+    db.add(entrega)
+    audit.registrar(
+        db, accion="cuadre_llegada", tabla="entregas_turno",
+        registro_id=None, usuario_id=usuario_id, tienda_id=turno.tienda_id,
+        datos_despues={"tipo_turno": tipo_turno, "efectivo_real": efectivo_real,
+                       "efectivo_esperado": efectivo_esperado, "diferencia": diferencia},
+    )
+    db.commit()
+    db.refresh(entrega)
+    return entrega
+
+
+def get_movimientos(db: Session, turno_id: int):
+    return db.query(MovimientoCaja).filter(
+        MovimientoCaja.caja_turno_id == turno_id
+    ).order_by(MovimientoCaja.fecha.desc()).all()
 
 
 def _tick_checklist(db: Session, tienda_id: int, **kwargs):

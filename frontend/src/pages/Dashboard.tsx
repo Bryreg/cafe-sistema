@@ -271,21 +271,21 @@ export default function Dashboard() {
                           </div>
                         </td>
                         <td className="py-2 px-3 text-right font-mono text-warm-400 border-b border-warm-50">
-                          {ins.stock_apertura ?? '—'}
+                          {ins.stock_apertura != null ? Math.round(ins.stock_apertura) : '—'}
                         </td>
                         <td className="py-2 px-3 text-right font-mono text-warm-400 border-b border-warm-50">
-                          {ins.stock_cierre ?? '—'}
+                          {ins.stock_cierre != null ? Math.round(ins.stock_cierre) : '—'}
                         </td>
                         <td className="py-2 px-3 text-right font-mono font-bold border-b border-warm-50 text-[13px]"
                           style={{ color: ins.bajo_minimo ? 'oklch(45% 0.20 25)' : 'oklch(25% 0.01 60)' }}>
-                          {ins.stock_actual}
+                          {Math.round(ins.stock_actual)}
                         </td>
                         <td className="py-2 px-3 text-right font-mono text-warm-400 border-b border-warm-50">
-                          {ins.stock_minimo}
+                          {Math.round(ins.stock_minimo)}
                         </td>
                         <td className="py-2 px-3 text-right font-mono text-[11px] border-b border-warm-50"
                           style={{ color: delta < 0 ? 'oklch(45% 0.20 25)' : delta > 0 ? 'oklch(48% 0.15 155)' : 'oklch(55% 0.01 60)' }}>
-                          {delta > 0 ? '+' : ''}{delta}
+                          {delta > 0 ? '+' : ''}{Math.round(delta)}
                         </td>
                       </tr>
                     )

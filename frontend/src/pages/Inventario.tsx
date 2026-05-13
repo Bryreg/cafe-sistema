@@ -235,7 +235,7 @@ function InventarioAdmin() {
                     }`}>{t}</button>
                 ))}
               </div>
-              <input type="number" value={cantidad} onChange={e => setCantidad(e.target.value)}
+              <input type="number" step="1" min="0" value={cantidad} onChange={e => setCantidad(e.target.value)}
                 placeholder={`Cantidad (${selected.producto.unidad_medida})`}
                 className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-lg font-bold focus:outline-none focus:border-amber-400"
                 autoFocus />
@@ -266,7 +266,7 @@ function InventarioAdmin() {
                         onClick={() => { setSelected({ producto: p, tienda: t }); setTipo('entrada'); setCantidad(''); setMotivo(''); setError('') }}
                         className="flex flex-col items-center gap-0.5 py-1.5 rounded-xl hover:bg-gray-100 transition-colors">
                         <div className={`w-2 h-2 rounded-full ${stockDot(s)}`} />
-                        <span className={`text-sm ${stockTextColor(s)}`}>{s.stock_actual}</span>
+                        <span className={`text-sm ${stockTextColor(s)}`}>{Math.round(s.stock_actual)}</span>
                         <span className="text-xs text-gray-400">{p.unidad_medida}</span>
                       </button>
                     )
@@ -437,11 +437,11 @@ function InventarioAdmin() {
                                 <td key={t.id} className="px-3 py-2 text-center">
                                   <div className="flex flex-col items-center gap-0.5">
                                     <span className={`text-sm font-bold font-mono ${s?.alerta ? 'text-red-500' : 'text-gray-800'}`}>
-                                      {s?.stock_actual ?? 0}
+                                      {Math.round(s?.stock_actual ?? 0)}
                                     </span>
                                     {isEditingMin ? (
                                       <div className="flex items-center gap-1">
-                                        <input type="number" value={minimoEditing.valor}
+                                        <input type="number" step="1" min="0" value={minimoEditing.valor}
                                           onChange={e => setMinimoEditing(m => m ? { ...m, valor: e.target.value } : null)}
                                           className="w-14 border border-gray-300 rounded px-1 text-xs text-center" autoFocus
                                           onKeyDown={e => { if (e.key === 'Enter') guardarMinimo() }} />
@@ -452,7 +452,7 @@ function InventarioAdmin() {
                                       <button
                                         onClick={() => setMinimoEditing({ productoId: p.id, tiendaId: t.id, valor: String(s?.stock_minimo ?? 0) })}
                                         className="text-xs text-gray-400 hover:text-gray-600 transition-colors" title="Editar mínimo">
-                                        mín {s?.stock_minimo ?? 0}
+                                        mín {Math.round(s?.stock_minimo ?? 0)}
                                       </button>
                                     )}
                                   </div>
@@ -550,7 +550,7 @@ function InventarioBarista() {
                   <X size={20} />
                 </button>
               </div>
-              <p className="text-sm text-gray-500">Stock actual: <strong>{selected.stock_actual} {selected.unidad_medida}</strong></p>
+              <p className="text-sm text-gray-500">Stock actual: <strong>{Math.round(selected.stock_actual)} {selected.unidad_medida}</strong></p>
               {error && (
                 <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 px-3 py-2 rounded-xl">
                   <AlertTriangle size={14} /> {error}
@@ -568,7 +568,7 @@ function InventarioBarista() {
                     }`}>{t}</button>
                 ))}
               </div>
-              <input type="number" value={cantidad} onChange={e => setCantidad(e.target.value)}
+              <input type="number" step="1" min="0" value={cantidad} onChange={e => setCantidad(e.target.value)}
                 placeholder={`Cantidad (${selected.unidad_medida})`}
                 className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-lg font-bold focus:outline-none focus:border-amber-400"
                 autoFocus />
@@ -591,10 +591,10 @@ function InventarioBarista() {
                 <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${c.dot}`} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-gray-800 leading-tight">{item.producto_nombre}</p>
-                  <p className="text-xs text-gray-400">{item.categoria} · mín {item.stock_minimo} {item.unidad_medida}</p>
+                  <p className="text-xs text-gray-400">{item.categoria} · mín {Math.round(item.stock_minimo)} {item.unidad_medida}</p>
                 </div>
                 <span className={`text-base font-bold mr-1 ${c.text}`}>
-                  {item.stock_actual}
+                  {Math.round(item.stock_actual)}
                   <span className="text-xs font-normal text-gray-400 ml-0.5">{item.unidad_medida}</span>
                 </span>
                 <div className="flex gap-1.5 shrink-0">

@@ -471,7 +471,7 @@ export default function Hub() {
                   <div key={a.producto_id} className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-red-800">{a.producto}</span>
                     <span className="text-xs font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full font-mono">
-                      {a.stock_actual} {a.unidad}
+                      {Math.round(a.stock_actual)} {a.unidad}
                     </span>
                   </div>
                 ))}
@@ -486,7 +486,7 @@ export default function Hub() {
                   <div key={a.producto_id} className="flex items-center justify-between">
                     <span className="text-sm font-medium text-warm-600">{a.producto}</span>
                     <span className="text-xs font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 font-mono">
-                      {a.stock_actual}/{a.stock_minimo} {a.unidad}
+                      {Math.round(a.stock_actual)}/{Math.round(a.stock_minimo)} {a.unidad}
                     </span>
                   </div>
                 ))}

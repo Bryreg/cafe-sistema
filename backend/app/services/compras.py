@@ -110,14 +110,14 @@ def get_panel_pedido(db: Session, tienda_id: int) -> dict:
         if not inv.producto.controla_stock:
             continue
         alerta = inv.stock_actual <= inv.stock_minimo
-        cantidad_sugerida = max(0.0, round(inv.stock_minimo * 2 - inv.stock_actual, 2))
+        cantidad_sugerida = max(0, round(inv.stock_minimo * 2 - inv.stock_actual))
         productos.append({
             "producto_id": inv.producto_id,
             "nombre": inv.producto.nombre,
             "categoria": inv.producto.categoria.value,
             "unidad_medida": inv.producto.unidad_medida,
-            "stock_actual": inv.stock_actual,
-            "stock_minimo": inv.stock_minimo,
+            "stock_actual": round(inv.stock_actual),
+            "stock_minimo": round(inv.stock_minimo),
             "alerta": alerta,
             "nivel": "agotado" if inv.stock_actual <= 0 else ("bajo" if alerta else "ok"),
             "cantidad_sugerida": cantidad_sugerida,

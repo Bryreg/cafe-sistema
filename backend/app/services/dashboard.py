@@ -43,8 +43,8 @@ def get_dashboard(db: Session, tienda_id: int):
     productos_criticos_lista = [
         {
             "nombre": p.nombre,
-            "stock_actual": round(inv.stock_actual, 2),
-            "stock_minimo": round(inv.stock_minimo, 2),
+            "stock_actual": round(inv.stock_actual),
+            "stock_minimo": round(inv.stock_minimo),
             "unidad": p.unidad_medida,
         }
         for inv, p in criticos_q
@@ -191,8 +191,8 @@ def get_admin_resumen(db: Session, tienda_id: int):
             "categoria": p.categoria.value,
             "stock_apertura": ap,
             "stock_cierre": cl,
-            "stock_actual": round(inv.stock_actual, 2),
-            "stock_minimo": round(inv.stock_minimo, 2),
+            "stock_actual": round(inv.stock_actual),
+            "stock_minimo": round(inv.stock_minimo),
             "diferencia": diferencia,
             "bajo_minimo": inv.stock_actual < inv.stock_minimo,
         })

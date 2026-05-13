@@ -127,7 +127,7 @@ export default function ComprasAdmin() {
           `*${label}*`,
           ...items.map(p =>
             p.cantidad_sugerida > 0
-              ? `• ${p.nombre}: ${p.cantidad_sugerida} ${p.unidad_medida} (stock: ${p.stock_actual})`
+              ? `• ${p.nombre}: ${Math.round(p.cantidad_sugerida)} ${p.unidad_medida} (stock: ${Math.round(p.stock_actual)})`
               : `• ${p.nombre}: AGOTADO — definir cantidad`
           ),
           '',
@@ -239,12 +239,12 @@ export default function ComprasAdmin() {
                             <p className="text-sm font-medium text-gray-800">{item.producto_nombre}</p>
                             <p className="text-xs text-gray-400">{item.unidad_medida}</p>
                           </div>
-                          <p className="text-sm text-center text-gray-500">{item.cantidad_sistema}</p>
+                          <p className="text-sm text-center text-gray-500">{Math.round(item.cantidad_sistema)}</p>
                           <div className="text-center">
-                            <p className="text-sm font-bold text-gray-800">{item.cantidad_real}</p>
+                            <p className="text-sm font-bold text-gray-800">{Math.round(item.cantidad_real)}</p>
                             {dif !== 0 && (
                               <p className={`text-xs font-semibold ${difColor}`}>
-                                {dif > 0 ? `+${dif}` : dif}
+                                {dif > 0 ? `+${Math.round(dif)}` : Math.round(dif)}
                               </p>
                             )}
                           </div>
@@ -325,18 +325,18 @@ export default function ComprasAdmin() {
                     }`}>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-gray-800">{p.nombre}</p>
-                      <p className="text-xs text-gray-400">mín {p.stock_minimo} {p.unidad_medida}</p>
+                      <p className="text-xs text-gray-400">mín {Math.round(p.stock_minimo)} {p.unidad_medida}</p>
                     </div>
                     <div className="text-right shrink-0">
                       <p className={`text-base font-bold ${
                         p.nivel === 'agotado' ? 'text-red-600' :
                         p.nivel === 'bajo' ? 'text-amber-600' : 'text-gray-700'
-                      }`}>{p.stock_actual}</p>
+                      }`}>{Math.round(p.stock_actual)}</p>
                       <p className="text-xs text-gray-400">{p.unidad_medida}</p>
                     </div>
                     {p.nivel !== 'ok' && p.cantidad_sugerida > 0 && (
                       <div className={`shrink-0 px-2.5 py-1 rounded-lg border text-xs font-bold ${NIVEL_STYLE[p.nivel]}`}>
-                        pedir {p.cantidad_sugerida}
+                        pedir {Math.round(p.cantidad_sugerida)}
                       </div>
                     )}
                   </div>

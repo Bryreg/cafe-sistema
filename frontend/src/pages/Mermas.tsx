@@ -224,7 +224,7 @@ export default function Mermas() {
                 }}>
                 <p className="text-sm font-semibold text-gray-800 leading-tight">{item.producto_nombre}</p>
                 <p className="text-xs mt-0.5 font-medium" style={{ color: item.stock_actual === 0 ? 'oklch(50% 0.18 25)' : 'oklch(58% 0.01 60)' }}>
-                  {item.stock_actual} {item.unidad_medida}
+                  {Math.round(item.stock_actual)} {item.unidad_medida}
                 </p>
               </button>
             ))}
@@ -236,7 +236,7 @@ export default function Mermas() {
           <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4">
             <div className="flex items-center justify-between">
               <p className="text-sm font-bold text-gray-800">{selected.producto_nombre}</p>
-              <span className="text-xs text-gray-400">Stock: {selected.stock_actual} {selected.unidad_medida}</span>
+              <span className="text-xs text-gray-400">Stock: {Math.round(selected.stock_actual)} {selected.unidad_medida}</span>
             </div>
 
             <div>

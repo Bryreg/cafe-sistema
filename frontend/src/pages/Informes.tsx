@@ -786,11 +786,11 @@ function TabRotacion({ tiendaId }: { tiendaId: number }) {
                         <p className="text-xs text-gray-400">{f.unidad}</p>
                       </td>
                       <td className={`px-3 py-2.5 text-right font-mono font-bold text-sm ${f.alerta_min ? 'text-red-600' : 'text-gray-700'}`}>
-                        {fmtN(f.stock_actual, 1)}
+                        {fmtN(f.stock_actual, 0)}
                         {f.alerta_min && <AlertTriangle size={10} className="inline ml-1 text-red-500" />}
                       </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-sm text-green-700">{fmtN(f.entradas, 1)}</td>
-                      <td className="px-3 py-2.5 text-right font-mono text-sm text-blue-700">{fmtN(f.salidas, 1)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-green-700">{fmtN(f.entradas, 0)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-blue-700">{fmtN(f.salidas, 0)}</td>
                       <td className="px-3 py-2.5 text-right font-mono text-sm text-gray-600">
                         {f.rotacion !== null ? `${f.rotacion}x` : '—'}
                       </td>

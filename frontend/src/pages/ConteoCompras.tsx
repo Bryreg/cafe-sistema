@@ -72,7 +72,7 @@ export default function ConteoCompras() {
         nota: nota.trim() || null,
         items: itemsCompletados.map(i => ({
           producto_id: i.producto_id,
-          cantidad_real: Number(i.cantidad_real),
+          cantidad_real: Math.round(Number(i.cantidad_real)),
         })),
       })
       setExito(true)
@@ -144,12 +144,14 @@ export default function ConteoCompras() {
                     </div>
                     {/* Cantidad sistema (referencia) */}
                     <div className="text-center w-12 shrink-0">
-                      <p className="text-sm font-bold text-gray-400">{item.cantidad_sistema}</p>
+                      <p className="text-sm font-bold text-gray-400">{Math.round(item.cantidad_sistema)}</p>
                       <p className="text-xs text-gray-300">sist.</p>
                     </div>
                     {/* Input cantidad real */}
                     <input
                       type="number"
+                      step="1"
+                      min="0"
                       value={item.cantidad_real}
                       onChange={e => actualizar(item.producto_id, e.target.value)}
                       placeholder="—"
@@ -158,7 +160,7 @@ export default function ConteoCompras() {
                     {/* Diferencia */}
                     {diferencia !== null && (
                       <div className={`w-10 text-center shrink-0 text-sm font-bold ${difColor}`}>
-                        {diferencia > 0 ? `+${diferencia}` : diferencia}
+                        {diferencia > 0 ? `+${Math.round(diferencia)}` : Math.round(diferencia)}
                       </div>
                     )}
                     {diferencia === null && <div className="w-10 shrink-0" />}

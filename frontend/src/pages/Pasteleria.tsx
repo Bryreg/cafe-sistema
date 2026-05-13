@@ -246,7 +246,7 @@ export default function Pasteleria() {
 
           <div>
             <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-2">Cantidad</label>
-            <input type="number" inputMode="numeric" value={cantidad} onChange={e => setCantidad(e.target.value)}
+            <input type="number" inputMode="numeric" step="1" min="0" value={cantidad} onChange={e => setCantidad(e.target.value)}
               placeholder="0"
               className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-xl font-bold text-center focus:outline-none focus:border-amber-400 transition-colors" />
           </div>

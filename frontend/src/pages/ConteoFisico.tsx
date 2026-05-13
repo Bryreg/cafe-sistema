@@ -55,7 +55,7 @@ export default function ConteoFisico() {
     try {
       const itemsList = items.map(item => ({
         producto_id: item.producto_id,
-        cantidad_real: Number(conteos[item.producto_id] ?? item.stock_actual),
+        cantidad_real: Math.round(Number(conteos[item.producto_id] ?? item.stock_actual)),
       }))
       await api.post('/conteos/', {
         tienda_id,
@@ -147,15 +147,17 @@ export default function ConteoFisico() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-800">{item.producto_nombre}</p>
                 <p className="text-xs text-gray-400">
-                  Sistema: {item.stock_actual} {item.unidad_medida}
+                  Sistema: {Math.round(item.stock_actual)} {item.unidad_medida}
                 </p>
               </div>
               <div className="flex items-center gap-1.5">
                 <input
                   type="number"
+                  step="1"
+                  min="0"
                   value={conteos[item.producto_id] ?? ''}
                   onChange={e => setConteos(prev => ({ ...prev, [item.producto_id]: e.target.value }))}
-                  placeholder={String(item.stock_actual)}
+                  placeholder={String(Math.round(item.stock_actual))}
                   className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-amber-400"
                 />
                 <span className="text-xs text-gray-400 w-8">{item.unidad_medida}</span>

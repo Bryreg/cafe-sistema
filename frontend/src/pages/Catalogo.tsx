@@ -267,12 +267,14 @@ export default function Catalogo() {
                               <td key={t.id} className="px-3 py-2 text-center">
                                 <div className="flex flex-col items-center gap-0.5">
                                   <span className={`text-sm font-bold font-mono ${s?.alerta ? 'text-red-500' : 'text-gray-800'}`}>
-                                    {s?.stock_actual ?? 0}
+                                    {Math.round(s?.stock_actual ?? 0)}
                                   </span>
                                   {isEditingMin ? (
                                     <div className="flex items-center gap-1">
                                       <input
                                         type="number"
+                                        step="1"
+                                        min="0"
                                         value={minimoEditing.valor}
                                         onChange={e => setMinimoEditing(m => m ? { ...m, valor: e.target.value } : null)}
                                         className="w-14 border border-gray-300 rounded px-1 text-xs text-center"
@@ -287,7 +289,7 @@ export default function Catalogo() {
                                       onClick={() => setMinimoEditing({ productoId: p.id, tiendaId: t.id, valor: String(s?.stock_minimo ?? 0) })}
                                       className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
                                       title="Editar mínimo">
-                                      mín {s?.stock_minimo ?? 0}
+                                      mín {Math.round(s?.stock_minimo ?? 0)}
                                     </button>
                                   )}
                                 </div>

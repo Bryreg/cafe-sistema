@@ -71,20 +71,26 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int) ->
 
 
 def get_proveedores_tienda(db: Session, tienda_id: int) -> list:
-    """Devuelve proveedores únicos ordenados por frecuencia descendente."""
+    """Devuelve proveedores únicos ordenados por gasto total descendente."""
     rows = (
         db.query(
             FacturaCompra.proveedor,
             func.count().label("frecuencia"),
+            func.sum(FacturaCompra.valor_total).label("total_gastado"),
             func.max(FacturaCompra.fecha_recibido).label("ultima"),
         )
         .filter(FacturaCompra.tienda_id == tienda_id)
         .group_by(FacturaCompra.proveedor)
-        .order_by(func.count().desc())
+        .order_by(func.sum(FacturaCompra.valor_total).desc())
         .all()
     )
     return [
-        {"proveedor": r.proveedor, "frecuencia": r.frecuencia, "ultima": r.ultima}
+        {
+            "proveedor": r.proveedor,
+            "frecuencia": r.frecuencia,
+            "total_gastado": r.total_gastado or 0,
+            "ultima": r.ultima,
+        }
         for r in rows
     ]
 

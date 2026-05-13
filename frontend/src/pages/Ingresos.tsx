@@ -20,6 +20,7 @@ interface Producto {
 interface ProveedorHistorial {
   proveedor: string
   frecuencia: number
+  total_gastado: number
   ultima: string | null
 }
 

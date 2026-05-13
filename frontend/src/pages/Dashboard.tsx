@@ -9,6 +9,10 @@ import {
 
 const fmt = (v: number) => `$${Math.round(v).toLocaleString('es-CO')}`
 const fmtSigned = (v: number) => (v === 0 ? '$0' : (v > 0 ? '+' : '') + fmt(v))
+function parseUTC(s: string): Date {
+  const t = s.replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1')
+  return new Date(t.endsWith('Z') ? t : t + 'Z')
+}
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 interface Sede { id: number; nombre: string }
@@ -29,6 +33,11 @@ interface Insumo {
   stock_apertura: number | null; stock_cierre: number | null
   stock_actual: number; stock_minimo: number
   diferencia: number | null; bajo_minimo: boolean
+}
+
+interface PendienteItem {
+  turno_id: number; fecha_apertura: string; fecha_cierre: string
+  esperado: number; consignado: number; pendiente: number
 }
 
 interface AdminResumen {
@@ -53,6 +62,7 @@ export default function Dashboard() {
   const [tiendaId, setTiendaId]   = useState<number>(user?.tienda_id ?? 1)
   const [dashData, setDashData]   = useState<Record<number, DashData>>({})
   const [resumen, setResumen]     = useState<AdminResumen | null>(null)
+  const [pendienteConsig, setPendienteConsig] = useState<{ items: PendienteItem[], total_pendiente: number } | null>(null)
   const [loading, setLoading]     = useState(true)
 
   useEffect(() => {
@@ -72,6 +82,11 @@ export default function Dashboard() {
   }, [])
 
   useEffect(() => { loadResumen(tiendaId) }, [tiendaId, loadResumen])
+
+  useEffect(() => {
+    setPendienteConsig(null)
+    api.get(`/consignaciones/pendiente/${tiendaId}`).then(r => setPendienteConsig(r.data)).catch(() => null)
+  }, [tiendaId])
 
   const active = dashData[tiendaId] ?? null
 
@@ -351,39 +366,59 @@ export default function Dashboard() {
 
             {/* Consignaciones */}
             <div className="bg-white border border-warm-200 rounded-xl overflow-hidden flex flex-col">
-              <div className="px-3.5 py-2.5 border-b border-warm-100">
+              <div className="px-3.5 py-2.5 border-b border-warm-100 flex items-center justify-between">
                 <p className="text-[11px] font-bold uppercase tracking-wide text-warm-400">Consignaciones</p>
+                {pendienteConsig && pendienteConsig.items.filter(i => i.pendiente > 0).length > 0 && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                    style={{ background: 'oklch(93% 0.04 65)', color: 'oklch(42% 0.15 65)' }}>
+                    {pendienteConsig.items.filter(i => i.pendiente > 0).length} pendiente{pendienteConsig.items.filter(i => i.pendiente > 0).length > 1 ? 's' : ''}
+                  </span>
+                )}
               </div>
               <div className="p-3.5 flex flex-col flex-1">
-                {resumen ? (
+                {!pendienteConsig ? (
+                  <div className="space-y-2">
+                    <div className="h-8 bg-warm-100 rounded animate-pulse" />
+                    <div className="h-4 bg-warm-100 rounded animate-pulse" />
+                  </div>
+                ) : pendienteConsig.items.filter(i => i.pendiente > 0).length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-1.5 py-4">
+                    <Check size={18} style={{ color: 'oklch(48% 0.15 155)' }} />
+                    <span className="text-[12px] font-semibold" style={{ color: 'oklch(48% 0.15 155)' }}>Al día</span>
+                  </div>
+                ) : (
                   <>
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-3xl font-bold font-mono"
-                        style={{ color: resumen.consignaciones.count > 0 ? 'oklch(52% 0.18 65)' : 'oklch(48% 0.15 155)' }}>
-                        {resumen.consignaciones.count}
-                      </span>
-                      <span className="text-[11px] text-warm-400">pendientes</span>
+                    <div className="space-y-2 flex-1">
+                      {pendienteConsig.items.filter(i => i.pendiente > 0).map(item => (
+                        <div key={item.turno_id} className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] capitalize text-warm-600 truncate">
+                            {parseUTC(item.fecha_cierre).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })}
+                          </span>
+                          <span className="text-[12px] font-bold font-mono shrink-0"
+                            style={{ color: 'oklch(45% 0.18 65)' }}>
+                            {fmt(item.pendiente)}
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                    <p className="text-[12px] font-semibold font-mono text-warm-500 mt-0.5">
-                      {fmt(resumen.consignaciones.monto)}
-                    </p>
+                    <div className="flex items-center justify-between pt-2 mt-2 border-t border-warm-100">
+                      <span className="text-[10px] font-bold text-warm-400 uppercase tracking-wide">Total</span>
+                      <span className="text-[13px] font-bold font-mono" style={{ color: 'oklch(45% 0.18 65)' }}>
+                        {fmt(pendienteConsig.total_pendiente)}
+                      </span>
+                    </div>
                     <button
-                      onClick={() => navigate('/consignaciones')}
-                      className="mt-auto pt-3 flex items-center justify-center gap-1 w-full py-2 rounded-lg text-[11px] font-bold transition-colors"
+                      onClick={() => navigate('/consignaciones-admin')}
+                      className="mt-2 flex items-center justify-center gap-1 w-full py-2 rounded-lg text-[11px] font-bold transition-colors"
                       style={{
                         background: 'oklch(96% 0.025 65)',
                         border: '1px solid oklch(85% 0.06 65)',
                         color: 'oklch(45% 0.15 65)',
                       }}
                     >
-                      Reportar <ArrowRight size={10} />
+                      Ver detalle <ArrowRight size={10} />
                     </button>
                   </>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="h-8 bg-warm-100 rounded animate-pulse" />
-                    <div className="h-4 bg-warm-100 rounded animate-pulse" />
-                  </div>
                 )}
               </div>
             </div>

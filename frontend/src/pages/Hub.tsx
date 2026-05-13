@@ -7,7 +7,7 @@ import {
   Coffee, LogOut, CheckCircle2, Circle,
   AlertTriangle, ChevronRight, Lock, TrendingUp, TrendingDown,
   UserCheck, ChevronDown, ChevronUp, Sparkles,
-  Cake, Clock, Bell, X as XIcon, ImageIcon,
+  Cake, Clock, Bell, X as XIcon, ImageIcon, Banknote,
 } from 'lucide-react'
 import BaristaBottomNav from '../components/BaristaBottomNav'
 
@@ -46,6 +46,10 @@ interface Movimiento {
   id: number; tipo: string; concepto: string; valor: number
   fecha: string; imagen_url: string | null
 }
+interface PendienteConsignacion {
+  turno_id: number; fecha_apertura: string; fecha_cierre: string
+  esperado: number; consignado: number; pendiente: number
+}
 interface Venta {
   id: number; venta_total: number; nota_credito: number
   vales: number; tarjetas: number; efectivo_calculado: number
@@ -68,6 +72,7 @@ export default function Hub() {
   const [ventas, setVentas] = useState<Venta[]>([])
   const [showVentas, setShowVentas] = useState(false)
   const [limpiezaDiaria, setLimpiezaDiaria] = useState(false)
+  const [pendienteConsig, setPendienteConsig] = useState<{ items: PendienteConsignacion[], total_pendiente: number } | null>(null)
 
   // Reloj
   useEffect(() => {
@@ -80,6 +85,7 @@ export default function Hub() {
     if (!user?.tienda_id) return
     api.get(`/inventario/alertas/${user.tienda_id}`).then(r => setAlertas(r.data)).catch(() => null)
     api.get(`/dashboard/${user.tienda_id}`).then(r => setLimpiezaDiaria(r.data.limpieza_check)).catch(() => null)
+    api.get(`/consignaciones/pendiente/${user.tienda_id}`).then(r => setPendienteConsig(r.data)).catch(() => null)
     refresh()
     api.get('/comunicados/mis-comunicados').then(r => setComunicados(r.data)).catch(() => null)
 
@@ -219,6 +225,50 @@ export default function Hub() {
             ))}
           </div>
         )}
+
+        {/* ── Consignaciones pendientes ── */}
+        {pendienteConsig && pendienteConsig.items.filter(i => i.pendiente > 0).length > 0 && (() => {
+          const items = pendienteConsig.items.filter(i => i.pendiente > 0)
+          return (
+            <div className="rounded-2xl p-4 space-y-2.5" style={{
+              background: 'oklch(97% 0.025 65)',
+              border: '2px solid oklch(82% 0.10 65)',
+            }}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Banknote size={15} style={{ color: 'oklch(52% 0.18 65)' }} />
+                  <span className="text-xs font-bold uppercase tracking-wide" style={{ color: 'oklch(38% 0.12 65)' }}>
+                    {items.length === 1 ? '1 consignación pendiente' : `${items.length} consignaciones pendientes`}
+                  </span>
+                </div>
+                <span className="text-xs font-bold font-mono px-2 py-0.5 rounded-full"
+                  style={{ background: 'oklch(88% 0.09 65)', color: 'oklch(38% 0.14 65)' }}>
+                  {fmt(pendienteConsig.total_pendiente)}
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {items.map(item => (
+                  <div key={item.turno_id} className="flex items-center justify-between rounded-xl px-3 py-2"
+                    style={{ background: 'oklch(93% 0.04 65)' }}>
+                    <span className="text-sm capitalize" style={{ color: 'oklch(40% 0.08 65)' }}>
+                      {parseUTC(item.fecha_cierre).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' })}
+                    </span>
+                    <span className="text-sm font-bold font-mono" style={{ color: 'oklch(38% 0.14 65)' }}>
+                      {fmt(item.pendiente)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() => navigate('/consignaciones')}
+                className="w-full py-2.5 rounded-xl text-xs font-bold transition-colors"
+                style={{ background: 'oklch(72% 0.14 65)', color: '#fff' }}
+              >
+                Registrar consignación →
+              </button>
+            </div>
+          )
+        })()}
 
         {/* ── Tarjeta de turno ── */}
         {turno ? (

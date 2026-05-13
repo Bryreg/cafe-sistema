@@ -13,13 +13,14 @@ router = APIRouter(prefix="/consignaciones", tags=["consignaciones"])
 async def registrar(
     tienda_id: int = Form(...),
     valor: float = Form(...),
+    turno_id: Optional[int] = Form(None),
     imagen: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user)
 ):
     ensure_tienda_access(user, tienda_id)
     imagen_url = await upload_imagen(imagen)
-    return svc.registrar(db, tienda_id, valor, imagen_url, user.id)
+    return svc.registrar(db, tienda_id, valor, imagen_url, user.id, turno_id=turno_id)
 
 @router.get("/pendiente/{tienda_id}")
 def pendiente(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):

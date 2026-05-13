@@ -57,6 +57,8 @@ with engine.connect() as _conn:
         "ALTER TABLE conteos_compras ADD COLUMN nota VARCHAR(300)",
         "ALTER TABLE conteos_compras ADD COLUMN fecha_ajuste DATETIME",
         "ALTER TABLE conteos_compras ADD COLUMN usuario_ajuste_id INTEGER",
+        # Integridad relacional: consignaciones ligadas a un turno específico
+        "ALTER TABLE consignaciones ADD COLUMN caja_turno_id INTEGER REFERENCES caja_turnos(id)",
     ]:
         try:
             _conn.execute(_text(_sql))

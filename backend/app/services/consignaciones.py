@@ -5,10 +5,42 @@ from fastapi import HTTPException
 from app.models.models import (Consignacion, EstadoConsignacionEnum,
                                 CajaTurno, MovimientoCaja, Tienda, EstadoTurnoEnum)
 
-def registrar(db: Session, tienda_id: int, valor: float, imagen_url: str | None, usuario_id: int):
+
+def _turno_pendiente_mas_antiguo(db: Session, tienda_id: int) -> int | None:
+    """Devuelve el id del turno cerrado más antiguo que aún tiene consignación pendiente."""
+    cutoff = datetime.utcnow() - timedelta(days=7)
+    turnos = (
+        db.query(CajaTurno)
+        .filter(
+            CajaTurno.tienda_id == tienda_id,
+            CajaTurno.estado == EstadoTurnoEnum.cerrado,
+            CajaTurno.fecha_cierre >= cutoff,
+        )
+        .order_by(CajaTurno.fecha_cierre.asc())
+        .all()
+    )
+    for t in turnos:
+        movs = db.query(MovimientoCaja).filter(MovimientoCaja.caja_turno_id == t.id).all()
+        total_egresos = sum(m.valor for m in movs if m.tipo == "egreso")
+        total_ingresos_mov = sum(m.valor for m in movs if m.tipo == "ingreso")
+        esperado = (t.total_efectivo or 0) + total_ingresos_mov - total_egresos
+        if esperado <= 0:
+            continue
+        consignado = db.query(func.sum(Consignacion.valor)).filter(
+            Consignacion.caja_turno_id == t.id
+        ).scalar() or 0
+        if round(consignado, 2) < round(esperado, 2):
+            return t.id
+    return None
+
+
+def registrar(db: Session, tienda_id: int, valor: float, imagen_url: str | None,
+              usuario_id: int, turno_id: int | None = None):
     if valor <= 0:
         raise HTTPException(status_code=400, detail="El valor de la consignación debe ser mayor a 0")
-    c = Consignacion(tienda_id=tienda_id, valor=valor, imagen_url=imagen_url,
+    caja_turno_id = turno_id or _turno_pendiente_mas_antiguo(db, tienda_id)
+    c = Consignacion(tienda_id=tienda_id, caja_turno_id=caja_turno_id,
+                     valor=valor, imagen_url=imagen_url,
                      usuario_id=usuario_id, estado=EstadoConsignacionEnum.pendiente)
     db.add(c)
     db.commit()
@@ -34,6 +66,22 @@ def get_por_tienda(db: Session, tienda_id: int, fecha: date | None = None):
         for c in rows
     ]
 
+
+def _consigs_del_turno(db: Session, turno: CajaTurno) -> list:
+    """FK-based matching con fallback a ventana de fecha para registros legacy."""
+    fk = db.query(Consignacion).filter(Consignacion.caja_turno_id == turno.id).all()
+    if fk:
+        return fk
+    # Fallback: registros sin FK dentro de la ventana temporal del turno
+    ventana_fin = turno.fecha_cierre + timedelta(hours=20)
+    return db.query(Consignacion).filter(
+        Consignacion.tienda_id == turno.tienda_id,
+        Consignacion.caja_turno_id.is_(None),
+        Consignacion.fecha >= turno.fecha_apertura,
+        Consignacion.fecha <= ventana_fin,
+    ).all()
+
+
 def get_resumen_admin(db: Session):
     """
     Por cada turno cerrado (todas las tiendas), calcula:
@@ -58,13 +106,7 @@ def get_resumen_admin(db: Session):
         total_egresos = sum(m.valor for m in egresos)
         total_ingresos_mov = sum(m.valor for m in ingresos_mov)
 
-        # Consignaciones en la ventana: desde apertura hasta cierre + 20h
-        ventana_fin = t.fecha_cierre + timedelta(hours=20)
-        consigs = db.query(Consignacion).filter(
-            Consignacion.tienda_id == t.tienda_id,
-            Consignacion.fecha >= t.fecha_apertura,
-            Consignacion.fecha <= ventana_fin,
-        ).order_by(Consignacion.fecha).all()
+        consigs = sorted(_consigs_del_turno(db, t), key=lambda c: c.fecha)
         total_consignado = sum(c.valor for c in consigs)
 
         # Fórmula: lo que se vendió en cash ± movimientos = lo que debe consignarse
@@ -106,12 +148,7 @@ def get_resumen_admin(db: Session):
 
 
 def get_pendiente(db: Session, tienda_id: int):
-    """
-    Returns pending consignación amount based on closed turns in the last 3 days.
-    For each closed turn: esperado = total_efectivo + ingresos_movimientos - egresos_movimientos.
-    Subtracts what's already been consigned in the same time window.
-    """
-    cutoff = datetime.utcnow() - timedelta(days=3)
+    cutoff = datetime.utcnow() - timedelta(days=7)
     turnos = (
         db.query(CajaTurno)
         .filter(
@@ -130,12 +167,7 @@ def get_pendiente(db: Session, tienda_id: int):
         total_ingresos_mov = sum(m.valor for m in movs if m.tipo == "ingreso")
         esperado = (t.total_efectivo or 0) + total_ingresos_mov - total_egresos
 
-        ventana_fin = t.fecha_cierre + timedelta(hours=20)
-        consigs = db.query(Consignacion).filter(
-            Consignacion.tienda_id == tienda_id,
-            Consignacion.fecha >= t.fecha_apertura,
-            Consignacion.fecha <= ventana_fin,
-        ).all()
+        consigs = _consigs_del_turno(db, t)
         total_consignado = sum(c.valor for c in consigs)
         pendiente = max(0, round(esperado - total_consignado, 2))
 

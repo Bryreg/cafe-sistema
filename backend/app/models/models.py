@@ -360,12 +360,14 @@ class Consignacion(Base):
     __tablename__ = "consignaciones"
     id = Column(Integer, primary_key=True)
     tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
+    caja_turno_id = Column(Integer, ForeignKey("caja_turnos.id"), nullable=True)
     fecha = Column(DateTime, default=datetime.utcnow)
     valor = Column(Float, nullable=False)
     imagen_url = Column(String(300), nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     estado = Column(SAEnum(EstadoConsignacionEnum), default=EstadoConsignacionEnum.pendiente)
     tienda = relationship("Tienda", back_populates="consignaciones")
+    turno = relationship("CajaTurno", foreign_keys=[caja_turno_id])
     usuario = relationship("Usuario")
 
 

@@ -2,7 +2,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from fastapi import HTTPException
 from datetime import datetime
-from app.models.models import FacturaCompra, FacturaCompraItem, TipoPagoEnum
+from app.models.models import (FacturaCompra, FacturaCompraItem, TipoPagoEnum,
+                               CajaTurno, MovimientoCaja, EstadoTurnoEnum)
 from app.services import inventario as inv_svc
 from app.services import audit
 
@@ -53,6 +54,24 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int) ->
             usuario_id=usuario_id,
             fecha_vencimiento=item.fecha_vencimiento,
         )
+
+    # Si el pago es en efectivo, registrar el egreso en el turno activo
+    if data.tipo_pago == "contado" and data.valor_total > 0:
+        turno_activo = db.query(CajaTurno).filter(
+            CajaTurno.tienda_id == data.tienda_id,
+            CajaTurno.estado == EstadoTurnoEnum.abierto,
+        ).first()
+        if turno_activo:
+            concepto = f"Pago proveedor: {data.proveedor}"
+            if data.numero_factura:
+                concepto += f" — Fact. {data.numero_factura}"
+            db.add(MovimientoCaja(
+                caja_turno_id=turno_activo.id,
+                tipo="egreso",
+                concepto=concepto,
+                valor=data.valor_total,
+                usuario_id=usuario_id,
+            ))
 
     audit.registrar(
         db, accion="crear_factura_compra", tabla="facturas_compra",

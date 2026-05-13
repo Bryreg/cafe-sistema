@@ -226,8 +226,9 @@ export default function ConsignacionesAdmin() {
   }
 
   // Totales globales
-  const totalEsperado = dias.reduce((s, d) => s + d.esperado_consignar, 0)
+  const totalEsperado   = dias.reduce((s, d) => s + d.esperado_consignar, 0)
   const totalConsignado = dias.reduce((s, d) => s + d.total_consignado, 0)
+  const totalPendiente  = dias.reduce((s, d) => s + Math.max(0, d.esperado_consignar - d.total_consignado), 0)
   const diasConDiferencia = dias.filter(d => Math.abs(d.diferencia) > 0.5).length
 
   if (loading) return <p className="text-sm text-gray-400 text-center py-12">Cargando...</p>
@@ -264,21 +265,25 @@ export default function ConsignacionesAdmin() {
 
       {/* Resumen global */}
       <div className="grid grid-cols-3 gap-3">
+        {/* Por consignar — la cifra principal */}
+        <div className={`border-2 rounded-2xl p-4 ${totalPendiente > 0 ? 'bg-amber-50 border-amber-300' : 'bg-green-50 border-green-200'}`}>
+          <p className={`text-xs font-semibold uppercase tracking-wide ${totalPendiente > 0 ? 'text-amber-700' : 'text-green-600'}`}>
+            Por consignar
+          </p>
+          <p className={`text-2xl font-bold mt-1 ${totalPendiente > 0 ? 'text-amber-800' : 'text-green-700'}`}>
+            {fmt(totalPendiente)}
+          </p>
+          {totalPendiente === 0 && (
+            <p className="text-xs text-green-600 mt-0.5">Al día ✓</p>
+          )}
+        </div>
+        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ya consignado</p>
+          <p className="text-xl font-bold text-gray-700 mt-1">{fmt(totalConsignado)}</p>
+        </div>
         <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4">
-          <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide">Esperado</p>
+          <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide">Total esperado</p>
           <p className="text-xl font-bold text-blue-800 mt-1">{fmt(totalEsperado)}</p>
-        </div>
-        <div className="bg-green-50 border border-green-200 rounded-2xl p-4">
-          <p className="text-xs font-semibold text-green-600 uppercase tracking-wide">Consignado</p>
-          <p className="text-xl font-bold text-green-800 mt-1">{fmt(totalConsignado)}</p>
-        </div>
-        <div className={`border rounded-2xl p-4 ${diasConDiferencia > 0 ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
-          <p className={`text-xs font-semibold uppercase tracking-wide ${diasConDiferencia > 0 ? 'text-red-600' : 'text-gray-500'}`}>
-            Diferencias
-          </p>
-          <p className={`text-xl font-bold mt-1 ${diasConDiferencia > 0 ? 'text-red-700' : 'text-gray-400'}`}>
-            {diasConDiferencia} {diasConDiferencia === 1 ? 'día' : 'días'}
-          </p>
         </div>
       </div>
 
@@ -297,6 +302,7 @@ export default function ConsignacionesAdmin() {
           const ok = Math.abs(dia.diferencia) <= 0.5
           const hayEgresos = dia.egresos_detalle.length > 0
           const hayIngresos = dia.ingresos_detalle.length > 0
+          const porConsignar = Math.max(0, dia.esperado_consignar - dia.total_consignado)
 
           return (
             <div key={dia.turno_id}
@@ -332,12 +338,18 @@ export default function ConsignacionesAdmin() {
                   </p>
                 </div>
 
-                {/* Diferencia */}
+                {/* Pendiente / cuadrado */}
                 <div className="text-right shrink-0">
-                  <p className={`text-base font-bold ${ok ? 'text-green-600' : 'text-red-600'}`}>
-                    {ok ? '✓ Cuadrado' : fmt(dia.diferencia)}
-                  </p>
-                  <p className="text-xs text-gray-400">{fmt(dia.total_consignado)} consignado</p>
+                  {porConsignar > 0.5 ? (
+                    <>
+                      <p className="text-base font-bold text-amber-600">{fmt(porConsignar)}</p>
+                      <p className="text-xs text-amber-500">por consignar</p>
+                    </>
+                  ) : (
+                    <p className={`text-base font-bold ${ok ? 'text-green-600' : 'text-red-600'}`}>
+                      {ok ? '✓ Al día' : fmt(dia.diferencia)}
+                    </p>
+                  )}
                 </div>
 
                 {abierto ? <ChevronUp size={16} className="text-gray-400 shrink-0" /> : <ChevronDown size={16} className="text-gray-400 shrink-0" />}

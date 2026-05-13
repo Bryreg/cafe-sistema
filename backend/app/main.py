@@ -64,6 +64,7 @@ with engine.connect() as _conn:
             _conn.execute(_text(_sql))
             _conn.commit()
         except Exception:
+            _conn.rollback()  # necesario en PostgreSQL: libera el estado de error antes del siguiente statement
             pass  # columna ya existe
 
 Base.metadata.create_all(bind=engine)

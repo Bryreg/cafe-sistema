@@ -383,6 +383,44 @@ export default function Cierre() {
           </div>
         )}
 
+        {/* Monto a consignar */}
+        <div className="rounded-2xl p-4" style={{
+          background: 'oklch(16% 0.09 75)',
+          border: '2px solid oklch(48% 0.20 75)',
+        }}>
+          <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{ color: dark.amber }}>
+            Monto a consignar al banco
+          </p>
+          <div className="space-y-1.5 text-sm">
+            <div className="flex justify-between">
+              <span style={{ color: dark.inkMuted }}>Ventas en efectivo</span>
+              <span className="font-mono font-semibold" style={{ color: dark.ink }}>{fmt(turno.total_efectivo)}</span>
+            </div>
+            {turno.ingresos_movimientos > 0 && (
+              <div className="flex justify-between">
+                <span style={{ color: dark.inkMuted }}>+ Ingresos mov.</span>
+                <span className="font-mono" style={{ color: dark.green }}>{fmt(turno.ingresos_movimientos)}</span>
+              </div>
+            )}
+            {turno.egresos_movimientos > 0 && (
+              <div className="flex justify-between">
+                <span style={{ color: dark.inkMuted }}>− Vales / proveedores</span>
+                <span className="font-mono" style={{ color: dark.danger }}>−{fmt(turno.egresos_movimientos)}</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: '1.5px solid oklch(38% 0.18 75)' }}>
+            <span className="text-sm font-bold" style={{ color: dark.amber }}>Total a consignar</span>
+            <span className="text-2xl font-bold font-mono" style={{ color: dark.amber, letterSpacing: '-0.5px' }}>
+              {fmt(Math.max(0, turno.total_efectivo + turno.ingresos_movimientos - turno.egresos_movimientos))}
+            </span>
+          </div>
+          <div className="flex justify-between mt-2 pt-2 text-[11px]" style={{ borderTop: `1px solid ${dark.border}` }}>
+            <span style={{ color: dark.inkSubtle }}>Base que queda en caja</span>
+            <span className="font-mono" style={{ color: dark.inkSubtle }}>{fmt(turno.base_real)}</span>
+          </div>
+        </div>
+
         {/* Justificación si hay diferencias */}
         {hayDiff && (
           <div>

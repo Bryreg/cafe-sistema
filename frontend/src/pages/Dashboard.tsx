@@ -162,13 +162,13 @@ export default function Dashboard() {
             {
               l: 'Diferencia caja',
               v: active ? fmtSigned(active.diferencia_caja) : '—',
-              s: active?.estado_caja === 'sin_turno' ? 'sin turno' : 'turno activo',
+              s: !active ? '' : active.estado_caja === 'sin_turno' ? 'sin turno' : 'turno activo',
               tone: !active ? 'neu' : active.diferencia_caja === 0 ? 'ok' : 'bad',
             },
             {
               l: 'Productos críticos',
               v: active ? String(active.productos_criticos) : '—',
-              s: 'bajo mínimo',
+              s: active ? 'bajo mínimo' : '',
               tone: !active ? 'neu' : active.productos_criticos > 0 ? 'bad' : 'ok',
             },
             {

@@ -366,50 +366,67 @@ export default function Dashboard() {
 
             {/* Consignaciones */}
             <div className="bg-white border border-warm-200 rounded-xl overflow-hidden flex flex-col">
-              <div className="px-3.5 py-2.5 border-b border-warm-100 flex items-center justify-between">
+              <div className="px-3.5 py-2.5 border-b border-warm-100">
                 <p className="text-[11px] font-bold uppercase tracking-wide text-warm-400">Consignaciones</p>
-                {pendienteConsig && pendienteConsig.items.filter(i => i.pendiente > 0).length > 0 && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
-                    style={{ background: 'oklch(93% 0.04 65)', color: 'oklch(42% 0.15 65)' }}>
-                    {pendienteConsig.items.filter(i => i.pendiente > 0).length} pendiente{pendienteConsig.items.filter(i => i.pendiente > 0).length > 1 ? 's' : ''}
-                  </span>
-                )}
               </div>
-              <div className="p-3.5 flex flex-col flex-1">
+              <div className="p-3.5 flex flex-col flex-1 gap-2">
                 {!pendienteConsig ? (
                   <div className="space-y-2">
-                    <div className="h-8 bg-warm-100 rounded animate-pulse" />
+                    <div className="h-10 bg-warm-100 rounded animate-pulse" />
                     <div className="h-4 bg-warm-100 rounded animate-pulse" />
-                  </div>
-                ) : pendienteConsig.items.filter(i => i.pendiente > 0).length === 0 ? (
-                  <div className="flex-1 flex flex-col items-center justify-center gap-1.5 py-4">
-                    <Check size={18} style={{ color: 'oklch(48% 0.15 155)' }} />
-                    <span className="text-[12px] font-semibold" style={{ color: 'oklch(48% 0.15 155)' }}>Al día</span>
+                    <div className="h-4 bg-warm-100 rounded animate-pulse" />
                   </div>
                 ) : (
                   <>
-                    <div className="space-y-2 flex-1">
-                      {pendienteConsig.items.filter(i => i.pendiente > 0).map(item => (
-                        <div key={item.turno_id} className="flex items-center justify-between gap-2">
-                          <span className="text-[11px] capitalize text-warm-600 truncate">
-                            {parseUTC(item.fecha_cierre).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })}
-                          </span>
-                          <span className="text-[12px] font-bold font-mono shrink-0"
-                            style={{ color: 'oklch(45% 0.18 65)' }}>
-                            {fmt(item.pendiente)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="flex items-center justify-between pt-2 mt-2 border-t border-warm-100">
-                      <span className="text-[10px] font-bold text-warm-400 uppercase tracking-wide">Total</span>
-                      <span className="text-[13px] font-bold font-mono" style={{ color: 'oklch(45% 0.18 65)' }}>
+                    {/* Total por consignar — cifra principal */}
+                    <div className={`rounded-lg px-3 py-2 flex items-center justify-between ${
+                      pendienteConsig.total_pendiente > 0
+                        ? 'bg-red-50 border border-red-200'
+                        : 'bg-green-50 border border-green-200'
+                    }`}>
+                      <span className={`text-[10px] font-bold uppercase tracking-wide ${
+                        pendienteConsig.total_pendiente > 0 ? 'text-red-600' : 'text-green-600'
+                      }`}>
+                        {pendienteConsig.total_pendiente > 0 ? 'Por consignar' : 'Al día'}
+                      </span>
+                      <span className={`text-[15px] font-bold font-mono ${
+                        pendienteConsig.total_pendiente > 0 ? 'text-red-700' : 'text-green-700'
+                      }`}>
                         {fmt(pendienteConsig.total_pendiente)}
                       </span>
                     </div>
+
+                    {/* Sin confirmar por admin */}
+                    {active && active.consignaciones_pendientes > 0 && (
+                      <div className="rounded-lg px-3 py-1.5 flex items-center justify-between bg-amber-50 border border-amber-200">
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-amber-700">Sin confirmar</span>
+                        <span className="text-[13px] font-bold font-mono text-amber-700">
+                          {active.consignaciones_pendientes}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Desglose por turno */}
+                    {pendienteConsig.items.length > 0 && (
+                      <div className="space-y-1 flex-1">
+                        {pendienteConsig.items.map(item => (
+                          <div key={item.turno_id} className="flex items-center justify-between gap-1">
+                            <span className="text-[11px] capitalize text-warm-500 truncate">
+                              {parseUTC(item.fecha_cierre).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })}
+                            </span>
+                            <span className={`text-[11px] font-bold font-mono shrink-0 ${
+                              item.pendiente > 0 ? 'text-red-600' : 'text-green-600'
+                            }`}>
+                              {item.pendiente > 0 ? fmt(item.pendiente) : '✓'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     <button
                       onClick={() => navigate('/consignaciones')}
-                      className="mt-2 flex items-center justify-center gap-1 w-full py-2 rounded-lg text-[11px] font-bold transition-colors"
+                      className="mt-auto flex items-center justify-center gap-1 w-full py-1.5 rounded-lg text-[11px] font-bold"
                       style={{
                         background: 'oklch(96% 0.025 65)',
                         border: '1px solid oklch(85% 0.06 65)',

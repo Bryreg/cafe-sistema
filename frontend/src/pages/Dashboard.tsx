@@ -408,7 +408,7 @@ export default function Dashboard() {
                       </span>
                     </div>
                     <button
-                      onClick={() => navigate('/consignaciones-admin')}
+                      onClick={() => navigate('/consignaciones')}
                       className="mt-2 flex items-center justify-center gap-1 w-full py-2 rounded-lg text-[11px] font-bold transition-colors"
                       style={{
                         background: 'oklch(96% 0.025 65)',

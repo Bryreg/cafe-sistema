@@ -387,6 +387,34 @@ class ChecklistDiario(Base):
     tienda = relationship("Tienda", back_populates="checklists")
 
 
+class TipoMantenimientoEnum(str, enum.Enum):
+    equipo      = "equipo"
+    fumigacion  = "fumigacion"
+    sondeo      = "sondeo"
+    plomeria    = "plomeria"
+    electrico   = "electrico"
+    otro        = "otro"
+
+
+class Mantenimiento(Base):
+    """Registro de mantenimientos, fumigaciones, sondeos y reparaciones."""
+    __tablename__ = "mantenimientos"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
+    tipo = Column(SAEnum(TipoMantenimientoEnum), nullable=False)
+    titulo = Column(String(200), nullable=False)
+    descripcion = Column(Text, nullable=True)
+    fecha_realizado = Column(DateTime, nullable=False)
+    fecha_proximo = Column(DateTime, nullable=True)
+    costo = Column(Float, nullable=True)
+    tecnico = Column(String(150), nullable=True)
+    imagen_url = Column(String(300), nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    tienda = relationship("Tienda")
+    usuario = relationship("Usuario")
+
+
 class AuditLog(Base):
     """Etapa 1: Registro inmutable de acciones críticas del sistema."""
     __tablename__ = "audit_log"

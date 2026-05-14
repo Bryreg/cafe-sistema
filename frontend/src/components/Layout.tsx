@@ -3,19 +3,20 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import {
   Coffee, LayoutDashboard, Package, Banknote, LogOut, Inbox,
-  BarChart2, ShoppingCart, Bell, Users, Menu, X, ClipboardList,
+  BarChart2, ShoppingCart, Bell, Users, Menu, X, ClipboardList, Wrench,
 } from 'lucide-react'
 
 const NAV_ADMIN = [
-  { to: '/dashboard',      label: 'Dashboard',      icon: LayoutDashboard },
-  { to: '/inventario',     label: 'Inventario',      icon: Package },
-  { to: '/pedidos-admin',  label: 'Pedidos',         icon: ClipboardList },
-  { to: '/compras',        label: 'Compras',         icon: ShoppingCart },
-  { to: '/consignaciones', label: 'Consignaciones',  icon: Banknote },
-  { to: '/comunicados',    label: 'Comunicados',     icon: Bell },
-  { to: '/bandeja',        label: 'Bandeja',         icon: Inbox },
-  { to: '/informes',       label: 'Informes',        icon: BarChart2 },
-  { to: '/usuarios',       label: 'Usuarios',        icon: Users },
+  { to: '/dashboard',       label: 'Dashboard',       icon: LayoutDashboard },
+  { to: '/inventario',      label: 'Inventario',       icon: Package },
+  { to: '/pedidos-admin',   label: 'Pedidos',          icon: ClipboardList },
+  { to: '/compras',         label: 'Compras',          icon: ShoppingCart },
+  { to: '/consignaciones',  label: 'Consignaciones',   icon: Banknote },
+  { to: '/mantenimientos',  label: 'Mantenimientos',   icon: Wrench },
+  { to: '/comunicados',     label: 'Comunicados',      icon: Bell },
+  { to: '/bandeja',         label: 'Bandeja',          icon: Inbox },
+  { to: '/informes',        label: 'Informes',         icon: BarChart2 },
+  { to: '/usuarios',        label: 'Usuarios',         icon: Users },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {

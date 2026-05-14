@@ -37,6 +37,7 @@ import ComprasAdmin from './pages/ComprasAdmin'
 import Comunicados from './pages/Comunicados'
 import Usuarios from './pages/Usuarios'
 import PedidosAdmin from './pages/PedidosAdmin'
+import MantenimientosAdmin from './pages/MantenimientosAdmin'
 
 // ─── Smart redirect basado en estado del turno ───────────────────────────────
 function SmartRedirect() {
@@ -181,6 +182,9 @@ function AppRoutes() {
       } />
       <Route path="/pedidos-admin" element={
         <ProtectedRoute role="admin"><Layout><PedidosAdmin /></Layout></ProtectedRoute>
+      } />
+      <Route path="/mantenimientos" element={
+        <ProtectedRoute role="admin"><Layout><MantenimientosAdmin /></Layout></ProtectedRoute>
       } />
 
       <Route path="*" element={<Navigate to="/" replace />} />

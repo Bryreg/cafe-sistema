@@ -295,9 +295,9 @@ export default function ConsignacionesAdmin() {
       )}
 
       {/* Resumen global */}
-      <div className="grid grid-cols-3 gap-3">
-        {/* Por consignar — la cifra principal */}
-        <div className={`border-2 rounded-2xl p-4 ${totalPendiente > 0 ? 'bg-amber-50 border-amber-300' : 'bg-green-50 border-green-200'}`}>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
+        {/* Por consignar — fila completa en móvil */}
+        <div className={`col-span-2 sm:col-span-1 border-2 rounded-2xl p-4 ${totalPendiente > 0 ? 'bg-amber-50 border-amber-300' : 'bg-green-50 border-green-200'}`}>
           <p className={`text-xs font-semibold uppercase tracking-wide ${totalPendiente > 0 ? 'text-amber-700' : 'text-green-600'}`}>
             Por consignar
           </p>
@@ -308,13 +308,13 @@ export default function ConsignacionesAdmin() {
             <p className="text-xs text-green-600 mt-0.5">Al día ✓</p>
           )}
         </div>
-        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4">
+        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-3 sm:p-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ya consignado</p>
-          <p className="text-xl font-bold text-gray-700 mt-1">{fmt(totalConsignado)}</p>
+          <p className="text-base sm:text-xl font-bold text-gray-700 mt-1">{fmt(totalConsignado)}</p>
         </div>
-        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4">
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3 sm:p-4">
           <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide">Total esperado</p>
-          <p className="text-xl font-bold text-blue-800 mt-1">{fmt(totalEsperado)}</p>
+          <p className="text-base sm:text-xl font-bold text-blue-800 mt-1">{fmt(totalEsperado)}</p>
         </div>
       </div>
 

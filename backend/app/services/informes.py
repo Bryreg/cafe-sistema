@@ -366,6 +366,98 @@ def reporte_turnos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
     }
 
 
+def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date):
+    """Timeline unificado: entradas, ajustes, mermas y salidas de pastelería."""
+    desde = datetime.combine(fecha_desde, datetime.min.time())
+    hasta = datetime.combine(fecha_hasta, datetime.max.time())
+
+    resultados = []
+
+    # ── Entradas y ajustes de MovimientoInventario ────────────────────────────
+    movs = (
+        db.query(MovimientoInventario, Producto, Usuario)
+        .join(Producto, MovimientoInventario.producto_id == Producto.id)
+        .join(Usuario, MovimientoInventario.usuario_id == Usuario.id)
+        .filter(
+            MovimientoInventario.tienda_id == tienda_id,
+            MovimientoInventario.tipo.in_([TipoMovInvEnum.entrada, TipoMovInvEnum.ajuste]),
+            MovimientoInventario.fecha >= desde,
+            MovimientoInventario.fecha <= hasta,
+        )
+        .all()
+    )
+    for m, prod, usr in movs:
+        resultados.append({
+            "fecha":    m.fecha.strftime("%Y-%m-%d %H:%M"),
+            "tipo":     m.tipo.value,
+            "subtipo":  None,
+            "producto": prod.nombre,
+            "unidad":   prod.unidad_medida,
+            "cantidad": round(m.cantidad),
+            "usuario":  usr.nombre,
+            "motivo":   m.motivo or "",
+        })
+
+    # ── Salidas de pastelería ─────────────────────────────────────────────────
+    past = (
+        db.query(MovimientoInventario, Producto, Usuario)
+        .join(Producto, MovimientoInventario.producto_id == Producto.id)
+        .join(Usuario, MovimientoInventario.usuario_id == Usuario.id)
+        .filter(
+            MovimientoInventario.tienda_id == tienda_id,
+            MovimientoInventario.tipo == TipoMovInvEnum.salida,
+            MovimientoInventario.motivo == "Preparación pastelería",
+            MovimientoInventario.fecha >= desde,
+            MovimientoInventario.fecha <= hasta,
+        )
+        .all()
+    )
+    for m, prod, usr in past:
+        resultados.append({
+            "fecha":    m.fecha.strftime("%Y-%m-%d %H:%M"),
+            "tipo":     "pasteleria",
+            "subtipo":  None,
+            "producto": prod.nombre,
+            "unidad":   prod.unidad_medida,
+            "cantidad": round(m.cantidad),
+            "usuario":  usr.nombre,
+            "motivo":   m.motivo or "",
+        })
+
+    # ── Mermas ────────────────────────────────────────────────────────────────
+    mermas_q = (
+        db.query(Merma, Producto, Usuario)
+        .join(Producto, Merma.producto_id == Producto.id)
+        .join(Usuario, Merma.usuario_id == Usuario.id)
+        .filter(
+            Merma.tienda_id == tienda_id,
+            Merma.fecha_registro >= desde,
+            Merma.fecha_registro <= hasta,
+        )
+        .all()
+    )
+    for m, prod, usr in mermas_q:
+        resultados.append({
+            "fecha":    m.fecha_registro.strftime("%Y-%m-%d %H:%M"),
+            "tipo":     "merma",
+            "subtipo":  m.tipo,
+            "producto": prod.nombre,
+            "unidad":   prod.unidad_medida,
+            "cantidad": round(m.cantidad),
+            "usuario":  usr.nombre,
+            "motivo":   m.motivo,
+        })
+
+    resultados.sort(key=lambda x: x["fecha"], reverse=True)
+
+    conteos: dict = {"todos": len(resultados)}
+    for r in resultados:
+        t = r["tipo"]
+        conteos[t] = conteos.get(t, 0) + 1
+
+    return {"movimientos": resultados, "conteos": conteos}
+
+
 def reporte_baristas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date):
     """Ranking de baristas: cuadres de llegada y cierres con sus diferencias."""
     desde = datetime.combine(fecha_desde, datetime.min.time())

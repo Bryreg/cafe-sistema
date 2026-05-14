@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { BarChart2, Trash2, Package, ChevronDown, ChevronUp, UserCheck, Clock, AlertTriangle, Download } from 'lucide-react'
+import { BarChart2, ArrowUpDown, Package, ChevronDown, ChevronUp, UserCheck, Clock, AlertTriangle, Download } from 'lucide-react'
 import DifferenceBadge from '../components/DifferenceBadge'
 
 interface Sede { id: number; nombre: string }
@@ -28,7 +28,7 @@ function BtnExcel({ onClick }: { onClick: () => void }) {
   )
 }
 
-type Tab = 'ventas' | 'mermas' | 'inventario' | 'cuadres' | 'turnos'
+type Tab = 'ventas' | 'movimientos' | 'inventario' | 'cuadres' | 'turnos'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 const fmtN = (v: number, dec = 2) => v.toLocaleString('es-CO', { minimumFractionDigits: dec, maximumFractionDigits: dec })
@@ -140,53 +140,59 @@ function TabVentas({ tiendaId }: { tiendaId: number }) {
   )
 }
 
-// ─── Mermas ──────────────────────────────────────────────────────────────────
-interface DetalleItem { fecha: string; cantidad: number; motivo: string; tipo?: string }
-interface FilaMerma { producto_id: number; producto: string; unidad: string; total_cantidad: number; n_registros: number; detalle: DetalleItem[] }
+// ─── Movimientos ─────────────────────────────────────────────────────────────
+interface Movimiento {
+  fecha: string; tipo: string; subtipo: string | null
+  producto: string; unidad: string; cantidad: number
+  usuario: string; motivo: string
+}
 
-function TabMermas({ tiendaId }: { tiendaId: number }) {
+const MOV_CFG: Record<string, { label: string; bg: string; text: string; sign: string }> = {
+  entrada:    { label: 'Entrada',    bg: '#dcfce7', text: '#166534', sign: '+' },
+  ajuste:     { label: 'Ajuste',     bg: '#dbeafe', text: '#1d4ed8', sign: '='  },
+  merma:      { label: 'Merma',      bg: '#fee2e2', text: '#dc2626', sign: '−' },
+  pasteleria: { label: 'Pastelería', bg: '#f3e8ff', text: '#7c3aed', sign: '−' },
+}
+const MOV_SUBTIPO: Record<string, string> = { consumo: 'Consumo', traslado: 'Traslado', 'daño': 'Daño' }
+const FILTROS_MOV = [
+  { key: 'todos',      label: 'Todos'      },
+  { key: 'entrada',    label: 'Entradas'   },
+  { key: 'merma',      label: 'Mermas'     },
+  { key: 'ajuste',     label: 'Ajustes'    },
+  { key: 'pasteleria', label: 'Pastelería' },
+]
+
+function TabMovimientos({ tiendaId }: { tiendaId: number }) {
   const [desde, setDesde] = useState(inicioMes())
   const [hasta, setHasta] = useState(hoy())
-  const [filas, setFilas] = useState<FilaMerma[] | null>(null)
-  const [kpi, setKpi] = useState<KpiMermas | null>(null)
+  const [movimientos, setMovimientos] = useState<Movimiento[] | null>(null)
+  const [conteos, setConteos] = useState<Record<string, number>>({})
+  const [filtro, setFiltro] = useState<string>('todos')
   const [loading, setLoading] = useState(false)
-  const [expanded, setExpanded] = useState<Set<number>>(new Set())
 
   const cargar = async () => {
     setLoading(true)
     try {
-      const params = { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta }
-      const [detRes, kpiRes] = await Promise.all([
-        api.get('/informes/mermas', { params }),
-        api.get('/informes/kpi-mermas', { params }),
-      ])
-      setFilas(detRes.data.filas ?? [])
-      setKpi(kpiRes.data)
-      setExpanded(new Set())
+      const { data } = await api.get('/informes/movimientos', {
+        params: { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta },
+      })
+      setMovimientos(data.movimientos)
+      setConteos(data.conteos)
+      setFiltro('todos')
     } finally { setLoading(false) }
   }
 
-  const toggle = (id: number) => setExpanded(prev => {
-    const s = new Set(prev)
-    s.has(id) ? s.delete(id) : s.add(id)
-    return s
-  })
+  const filtrados = movimientos?.filter(m => filtro === 'todos' || m.tipo === filtro) ?? []
 
   const exportar = () => {
-    if (!filas) return
-    const rows: (string | number | null)[][] = []
-    for (const f of filas) {
-      rows.push([f.producto, f.unidad, f.total_cantidad, f.n_registros, '', ''])
-      for (const d of f.detalle) rows.push(['', '', '', '', d.fecha, d.cantidad, d.motivo])
-    }
-    exportarExcel(`mermas_${desde}_${hasta}`,
-      ['Producto', 'Unidad', 'Total cantidad', 'Registros', 'Fecha detalle', 'Cantidad detalle', 'Motivo'],
-      rows)
+    if (!filtrados.length) return
+    exportarExcel(`movimientos_${desde}_${hasta}`,
+      ['Fecha', 'Tipo', 'Subtipo', 'Producto', 'Unidad', 'Cantidad', 'Usuario', 'Motivo'],
+      filtrados.map(m => [m.fecha, m.tipo, m.subtipo ?? '', m.producto, m.unidad, m.cantidad, m.usuario, m.motivo]))
   }
 
   return (
     <div className="space-y-4">
-      {/* Filtro de fechas */}
       <div className="flex gap-2 flex-wrap items-end">
         <div>
           <label className="text-xs text-gray-500 block mb-1">Desde</label>
@@ -202,160 +208,88 @@ function TabMermas({ tiendaId }: { tiendaId: number }) {
           className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
           {loading ? 'Cargando...' : 'Consultar'}
         </button>
-        {filas && filas.length > 0 && <BtnExcel onClick={exportar} />}
+        {filtrados.length > 0 && <BtnExcel onClick={exportar} />}
       </div>
 
-      {/* KPIs */}
-      {kpi && (
-        <div className="space-y-3">
-          <div className="bg-white border border-gray-200 rounded-xl p-4">
-            <p className="text-xs text-gray-400 mb-1">Registros de merma</p>
-            <p className="text-2xl font-bold font-mono text-gray-800">{kpi.total_registros}</p>
-          </div>
-
-          {Object.keys(kpi.por_tipo).length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-4">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Por tipo</p>
-              <div className="space-y-2">
-                {Object.entries(kpi.por_tipo).map(([tipo, v]) => (
-                  <div key={tipo} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full" style={{ background: TIPO_COLOR[tipo] || '#6b7280' }} />
-                      <span className="text-sm font-medium text-gray-700">{TIPO_LABEL[tipo] || tipo}</span>
-                    </div>
-                    <div className="flex items-center gap-4 text-sm">
-                      <span className="text-gray-400">{v.n_productos} prod.</span>
-                      <span className="font-bold text-gray-800">{v.n} registros</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {kpi.top_productos.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-gray-100">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Top productos con más mermas</p>
-              </div>
-              <div className="divide-y divide-gray-50">
-                {kpi.top_productos.map((p, i) => (
-                  <div key={i} className="px-4 py-3 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-300 font-mono w-4">{i + 1}</span>
-                      <div>
-                        <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
-                        <span className="text-xs px-1.5 py-0.5 rounded font-medium"
-                          style={{ background: TIPO_COLOR[p.tipo] + '22', color: TIPO_COLOR[p.tipo] }}>
-                          {TIPO_LABEL[p.tipo] || p.tipo}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-gray-800 font-mono">{fmtN(p.cantidad, 0)} {p.unidad}</p>
-                      <p className="text-xs text-gray-400">{p.n} {p.n === 1 ? 'registro' : 'registros'}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+      {/* Chips de filtro */}
+      {movimientos !== null && (
+        <div className="flex gap-1.5 flex-wrap">
+          {FILTROS_MOV.filter(f => f.key === 'todos' || (conteos[f.key] ?? 0) > 0).map(f => (
+            <button key={f.key}
+              onClick={() => setFiltro(f.key)}
+              className={`px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
+                filtro === f.key
+                  ? 'bg-gray-800 text-white border-gray-800'
+                  : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
+              }`}>
+              {f.label}{(conteos[f.key] ?? 0) > 0 ? ` (${conteos[f.key]})` : ''}
+            </button>
+          ))}
         </div>
       )}
 
-      {/* Detalle por producto */}
-      {filas !== null && filas.length > 0 && (
-        <>
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Detalle por producto</p>
-          <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
-            {filas.map(f => (
-              <div key={f.producto_id}>
-                <button onClick={() => toggle(f.producto_id)}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left">
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-gray-800">{f.producto}</p>
-                    <p className="text-xs text-gray-400">{f.n_registros} {f.n_registros === 1 ? 'registro' : 'registros'}</p>
-                  </div>
-                  <span className="text-sm font-bold text-red-600">{fmtN(f.total_cantidad, 0)} {f.unidad}</span>
-                  {expanded.has(f.producto_id) ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
-                </button>
-                {expanded.has(f.producto_id) && (
-                  <div className="bg-gray-50 border-t border-gray-100 divide-y divide-gray-100">
-                    {f.detalle.map((d, i) => (
-                      <div key={i} className="flex items-center gap-3 px-6 py-2">
-                        <p className="text-xs text-gray-400 w-28 shrink-0">{d.fecha}</p>
-                        <p className="text-xs font-semibold text-gray-700 w-20 shrink-0">{fmtN(d.cantidad, 0)} {f.unidad}</p>
-                        {d.tipo && (
-                          <span className="text-xs px-1.5 py-0.5 rounded font-semibold shrink-0"
-                            style={{ background: (TIPO_COLOR[d.tipo] ?? '#6b7280') + '22', color: TIPO_COLOR[d.tipo] ?? '#6b7280' }}>
-                            {TIPO_LABEL[d.tipo] ?? d.tipo}
-                          </span>
-                        )}
-                        <p className="text-xs text-gray-500 truncate">{d.motivo}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
+      {/* Timeline */}
+      {filtrados.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-50">
+          {filtrados.map((m, i) => {
+            const cfg = MOV_CFG[m.tipo] ?? { label: m.tipo, bg: '#f3f4f6', text: '#374151', sign: '' }
+            return (
+              <div key={i} className="px-4 py-3 flex items-start gap-3">
+                <div className="shrink-0 pt-0.5">
+                  <span className="text-xs px-2 py-0.5 rounded-full font-semibold whitespace-nowrap"
+                    style={{ background: cfg.bg, color: cfg.text }}>
+                    {cfg.label}{m.subtipo ? ` · ${MOV_SUBTIPO[m.subtipo] ?? m.subtipo}` : ''}
+                  </span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-gray-800">{m.producto}</p>
+                  <p className="text-xs text-gray-400">{m.fecha} · {m.usuario}</p>
+                  {m.motivo && <p className="text-xs text-gray-500 truncate">{m.motivo}</p>}
+                </div>
+                <span className="text-sm font-bold font-mono shrink-0" style={{ color: cfg.text }}>
+                  {cfg.sign}{m.cantidad} {m.unidad}
+                </span>
               </div>
-            ))}
-          </div>
-        </>
+            )
+          })}
+        </div>
       )}
 
-      {filas !== null && filas.length === 0 && !loading && (
-        <p className="text-sm text-gray-400 text-center py-6">Sin mermas en el período.</p>
+      {movimientos !== null && filtrados.length === 0 && !loading && (
+        <p className="text-sm text-gray-400 text-center py-6">Sin movimientos en el período.</p>
       )}
     </div>
   )
 }
 
-// ─── Inventario (Rotación + Consumo detallado) ───────────────────────────────
-interface FilaConsumo { producto_id: number; producto: string; unidad: string; total_salida: number; n_movimientos: number; detalle: DetalleItem[] }
-
+// ─── Inventario (Rotación de stock) ─────────────────────────────────────────
 function TabInventario({ tiendaId }: { tiendaId: number }) {
   const [desde, setDesde] = useState(inicioMes())
   const [hasta, setHasta] = useState(hoy())
-  const [filas, setFilas] = useState<FilaConsumo[] | null>(null)
   const [rotFilas, setRotFilas] = useState<FilaRotacion[] | null>(null)
   const [resumen, setResumen] = useState<ResumenRotacion | null>(null)
   const [filtroEstado, setFiltroEstado] = useState<string>('todos')
   const [loading, setLoading] = useState(false)
-  const [expanded, setExpanded] = useState<Set<number>>(new Set())
 
   const cargar = async () => {
     setLoading(true)
     try {
-      const params = { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta }
-      const [consumoRes, rotRes] = await Promise.all([
-        api.get('/informes/inventario-consumido', { params }),
-        api.get('/informes/rotacion', { params }),
-      ])
-      setFilas(consumoRes.data.filas ?? [])
-      setRotFilas(rotRes.data.filas)
-      setResumen(rotRes.data.resumen)
-      setExpanded(new Set())
+      const { data } = await api.get('/informes/rotacion', {
+        params: { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta },
+      })
+      setRotFilas(data.filas)
+      setResumen(data.resumen)
       setFiltroEstado('todos')
     } finally { setLoading(false) }
   }
 
-  const toggle = (id: number) => setExpanded(prev => {
-    const s = new Set(prev)
-    s.has(id) ? s.delete(id) : s.add(id)
-    return s
-  })
-
   const rotFiltradas = rotFilas?.filter(f => filtroEstado === 'todos' || f.estado === filtroEstado) ?? []
 
   const exportar = () => {
-    if (!filas) return
-    const rows: (string | number | null)[][] = []
-    for (const f of filas) {
-      rows.push([f.producto, f.unidad, f.total_salida, f.n_movimientos, '', '', ''])
-      for (const d of f.detalle) rows.push(['', '', '', '', d.fecha, d.cantidad, d.motivo || ''])
-    }
+    if (!rotFilas) return
     exportarExcel(`inventario_${desde}_${hasta}`,
-      ['Producto', 'Unidad', 'Total salida', 'Movimientos', 'Fecha detalle', 'Cantidad detalle', 'Motivo'],
-      rows)
+      ['Producto', 'Unidad', 'Stock actual', 'Stock mínimo', 'Entradas', 'Salidas', 'Rotación', 'Estado'],
+      rotFilas.map(f => [f.producto, f.unidad, f.stock_actual, f.stock_minimo, f.entradas, f.salidas, f.rotacion ?? '', f.estado]))
   }
 
   return (
@@ -375,13 +309,11 @@ function TabInventario({ tiendaId }: { tiendaId: number }) {
           className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
           {loading ? 'Cargando...' : 'Consultar'}
         </button>
-        {filas && filas.length > 0 && <BtnExcel onClick={exportar} />}
+        {rotFilas && rotFilas.length > 0 && <BtnExcel onClick={exportar} />}
       </div>
 
-      {/* ── Rotación ── */}
       {resumen && (
         <>
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Rotación de stock</p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
               { key: 'activos',        label: 'Activos',        val: resumen.activos,        color: 'text-green-700' },
@@ -450,40 +382,7 @@ function TabInventario({ tiendaId }: { tiendaId: number }) {
         </>
       )}
 
-      {/* ── Consumo detallado ── */}
-      {filas !== null && filas.length > 0 && (
-        <>
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2">Consumo detallado</p>
-          <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
-            {filas.map(f => (
-              <div key={f.producto_id}>
-                <button onClick={() => toggle(f.producto_id)}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left">
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-gray-800">{f.producto}</p>
-                    <p className="text-xs text-gray-400">{f.n_movimientos} {f.n_movimientos === 1 ? 'movimiento' : 'movimientos'}</p>
-                  </div>
-                  <span className="text-sm font-bold text-blue-600">{fmtN(f.total_salida, 0)} {f.unidad}</span>
-                  {expanded.has(f.producto_id) ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
-                </button>
-                {expanded.has(f.producto_id) && (
-                  <div className="bg-gray-50 border-t border-gray-100 divide-y divide-gray-100">
-                    {f.detalle.map((d, i) => (
-                      <div key={i} className="flex items-center gap-3 px-6 py-2">
-                        <p className="text-xs text-gray-400 w-36 shrink-0">{d.fecha}</p>
-                        <p className="text-xs font-semibold text-gray-700 w-20 shrink-0">{fmtN(d.cantidad, 0)} {f.unidad}</p>
-                        <p className="text-xs text-gray-500 truncate">{d.motivo || '—'}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-
-      {filas !== null && filas.length === 0 && !loading && (
+      {rotFilas !== null && rotFilas.length === 0 && !loading && (
         <p className="text-sm text-gray-400 text-center py-6">Sin movimientos en el período.</p>
       )}
     </div>
@@ -783,17 +682,7 @@ function TabTurnos({ tiendaId }: { tiendaId: number }) {
   )
 }
 
-// ─── KPI Mermas (tipos y colores, usados en TabMermas) ────────────────────────
-interface KpiMermas {
-  total_registros: number; total_ventas: number; tiene_ventas: boolean
-  por_tipo: Record<string, { n: number; n_productos: number }>
-  top_productos: { nombre: string; unidad: string; n: number; cantidad: number; tipo: string }[]
-}
-
-const TIPO_COLOR: Record<string, string> = { consumo: '#ea580c', traslado: '#2563eb', daño: '#dc2626' }
-const TIPO_LABEL: Record<string, string> = { consumo: 'Consumo', traslado: 'Traslado', daño: 'Daño' }
-
-// ─── Rotación ─────────────────────────────────────────────────────────────────
+// ─── Rotación (interfaces usadas por TabInventario) ───────────────────────────
 interface FilaRotacion {
   producto_id: number; producto: string; categoria: string; unidad: string
   stock_actual: number; stock_minimo: number; entradas: number; salidas: number
@@ -833,11 +722,11 @@ export default function Informes() {
   )
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'ventas',     label: 'Ventas',     icon: <BarChart2 size={14} /> },
-    { id: 'turnos',     label: 'Turnos',     icon: <Clock size={14} /> },
-    { id: 'cuadres',    label: 'Cuadres',    icon: <UserCheck size={14} /> },
-    { id: 'mermas',     label: 'Mermas',     icon: <Trash2 size={14} /> },
-    { id: 'inventario', label: 'Inventario', icon: <Package size={14} /> },
+    { id: 'ventas',       label: 'Ventas',       icon: <BarChart2 size={14} /> },
+    { id: 'turnos',       label: 'Turnos',       icon: <Clock size={14} /> },
+    { id: 'cuadres',      label: 'Cuadres',      icon: <UserCheck size={14} /> },
+    { id: 'movimientos',  label: 'Movimientos',  icon: <ArrowUpDown size={14} /> },
+    { id: 'inventario',   label: 'Inventario',   icon: <Package size={14} /> },
   ]
 
   return (
@@ -874,11 +763,11 @@ export default function Informes() {
         ))}
       </div>
 
-      {tab === 'ventas'     && <TabVentas     tiendaId={tiendaId} />}
-      {tab === 'turnos'     && <TabTurnos     tiendaId={tiendaId} />}
-      {tab === 'cuadres'    && <TabCuadres    tiendaId={tiendaId} />}
-      {tab === 'mermas'     && <TabMermas     tiendaId={tiendaId} />}
-      {tab === 'inventario' && <TabInventario tiendaId={tiendaId} />}
+      {tab === 'ventas'      && <TabVentas      tiendaId={tiendaId} />}
+      {tab === 'turnos'      && <TabTurnos      tiendaId={tiendaId} />}
+      {tab === 'cuadres'     && <TabCuadres     tiendaId={tiendaId} />}
+      {tab === 'movimientos' && <TabMovimientos tiendaId={tiendaId} />}
+      {tab === 'inventario'  && <TabInventario  tiendaId={tiendaId} />}
     </div>
   )
 }

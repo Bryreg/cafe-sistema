@@ -208,15 +208,9 @@ function TabMermas({ tiendaId }: { tiendaId: number }) {
       {/* KPIs */}
       {kpi && (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <p className="text-xs text-gray-400 mb-1">Registros de merma</p>
-              <p className="text-2xl font-bold font-mono text-gray-800">{kpi.total_registros}</p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <p className="text-xs text-gray-400 mb-1">Ventas del período</p>
-              <p className="text-xl font-bold font-mono text-gray-800">{fmt(kpi.total_ventas)}</p>
-            </div>
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <p className="text-xs text-gray-400 mb-1">Registros de merma</p>
+            <p className="text-2xl font-bold font-mono text-gray-800">{kpi.total_registros}</p>
           </div>
 
           {Object.keys(kpi.por_tipo).length > 0 && (

@@ -8,7 +8,7 @@ from app.models.models import Base
 from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
                           dashboard, ventas, conteos, mermas, solicitudes,
                           informes, audit, alertas, notificaciones, limpieza,
-                          facturas, compras, comunicados)
+                          facturas, compras, comunicados, pedidos)
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -59,6 +59,9 @@ with engine.connect() as _conn:
         "ALTER TABLE conteos_compras ADD COLUMN usuario_ajuste_id INTEGER",
         # Integridad relacional: consignaciones ligadas a un turno específico
         "ALTER TABLE consignaciones ADD COLUMN caja_turno_id INTEGER REFERENCES caja_turnos(id)",
+        # Panel de pedidos: proveedor fijo y tiempo de entrega por producto
+        "ALTER TABLE productos ADD COLUMN proveedor VARCHAR(100)",
+        "ALTER TABLE productos ADD COLUMN lead_time_dias INTEGER DEFAULT 2",
     ]:
         try:
             _conn.execute(_text(_sql))
@@ -318,6 +321,76 @@ def _migrate_productos_reales():
 
 _migrate_productos_reales()
 
+
+# ─── Migración de proveedores y lead times (idempotente) ──────────────────────
+def _migrate_proveedores():
+    """
+    Asigna proveedor fijo y lead_time_dias a los productos conocidos.
+    Para el resto fija el lead_time según categoría.
+    Idempotente — siempre sobreescribe los fijos, respeta customizaciones del resto.
+    """
+    from app.models.models import Producto, CategoriaProductoEnum
+    db = SessionLocal()
+    try:
+        FIJOS = {
+            # Delitas — entrega al día siguiente si se pide antes del mediodía
+            "Pastel Pollo":           ("Delitas", 1),
+            "Pastel Carne":           ("Delitas", 1),
+            "Pastel Queso":           ("Delitas", 1),
+            "Dedo de Queso":          ("Delitas", 1),
+            "Wafles Pandebono":       ("Delitas", 1),
+            "Croissant Queso":        ("Delitas", 1),
+            "Croissant Chocolate":    ("Delitas", 1),
+            "Croissant Mantequilla":  ("Delitas", 1),
+            # Wilenses
+            "Almojábanas":            ("Wilenses", 1),
+            # María María — tortas y repostería
+            "Torta Chocolate":        ("María María", 1),
+            "Torta Zanahoria":        ("María María", 1),
+            "Torta Naranja":          ("María María", 1),
+            "Torta Red Velvet":       ("María María", 1),
+            "Brownies":               ("María María", 1),
+            "Cake Zanahoria":         ("María María", 1),
+            "Cake Banano":            ("María María", 1),
+            "Alfajor":                ("María María", 1),
+            # Maxipulpas
+            "Pulpa Mango":            ("Maxipulpas", 2),
+            "Pulpa Lulo":             ("Maxipulpas", 2),
+            "Pulpa Mora":             ("Maxipulpas", 2),
+            "Pulpa Limón":            ("Maxipulpas", 2),
+        }
+        # Productos con entrega lenta (helados, saborizantes, licores, desechables)
+        LENTOS = {
+            "Helado Vainilla", "Helado Chocolate",
+            "Saborizante Vainilla", "Saborizante Canela", "Saborizante Macadamia",
+            "Saborizante Frutos Amarillos", "Saborizante Kiwi Fresa",
+            "Licor Amaretto", "Licor Baileys", "Licor Black & White",
+        }
+        for p in db.query(Producto).all():
+            if p.nombre in FIJOS:
+                p.proveedor, p.lead_time_dias = FIJOS[p.nombre]
+            elif p.proveedor:
+                pass  # ya tiene proveedor asignado manualmente → no tocar
+            elif p.nombre in LENTOS:
+                p.lead_time_dias = 5
+            elif p.categoria == CategoriaProductoEnum.pasteleria:
+                p.lead_time_dias = 1
+            elif p.categoria == CategoriaProductoEnum.insumo:
+                p.lead_time_dias = 5
+            else:  # bebida
+                p.lead_time_dias = 2
+        db.commit()
+        logger.info("Migración proveedores/lead_time completada.")
+    except Exception as exc:
+        db.rollback()
+        logger.error("Error en migración proveedores: %s", exc)
+    finally:
+        db.close()
+
+
+_migrate_proveedores()
+
+
 app = FastAPI(title="Sistema Café", version="1.0.0")
 
 app.add_middleware(
@@ -349,6 +422,7 @@ app.include_router(limpieza.router, prefix="/api/v1")
 app.include_router(facturas.router, prefix="/api/v1")
 app.include_router(compras.router, prefix="/api/v1")
 app.include_router(comunicados.router, prefix="/api/v1")
+app.include_router(pedidos.router, prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────
 _frontend_dist = os.path.abspath(

@@ -155,6 +155,8 @@ class Producto(Base):
     categoria = Column(SAEnum(CategoriaProductoEnum), nullable=False)
     unidad_medida = Column(String(30), nullable=False)
     controla_stock = Column(Boolean, default=True)
+    proveedor = Column(String(100), nullable=True)
+    lead_time_dias = Column(Integer, default=2, server_default="2")
     inventarios = relationship("Inventario", back_populates="producto")
     movimientos_inv = relationship("MovimientoInventario", back_populates="producto")
     pastelerias = relationship("PasteleriaDiaria", back_populates="producto")

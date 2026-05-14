@@ -8,7 +8,8 @@ from app.models.models import Base
 from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
                           dashboard, ventas, conteos, mermas, solicitudes,
                           informes, audit, alertas, notificaciones, limpieza,
-                          facturas, compras, comunicados, pedidos, mantenimientos)
+                          facturas, compras, comunicados, pedidos, mantenimientos,
+                          auditorias)
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -424,6 +425,7 @@ app.include_router(compras.router, prefix="/api/v1")
 app.include_router(comunicados.router, prefix="/api/v1")
 app.include_router(pedidos.router, prefix="/api/v1")
 app.include_router(mantenimientos.router, prefix="/api/v1")
+app.include_router(auditorias.router, prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────
 _frontend_dist = os.path.abspath(

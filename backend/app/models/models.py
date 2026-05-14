@@ -414,6 +414,81 @@ class Mantenimiento(Base):
     usuario = relationship("Usuario")
 
 
+class CausaAuditoriaEnum(str, enum.Enum):
+    acceso_no_autorizado = "acceso_no_autorizado"
+    error_conteo         = "error_conteo"
+    dano                 = "dano"
+    traslado_no_registrado = "traslado_no_registrado"
+    otro                 = "otro"
+
+
+class EstadoAuditoriaEnum(str, enum.Enum):
+    abierta  = "abierta"
+    cerrada  = "cerrada"
+
+
+class AuditoriaInventario(Base):
+    """Auditoría ad-hoc de inventario — conteo físico puntual con análisis de diferencias."""
+    __tablename__ = "auditorias_inventario"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
+    fecha = Column(DateTime, nullable=False)
+    descripcion = Column(String(300), nullable=False)
+    causa = Column(SAEnum(CausaAuditoriaEnum), nullable=True)
+    observaciones = Column(Text, nullable=True)
+    acciones_tomadas = Column(Text, nullable=True)
+    estado = Column(SAEnum(EstadoAuditoriaEnum), default=EstadoAuditoriaEnum.abierta)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    tienda = relationship("Tienda")
+    usuario = relationship("Usuario")
+    items = relationship("AuditoriaInventarioItem", back_populates="auditoria",
+                         cascade="all, delete-orphan")
+
+
+class AuditoriaInventarioItem(Base):
+    __tablename__ = "auditorias_inventario_items"
+    id = Column(Integer, primary_key=True)
+    auditoria_id = Column(Integer, ForeignKey("auditorias_inventario.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
+    cantidad_sistema = Column(Float, nullable=False)
+    cantidad_real = Column(Float, nullable=False)
+    diferencia = Column(Float, nullable=False)
+    observacion = Column(String(200), nullable=True)
+    auditoria = relationship("AuditoriaInventario", back_populates="items")
+    producto = relationship("Producto")
+
+
+class AuditoriaLimpieza(Base):
+    """Cronograma semanal de aseo — basado en el formato físico Cronograma de Aseo."""
+    __tablename__ = "auditorias_limpieza"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
+    semana = Column(String(10), nullable=False)       # "2026-W07"
+    fecha_inicio = Column(DateTime, nullable=False)   # lunes de la semana
+    observaciones = Column(Text, nullable=True)
+    vobo = Column(Boolean, default=False)
+    vobo_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    vobo_fecha = Column(DateTime, nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    tienda = relationship("Tienda")
+    usuario = relationship("Usuario", foreign_keys=[usuario_id])
+    vobo_usuario = relationship("Usuario", foreign_keys=[vobo_por_id])
+    items = relationship("AuditoriaLimpiezaItem", back_populates="auditoria",
+                         cascade="all, delete-orphan")
+
+
+class AuditoriaLimpiezaItem(Base):
+    __tablename__ = "auditorias_limpieza_items"
+    id = Column(Integer, primary_key=True)
+    auditoria_id = Column(Integer, ForeignKey("auditorias_limpieza.id"), nullable=False)
+    tarea_key = Column(String(50), nullable=False)
+    realizado = Column(Boolean, default=False)
+    realizado_por = Column(String(100), nullable=True)
+    auditoria = relationship("AuditoriaLimpieza", back_populates="items")
+
+
 class AuditLog(Base):
     """Etapa 1: Registro inmutable de acciones críticas del sistema."""
     __tablename__ = "audit_log"

@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import {
   Coffee, LayoutDashboard, Package, Banknote, LogOut, Inbox,
-  BarChart2, ShoppingCart, Bell, Users, Menu, X, ClipboardList, Wrench,
+  BarChart2, ShoppingCart, Bell, Users, Menu, X, ClipboardList, Wrench, ClipboardCheck,
 } from 'lucide-react'
 
 const NAV_ADMIN = [
@@ -13,6 +13,7 @@ const NAV_ADMIN = [
   { to: '/compras',         label: 'Compras',          icon: ShoppingCart },
   { to: '/consignaciones',  label: 'Consignaciones',   icon: Banknote },
   { to: '/mantenimientos',  label: 'Mantenimientos',   icon: Wrench },
+  { to: '/auditorias',      label: 'Auditorías',       icon: ClipboardCheck },
   { to: '/comunicados',     label: 'Comunicados',      icon: Bell },
   { to: '/bandeja',         label: 'Bandeja',          icon: Inbox },
   { to: '/informes',        label: 'Informes',         icon: BarChart2 },

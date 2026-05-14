@@ -405,7 +405,6 @@ class Mantenimiento(Base):
     titulo = Column(String(200), nullable=False)
     descripcion = Column(Text, nullable=True)
     fecha_realizado = Column(DateTime, nullable=False)
-    fecha_proximo = Column(DateTime, nullable=True)
     costo = Column(Float, nullable=True)
     tecnico = Column(String(150), nullable=True)
     imagen_url = Column(String(300), nullable=True)

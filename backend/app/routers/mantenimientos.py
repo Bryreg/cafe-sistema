@@ -18,7 +18,6 @@ async def crear(
     titulo: str = Form(...),
     fecha_realizado: datetime = Form(...),
     descripcion: Optional[str] = Form(None),
-    fecha_proximo: Optional[datetime] = Form(None),
     costo: Optional[float] = Form(None),
     tecnico: Optional[str] = Form(None),
     imagen: Optional[UploadFile] = File(None),
@@ -30,8 +29,7 @@ async def crear(
     return svc.crear(
         db, tienda_id=tienda_id, usuario_id=user.id, tipo=tipo,
         titulo=titulo, fecha_realizado=fecha_realizado,
-        descripcion=descripcion, fecha_proximo=fecha_proximo,
-        costo=costo, tecnico=tecnico, imagen_url=imagen_url,
+        descripcion=descripcion, costo=costo, tecnico=tecnico, imagen_url=imagen_url,
     )
 
 
@@ -44,17 +42,6 @@ def listar(
 ):
     ensure_tienda_access(user, tienda_id)
     return svc.listar(db, tienda_id, tipo)
-
-
-@router.get("/proximos")
-def proximos(
-    tienda_id: Optional[int] = Query(None),
-    db: Session = Depends(get_db),
-    user: Usuario = Depends(require_admin),
-):
-    if tienda_id:
-        ensure_tienda_access(user, tienda_id)
-    return svc.proximos(db, tienda_id)
 
 
 @router.delete("/{mantenimiento_id}")

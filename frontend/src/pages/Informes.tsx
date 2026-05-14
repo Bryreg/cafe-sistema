@@ -763,11 +763,11 @@ export default function Informes() {
         ))}
       </div>
 
-      {tab === 'ventas'      && <TabVentas      tiendaId={tiendaId} />}
-      {tab === 'turnos'      && <TabTurnos      tiendaId={tiendaId} />}
-      {tab === 'cuadres'     && <TabCuadres     tiendaId={tiendaId} />}
-      {tab === 'movimientos' && <TabMovimientos tiendaId={tiendaId} />}
-      {tab === 'inventario'  && <TabInventario  tiendaId={tiendaId} />}
+      {tab === 'ventas'      && <TabVentas      key={tiendaId} tiendaId={tiendaId} />}
+      {tab === 'turnos'      && <TabTurnos      key={tiendaId} tiendaId={tiendaId} />}
+      {tab === 'cuadres'     && <TabCuadres     key={tiendaId} tiendaId={tiendaId} />}
+      {tab === 'movimientos' && <TabMovimientos key={tiendaId} tiendaId={tiendaId} />}
+      {tab === 'inventario'  && <TabInventario  key={tiendaId} tiendaId={tiendaId} />}
     </div>
   )
 }

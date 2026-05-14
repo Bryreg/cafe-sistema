@@ -70,14 +70,22 @@ export default function Comunicados() {
   }
 
   const toggleActivo = async (c: Comunicado) => {
-    await api.patch(`/comunicados/${c.id}`, { activo: !c.activo })
-    cargar()
+    try {
+      await api.patch(`/comunicados/${c.id}`, { activo: !c.activo })
+      cargar()
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'Error al actualizar')
+    }
   }
 
   const eliminar = async (id: number) => {
     if (!confirm('¿Eliminar este comunicado?')) return
-    await api.delete(`/comunicados/${id}`)
-    cargar()
+    try {
+      await api.delete(`/comunicados/${id}`)
+      cargar()
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'Error al eliminar')
+    }
   }
 
   const activos   = comunicados.filter(c => c.activo)

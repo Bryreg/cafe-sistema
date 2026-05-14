@@ -309,6 +309,8 @@ export default function PedidosAdmin() {
   // Cargar sugerencia cuando cambia la sede
   useEffect(() => {
     if (tiendaId === null) return
+    setCantidades({})  // Limpiar cantidades anteriores inmediatamente para evitar mostrar datos de otra sede
+    setData(null)
     setLoading(true)
     api.get('/pedidos/sugerencia', { params: { tienda_id: tiendaId } })
       .then(r => {

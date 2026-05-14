@@ -52,21 +52,25 @@ export default function Consignaciones() {
 
   const load = async () => {
     if (!user?.tienda_id) return
-    const [pendRes, listaRes] = await Promise.all([
-      api.get(`/consignaciones/pendiente/${user.tienda_id}`),
-      api.get(`/consignaciones/tienda/${user.tienda_id}`),
-    ])
-    const p: Pendiente = pendRes.data
-    setPendiente(p)
-    setLista(listaRes.data)
-    if (p.total_pendiente > 0) setValor(String(p.total_pendiente))
+    try {
+      const [pendRes, listaRes] = await Promise.all([
+        api.get(`/consignaciones/pendiente/${user.tienda_id}`),
+        api.get(`/consignaciones/tienda/${user.tienda_id}`),
+      ])
+      const p: Pendiente = pendRes.data
+      setPendiente(p)
+      setLista(listaRes.data)
+      // Pre-llenar solo si el campo está vacío (no pisar lo que el usuario esté editando)
+      if (p.total_pendiente > 0) setValor(prev => prev !== '' ? prev : String(p.total_pendiente))
+    } catch { /* silencioso */ }
   }
 
-  useEffect(() => { load() }, [user])
+  useEffect(() => { load() }, [user?.tienda_id])
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
     if (!f) return
+    setPreview(prev => { if (prev) URL.revokeObjectURL(prev); return null })
     setArchivo(f)
     setPreview(URL.createObjectURL(f))
   }
@@ -79,7 +83,9 @@ export default function Consignaciones() {
       form.append('valor', valor)
       if (archivo) form.append('imagen', archivo)
       await api.post('/consignaciones/', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      if (preview) URL.revokeObjectURL(preview)
       setValor(''); setArchivo(null); setPreview(null)
+      if (fileRef.current) fileRef.current.value = ''
       setSaved(true); setTimeout(() => setSaved(false), 3000)
       load()
     } catch (e: any) {
@@ -223,7 +229,7 @@ export default function Consignaciones() {
               <div className="relative">
                 <img src={preview} alt="preview" className="w-full h-36 object-cover rounded-xl border-2 border-amber-300" />
                 <button
-                  onClick={() => { setArchivo(null); setPreview(null) }}
+                  onClick={() => { if (preview) URL.revokeObjectURL(preview); setArchivo(null); setPreview(null); if (fileRef.current) fileRef.current.value = '' }}
                   className="absolute top-2 right-2 bg-black/60 text-white rounded-full w-7 h-7 flex items-center justify-center"
                 >
                   <X size={13} />

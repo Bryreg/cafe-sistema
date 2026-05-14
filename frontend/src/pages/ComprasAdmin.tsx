@@ -77,7 +77,8 @@ export default function ComprasAdmin() {
     try {
       const { data } = await api.get('/inventario/admin/resumen')
       setTiendas(data.tiendas)
-      if (data.tiendas.length > 0 && !tiendaPanel) setTiendaPanel(data.tiendas[0].id)
+      // Usar forma funcional para evitar closure sobre tiendaPanel del primer render
+      setTiendaPanel(prev => prev ?? (data.tiendas[0]?.id ?? null))
     } catch { /* silencioso */ }
   }, [])
 

@@ -24,6 +24,8 @@ def get_current_user(
     # Si el token contiene tienda_id (sede seleccionada al iniciar turno), usarla
     tienda_override = payload.get("tienda_id")
     if tienda_override is not None:
+        # Expulsar del session antes de mutar para evitar persistencia accidental en DB
+        db.expunge(user)
         user.tienda_id = int(tienda_override)
     return user
 

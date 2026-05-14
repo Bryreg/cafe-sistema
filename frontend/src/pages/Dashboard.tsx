@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
@@ -76,16 +76,20 @@ export default function Dashboard() {
     }).catch(() => null).finally(() => setLoading(false))
   }, [])
 
-  const loadResumen = useCallback((tid: number) => {
+  useEffect(() => {
     setResumen(null)
-    api.get(`/dashboard/${tid}/admin-resumen`).then(r => setResumen(r.data)).catch(() => null)
-  }, [])
-
-  useEffect(() => { loadResumen(tiendaId) }, [tiendaId, loadResumen])
+    const ctrl = new AbortController()
+    api.get(`/dashboard/${tiendaId}/admin-resumen`, { signal: ctrl.signal })
+      .then(r => setResumen(r.data)).catch(() => null)
+    return () => ctrl.abort()
+  }, [tiendaId])
 
   useEffect(() => {
     setPendienteConsig(null)
-    api.get(`/consignaciones/pendiente/${tiendaId}`).then(r => setPendienteConsig(r.data)).catch(() => null)
+    const ctrl = new AbortController()
+    api.get(`/consignaciones/pendiente/${tiendaId}`, { signal: ctrl.signal })
+      .then(r => setPendienteConsig(r.data)).catch(() => null)
+    return () => ctrl.abort()
   }, [tiendaId])
 
   const active = dashData[tiendaId] ?? null

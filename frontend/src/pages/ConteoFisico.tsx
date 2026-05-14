@@ -81,18 +81,16 @@ export default function ConteoFisico() {
     </BaristaLayout>
   )
 
-  if (turno.tiene_conteo_apertura && tipo === 'apertura') {
-    if (turno.tiene_conteo_cierre) {
-      return (
-        <BaristaLayout title="Conteos">
-        <div className="space-y-4">
-          <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
-            Ambos conteos del turno fueron completados ✓
-          </div>
+  if (turno.tiene_conteo_apertura && turno.tiene_conteo_cierre) {
+    return (
+      <BaristaLayout title="Conteos">
+      <div className="space-y-4">
+        <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
+          Ambos conteos del turno fueron completados ✓
         </div>
-        </BaristaLayout>
-      )
-    }
+      </div>
+      </BaristaLayout>
+    )
   }
 
   if (tipo === 'cierre' && !turno.tiene_ventas) return (

@@ -147,6 +147,7 @@ export default function Bandeja() {
   const [sencillas, setSencillas] = useState<Sencilla[]>([])
   const [loading, setLoading] = useState(true)
   const [editando, setEditando] = useState<number | null>(null)
+  const [procesando, setProcesando] = useState<number | null>(null)
 
   const tienda_id = user?.tienda_id
 
@@ -169,20 +170,32 @@ export default function Bandeja() {
   useEffect(() => { load() }, [tienda_id])
 
   const accionPedido = async (id: number, accion: 'aprobar' | 'rechazar') => {
-    await api.patch(`/solicitudes/pedido/${id}/${accion}`)
-    load()
+    if (procesando !== null) return
+    setProcesando(id)
+    try {
+      await api.patch(`/solicitudes/pedido/${id}/${accion}`)
+      await load()
+    } finally { setProcesando(null) }
   }
 
   const aprobarSencilla = async (id: number, detalle: string, monto: number) => {
-    await api.patch(`/solicitudes/sencilla/${id}/aprobar`, { detalle, monto_solicitado: monto })
-    setEditando(null)
-    load()
+    if (procesando !== null) return
+    setProcesando(id)
+    try {
+      await api.patch(`/solicitudes/sencilla/${id}/aprobar`, { detalle, monto_solicitado: monto })
+      setEditando(null)
+      await load()
+    } finally { setProcesando(null) }
   }
 
   const rechazarSencilla = async (id: number) => {
-    await api.patch(`/solicitudes/sencilla/${id}/rechazar`)
-    setEditando(null)
-    load()
+    if (procesando !== null) return
+    setProcesando(id)
+    try {
+      await api.patch(`/solicitudes/sencilla/${id}/rechazar`)
+      setEditando(null)
+      await load()
+    } finally { setProcesando(null) }
   }
 
   const estadoBadge = (estado: string) => (
@@ -247,11 +260,13 @@ export default function Bandeja() {
                   {p.estado === 'pendiente' && (
                     <div className="flex gap-2 mt-2">
                       <button onClick={() => accionPedido(p.id, 'aprobar')}
-                        className="flex items-center gap-1 text-xs bg-green-100 text-green-700 hover:bg-green-200 px-3 py-1.5 rounded-lg font-medium">
-                        <CheckCircle2 size={12} /> Aprobar
+                        disabled={procesando !== null}
+                        className="flex items-center gap-1 text-xs bg-green-100 text-green-700 hover:bg-green-200 disabled:opacity-50 px-3 py-1.5 rounded-lg font-medium">
+                        <CheckCircle2 size={12} /> {procesando === p.id ? '...' : 'Aprobar'}
                       </button>
                       <button onClick={() => accionPedido(p.id, 'rechazar')}
-                        className="flex items-center gap-1 text-xs bg-red-100 text-red-700 hover:bg-red-200 px-3 py-1.5 rounded-lg font-medium">
+                        disabled={procesando !== null}
+                        className="flex items-center gap-1 text-xs bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 px-3 py-1.5 rounded-lg font-medium">
                         <XCircle size={12} /> Rechazar
                       </button>
                     </div>
@@ -323,17 +338,20 @@ export default function Bandeja() {
                     {s.estado === 'pendiente' && editando !== s.id && (
                       <div className="flex gap-2 mt-3">
                         <button onClick={() => rechazarSencilla(s.id)}
-                          className="flex items-center gap-1 text-xs bg-red-100 text-red-700 hover:bg-red-200 px-3 py-2 rounded-lg font-medium">
+                          disabled={procesando !== null}
+                          className="flex items-center gap-1 text-xs bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 px-3 py-2 rounded-lg font-medium">
                           <XCircle size={12} /> Rechazar
                         </button>
                         <button onClick={() => setEditando(s.id)}
-                          className="flex items-center gap-1 text-xs bg-amber-100 text-amber-700 hover:bg-amber-200 px-3 py-2 rounded-lg font-medium">
+                          disabled={procesando !== null}
+                          className="flex items-center gap-1 text-xs bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-50 px-3 py-2 rounded-lg font-medium">
                           <Pencil size={12} /> Cambiar
                         </button>
                         <button
                           onClick={() => aprobarSencilla(s.id, s.detalle ?? '[]', s.monto_solicitado)}
-                          className="flex-1 flex items-center justify-center gap-1 text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg font-semibold">
-                          <CheckCircle2 size={12} /> Aprobar
+                          disabled={procesando !== null}
+                          className="flex-1 flex items-center justify-center gap-1 text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg font-semibold">
+                          <CheckCircle2 size={12} /> {procesando === s.id ? '...' : 'Aprobar'}
                         </button>
                       </div>
                     )}

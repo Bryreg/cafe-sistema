@@ -50,7 +50,7 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
     base_sistema = ultimo.efectivo_final_real if ultimo and ultimo.efectivo_final_real is not None else 0.0
     diferencia = base_real - base_sistema
 
-    if diferencia != 0 and not justificacion:
+    if round(diferencia, 2) != 0 and not justificacion:
         raise HTTPException(
             status_code=400,
             detail=f"Diferencia de ${diferencia:,.0f} detectada. Se requiere justificación."
@@ -120,7 +120,7 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
     # Cuadre datáfono: Bold vs Siigo tarjeta
     diferencia_tarjeta = (datafono_real - turno.total_tarjeta) if datafono_real is not None else None
 
-    hay_diff = diferencia_cierre != 0 or (diferencia_tarjeta is not None and diferencia_tarjeta != 0)
+    hay_diff = round(diferencia_cierre, 2) != 0 or (diferencia_tarjeta is not None and round(diferencia_tarjeta, 2) != 0)
     if hay_diff and not justificacion:
         raise HTTPException(
             status_code=400,
@@ -146,7 +146,7 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
                        "justificacion": justificacion},
     )
     # Etapa 7: notificación si hay diferencia
-    if diferencia_cierre and diferencia_cierre != 0:
+    if diferencia_cierre is not None and round(diferencia_cierre, 2) != 0:
         notificaciones.crear(
             db, tienda_id=turno.tienda_id, tipo="diferencia_caja",
             nivel="critico" if abs(diferencia_cierre) > 10000 else "advertencia",
@@ -183,7 +183,7 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
     ).scalar() or 0.0
 
     efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
-    if round(ventas_efectivo_siigo, 2) != round(turno.total_efectivo, 2):
+    if round(ventas_efectivo_siigo) != round(turno.total_efectivo):
         raise HTTPException(
             status_code=400,
             detail="El efectivo reportado en Siigo no coincide con las ventas registradas del turno. Revisa ventas antes de guardar la entrega."
@@ -226,7 +226,7 @@ def get_entregas_turno(db: Session, turno_id: int):
 def get_entregas_tienda(db: Session, tienda_id: int, limit: int = 20, solo_hoy: bool = True):
     q = db.query(EntregaTurno).filter(EntregaTurno.tienda_id == tienda_id)
     if solo_hoy:
-        hoy = datetime.now().date()
+        hoy = datetime.utcnow().date()
         desde = datetime.combine(hoy, datetime.min.time())
         hasta = datetime.combine(hoy, datetime.max.time())
         q = q.filter(EntregaTurno.fecha_hora >= desde, EntregaTurno.fecha_hora <= hasta)

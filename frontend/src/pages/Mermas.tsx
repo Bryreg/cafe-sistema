@@ -48,19 +48,21 @@ export default function Mermas() {
 
   const load = async () => {
     if (!user?.tienda_id) return
-    const [invRes, mermasRes, sedesRes, trasladosRes] = await Promise.all([
-      api.get(`/inventario/tienda/${user.tienda_id}`),
-      api.get(`/mermas/tienda/${user.tienda_id}`),
-      api.get('/mermas/sedes'),
-      api.get(`/mermas/traslados/pendientes/${user.tienda_id}`),
-    ])
-    setItems(invRes.data)
-    setMermas(mermasRes.data)
-    setSedes(sedesRes.data)
-    setTraslados(trasladosRes.data)
+    try {
+      const [invRes, mermasRes, sedesRes, trasladosRes] = await Promise.all([
+        api.get(`/inventario/tienda/${user.tienda_id}`),
+        api.get(`/mermas/tienda/${user.tienda_id}`),
+        api.get('/mermas/sedes'),
+        api.get(`/mermas/traslados/pendientes/${user.tienda_id}`),
+      ])
+      setItems(invRes.data)
+      setMermas(mermasRes.data)
+      setSedes(sedesRes.data)
+      setTraslados(trasladosRes.data)
+    } catch { /* silencioso */ }
   }
 
-  useEffect(() => { load() }, [user])
+  useEffect(() => { load() }, [user?.tienda_id])
 
   const selected = items.find(i => i.producto_id === productoId)
   const sedesDestino = sedes.filter(s => s.id !== user?.tienda_id)

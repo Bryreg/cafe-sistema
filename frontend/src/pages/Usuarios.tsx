@@ -67,7 +67,7 @@ function FormUsuario({
         await api.post('/auth/usuarios', {
           nombre: nombre.trim(),
           email: email.trim().toLowerCase(),
-          password: Math.random().toString(36).slice(2, 10),
+          password: Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, '0')).join(''),
           rol,
           tienda_id: tienda ? Number(tienda) : null,
         })

@@ -56,7 +56,8 @@ def ajustar_stock(db: Session, conteo_id: int, usuario_id: int) -> dict:
     for item in conteo.items:
         if item.diferencia == 0:
             continue
-        # Usamos ajuste directo al stock real contado
+        # commit=False: todos los ajustes quedan en la misma transacción;
+        # se hace un único commit al final para garantizar atomicidad.
         inv_svc.registrar_movimiento(
             db,
             producto_id=item.producto_id,
@@ -65,6 +66,7 @@ def ajustar_stock(db: Session, conteo_id: int, usuario_id: int) -> dict:
             cantidad=item.cantidad_real,
             motivo=f"Ajuste por conteo de compras #{conteo.id}",
             usuario_id=usuario_id,
+            commit=False,
         )
 
     conteo.ajustado = True

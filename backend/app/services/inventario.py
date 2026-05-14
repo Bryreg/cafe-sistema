@@ -25,7 +25,7 @@ def get_inventario_tienda(db: Session, tienda_id: int):
 
 def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: str,
                           cantidad: float, motivo: str | None, usuario_id: int,
-                          fecha_vencimiento: datetime | None = None):
+                          fecha_vencimiento: datetime | None = None, commit: bool = True):
     if tipo not in {"entrada", "salida", "ajuste"}:
         raise HTTPException(status_code=400, detail="tipo debe ser entrada, salida o ajuste")
     if tipo in {"entrada", "salida"} and cantidad <= 0:
@@ -72,8 +72,9 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
                        "cantidad": cantidad, "motivo": motivo,
                        "stock_resultante": inv.stock_actual},
     )
-    db.commit()
-    db.refresh(inv)
+    if commit:
+        db.commit()
+        db.refresh(inv)
     return inv
 
 

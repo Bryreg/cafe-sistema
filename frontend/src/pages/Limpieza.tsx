@@ -76,9 +76,10 @@ export default function Limpieza() {
       // Calculate date within selected week
       const dia = (semana - 1) * 7 + 1  // first day of that week
       const fechaTarea = new Date(anio, mes - 1, dia)
-      // If current month/week and today falls in it, use today
-      const esHoy = mes === hoy.getMonth() + 1 && anio === hoy.getFullYear() && semana === semanaDelMes(hoy)
-      const fechaEnviar = esHoy ? hoy.toISOString().split('T')[0] : fechaTarea.toISOString().split('T')[0]
+      // If current month/week and today falls in it, use today (compute fresh to avoid stale date)
+      const ahora = new Date()
+      const esHoy = mes === ahora.getMonth() + 1 && anio === ahora.getFullYear() && semana === semanaDelMes(ahora)
+      const fechaEnviar = esHoy ? ahora.toISOString().split('T')[0] : fechaTarea.toISOString().split('T')[0]
 
       const { data } = await api.post(`/limpieza/${user.tienda_id}/semanal`, {
         tarea_key: key,

@@ -145,11 +145,8 @@ function PasteleriaAdmin() {
 }
 
 // ─── Vista Barista ─────────────────────────────────────────────────────────────
-export default function Pasteleria() {
+function PasteleriaBarista() {
   const { user } = useAuth()
-
-  if (user?.rol === 'admin') return <PasteleriaAdmin />
-
   const [productos, setProductos] = useState<Producto[]>([])
   const [registros, setRegistros] = useState<Lote[]>([])
   const [productoId, setProductoId] = useState('')
@@ -171,7 +168,7 @@ export default function Pasteleria() {
     api.get('/inventario/productos')
       .then(r => setProductos(r.data.filter((p: Producto) => p.categoria === 'pasteleria')))
     loadRegistros()
-  }, [user])
+  }, [user?.tienda_id])
 
   const registrar = async () => {
     setError(''); setSaving(true)
@@ -312,4 +309,10 @@ export default function Pasteleria() {
       </div>
     </BaristaLayout>
   )
+}
+
+export default function Pasteleria() {
+  const { user } = useAuth()
+  if (user?.rol === 'admin') return <PasteleriaAdmin />
+  return <PasteleriaBarista />
 }

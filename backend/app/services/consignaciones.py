@@ -72,7 +72,9 @@ def _consigs_del_turno(db: Session, turno: CajaTurno) -> list:
     fk = db.query(Consignacion).filter(Consignacion.caja_turno_id == turno.id).all()
     if fk:
         return fk
-    # Fallback: registros sin FK dentro de la ventana temporal del turno
+    # Fallback: registros sin FK — sólo posible en turnos cerrados con fecha_cierre
+    if turno.fecha_cierre is None:
+        return []
     ventana_fin = turno.fecha_cierre + timedelta(hours=20)
     return db.query(Consignacion).filter(
         Consignacion.tienda_id == turno.tienda_id,

@@ -95,6 +95,7 @@ def reporte_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
             "fecha": m.fecha_registro.strftime("%Y-%m-%d %H:%M"),
             "cantidad": m.cantidad,
             "motivo": m.motivo,
+            "tipo": m.tipo,
         })
 
     rows = list(por_producto.values())

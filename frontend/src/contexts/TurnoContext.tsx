@@ -40,6 +40,8 @@ export function TurnoProvider({ children }: { children: ReactNode }) {
   const [turno, setTurno] = useState<Turno | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Carga explícita: muestra spinner, limpia turno en error.
+  // Usada en carga inicial y cuando el barista completa un paso.
   const refresh = useCallback(async () => {
     if (!user?.tienda_id) { setLoading(false); return }
     setLoading(true)
@@ -55,10 +57,26 @@ export function TurnoProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (user?.rol !== 'barista') { setTurno(null); setLoading(false); return }
+
+    // Carga inicial — muestra spinner
     refresh()
-    const t = setInterval(refresh, 15_000)
+
+    // Polls en segundo plano — SILENCIOSOS:
+    // No activan loading (evita flicker cada 15 s) y no limpian turno
+    // ante errores de red (evita sacar al barista de la página de cierre)
+    const tiendaId = user.tienda_id
+    const t = setInterval(async () => {
+      if (!tiendaId) return
+      try {
+        const { data } = await api.get(`/caja/activo/${tiendaId}`)
+        setTurno(data)
+      } catch {
+        // silencioso: error de red no borra el estado actual
+      }
+    }, 15_000)
+
     return () => clearInterval(t)
-  }, [user?.tienda_id, user?.rol])
+  }, [user?.tienda_id, user?.rol]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <TurnoContext.Provider value={{ turno, loading, refresh }}>

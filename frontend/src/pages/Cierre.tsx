@@ -153,10 +153,14 @@ export default function Cierre() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // Depende solo de los campos relevantes para navegación, NO del objeto completo.
+  // Si dependiera de `turno`, el efecto se dispararía en cada poll de 15 s
+  // (nueva referencia de objeto) y podría sacar al barista de la página si
+  // hubiera un error de red momentáneo que pusiera turno en null.
   useEffect(() => {
     if (!turno) { navigate('/hub', { replace: true }); return }
     if (!turno.tiene_conteo_cierre) navigate('/conteo-cierre', { replace: true })
-  }, [navigate, turno])
+  }, [turno?.id, turno?.tiene_conteo_cierre, navigate])
 
   if (!turno || !turno.tiene_conteo_cierre) return null
 

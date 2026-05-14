@@ -43,7 +43,7 @@ export default function ConteoCierre() {
     api.get(`/inventario/tienda/${user.tienda_id}`)
       .then(r => setItems(r.data))
       .finally(() => setLoading(false))
-  }, [user])
+  }, [user?.tienda_id])
 
   const getVal  = (id: number, ref: number) => conteos[id] !== undefined ? Number(conteos[id]) : ref
   const getDiff = (id: number, ref: number) => getVal(id, ref) - ref

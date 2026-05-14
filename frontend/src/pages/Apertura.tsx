@@ -251,9 +251,11 @@ export default function Apertura() {
   const [showContador, setShowContador] = useState(true)
   const [baseSistema, setBaseSistema] = useState(0)
 
+  // Depender de turno?.id (no del objeto completo) evita re-disparos en cada
+  // poll cuando turno ya existe pero el objeto es una nueva referencia.
   useEffect(() => {
     if (!turnoLoading && turno) navigate('/hub', { replace: true })
-  }, [turno, turnoLoading])
+  }, [turno?.id, turnoLoading, navigate])
 
   useEffect(() => {
     if (!user?.tienda_id) return
@@ -282,7 +284,10 @@ export default function Apertura() {
         base_real: Number(baseReal),
         justificacion_apertura: justificacion || null,
       })
-      await refresh()
+      // NO llamar refresh() aquí: causaba una race condition donde el useEffect
+      // detectaba turno != null y navegaba a /hub justo cuando este código
+      // navegaba a /conteo-apertura → doble navegación.
+      // El poll de 15 s de TurnoContext actualizará el turno en segundo plano.
       navigate('/conteo-apertura')
     } catch (e: any) {
       const detail = e.response?.data?.detail || ''

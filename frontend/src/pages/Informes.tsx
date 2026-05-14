@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { BarChart2, Trash2, Package, ChevronDown, ChevronUp, UserCheck, Clock, TrendingUp, AlertTriangle, Users, Download } from 'lucide-react'
+import { BarChart2, Trash2, Package, ChevronDown, ChevronUp, UserCheck, Clock, AlertTriangle, Users, Download } from 'lucide-react'
 import DifferenceBadge from '../components/DifferenceBadge'
 
 interface Sede { id: number; nombre: string }
@@ -28,7 +28,7 @@ function BtnExcel({ onClick }: { onClick: () => void }) {
   )
 }
 
-type Tab = 'ventas' | 'mermas' | 'inventario' | 'cuadres' | 'turnos' | 'kpi' | 'rotacion' | 'baristas'
+type Tab = 'ventas' | 'mermas' | 'inventario' | 'cuadres' | 'turnos' | 'rotacion' | 'baristas'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 const fmtN = (v: number, dec = 2) => v.toLocaleString('es-CO', { minimumFractionDigits: dec, maximumFractionDigits: dec })
@@ -148,14 +148,20 @@ function TabMermas({ tiendaId }: { tiendaId: number }) {
   const [desde, setDesde] = useState(inicioMes())
   const [hasta, setHasta] = useState(hoy())
   const [filas, setFilas] = useState<FilaMerma[] | null>(null)
+  const [kpi, setKpi] = useState<KpiMermas | null>(null)
   const [loading, setLoading] = useState(false)
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
 
   const cargar = async () => {
     setLoading(true)
     try {
-      const { data } = await api.get('/informes/mermas', { params: { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta } })
-      setFilas(data.filas ?? [])
+      const params = { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta }
+      const [detRes, kpiRes] = await Promise.all([
+        api.get('/informes/mermas', { params }),
+        api.get('/informes/kpi-mermas', { params }),
+      ])
+      setFilas(detRes.data.filas ?? [])
+      setKpi(kpiRes.data)
       setExpanded(new Set())
     } finally { setLoading(false) }
   }
@@ -180,6 +186,7 @@ function TabMermas({ tiendaId }: { tiendaId: number }) {
 
   return (
     <div className="space-y-4">
+      {/* Filtro de fechas */}
       <div className="flex gap-2 flex-wrap items-end">
         <div>
           <label className="text-xs text-gray-500 block mb-1">Desde</label>
@@ -198,33 +205,101 @@ function TabMermas({ tiendaId }: { tiendaId: number }) {
         {filas && filas.length > 0 && <BtnExcel onClick={exportar} />}
       </div>
 
-      {filas !== null && filas.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
-          {filas.map(f => (
-            <div key={f.producto_id}>
-              <button onClick={() => toggle(f.producto_id)}
-                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left">
-                <div className="flex-1">
-                  <p className="text-sm font-semibold text-gray-800">{f.producto}</p>
-                  <p className="text-xs text-gray-400">{f.n_registros} {f.n_registros === 1 ? 'registro' : 'registros'}</p>
-                </div>
-                <span className="text-sm font-bold text-red-600">{fmtN(f.total_cantidad)} {f.unidad}</span>
-                {expanded.has(f.producto_id) ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
-              </button>
-              {expanded.has(f.producto_id) && (
-                <div className="bg-gray-50 border-t border-gray-100 divide-y divide-gray-100">
-                  {f.detalle.map((d, i) => (
-                    <div key={i} className="flex items-center gap-3 px-6 py-2">
-                      <p className="text-xs text-gray-400 w-36 shrink-0">{d.fecha}</p>
-                      <p className="text-xs font-semibold text-gray-700 w-20 shrink-0">{fmtN(d.cantidad)} {f.unidad}</p>
-                      <p className="text-xs text-gray-500 truncate">{d.motivo}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
+      {/* KPIs */}
+      {kpi && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <p className="text-xs text-gray-400 mb-1">Registros de merma</p>
+              <p className="text-2xl font-bold font-mono text-gray-800">{kpi.total_registros}</p>
             </div>
-          ))}
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <p className="text-xs text-gray-400 mb-1">Ventas del período</p>
+              <p className="text-xl font-bold font-mono text-gray-800">{fmt(kpi.total_ventas)}</p>
+            </div>
+          </div>
+
+          {Object.keys(kpi.por_tipo).length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 p-4">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Por tipo</p>
+              <div className="space-y-2">
+                {Object.entries(kpi.por_tipo).map(([tipo, v]) => (
+                  <div key={tipo} className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full" style={{ background: TIPO_COLOR[tipo] || '#6b7280' }} />
+                      <span className="text-sm font-medium text-gray-700">{TIPO_LABEL[tipo] || tipo}</span>
+                    </div>
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className="text-gray-400">{v.n_productos} prod.</span>
+                      <span className="font-bold text-gray-800">{v.n} registros</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {kpi.top_productos.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-gray-100">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Top productos con más mermas</p>
+              </div>
+              <div className="divide-y divide-gray-50">
+                {kpi.top_productos.map((p, i) => (
+                  <div key={i} className="px-4 py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-300 font-mono w-4">{i + 1}</span>
+                      <div>
+                        <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
+                        <span className="text-xs px-1.5 py-0.5 rounded font-medium"
+                          style={{ background: TIPO_COLOR[p.tipo] + '22', color: TIPO_COLOR[p.tipo] }}>
+                          {TIPO_LABEL[p.tipo] || p.tipo}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-gray-800 font-mono">{fmtN(p.cantidad, 0)} {p.unidad}</p>
+                      <p className="text-xs text-gray-400">{p.n} {p.n === 1 ? 'registro' : 'registros'}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
+      )}
+
+      {/* Detalle por producto */}
+      {filas !== null && filas.length > 0 && (
+        <>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Detalle por producto</p>
+          <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
+            {filas.map(f => (
+              <div key={f.producto_id}>
+                <button onClick={() => toggle(f.producto_id)}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left">
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-gray-800">{f.producto}</p>
+                    <p className="text-xs text-gray-400">{f.n_registros} {f.n_registros === 1 ? 'registro' : 'registros'}</p>
+                  </div>
+                  <span className="text-sm font-bold text-red-600">{fmtN(f.total_cantidad, 0)} {f.unidad}</span>
+                  {expanded.has(f.producto_id) ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
+                </button>
+                {expanded.has(f.producto_id) && (
+                  <div className="bg-gray-50 border-t border-gray-100 divide-y divide-gray-100">
+                    {f.detalle.map((d, i) => (
+                      <div key={i} className="flex items-center gap-3 px-6 py-2">
+                        <p className="text-xs text-gray-400 w-36 shrink-0">{d.fecha}</p>
+                        <p className="text-xs font-semibold text-gray-700 w-20 shrink-0">{fmtN(d.cantidad, 0)} {f.unidad}</p>
+                        <p className="text-xs text-gray-500 truncate">{d.motivo}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       {filas !== null && filas.length === 0 && !loading && (
@@ -561,7 +636,7 @@ function TabTurnos({ tiendaId }: { tiendaId: number }) {
   )
 }
 
-// ─── KPI Mermas ───────────────────────────────────────────────────────────────
+// ─── KPI Mermas (tipos y colores, usados en TabMermas) ────────────────────────
 interface KpiMermas {
   total_registros: number; total_ventas: number; tiene_ventas: boolean
   por_tipo: Record<string, { n: number; n_productos: number }>
@@ -570,113 +645,6 @@ interface KpiMermas {
 
 const TIPO_COLOR: Record<string, string> = { consumo: '#ea580c', traslado: '#2563eb', daño: '#dc2626' }
 const TIPO_LABEL: Record<string, string> = { consumo: 'Consumo', traslado: 'Traslado', daño: 'Daño' }
-
-function TabKpi({ tiendaId }: { tiendaId: number }) {
-  const [desde, setDesde] = useState(inicioMes())
-  const [hasta, setHasta] = useState(hoy())
-  const [data, setData] = useState<KpiMermas | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  const cargar = async () => {
-    setLoading(true)
-    try {
-      const { data: d } = await api.get('/informes/kpi-mermas', { params: { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta } })
-      setData(d)
-    } finally { setLoading(false) }
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex gap-2 flex-wrap items-end">
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Desde</label>
-          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none" />
-        </div>
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Hasta</label>
-          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none" />
-        </div>
-        <button onClick={cargar} disabled={loading}
-          className="text-white font-semibold px-4 py-2 rounded-lg text-sm disabled:opacity-50"
-          style={{ background: 'oklch(48% 0.12 155)' }}>
-          {loading ? 'Cargando...' : 'Consultar'}
-        </button>
-      </div>
-
-      {data && (
-        <div className="space-y-4">
-          {/* Tarjetas KPI */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <p className="text-xs text-gray-400 mb-1">Registros de merma</p>
-              <p className="text-2xl font-bold font-mono text-gray-800">{data.total_registros}</p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <p className="text-xs text-gray-400 mb-1">Ventas del período</p>
-              <p className="text-xl font-bold font-mono text-gray-800">{fmt(data.total_ventas)}</p>
-            </div>
-          </div>
-
-          {/* Por tipo */}
-          {Object.keys(data.por_tipo).length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-4">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Por tipo</p>
-              <div className="space-y-3">
-                {Object.entries(data.por_tipo).map(([tipo, v]) => (
-                  <div key={tipo} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full" style={{ background: TIPO_COLOR[tipo] || '#6b7280' }} />
-                      <span className="text-sm font-medium text-gray-700">{TIPO_LABEL[tipo] || tipo}</span>
-                    </div>
-                    <div className="flex items-center gap-4 text-sm">
-                      <span className="text-gray-400">{v.n_productos} prod.</span>
-                      <span className="font-bold text-gray-800">{v.n} registros</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Top productos con más mermas */}
-          {data.top_productos.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-gray-100">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Productos con más mermas</p>
-              </div>
-              <div className="divide-y divide-gray-50">
-                {data.top_productos.map((p, i) => (
-                  <div key={i} className="px-4 py-3 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-300 font-mono w-4">{i + 1}</span>
-                      <div>
-                        <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
-                        <span className="text-xs px-1.5 py-0.5 rounded font-medium"
-                          style={{ background: TIPO_COLOR[p.tipo] + '22', color: TIPO_COLOR[p.tipo] }}>
-                          {TIPO_LABEL[p.tipo] || p.tipo}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-gray-800 font-mono">{fmtN(p.cantidad)} {p.unidad}</p>
-                      <p className="text-xs text-gray-400">{p.n} {p.n === 1 ? 'registro' : 'registros'}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {data.total_registros === 0 && (
-            <p className="text-sm text-gray-400 text-center py-6">Sin mermas registradas en el período.</p>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
 
 // ─── Rotación ─────────────────────────────────────────────────────────────────
 interface FilaRotacion {
@@ -960,9 +928,8 @@ export default function Informes() {
     { id: 'baristas',  label: 'Baristas',       icon: <Users size={14} /> },
     { id: 'turnos',    label: 'Turnos',         icon: <Clock size={14} /> },
     { id: 'cuadres',   label: 'Cuadres',        icon: <UserCheck size={14} /> },
-    { id: 'kpi',       label: 'KPI Mermas',     icon: <TrendingUp size={14} /> },
+    { id: 'mermas',    label: 'Mermas',         icon: <Trash2 size={14} /> },
     { id: 'rotacion',  label: 'Rotación',       icon: <Package size={14} /> },
-    { id: 'mermas',    label: 'Mermas detalle', icon: <Trash2 size={14} /> },
     { id: 'inventario',label: 'Inv. consumido', icon: <Package size={14} /> },
   ]
 
@@ -1004,9 +971,8 @@ export default function Informes() {
       {tab === 'baristas'   && <TabBaristas  tiendaId={tiendaId} />}
       {tab === 'turnos'     && <TabTurnos    tiendaId={tiendaId} />}
       {tab === 'cuadres'    && <TabCuadres   tiendaId={tiendaId} />}
-      {tab === 'kpi'        && <TabKpi       tiendaId={tiendaId} />}
-      {tab === 'rotacion'   && <TabRotacion  tiendaId={tiendaId} />}
       {tab === 'mermas'     && <TabMermas    tiendaId={tiendaId} />}
+      {tab === 'rotacion'   && <TabRotacion  tiendaId={tiendaId} />}
       {tab === 'inventario' && <TabInventario tiendaId={tiendaId} />}
     </div>
   )

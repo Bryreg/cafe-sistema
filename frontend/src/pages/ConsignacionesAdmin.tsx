@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
   Banknote, User, ImageIcon, Check, X, ZoomIn,
@@ -7,6 +8,7 @@ import {
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
+interface Sede { id: number; nombre: string }
 
 interface MovDetalle { concepto: string; valor: number; fecha: string }
 interface ConsignacionItem {
@@ -191,18 +193,31 @@ function descargarReporteHTML(dias: ResumenDia[]) {
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function ConsignacionesAdmin() {
+  const { user } = useAuth()
+  const [sedes, setSedes] = useState<Sede[]>([])
+  const [tiendaId, setTiendaId] = useState<number | null>(user?.tienda_id ?? null)
   const [dias, setDias] = useState<ResumenDia[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [fotoModal, setFotoModal] = useState<string | null>(null)
   const [confirmando, setConfirmando] = useState<number | null>(null)
   const [expandido, setExpandido] = useState<number | null>(null)
 
-  const load = async () => {
+  // Cargar sedes disponibles
+  useEffect(() => {
+    api.get('/auth/tiendas').then(({ data }) => {
+      setSedes(data)
+      if (!tiendaId && data.length > 0) setTiendaId(data[0].id)
+    }).catch(() => {})
+  }, [])
+
+  const load = async (tid: number) => {
     setLoading(true)
     try {
-      const { data } = await api.get('/consignaciones/resumen-admin')
+      const { data } = await api.get('/consignaciones/resumen-admin', {
+        params: { tienda_id: tid },
+      })
       setDias(data)
-      // Auto-expand first day with pending consignaciones
+      setExpandido(null)
       const primero = data.find((d: ResumenDia) =>
         d.consignaciones.some((c: ConsignacionItem) => c.estado === 'pendiente')
       )
@@ -210,7 +225,7 @@ export default function ConsignacionesAdmin() {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { if (tiendaId !== null) load(tiendaId) }, [tiendaId])
 
   const confirmar = async (id: number) => {
     setConfirmando(id)
@@ -262,6 +277,22 @@ export default function ConsignacionesAdmin() {
           </div>
         )}
       </div>
+
+      {/* Selector de sede */}
+      {sedes.length > 1 && (
+        <div className="flex gap-1.5 flex-wrap">
+          {sedes.map(s => (
+            <button key={s.id} onClick={() => setTiendaId(s.id)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                tiendaId === s.id
+                  ? 'bg-amber-600 text-white border-amber-600'
+                  : 'bg-white text-gray-600 border-gray-200 hover:border-amber-400'
+              }`}>
+              {s.nombre}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Resumen global */}
       <div className="grid grid-cols-3 gap-3">
@@ -324,9 +355,11 @@ export default function ConsignacionesAdmin() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-sm font-bold text-gray-800 capitalize">{fmtFecha(dia.fecha_cierre)}</p>
-                    <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">
-                      {dia.tienda_nombre}
-                    </span>
+                    {sedes.length > 1 && (
+                      <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">
+                        {dia.tienda_nombre}
+                      </span>
+                    )}
                     {pendientes.length > 0 && (
                       <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold">
                         {pendientes.length} pendiente{pendientes.length !== 1 ? 's' : ''}

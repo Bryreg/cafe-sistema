@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile, File, Form
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
@@ -34,8 +34,14 @@ def listar(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depend
     return svc.get_por_tienda(db, tienda_id)
 
 @router.get("/resumen-admin")
-def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
-    return svc.get_resumen_admin(db)
+def resumen_admin(
+    tienda_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(require_admin),
+):
+    if tienda_id:
+        ensure_tienda_access(user, tienda_id)
+    return svc.get_resumen_admin(db, tienda_id)
 
 
 @router.patch("/{consignacion_id}/confirmar")

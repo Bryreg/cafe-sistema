@@ -82,17 +82,18 @@ def _consigs_del_turno(db: Session, turno: CajaTurno) -> list:
     ).all()
 
 
-def get_resumen_admin(db: Session):
+def get_resumen_admin(db: Session, tienda_id: int | None = None):
     """
-    Por cada turno cerrado (todas las tiendas), calcula:
+    Por cada turno cerrado, calcula:
       esperado_consignar = total_efectivo + ingresos_movimientos - egresos_movimientos
     y cruza con las consignaciones registradas ese día.
+    Si se pasa tienda_id, filtra por esa sede.
     """
     tiendas = {t.id: t.nombre for t in db.query(Tienda).all()}
-    turnos = (db.query(CajaTurno)
-              .filter(CajaTurno.estado == EstadoTurnoEnum.cerrado)
-              .order_by(CajaTurno.fecha_cierre.desc())
-              .limit(60).all())
+    q = db.query(CajaTurno).filter(CajaTurno.estado == EstadoTurnoEnum.cerrado)
+    if tienda_id:
+        q = q.filter(CajaTurno.tienda_id == tienda_id)
+    turnos = q.order_by(CajaTurno.fecha_cierre.desc()).limit(60).all()
 
     result = []
     for t in turnos:

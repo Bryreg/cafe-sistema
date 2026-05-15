@@ -30,15 +30,20 @@
     -webkit-tap-highlight-color: transparent;
   }
 
-  /* Evita el zoom automático de iOS Safari al enfocar inputs */
-  input, select, textarea {
-    font-size: 16px;
-  }
-
   /* Scrollbars invisibles en móvil (no afecta al scroll en sí) */
   ::-webkit-scrollbar {
     display: none;
   }
+}
+
+/*
+ * FUERA de @layer para ganar sobre todas las Tailwind utilities.
+ * iOS Safari hace zoom automático en inputs/selects con font-size < 16px.
+ * Al estar fuera de cualquier layer, esta regla tiene la máxima precedencia
+ * en la cascada CSS (spec: estilos sin layer > @layer utilities).
+ */
+input, select, textarea {
+  font-size: 16px;
 }
 
 /* ── Safe-area utilities (para headers pegajosos con notch/Dynamic Island) ── */

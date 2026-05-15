@@ -151,13 +151,16 @@ def _migrate_productos_reales():
         if not tiendas:
             return  # No hay tiendas → la base está vacía o en un estado inesperado
 
-        # Nombres del seed inicial que deben eliminarse (si no tienen movimientos)
+        # Nombres que deben eliminarse si no tienen movimientos reales
         SEED_FALSOS = [
-            # Claramente falsos
+            # Claramente falsos (seed inicial)
             "Café Espresso", "Leche Oat", "Muffin Arándanos", "Brownie",
             "Tarta Limón", "Café Molido", "Jarabe Vainilla", "Vasos 8oz",
             # Con categoría/unidad incorrectas — se recrean desde la lista real
             "Leche Entera", "Azúcar", "Cocoa", "Croissant", "Vasos 12oz",
+            # Obsoletos — nombres viejos o productos que ya no se manejan
+            "Palito de Queso", "Dedo de Queso", "Pan Esponjado",
+            "Omelette Queso", "Pastel Pollo",
         ]
         from app.models.models import (PasteleriaDiaria, Merma, ConteoFisicoItem)
         _TABLAS_DEPENDIENTES = [
@@ -188,13 +191,11 @@ def _migrate_productos_reales():
             (CategoriaProductoEnum.pasteleria, "Almojábanas",             "und"),
             (CategoriaProductoEnum.pasteleria, "Croissant Chocolate",     "und"),
             (CategoriaProductoEnum.pasteleria, "Croissant Mantequilla",   "und"),
-            (CategoriaProductoEnum.pasteleria, "Muffin Mora",             "und"),
             (CategoriaProductoEnum.pasteleria, "Torta Chocolate",         "und"),
             (CategoriaProductoEnum.pasteleria, "Torta Zanahoria",         "und"),
             (CategoriaProductoEnum.pasteleria, "Torta Naranja",           "und"),
             (CategoriaProductoEnum.pasteleria, "Torta Red Velvet",        "und"),
             (CategoriaProductoEnum.pasteleria, "Pastel de Pollo",         "und"),
-            (CategoriaProductoEnum.pasteleria, "Pastel Carne",            "und"),
             (CategoriaProductoEnum.pasteleria, "Masa Pandebono",          "und"),
             (CategoriaProductoEnum.pasteleria, "Omelette",                "und"),
             (CategoriaProductoEnum.pasteleria, "Omelette Jamón y Queso", "und"),
@@ -351,14 +352,16 @@ def _migrate_proveedores():
                 logger.info("Duplicado fusionado: '%s' → '%s' (viejo oculto)", nombre_viejo, nombre_nuevo)
         db.flush()
 
-        # Productos que ya no se manejan → ocultar del panel de pedidos
+        # Productos que ya no se manejan → ocultar de todo el sistema
         DESACTIVAR = {
             "Panela",
-            "Pastel Queso", "Pan Pollo", "Wafles Pandebono",
+            "Pastel Carne", "Pastel Queso", "Pan Pollo", "Wafles Pandebono",
             "Cake Zanahoria", "Cake Banano", "Brownies", "Alfajor",
-            "Muffin Vainilla", "Muffin Queso", "Muffin Naranja",
+            "Muffin Mora", "Muffin Vainilla", "Muffin Queso", "Muffin Naranja",
             "Croissant Queso",
-            "Palito de Queso",  # fusionado con Esponjado de Queso
+            # nombres viejos — por si sobreviven con movimientos y no pudieron borrarse
+            "Palito de Queso", "Dedo de Queso", "Pan Esponjado",
+            "Omelette Queso", "Pastel Pollo",
         }
         for p in db.query(Producto).filter(Producto.nombre.in_(DESACTIVAR)).all():
             if p.controla_stock:
@@ -373,7 +376,6 @@ def _migrate_proveedores():
             "Pastel de Pollo":        ("La Paola", 1),
             "Esponjado de Queso":     ("La Paola", 1),
             # Delitas — entrega al día siguiente si se pide antes del mediodía
-            "Pastel Carne":           ("Delitas", 1),
             "Croissant Chocolate":    ("Delitas", 1),
             "Croissant Mantequilla":  ("Delitas", 1),
             # Wilenses

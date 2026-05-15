@@ -186,31 +186,19 @@ def _migrate_productos_reales():
             # (categoria_enum, nombre, unidad_medida)
             # ── PASTELERÍA
             (CategoriaProductoEnum.pasteleria, "Almojábanas",             "und"),
-            (CategoriaProductoEnum.pasteleria, "Croissant Queso",         "und"),
             (CategoriaProductoEnum.pasteleria, "Croissant Chocolate",     "und"),
             (CategoriaProductoEnum.pasteleria, "Croissant Mantequilla",   "und"),
             (CategoriaProductoEnum.pasteleria, "Muffin Mora",             "und"),
-            (CategoriaProductoEnum.pasteleria, "Muffin Vainilla",         "und"),
-            (CategoriaProductoEnum.pasteleria, "Muffin Queso",            "und"),
-            (CategoriaProductoEnum.pasteleria, "Muffin Naranja",          "und"),
-            (CategoriaProductoEnum.pasteleria, "Alfajor",                 "und"),
             (CategoriaProductoEnum.pasteleria, "Torta Chocolate",         "und"),
             (CategoriaProductoEnum.pasteleria, "Torta Zanahoria",         "und"),
             (CategoriaProductoEnum.pasteleria, "Torta Naranja",           "und"),
             (CategoriaProductoEnum.pasteleria, "Torta Red Velvet",        "und"),
-            (CategoriaProductoEnum.pasteleria, "Brownies",                "und"),
-            (CategoriaProductoEnum.pasteleria, "Cake Zanahoria",          "und"),
-            (CategoriaProductoEnum.pasteleria, "Cake Banano",             "und"),
-            (CategoriaProductoEnum.pasteleria, "Wafles Pandebono",        "und"),
             (CategoriaProductoEnum.pasteleria, "Pastel de Pollo",         "und"),
             (CategoriaProductoEnum.pasteleria, "Pastel Carne",            "und"),
-            (CategoriaProductoEnum.pasteleria, "Pastel Queso",            "und"),
             (CategoriaProductoEnum.pasteleria, "Masa Pandebono",          "und"),
             (CategoriaProductoEnum.pasteleria, "Omelette",                "und"),
             (CategoriaProductoEnum.pasteleria, "Omelette Jamón y Queso", "und"),
-            (CategoriaProductoEnum.pasteleria, "Pan Pollo",               "und"),
             (CategoriaProductoEnum.pasteleria, "Esponjado de Queso",      "und"),
-            (CategoriaProductoEnum.pasteleria, "Palito de Queso",         "und"),
             # ── BEBIDA
             (CategoriaProductoEnum.bebida, "Café Alta Tostión x2500g",    "g"),
             (CategoriaProductoEnum.bebida, "Café Libra Medium 500g",      "und"),
@@ -245,7 +233,6 @@ def _migrate_productos_reales():
             (CategoriaProductoEnum.bebida, "Cocoa",                       "g"),
             (CategoriaProductoEnum.bebida, "Galleta Oreo",                "g"),
             (CategoriaProductoEnum.bebida, "Milo",                        "g"),
-            (CategoriaProductoEnum.bebida, "Panela",                      "g"),
             (CategoriaProductoEnum.bebida, "Aromática Toronjil",          "und"),
             (CategoriaProductoEnum.bebida, "Aromática Limoncillo",        "und"),
             (CategoriaProductoEnum.bebida, "Aromática Cidrón",            "und"),
@@ -339,7 +326,8 @@ def _migrate_proveedores():
             "Omelette Queso":  "Omelette Jamón y Queso",
             "Pastel Pollo":    "Pastel de Pollo",
             "Pan Esponjado":   "Esponjado de Queso",
-            "Dedo de Queso":   "Palito de Queso",
+            "Dedo de Queso":   "Esponjado de Queso",   # mismo producto
+            "Palito de Queso": "Esponjado de Queso",   # mismo producto
         }
         for nombre_viejo, nombre_nuevo in RENOMBRES.items():
             p_viejo = db.query(Producto).filter_by(nombre=nombre_viejo).first()
@@ -363,18 +351,29 @@ def _migrate_proveedores():
                 logger.info("Duplicado fusionado: '%s' → '%s' (viejo oculto)", nombre_viejo, nombre_nuevo)
         db.flush()
 
+        # Productos que ya no se manejan → ocultar del panel de pedidos
+        DESACTIVAR = {
+            "Panela",
+            "Pastel Queso", "Pan Pollo", "Wafles Pandebono",
+            "Cake Zanahoria", "Cake Banano", "Brownies", "Alfajor",
+            "Muffin Vainilla", "Muffin Queso", "Muffin Naranja",
+            "Croissant Queso",
+            "Palito de Queso",  # fusionado con Esponjado de Queso
+        }
+        for p in db.query(Producto).filter(Producto.nombre.in_(DESACTIVAR)).all():
+            if p.controla_stock:
+                p.controla_stock = False
+                logger.info("Producto desactivado: %s", p.nombre)
+        db.flush()
+
         FIJOS = {
             # La Paola — entrega al día siguiente
             "Omelette":               ("La Paola", 1),
             "Omelette Jamón y Queso": ("La Paola", 1),
             "Pastel de Pollo":        ("La Paola", 1),
             "Esponjado de Queso":     ("La Paola", 1),
-            "Palito de Queso":        ("La Paola", 1),
             # Delitas — entrega al día siguiente si se pide antes del mediodía
             "Pastel Carne":           ("Delitas", 1),
-            "Pastel Queso":           ("Delitas", 1),
-            "Wafles Pandebono":       ("Delitas", 1),
-            "Croissant Queso":        ("Delitas", 1),
             "Croissant Chocolate":    ("Delitas", 1),
             "Croissant Mantequilla":  ("Delitas", 1),
             # Wilenses
@@ -384,10 +383,6 @@ def _migrate_proveedores():
             "Torta Zanahoria":        ("María María", 1),
             "Torta Naranja":          ("María María", 1),
             "Torta Red Velvet":       ("María María", 1),
-            "Brownies":               ("María María", 1),
-            "Cake Zanahoria":         ("María María", 1),
-            "Cake Banano":            ("María María", 1),
-            "Alfajor":                ("María María", 1),
             # Maxipulpas
             "Pulpa Mango":            ("Maxipulpas", 2),
             "Pulpa Lulo":             ("Maxipulpas", 2),

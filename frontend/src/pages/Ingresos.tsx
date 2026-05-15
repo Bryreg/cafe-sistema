@@ -5,7 +5,7 @@ import api from '../api/client'
 import BaristaBottomNav from '../components/BaristaBottomNav'
 import {
   ArrowLeft, ChevronDown, ChevronRight, Search, Plus, X,
-  Check, Trash2, Croissant, Box, Upload, ImageIcon,
+  Check, Trash2, Croissant, Box, Upload,
 } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -410,33 +410,32 @@ export default function Ingresos() {
 
           {/* ── Foto de la factura ── */}
           <div className="mx-4 mt-4">
-            <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
-            <p className="text-[10px] font-bold uppercase tracking-widest text-warm-400 mb-2">
-              Foto de la factura
-              <span className="ml-1.5 normal-case font-normal text-warm-300">opcional</span>
-            </p>
-            {preview ? (
-              <div className="relative rounded-2xl overflow-hidden border-2 border-amber-300">
-                <img src={preview} alt="factura" className="w-full h-40 object-cover" />
-                <button
-                  onClick={quitarFoto}
-                  className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center transition-colors"
-                >
-                  <X size={14} />
-                </button>
-                <div className="absolute bottom-2 left-2 bg-black/50 text-white text-[10px] font-semibold px-2 py-1 rounded-lg flex items-center gap-1">
-                  <ImageIcon size={10} /> {imagen?.name}
+            <div className="bg-white rounded-2xl border border-warm-200 p-4 space-y-3">
+              <p className="text-sm font-bold text-warm-700">
+                Foto de la factura
+                <span className="ml-1.5 text-xs font-normal text-warm-400">(opcional)</span>
+              </p>
+              <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+              {preview ? (
+                <div className="relative">
+                  <img src={preview} alt="preview" className="w-full h-36 object-cover rounded-xl border-2 border-amber-300" />
+                  <button
+                    onClick={quitarFoto}
+                    className="absolute top-2 right-2 bg-black/60 text-white rounded-full w-7 h-7 flex items-center justify-center"
+                  >
+                    <X size={13} />
+                  </button>
                 </div>
-              </div>
-            ) : (
-              <button
-                onClick={() => fileRef.current?.click()}
-                className="w-full h-28 border-2 border-dashed border-warm-200 rounded-2xl flex flex-col items-center justify-center gap-2 hover:border-amber-400 hover:bg-amber-50 transition-colors bg-white active:scale-[0.98]"
-              >
-                <Upload size={20} className="text-warm-300" />
-                <span className="text-[12px] text-warm-400 font-medium">Toca para fotografiar la factura</span>
-              </button>
-            )}
+              ) : (
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  className="w-full h-28 border-2 border-dashed border-warm-200 rounded-xl flex flex-col items-center justify-center gap-2 hover:border-amber-400 hover:bg-amber-50 transition-colors"
+                >
+                  <Upload size={22} className="text-warm-300" />
+                  <span className="text-xs text-warm-400 font-medium">Toca para fotografiar la factura</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* ── Campos opcionales ── */}

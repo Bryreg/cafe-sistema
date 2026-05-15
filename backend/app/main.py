@@ -333,7 +333,8 @@ def _migrate_proveedores():
     from app.models.models import Producto, CategoriaProductoEnum
     db = SessionLocal()
     try:
-        # Renombrar productos a sus nombres correctos (idempotente)
+        # Renombrar/fusionar productos a sus nombres correctos (idempotente)
+        from app.models.models import Inventario as _Inv
         RENOMBRES = {
             "Omelette Queso":  "Omelette Jamón y Queso",
             "Pastel Pollo":    "Pastel de Pollo",
@@ -342,11 +343,24 @@ def _migrate_proveedores():
         }
         for nombre_viejo, nombre_nuevo in RENOMBRES.items():
             p_viejo = db.query(Producto).filter_by(nombre=nombre_viejo).first()
-            if p_viejo:
-                ya_existe = db.query(Producto).filter_by(nombre=nombre_nuevo).first()
-                if not ya_existe:
-                    p_viejo.nombre = nombre_nuevo
-                    logger.info("Producto renombrado: %s → %s", nombre_viejo, nombre_nuevo)
+            if not p_viejo:
+                continue
+            p_nuevo = db.query(Producto).filter_by(nombre=nombre_nuevo).first()
+            if not p_nuevo:
+                # Caso normal: solo existe el nombre viejo → renombrar
+                p_viejo.nombre = nombre_nuevo
+                logger.info("Producto renombrado: %s → %s", nombre_viejo, nombre_nuevo)
+            else:
+                # Ambos existen (duplicado por orden de migración) → fusionar stock y ocultar el viejo
+                for inv_v in db.query(_Inv).filter_by(producto_id=p_viejo.id).all():
+                    inv_n = db.query(_Inv).filter_by(
+                        producto_id=p_nuevo.id, tienda_id=inv_v.tienda_id
+                    ).first()
+                    if inv_n and inv_v.stock_actual:
+                        inv_n.stock_actual += inv_v.stock_actual
+                    inv_v.stock_actual = 0.0
+                p_viejo.controla_stock = False
+                logger.info("Duplicado fusionado: '%s' → '%s' (viejo oculto)", nombre_viejo, nombre_nuevo)
         db.flush()
 
         FIJOS = {

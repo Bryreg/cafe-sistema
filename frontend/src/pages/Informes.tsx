@@ -316,16 +316,17 @@ function TabInventario({ tiendaId }: { tiendaId: number }) {
         <>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
-              { key: 'activos',        label: 'Activos',        val: resumen.activos,        color: 'text-green-700' },
-              { key: 'estancados',     label: 'Estancados',     val: resumen.estancados,     color: resumen.estancados > 0 ? 'text-orange-600' : 'text-gray-800' },
-              { key: 'sin_movimiento', label: 'Sin movimiento', val: resumen.sin_movimiento, color: 'text-gray-500' },
-              { key: 'bajo_minimo',    label: 'Bajo mínimo',    val: resumen.bajo_minimo,    color: resumen.bajo_minimo > 0 ? 'text-red-600' : 'text-gray-800' },
-            ].map(({ key, label, val, color }) => (
+              { key: 'activos',        label: 'Activos',        val: resumen.activos,        color: 'text-green-700',  desc: 'Tuvo entradas y salidas' },
+              { key: 'estancados',     label: 'Estancados',     val: resumen.estancados,     color: resumen.estancados > 0 ? 'text-orange-600' : 'text-gray-800', desc: 'Llegó mercancía pero no se consumió' },
+              { key: 'sin_movimiento', label: 'Sin movimiento', val: resumen.sin_movimiento, color: 'text-gray-500',    desc: 'Sin ningún movimiento en el período' },
+              { key: 'bajo_minimo',    label: 'Bajo mínimo',    val: resumen.bajo_minimo,    color: resumen.bajo_minimo > 0 ? 'text-red-600' : 'text-gray-800', desc: 'Stock actual ≤ stock mínimo' },
+            ].map(({ key, label, val, color, desc }) => (
               <button key={key}
                 onClick={() => setFiltroEstado(filtroEstado === key ? 'todos' : key)}
-                className={`bg-white border rounded-xl p-3 text-center transition-all ${filtroEstado === key ? 'border-amber-400' : 'border-gray-200'}`}>
-                <p className="text-xs text-gray-400">{label}</p>
-                <p className={`text-lg font-bold font-mono ${color}`}>{val}</p>
+                className={`bg-white border rounded-xl p-3 text-center transition-all ${filtroEstado === key ? 'border-amber-400 ring-1 ring-amber-200' : 'border-gray-200'}`}>
+                <p className="text-xs font-semibold text-gray-500">{label}</p>
+                <p className={`text-xl font-bold font-mono mt-0.5 ${color}`}>{val}</p>
+                <p className="text-[10px] text-gray-400 mt-1 leading-tight">{desc}</p>
               </button>
             ))}
           </div>
@@ -366,8 +367,9 @@ function TabInventario({ tiendaId }: { tiendaId: number }) {
                             {f.rotacion !== null ? `${f.rotacion}x` : '—'}
                           </td>
                           <td className="px-3 py-2.5">
-                            <span className="text-xs px-1.5 py-0.5 rounded-md font-semibold whitespace-nowrap"
-                              style={{ background: cfg.bg, color: cfg.text }}>
+                            <span className="text-xs px-1.5 py-0.5 rounded-md font-semibold whitespace-nowrap cursor-help"
+                              style={{ background: cfg.bg, color: cfg.text }}
+                              title={cfg.title}>
                               {cfg.label}
                             </span>
                           </td>
@@ -690,11 +692,11 @@ interface FilaRotacion {
 }
 interface ResumenRotacion { activos: number; estancados: number; sin_movimiento: number; agotados: number; bajo_minimo: number }
 
-const ESTADO_CFG: Record<string, { label: string; bg: string; text: string }> = {
-  activo:          { label: 'Activo',         bg: 'oklch(93% 0.015 155)', text: 'oklch(30% 0.10 155)' },
-  estancado:       { label: 'Estancado',       bg: 'oklch(95% 0.015 60)',  text: 'oklch(38% 0.12 55)'  },
-  agotado:         { label: 'Agotado',         bg: 'oklch(96% 0.015 20)',  text: 'oklch(38% 0.16 25)'  },
-  sin_movimiento:  { label: 'Sin movimiento',  bg: 'oklch(95% 0.005 60)',  text: 'oklch(55% 0.01 60)'  },
+const ESTADO_CFG: Record<string, { label: string; bg: string; text: string; title: string }> = {
+  activo:          { label: 'Activo',         bg: 'oklch(93% 0.015 155)', text: 'oklch(30% 0.10 155)', title: 'Tuvo entradas y salidas en el período' },
+  estancado:       { label: 'Estancado',       bg: 'oklch(95% 0.015 60)',  text: 'oklch(38% 0.12 55)',  title: 'Llegó mercancía pero no se consumió nada' },
+  agotado:         { label: 'Agotado',         bg: 'oklch(96% 0.015 20)',  text: 'oklch(38% 0.16 25)',  title: 'Stock en cero con salidas registradas' },
+  sin_movimiento:  { label: 'Sin movimiento',  bg: 'oklch(95% 0.005 60)',  text: 'oklch(55% 0.01 60)',  title: 'Sin ningún movimiento en el período' },
 }
 
 

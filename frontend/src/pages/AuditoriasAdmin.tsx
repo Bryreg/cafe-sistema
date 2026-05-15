@@ -71,7 +71,7 @@ interface InvProd {
 const CAUSAS: { value: string; label: string }[] = [
   { value: 'acceso_no_autorizado',    label: 'Acceso no autorizado' },
   { value: 'error_conteo',            label: 'Error de conteo' },
-  { value: 'daño',                    label: 'Daño al producto' },
+  { value: 'dano',                     label: 'Daño al producto' },
   { value: 'traslado_no_registrado',  label: 'Traslado no registrado' },
   { value: 'otro',                    label: 'Otro' },
 ]

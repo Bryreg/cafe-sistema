@@ -383,17 +383,17 @@ export default function Dashboard() {
                 ) : (
                   <>
                     {/* Total por consignar — cifra principal */}
-                    <div className={`rounded-lg px-3 py-2 flex items-center justify-between ${
+                    <div className={`rounded-lg px-3 py-2 flex flex-col gap-0.5 ${
                       pendienteConsig.total_pendiente > 0
                         ? 'bg-red-50 border border-red-200'
                         : 'bg-green-50 border border-green-200'
                     }`}>
                       <span className={`text-[10px] font-bold uppercase tracking-wide ${
-                        pendienteConsig.total_pendiente > 0 ? 'text-red-600' : 'text-green-600'
+                        pendienteConsig.total_pendiente > 0 ? 'text-red-500' : 'text-green-500'
                       }`}>
                         {pendienteConsig.total_pendiente > 0 ? 'Por consignar' : 'Al día'}
                       </span>
-                      <span className={`text-[15px] font-bold font-mono ${
+                      <span className={`text-[16px] font-bold font-mono leading-tight ${
                         pendienteConsig.total_pendiente > 0 ? 'text-red-700' : 'text-green-700'
                       }`}>
                         {fmt(pendienteConsig.total_pendiente)}

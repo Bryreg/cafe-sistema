@@ -5,7 +5,7 @@ import api from '../api/client'
 import BaristaBottomNav from '../components/BaristaBottomNav'
 import {
   ArrowLeft, ChevronDown, ChevronRight, Search, Plus, X,
-  Check, Trash2, Croissant, Box,
+  Check, Trash2, Croissant, Box, Upload, ImageIcon,
 } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -59,6 +59,8 @@ export default function Ingresos() {
   const [valorTotal, setValorTotal]       = useState('')
   const [numeroFactura, setNumeroFactura] = useState('')
   const [imagen, setImagen]               = useState<File | null>(null)
+  const [preview, setPreview]             = useState<string | null>(null)
+  const fileRef                           = useRef<HTMLInputElement>(null)
   const [items, setItems]                 = useState<ItemForm[]>([])
 
   // Proveedor picker
@@ -90,6 +92,20 @@ export default function Ingresos() {
         .catch(() => {})
     }
   }, [user?.tienda_id])
+
+  // ── Foto factura ─────────────────────────────────────────────────────────
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    if (preview) URL.revokeObjectURL(preview)
+    setImagen(f)
+    setPreview(URL.createObjectURL(f))
+  }
+  const quitarFoto = () => {
+    if (preview) URL.revokeObjectURL(preview)
+    setImagen(null); setPreview(null)
+    if (fileRef.current) fileRef.current.value = ''
+  }
 
   // ── Abrir quick-add ───────────────────────────────────────────────────────
   const openQuickAdd = () => {
@@ -157,7 +173,10 @@ export default function Ingresos() {
       await api.post('/facturas/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
       setExito(true)
       setProveedor(''); setFechaRecibido(hoy()); setTipoPago('contado')
-      setValorTotal(''); setNumeroFactura(''); setImagen(null)
+      setValorTotal(''); setNumeroFactura('')
+      if (preview) URL.revokeObjectURL(preview)
+      setImagen(null); setPreview(null)
+      if (fileRef.current) fileRef.current.value = ''
       setItems([])
       setTimeout(() => setExito(false), 3000)
     } catch (e: any) {
@@ -388,6 +407,37 @@ export default function Ingresos() {
               Agregar {items.length === 0 ? 'primer' : 'otro'} producto
             </button>
           )}
+
+          {/* ── Foto de la factura ── */}
+          <div className="mx-4 mt-4">
+            <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+            <p className="text-[10px] font-bold uppercase tracking-widest text-warm-400 mb-2">
+              Foto de la factura
+              <span className="ml-1.5 normal-case font-normal text-warm-300">opcional</span>
+            </p>
+            {preview ? (
+              <div className="relative rounded-2xl overflow-hidden border-2 border-amber-300">
+                <img src={preview} alt="factura" className="w-full h-40 object-cover" />
+                <button
+                  onClick={quitarFoto}
+                  className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full w-8 h-8 flex items-center justify-center transition-colors"
+                >
+                  <X size={14} />
+                </button>
+                <div className="absolute bottom-2 left-2 bg-black/50 text-white text-[10px] font-semibold px-2 py-1 rounded-lg flex items-center gap-1">
+                  <ImageIcon size={10} /> {imagen?.name}
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => fileRef.current?.click()}
+                className="w-full h-28 border-2 border-dashed border-warm-200 rounded-2xl flex flex-col items-center justify-center gap-2 hover:border-amber-400 hover:bg-amber-50 transition-colors bg-white active:scale-[0.98]"
+              >
+                <Upload size={20} className="text-warm-300" />
+                <span className="text-[12px] text-warm-400 font-medium">Toca para fotografiar la factura</span>
+              </button>
+            )}
+          </div>
 
           {/* ── Campos opcionales ── */}
           <div className="mx-4 mt-4">

@@ -202,15 +202,15 @@ def _migrate_productos_reales():
             (CategoriaProductoEnum.pasteleria, "Cake Zanahoria",          "und"),
             (CategoriaProductoEnum.pasteleria, "Cake Banano",             "und"),
             (CategoriaProductoEnum.pasteleria, "Wafles Pandebono",        "und"),
-            (CategoriaProductoEnum.pasteleria, "Pastel Pollo",            "und"),
+            (CategoriaProductoEnum.pasteleria, "Pastel de Pollo",         "und"),
             (CategoriaProductoEnum.pasteleria, "Pastel Carne",            "und"),
             (CategoriaProductoEnum.pasteleria, "Pastel Queso",            "und"),
             (CategoriaProductoEnum.pasteleria, "Masa Pandebono",          "und"),
             (CategoriaProductoEnum.pasteleria, "Omelette",                "und"),
-            (CategoriaProductoEnum.pasteleria, "Omelette Queso",          "und"),
+            (CategoriaProductoEnum.pasteleria, "Omelette Jamón y Queso", "und"),
             (CategoriaProductoEnum.pasteleria, "Pan Pollo",               "und"),
-            (CategoriaProductoEnum.pasteleria, "Pan Esponjado",           "und"),
-            (CategoriaProductoEnum.pasteleria, "Dedo de Queso",           "und"),
+            (CategoriaProductoEnum.pasteleria, "Esponjado de Queso",      "und"),
+            (CategoriaProductoEnum.pasteleria, "Palito de Queso",         "und"),
             # ── BEBIDA
             (CategoriaProductoEnum.bebida, "Café Alta Tostión x2500g",    "g"),
             (CategoriaProductoEnum.bebida, "Café Libra Medium 500g",      "und"),
@@ -333,12 +333,32 @@ def _migrate_proveedores():
     from app.models.models import Producto, CategoriaProductoEnum
     db = SessionLocal()
     try:
+        # Renombrar productos a sus nombres correctos (idempotente)
+        RENOMBRES = {
+            "Omelette Queso":  "Omelette Jamón y Queso",
+            "Pastel Pollo":    "Pastel de Pollo",
+            "Pan Esponjado":   "Esponjado de Queso",
+            "Dedo de Queso":   "Palito de Queso",
+        }
+        for nombre_viejo, nombre_nuevo in RENOMBRES.items():
+            p_viejo = db.query(Producto).filter_by(nombre=nombre_viejo).first()
+            if p_viejo:
+                ya_existe = db.query(Producto).filter_by(nombre=nombre_nuevo).first()
+                if not ya_existe:
+                    p_viejo.nombre = nombre_nuevo
+                    logger.info("Producto renombrado: %s → %s", nombre_viejo, nombre_nuevo)
+        db.flush()
+
         FIJOS = {
+            # La Paola — entrega al día siguiente
+            "Omelette":               ("La Paola", 1),
+            "Omelette Jamón y Queso": ("La Paola", 1),
+            "Pastel de Pollo":        ("La Paola", 1),
+            "Esponjado de Queso":     ("La Paola", 1),
+            "Palito de Queso":        ("La Paola", 1),
             # Delitas — entrega al día siguiente si se pide antes del mediodía
-            "Pastel Pollo":           ("Delitas", 1),
             "Pastel Carne":           ("Delitas", 1),
             "Pastel Queso":           ("Delitas", 1),
-            "Dedo de Queso":          ("Delitas", 1),
             "Wafles Pandebono":       ("Delitas", 1),
             "Croissant Queso":        ("Delitas", 1),
             "Croissant Chocolate":    ("Delitas", 1),

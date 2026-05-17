@@ -24,3 +24,6 @@ pydantic-settings==2.2.1
 
 # Storage
 cloudinary==1.44.0
+
+# HTTP client (Siigo API)
+httpx==0.28.1

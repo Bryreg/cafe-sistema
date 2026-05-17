@@ -8,6 +8,7 @@ import {
   AlertTriangle, ChevronRight, Lock, TrendingUp, TrendingDown,
   UserCheck, ChevronDown, ChevronUp, Sparkles,
   Cake, Clock, Bell, X as XIcon, ImageIcon, Banknote,
+  Trash2, Package, ShoppingCart, FileText, ClipboardList, ReceiptText,
 } from 'lucide-react'
 import BaristaBottomNav from '../components/BaristaBottomNav'
 
@@ -26,6 +27,28 @@ function saludo() {
   return 'Buenas noches'
 }
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
+
+function tiempoEnTurno(fechaApertura: string): string {
+  const diff = Math.max(0, Date.now() - parseUTC(fechaApertura).getTime())
+  const h = Math.floor(diff / 3_600_000)
+  const m = Math.floor((diff % 3_600_000) / 60_000)
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
+const TOOLS_MAIN = [
+  { label: 'Mermas',     sublabel: 'Registrar pérdidas', icon: Trash2,       path: '/mermas',   bg: 'bg-red-50',    icon_color: 'text-red-500'    },
+  { label: 'Inventario', sublabel: 'Stock actual',        icon: Package,      path: '/inventario', bg: 'bg-blue-50', icon_color: 'text-blue-500'   },
+  { label: 'Pedido',     sublabel: 'Solicitar productos', icon: ShoppingCart, path: '/pedido',   bg: 'bg-amber-50',  icon_color: 'text-amber-600'  },
+  { label: 'Sencilla',   sublabel: 'Sencilla del día',    icon: FileText,     path: '/sencilla', bg: 'bg-purple-50', icon_color: 'text-purple-500' },
+]
+const TOOLS_MORE = [
+  { label: 'Pastelería',     icon: Cake,          path: '/pasteleria'    },
+  { label: 'Conteos',        icon: ClipboardList,  path: '/conteos'       },
+  { label: 'Ingresos',       icon: ReceiptText,    path: '/ingresos'      },
+  { label: 'Limpieza',       icon: Sparkles,       path: '/limpieza'      },
+  { label: 'Consignaciones', icon: Banknote,       path: '/consignaciones'},
+  { label: 'C. Compras',     icon: Package,        path: '/conteo-compras'},
+]
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 interface AlertaStock {
@@ -72,6 +95,7 @@ export default function Hub() {
   const [ventas, setVentas] = useState<Venta[]>([])
   const [showVentas, setShowVentas] = useState(false)
   const [limpiezaDiaria, setLimpiezaDiaria] = useState(false)
+  const [showMasTools, setShowMasTools] = useState(false)
   const [pendienteConsig, setPendienteConsig] = useState<{ items: PendienteConsignacion[], total_pendiente: number } | null>(null)
 
   // Reloj
@@ -275,13 +299,30 @@ export default function Hub() {
           <div className="rounded-2xl p-4 space-y-3 text-white"
             style={{ background: 'linear-gradient(135deg, oklch(32% 0.045 155), oklch(28% 0.05 155))' }}>
 
-            {/* Estado + hora */}
+            {/* Header turno: estado + tiempo + pasos */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-green-400" />
                 <span className="text-xs font-semibold text-green-300 uppercase tracking-wide">Turno activo</span>
               </div>
-              <span className="text-xs tabular-nums" style={{ color: 'oklch(72% 0.03 155)' }}>{time}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold tabular-nums"
+                  style={{ color: 'oklch(72% 0.03 155)' }}>
+                  {time}
+                </span>
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full"
+                  style={{ background: 'oklch(40% 0.04 155)', color: 'oklch(72% 0.13 155)' }}>
+                  {pasos.filter(p => p.done).length}/{pasos.length}
+                </span>
+              </div>
+            </div>
+
+            {/* Tiempo en turno */}
+            <div>
+              <span className="text-2xl font-bold tabular-nums text-white leading-none">
+                {tiempoEnTurno(turno.fecha_apertura)}
+              </span>
+              <span className="text-xs ml-2" style={{ color: 'oklch(60% 0.05 155)' }}>en turno</span>
             </div>
 
             {/* Progress bar */}
@@ -392,6 +433,55 @@ export default function Hub() {
             <span className="font-bold">{nextStep.label}</span>
             <ChevronRight size={18} />
           </button>
+        )}
+
+        {/* ── Herramientas ── */}
+        {turno && (
+          <div>
+            <div className="grid grid-cols-2 gap-2">
+              {TOOLS_MAIN.map(({ label, sublabel, icon: Icon, path, bg, icon_color }) => (
+                <button
+                  key={path}
+                  onClick={() => navigate(path)}
+                  className={`flex items-center gap-3 px-3 py-3 rounded-2xl border border-warm-200 bg-white active:scale-[0.97] transition-all`}
+                >
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${bg}`}>
+                    <Icon size={17} className={icon_color} />
+                  </div>
+                  <div className="text-left min-w-0">
+                    <p className="text-sm font-semibold text-warm-800 leading-tight">{label}</p>
+                    <p className="text-xs text-warm-400 leading-tight truncate">{sublabel}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Más herramientas */}
+            {showMasTools && (
+              <div className="grid grid-cols-3 gap-2 mt-2">
+                {TOOLS_MORE.map(({ label, icon: Icon, path }) => (
+                  <button
+                    key={path}
+                    onClick={() => navigate(path)}
+                    className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-2xl border border-warm-200 bg-white active:scale-[0.97] transition-all"
+                  >
+                    <Icon size={18} className="text-warm-500" />
+                    <span className="text-xs font-medium text-warm-600 text-center leading-tight">{label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <button
+              onClick={() => setShowMasTools(v => !v)}
+              className="w-full flex items-center justify-center gap-1.5 py-2 text-xs text-warm-400 font-medium hover:text-warm-600 transition-colors mt-1"
+            >
+              {showMasTools
+                ? <><ChevronUp size={13} /> Menos herramientas</>
+                : <><ChevronDown size={13} /> {TOOLS_MORE.length} herramientas más</>
+              }
+            </button>
+          </div>
         )}
 
         {/* ── Cierre cuando el conteo esté listo ── */}

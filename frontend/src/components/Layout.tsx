@@ -5,13 +5,13 @@ import api from '../api/client'
 import {
   Coffee, LayoutDashboard, Package, Banknote, LogOut, Inbox,
   BarChart2, ShoppingCart, Bell, Users, Menu, X, ClipboardList, Wrench, ClipboardCheck,
-  Activity, CheckCheck,
+  Activity, CheckCheck, Layers,
 } from 'lucide-react'
 
 const NAV_ADMIN = [
-  { to: '/dashboard',       label: 'Dashboard',       icon: LayoutDashboard },
-  { to: '/inventario',      label: 'Inventario',       icon: Package },
-  { to: '/pedidos-admin',   label: 'Pedidos',          icon: ClipboardList },
+  { to: '/dashboard',          label: 'Dashboard',     icon: LayoutDashboard },
+  { to: '/control-inventario', label: 'Inventario',    icon: Layers },
+  { to: '/pedidos-admin',      label: 'Pedidos',       icon: ClipboardList },
   { to: '/compras',         label: 'Compras',          icon: ShoppingCart },
   { to: '/consignaciones',  label: 'Consignaciones',   icon: Banknote },
   { to: '/mantenimientos',  label: 'Mantenimientos',   icon: Wrench },

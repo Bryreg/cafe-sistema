@@ -30,6 +30,7 @@ import Ingresos from './pages/Ingresos'
 import ConteoCompras from './pages/ConteoCompras'
 
 // Admin pages
+import ControlInventario from './pages/ControlInventario'
 import Dashboard from './pages/Dashboard'
 import Bandeja from './pages/Bandeja'
 import Informes from './pages/Informes'
@@ -181,6 +182,9 @@ function AppRoutes() {
       } />
       <Route path="/usuarios" element={
         <ProtectedRoute role="admin"><Layout><Usuarios /></Layout></ProtectedRoute>
+      } />
+      <Route path="/control-inventario" element={
+        <ProtectedRoute role="admin"><Layout><ControlInventario /></Layout></ProtectedRoute>
       } />
       <Route path="/pedidos-admin" element={
         <ProtectedRoute role="admin"><Layout><PedidosAdmin /></Layout></ProtectedRoute>

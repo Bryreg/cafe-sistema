@@ -4,7 +4,8 @@ import time
 import httpx
 from app.config import settings
 
-SIIGO_BASE = "https://services.siigo.com/alliances/api"
+SIIGO_AUTH_URL = "https://api.siigo.com/auth"
+SIIGO_BASE = "https://api.siigo.com"
 
 # In-memory token cache (process lifetime)
 _cache: dict = {"token": None, "expires_at": 0.0}
@@ -17,9 +18,9 @@ async def _get_token() -> str:
 
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.post(
-            f"{SIIGO_BASE}/siigoapi-users/v1/sign-in",
-            json={"userName": settings.SIIGO_USERNAME, "accessKey": settings.SIIGO_ACCESS_KEY},
-            headers={"Content-Type": "application/json", "Partner-Id": "CafeSystem"},
+            SIIGO_AUTH_URL,
+            json={"username": settings.SIIGO_USERNAME, "access_key": settings.SIIGO_ACCESS_KEY},
+            headers={"Content-Type": "application/json", "Partner-Id": "cafe-sistema"},
         )
         if not r.is_success:
             raise ValueError(f"Siigo auth {r.status_code}: {r.text[:300]}")
@@ -30,7 +31,7 @@ async def _get_token() -> str:
         raise ValueError(f"Token not found in Siigo response: {list(data.keys())}")
 
     _cache["token"] = token
-    _cache["expires_at"] = now + 3500  # renew ~1 min before typical 1h expiry
+    _cache["expires_at"] = now + 86_000  # renew ~7 min before 24h expiry
     return token
 
 

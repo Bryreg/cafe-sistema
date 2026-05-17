@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { BarChart2, ArrowUpDown, Package, ChevronDown, ChevronUp, UserCheck, Clock, AlertTriangle, Download } from 'lucide-react'
+import { BarChart2, ArrowUpDown, Package, ChevronDown, ChevronUp, UserCheck, Clock, AlertTriangle, Download, ShoppingBag } from 'lucide-react'
 import DifferenceBadge from '../components/DifferenceBadge'
 
 interface Sede { id: number; nombre: string }
@@ -28,7 +28,7 @@ function BtnExcel({ onClick }: { onClick: () => void }) {
   )
 }
 
-type Tab = 'ventas' | 'movimientos' | 'inventario' | 'cuadres' | 'turnos'
+type Tab = 'ventas' | 'movimientos' | 'inventario' | 'cuadres' | 'turnos' | 'siigo'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 const fmtN = (v: number, dec = 2) => v.toLocaleString('es-CO', { minimumFractionDigits: dec, maximumFractionDigits: dec })
@@ -702,6 +702,140 @@ const ESTADO_CFG: Record<string, { label: string; bg: string; text: string; titl
 
 
 
+// ─── Siigo: ventas por producto ───────────────────────────────────────────────
+interface SiigoProducto {
+  nombre: string; codigo: string; cantidad: number; total: number; porcentaje: number
+}
+interface SiigoData {
+  fecha_desde: string; fecha_hasta: string
+  total_facturas: number; total_ventas: number
+  productos: SiigoProducto[]
+}
+
+function TabSiigo({ tiendaId }: { tiendaId: number }) {
+  const [desde, setDesde] = useState(inicioMes())
+  const [hasta, setHasta] = useState(hoy())
+  const [data, setData] = useState<SiigoData | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // tiendaId kept for future per-sede credentials
+  void tiendaId
+
+  const cargar = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const { data: res } = await api.get('/siigo/ventas-por-producto', {
+        params: { fecha_desde: desde, fecha_hasta: hasta },
+      })
+      setData(res)
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg ?? 'Error consultando Siigo')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const exportar = () => {
+    if (!data) return
+    exportarExcel(
+      `siigo_productos_${desde}_${hasta}`,
+      ['Producto', 'Código', 'Cantidad', 'Total', '%'],
+      data.productos.map(p => [p.nombre, p.codigo, p.cantidad, p.total, p.porcentaje])
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2 flex-wrap items-end">
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Desde</label>
+          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Hasta</label>
+          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+        </div>
+        <button onClick={cargar} disabled={loading}
+          className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
+          {loading ? 'Consultando Siigo…' : 'Consultar'}
+        </button>
+        {data && data.productos.length > 0 && <BtnExcel onClick={exportar} />}
+      </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {data && (
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <p className="text-xs text-gray-400">Facturas</p>
+              <p className="text-xl font-bold text-gray-800">{data.total_facturas}</p>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <p className="text-xs text-gray-400">Venta total</p>
+              <p className="text-base font-bold text-gray-800">{fmt(data.total_ventas)}</p>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <p className="text-xs text-gray-400">Productos</p>
+              <p className="text-xl font-bold text-gray-800">{data.productos.length}</p>
+            </div>
+          </div>
+
+          {data.productos.length > 0 ? (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-100">
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">#</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Producto</th>
+                      <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Cant.</th>
+                      <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Total</th>
+                      <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">%</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {data.productos.map((p, i) => (
+                      <tr key={p.codigo || p.nombre} className="hover:bg-gray-50">
+                        <td className="px-4 py-2.5 text-xs text-gray-300 font-mono">{i + 1}</td>
+                        <td className="px-4 py-2.5">
+                          <p className="font-medium text-gray-800">{p.nombre}</p>
+                          {p.codigo && <p className="text-xs text-gray-400">{p.codigo}</p>}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono text-gray-600">{fmtN(p.cantidad, 0)}</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-gray-800">{fmt(p.total)}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <div className="w-16 bg-gray-100 rounded-full h-1.5 hidden sm:block">
+                              <div className="bg-amber-400 h-1.5 rounded-full" style={{ width: `${p.porcentaje}%` }} />
+                            </div>
+                            <span className="text-xs text-gray-500 font-mono">{p.porcentaje}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-400 text-center py-6">Sin facturas en el período seleccionado.</p>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 // ─── Página principal ─────────────────────────────────────────────────────────
 export default function Informes() {
   const { user } = useAuth()
@@ -729,6 +863,7 @@ export default function Informes() {
     { id: 'cuadres',      label: 'Cuadres',      icon: <UserCheck size={14} /> },
     { id: 'movimientos',  label: 'Movimientos',  icon: <ArrowUpDown size={14} /> },
     { id: 'inventario',   label: 'Inventario',   icon: <Package size={14} /> },
+    { id: 'siigo',        label: 'Siigo',        icon: <ShoppingBag size={14} /> },
   ]
 
   return (
@@ -770,6 +905,7 @@ export default function Informes() {
       {tab === 'cuadres'     && <TabCuadres     key={tiendaId} tiendaId={tiendaId} />}
       {tab === 'movimientos' && <TabMovimientos key={tiendaId} tiendaId={tiendaId} />}
       {tab === 'inventario'  && <TabInventario  key={tiendaId} tiendaId={tiendaId} />}
+      {tab === 'siigo'       && <TabSiigo       key={tiendaId} tiendaId={tiendaId} />}
     </div>
   )
 }

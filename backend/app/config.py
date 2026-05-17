@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "uploads"
     ENV: str = "development"
     CLOUDINARY_URL: str = ""   # cloudinary://api_key:api_secret@cloud_name
+    SIIGO_USERNAME: str = ""
+    SIIGO_ACCESS_KEY: str = ""
 
     class Config:
         env_file = _env_file

@@ -46,7 +46,15 @@ async def _get_token() -> str:
 async def get_invoices(fecha_desde: str, fecha_hasta: str) -> list[dict]:
     """Fetch all sales invoices in [fecha_desde, fecha_hasta] (YYYY-MM-DD)."""
     token = await _get_token()
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Partner-Id": "cafe-sistema",
+    }
+
+    # Siigo requires ISO 8601 datetime format
+    date_start = f"{fecha_desde}T00:00:00Z"
+    date_end   = f"{fecha_hasta}T23:59:59Z"
 
     all_invoices: list[dict] = []
     page = 1
@@ -57,13 +65,15 @@ async def get_invoices(fecha_desde: str, fecha_hasta: str) -> list[dict]:
                 f"{SIIGO_BASE}/v1/invoices",
                 headers=headers,
                 params={
-                    "date_start": fecha_desde,
-                    "date_end":   fecha_hasta,
+                    "date_start": date_start,
+                    "date_end":   date_end,
                     "page":       page,
                     "page_size":  100,
                 },
             )
-            r.raise_for_status()
+            if not r.is_success:
+                raise ValueError(f"Siigo invoices {r.status_code}: {r.text[:300]}")
+
             data = r.json()
 
             results = data.get("results", [])

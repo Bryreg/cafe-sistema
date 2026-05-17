@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import api from '../api/client'
 import {
   Coffee, LayoutDashboard, Package, Banknote, LogOut, Inbox,
   BarChart2, ShoppingCart, Bell, Users, Menu, X, ClipboardList, Wrench, ClipboardCheck,
+  Activity, CheckCheck,
 } from 'lucide-react'
 
 const NAV_ADMIN = [
@@ -14,11 +16,133 @@ const NAV_ADMIN = [
   { to: '/consignaciones',  label: 'Consignaciones',   icon: Banknote },
   { to: '/mantenimientos',  label: 'Mantenimientos',   icon: Wrench },
   { to: '/auditorias',      label: 'Auditorías',       icon: ClipboardCheck },
+  { to: '/audit-log',       label: 'Historial',        icon: Activity },
   { to: '/comunicados',     label: 'Comunicados',      icon: Bell },
   { to: '/bandeja',         label: 'Bandeja',          icon: Inbox },
   { to: '/informes',        label: 'Informes',         icon: BarChart2 },
   { to: '/usuarios',        label: 'Usuarios',         icon: Users },
 ]
+
+// ─── Notificaciones ──────────────────────────────────────────────────────────
+interface Notif {
+  id: number; tipo: string; mensaje: string
+  nivel: 'info' | 'advertencia' | 'critico'
+  leida: boolean; fecha: string
+}
+
+const NIVEL_CFG = {
+  critico:     { dot: 'bg-red-500',    text: 'text-red-700',    bg: 'bg-red-50'    },
+  advertencia: { dot: 'bg-amber-500',  text: 'text-amber-700',  bg: 'bg-amber-50'  },
+  info:        { dot: 'bg-blue-400',   text: 'text-blue-700',   bg: 'bg-blue-50'   },
+}
+
+function fmtFecha(iso: string) {
+  const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z')
+  return d.toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })
+    + ' ' + d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+}
+
+function NotifBell({ tiendaId }: { tiendaId: number }) {
+  const [notifs, setNotifs] = useState<Notif[]>([])
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  const unread = notifs.filter(n => !n.leida).length
+
+  const fetchNotifs = () => {
+    api.get(`/notificaciones/${tiendaId}`)
+      .then(r => setNotifs(r.data))
+      .catch(() => {})
+  }
+
+  useEffect(() => {
+    fetchNotifs()
+    const t = setInterval(fetchNotifs, 60_000)
+    return () => clearInterval(t)
+  }, [tiendaId])
+
+  // cerrar al click fuera
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const marcarTodas = () => {
+    api.patch(`/notificaciones/${tiendaId}/leer-todas`)
+      .then(() => setNotifs(prev => prev.map(n => ({ ...n, leida: true }))))
+      .catch(() => {})
+  }
+
+  const marcarUna = (id: number) => {
+    api.patch(`/notificaciones/${tiendaId}/${id}/leer`)
+      .then(() => setNotifs(prev => prev.map(n => n.id === id ? { ...n, leida: true } : n)))
+      .catch(() => {})
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="relative p-1.5 text-warm-400 hover:text-warm-700 transition-colors"
+        aria-label="Notificaciones"
+      >
+        <Bell size={17} />
+        {unread > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-0.5">
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-xl border border-warm-200 z-50 overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-warm-100">
+            <span className="font-semibold text-sm text-warm-700">
+              Notificaciones {unread > 0 && <span className="text-red-500">({unread} sin leer)</span>}
+            </span>
+            {unread > 0 && (
+              <button
+                onClick={marcarTodas}
+                className="flex items-center gap-1 text-xs text-warm-400 hover:text-forest transition-colors"
+              >
+                <CheckCheck size={12} /> Marcar todas
+              </button>
+            )}
+          </div>
+          {/* Lista */}
+          <div className="max-h-80 overflow-y-auto divide-y divide-warm-50">
+            {notifs.length === 0 ? (
+              <p className="text-center text-sm text-warm-400 py-8">Sin notificaciones</p>
+            ) : notifs.map(n => {
+              const cfg = NIVEL_CFG[n.nivel] ?? NIVEL_CFG.info
+              return (
+                <button
+                  key={n.id}
+                  onClick={() => marcarUna(n.id)}
+                  className={`w-full text-left px-4 py-3 hover:bg-warm-50 transition-colors ${n.leida ? 'opacity-50' : ''}`}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${cfg.dot}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs font-semibold uppercase ${cfg.text}`}>{n.nivel}</p>
+                      <p className="text-sm text-warm-700 leading-snug">{n.mensaje}</p>
+                      <p className="text-xs text-warm-400 mt-0.5">{fmtFecha(n.fecha)}</p>
+                    </div>
+                    {!n.leida && <span className="w-2 h-2 rounded-full bg-forest flex-shrink-0 mt-1.5" />}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth()
@@ -44,11 +168,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <Coffee size={18} className="text-forest" />
           <span className="font-bold text-warm-700">Sistema Café</span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <span className="text-sm text-warm-500 hidden sm:inline">{user?.nombre}</span>
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
             user?.rol === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-forest-50 text-forest'
           }`}>{user?.rol}</span>
+          {user?.rol === 'admin' && user.tienda_id && (
+            <NotifBell tiendaId={user.tienda_id} />
+          )}
           <button
             onClick={handleLogout}
             className="flex items-center gap-1 text-xs text-warm-400 hover:text-red-500 transition-colors"

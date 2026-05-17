@@ -81,7 +81,7 @@ def get_dashboard(db: Session, tienda_id: int):
                   checklist.limpieza_check, checklist.cierre_realizado]
         cumplimiento = sum(1 for c in campos if c) / len(campos) * 100
 
-    # Alertas
+    # Alertas operativas básicas
     alertas = []
     if estado_caja == "sin_turno":
         alertas.append({"tipo": "caja", "mensaje": "No hay turno abierto hoy", "nivel": "advertencia"})
@@ -93,6 +93,14 @@ def get_dashboard(db: Session, tienda_id: int):
         alertas.append({"tipo": "solicitud", "mensaje": f"{solicitudes_pendientes} solicitud(es) sin atender", "nivel": "advertencia"})
     if checklist and not checklist.pasteleria_check and datetime.utcnow().hour >= 11:
         alertas.append({"tipo": "pasteleria", "mensaje": "Registro de pastelería pendiente", "nivel": "critico"})
+
+    # Alertas inteligentes: patrones anómalos (mermas, baristas con diferencias, caída de ventas…)
+    try:
+        from app.services import alertas as alertas_svc
+        smart = alertas_svc.get_alertas_inteligentes(db, tienda_id)
+        alertas.extend(smart.get("alertas", []))
+    except Exception:
+        pass  # nunca bloquear el dashboard por fallo en alertas
 
     return {
         "tienda_id": tienda_id,

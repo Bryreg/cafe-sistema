@@ -19,8 +19,10 @@ async def _get_token() -> str:
         r = await client.post(
             f"{SIIGO_BASE}/siigoapi-users/v1/sign-in",
             json={"userName": settings.SIIGO_USERNAME, "accessKey": settings.SIIGO_ACCESS_KEY},
+            headers={"Content-Type": "application/json", "Partner-Id": "CafeSystem"},
         )
-        r.raise_for_status()
+        if not r.is_success:
+            raise ValueError(f"Siigo auth {r.status_code}: {r.text[:300]}")
         data = r.json()
 
     token = data.get("access_token") or data.get("token") or data.get("accessToken")

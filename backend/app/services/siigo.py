@@ -16,10 +16,18 @@ async def _get_token() -> str:
     if _cache["token"] and _cache["expires_at"] > now + 60:
         return _cache["token"]
 
+    username = (settings.SIIGO_USERNAME or "").strip()
+    access_key = (settings.SIIGO_ACCESS_KEY or "").strip()
+
+    import logging
+    logging.getLogger(__name__).info(
+        "Siigo auth attempt: user=%s key_len=%d", username, len(access_key)
+    )
+
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.post(
             SIIGO_AUTH_URL,
-            json={"username": settings.SIIGO_USERNAME, "access_key": settings.SIIGO_ACCESS_KEY},
+            json={"username": username, "access_key": access_key},
             headers={"Content-Type": "application/json", "Partner-Id": "cafe-sistema"},
         )
         if not r.is_success:

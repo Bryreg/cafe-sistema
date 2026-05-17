@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
   AlertTriangle, CheckCircle2, TrendingUp, TrendingDown,
-  ShoppingCart, RefreshCw, ChevronDown, ChevronUp, Layers,
+  ShoppingCart, RefreshCw, ChevronDown, ChevronUp, Layers, Settings2, Check,
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -166,6 +166,161 @@ function StockSection({
                       <span className="text-sm text-gray-600">
                         {p.consumo_diario > 0 ? `${p.consumo_diario} ${p.unidad}` : '—'}
                       </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Calibración de mínimos ───────────────────────────────────────────────────
+
+interface EditState { stock_minimo?: number; lead_time_dias?: number }
+
+function CalibracionSection({
+  items, tiendaId, onSaved,
+}: {
+  items: ProductoInventario[]
+  tiendaId: number
+  onSaved: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [edits, setEdits] = useState<Record<number, EditState>>({})
+  const [saving, setSaving] = useState<Record<number, boolean>>({})
+  const [saved, setSaved] = useState<Record<number, boolean>>({})
+
+  function val(p: ProductoInventario, field: keyof EditState) {
+    return edits[p.producto_id]?.[field] ?? (field === 'stock_minimo' ? p.stock_minimo : p.lead_time_dias)
+  }
+
+  function setEdit(id: number, field: keyof EditState, v: number) {
+    setEdits(prev => ({ ...prev, [id]: { ...prev[id], [field]: v } }))
+  }
+
+  async function save(p: ProductoInventario) {
+    const e = edits[p.producto_id]
+    if (!e) return
+    setSaving(prev => ({ ...prev, [p.producto_id]: true }))
+    try {
+      const ops: Promise<unknown>[] = []
+      if (e.stock_minimo !== undefined && e.stock_minimo !== p.stock_minimo) {
+        ops.push(api.patch(`/inventario/tienda/${tiendaId}/producto/${p.producto_id}/minimo`, {
+          stock_minimo: e.stock_minimo,
+        }))
+      }
+      if (e.lead_time_dias !== undefined && e.lead_time_dias !== p.lead_time_dias) {
+        ops.push(api.patch(`/inventario/productos/${p.producto_id}`, {
+          lead_time_dias: e.lead_time_dias,
+        }))
+      }
+      await Promise.all(ops)
+      setSaved(prev => ({ ...prev, [p.producto_id]: true }))
+      setTimeout(() => setSaved(prev => ({ ...prev, [p.producto_id]: false })), 1500)
+      onSaved()
+    } catch {
+      alert('Error al guardar')
+    } finally {
+      setSaving(prev => ({ ...prev, [p.producto_id]: false }))
+    }
+  }
+
+  function coberturaLabel(minimo: number, consumo: number, leadTime: number) {
+    if (consumo <= 0) return { text: 'sin datos', color: 'text-gray-400' }
+    const dias = minimo / consumo
+    if (dias < leadTime) return { text: `${dias.toFixed(1)}d ⚠`, color: 'text-red-600 font-semibold' }
+    if (dias < leadTime * 2) return { text: `${dias.toFixed(1)}d`, color: 'text-amber-600' }
+    return { text: `${dias.toFixed(1)}d`, color: 'text-green-600' }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+      >
+        <span className="flex items-center gap-2 text-sm font-bold text-gray-600">
+          <Settings2 size={15} />
+          Calibrar mínimos y tiempos de entrega
+        </span>
+        {open ? <ChevronUp size={15} className="text-gray-400" /> : <ChevronDown size={15} className="text-gray-400" />}
+      </button>
+
+      {open && (
+        <div className="overflow-x-auto border-t border-gray-100">
+          <p className="px-4 py-2 text-xs text-gray-400 bg-gray-50 border-b border-gray-100">
+            Ajustá el stock mínimo y el tiempo de entrega por producto. La cobertura muestra cuántos días cubre el mínimo con el consumo real de los últimos 14 días.
+          </p>
+          <table className="w-full">
+            <thead>
+              <tr className="text-xs text-gray-400 uppercase bg-gray-50">
+                <th className="px-4 py-2 text-left font-medium">Producto</th>
+                <th className="px-2 py-2 text-center font-medium">Consumo/día</th>
+                <th className="px-2 py-2 text-center font-medium">Mínimo</th>
+                <th className="px-2 py-2 text-center font-medium">Entrega (días)</th>
+                <th className="px-2 py-2 text-center font-medium">Cobertura</th>
+                <th className="px-2 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {items.map(p => {
+                const minimo = val(p, 'stock_minimo') as number
+                const leadTime = val(p, 'lead_time_dias') as number
+                const cob = coberturaLabel(minimo, p.consumo_diario, leadTime)
+                const isDirty = edits[p.producto_id] !== undefined && (
+                  (edits[p.producto_id].stock_minimo !== undefined && edits[p.producto_id].stock_minimo !== p.stock_minimo) ||
+                  (edits[p.producto_id].lead_time_dias !== undefined && edits[p.producto_id].lead_time_dias !== p.lead_time_dias)
+                )
+                return (
+                  <tr key={p.producto_id} className="border-t border-gray-50 hover:bg-gray-50/50">
+                    <td className="px-4 py-2">
+                      <p className="text-sm text-gray-800">{p.nombre}</p>
+                      {p.proveedor && <p className="text-xs text-gray-400">{p.proveedor}</p>}
+                    </td>
+                    <td className="px-2 py-2 text-center text-sm text-gray-500">
+                      {p.consumo_diario > 0 ? `${p.consumo_diario} ${p.unidad}` : '—'}
+                    </td>
+                    <td className="px-2 py-2 text-center">
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={minimo}
+                        onChange={e => setEdit(p.producto_id, 'stock_minimo', parseFloat(e.target.value) || 0)}
+                        className="w-20 text-center border border-gray-300 rounded-lg py-1 text-sm focus:outline-none focus:ring-2 focus:ring-forest/40"
+                      />
+                      <span className="text-xs text-gray-400 ml-1">{p.unidad}</span>
+                    </td>
+                    <td className="px-2 py-2 text-center">
+                      <input
+                        type="number"
+                        min={1}
+                        max={14}
+                        step={1}
+                        value={leadTime}
+                        onChange={e => setEdit(p.producto_id, 'lead_time_dias', parseInt(e.target.value) || 1)}
+                        className="w-14 text-center border border-gray-300 rounded-lg py-1 text-sm focus:outline-none focus:ring-2 focus:ring-forest/40"
+                      />
+                    </td>
+                    <td className={`px-2 py-2 text-center text-sm ${cob.color}`}>
+                      {cob.text}
+                    </td>
+                    <td className="px-2 py-2 text-right">
+                      {saved[p.producto_id] ? (
+                        <Check size={16} className="text-green-500 inline" />
+                      ) : (
+                        <button
+                          onClick={() => save(p)}
+                          disabled={!isDirty || saving[p.producto_id]}
+                          className="text-xs font-medium px-2.5 py-1 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-default bg-forest text-white hover:bg-forest/90"
+                        >
+                          {saving[p.producto_id] ? '…' : 'Guardar'}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 )
@@ -466,6 +621,20 @@ export default function ControlInventario() {
           )}
         </div>
       </div>
+
+      {/* Calibración */}
+      {sugerencia && tiendaId !== null && allItems.length > 0 && (
+        <CalibracionSection
+          items={allItems}
+          tiendaId={tiendaId}
+          onSaved={() => {
+            // Refrescar sugerencia para reflejar nuevos mínimos
+            api.get('/pedidos/sugerencia', { params: { tienda_id: tiendaId } })
+              .then(r => setSugerencia(r.data))
+              .catch(() => {})
+          }}
+        />
+      )}
     </div>
   )
 }

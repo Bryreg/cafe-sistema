@@ -64,6 +64,8 @@ def editar_producto(producto_id: int, data: ProductoUpdate, db: Session = Depend
         p.categoria = cat_map[data.categoria]
     if data.unidad_medida is not None: p.unidad_medida = data.unidad_medida
     if data.controla_stock is not None: p.controla_stock = data.controla_stock
+    if data.lead_time_dias is not None: p.lead_time_dias = data.lead_time_dias
+    if data.proveedor is not None: p.proveedor = data.proveedor if data.proveedor.strip() else None
     db.commit()
     return {"id": p.id, "nombre": p.nombre, "categoria": p.categoria.value,
             "unidad_medida": p.unidad_medida, "controla_stock": p.controla_stock}

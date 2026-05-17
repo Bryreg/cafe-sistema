@@ -20,6 +20,8 @@ class ProductoUpdate(BaseModel):
     categoria: Optional[str] = None
     unidad_medida: Optional[str] = None
     controla_stock: Optional[bool] = None
+    lead_time_dias: Optional[int] = None
+    proveedor: Optional[str] = None
 
 class StockMinimoUpdate(BaseModel):
     stock_minimo: float

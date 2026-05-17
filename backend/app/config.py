@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     CLOUDINARY_URL: str = ""   # cloudinary://api_key:api_secret@cloud_name
     SIIGO_USERNAME: str = ""
     SIIGO_ACCESS_KEY: str = ""
+    SIIGO_PARTNER_ID: str = ""
 
     class Config:
         env_file = _env_file

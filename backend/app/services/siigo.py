@@ -28,7 +28,7 @@ async def _get_token() -> str:
         r = await client.post(
             SIIGO_AUTH_URL,
             json={"username": username, "access_key": access_key},
-            headers={"Content-Type": "application/json", "Partner-Id": settings.SIIGO_USERNAME},
+            headers={"Content-Type": "application/json", "Partner-Id": settings.SIIGO_PARTNER_ID},
         )
         if not r.is_success:
             raise ValueError(f"Siigo auth {r.status_code}: {r.text[:300]}")
@@ -49,6 +49,7 @@ async def get_invoices(fecha_desde: str, fecha_hasta: str) -> list[dict]:
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
+        "Partner-Id": settings.SIIGO_PARTNER_ID,
     }
 
     # Siigo requires ISO 8601 datetime format

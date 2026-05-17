@@ -32,6 +32,7 @@ import ConteoCompras from './pages/ConteoCompras'
 // Admin pages
 import ControlInventario from './pages/ControlInventario'
 import Dashboard from './pages/Dashboard'
+import AdminHub from './pages/AdminHub'
 import Bandeja from './pages/Bandeja'
 import Informes from './pages/Informes'
 import ComprasAdmin from './pages/ComprasAdmin'
@@ -166,7 +167,7 @@ function AppRoutes() {
 
       {/* ── Admin ── */}
       <Route path="/dashboard" element={
-        <ProtectedRoute role="admin"><Layout><Dashboard /></Layout></ProtectedRoute>
+        <ProtectedRoute role="admin"><AdminHub /></ProtectedRoute>
       } />
       <Route path="/bandeja" element={
         <ProtectedRoute role="admin"><Layout><Bandeja /></Layout></ProtectedRoute>

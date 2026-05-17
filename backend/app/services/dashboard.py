@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.models.models import (CajaTurno, Inventario, Consignacion, ChecklistDiario,
                                  Tienda, Producto, SolicitudPedido, SolicitudSencilla,
                                  EstadoTurnoEnum, EstadoConsignacionEnum)
@@ -8,6 +8,7 @@ from app.models.models import (CajaTurno, Inventario, Consignacion, ChecklistDia
 def get_dashboard(db: Session, tienda_id: int):
     tienda = db.query(Tienda).filter(Tienda.id == tienda_id).first()
     hoy = datetime.utcnow().date()
+    ayer = hoy - timedelta(days=1)
 
     # Turno activo
     turno = db.query(CajaTurno).filter(
@@ -16,6 +17,14 @@ def get_dashboard(db: Session, tienda_id: int):
     ).first()
 
     ventas_dia = turno.total_ventas if turno else 0.0
+
+    # Ventas de ayer (turnos cerrados)
+    turnos_ayer = db.query(CajaTurno).filter(
+        CajaTurno.tienda_id == tienda_id,
+        CajaTurno.estado == EstadoTurnoEnum.cerrado,
+        func.date(CajaTurno.fecha_apertura) == ayer,
+    ).all()
+    ventas_ayer = sum(t.total_ventas or 0 for t in turnos_ayer)
     if turno:
         if turno.diferencia_cierre is not None:
             diferencia_caja = turno.diferencia_cierre
@@ -106,6 +115,7 @@ def get_dashboard(db: Session, tienda_id: int):
         "tienda_id": tienda_id,
         "tienda_nombre": tienda.nombre if tienda else "",
         "ventas_dia": ventas_dia,
+        "ventas_ayer": ventas_ayer,
         "estado_caja": estado_caja,
         "diferencia_caja": diferencia_caja,
         "productos_criticos": criticos,

@@ -23,6 +23,8 @@ export interface Turno {
   tiene_conteo_apertura: boolean
   tiene_ventas: boolean
   tiene_conteo_cierre: boolean
+  ts_conteo_apertura: string | null
+  ts_conteo_cierre: string | null
   ultima_entrega_fecha: string | null
   ultima_entrega_diferencia_efectivo: number | null
 }

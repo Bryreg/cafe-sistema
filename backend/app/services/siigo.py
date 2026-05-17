@@ -103,7 +103,12 @@ def aggregate_by_product(invoices: list[dict]) -> dict:
             nombre = item.get("description", "") or ""
             cantidad = float(item.get("quantity", 0) or 0)
             precio = float(item.get("price", 0) or 0)
-            descuento = float(item.get("discount", 0) or 0)
+            # discount can be a dict {"percentage": X} or a plain number
+            raw_disc = item.get("discount", 0) or 0
+            if isinstance(raw_disc, dict):
+                descuento = float(raw_disc.get("percentage", 0) or 0)
+            else:
+                descuento = float(raw_disc)
             subtotal = round(cantidad * precio * (1 - descuento / 100), 2)
 
             key = codigo or nombre

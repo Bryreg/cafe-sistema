@@ -5,12 +5,12 @@ import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
 import {
   Coffee, LogOut,
-  AlertTriangle, ChevronRight, Lock,
+  AlertTriangle, ChevronRight,
   TrendingUp, TrendingDown, UserCheck,
   Sparkles, Cake, Clock, Bell, X as XIcon, ImageIcon,
   Banknote, Trash2, Package, ShoppingCart, FileText,
   ClipboardList, ReceiptText, LayoutGrid, ChevronDown, ChevronUp,
-  ClipboardCheck,
+  ClipboardCheck, Check,
 } from 'lucide-react'
 import BaristaBottomNav from '../components/BaristaBottomNav'
 
@@ -22,14 +22,7 @@ function parseUTC(s: string): Date {
 function hora() {
   return new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
 }
-function saludo() {
-  const h = new Date().getHours()
-  if (h < 12) return 'Buenos días'
-  if (h < 18) return 'Buenas tardes'
-  return 'Buenas noches'
-}
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
-function toMins(d: Date) { return d.getHours() * 60 + d.getMinutes() }
 function fmtTime(d: Date) {
   return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
 }
@@ -73,46 +66,8 @@ interface PendienteConsignacion {
   turno_id: number; fecha_apertura: string; fecha_cierre: string
   esperado: number; consignado: number; pendiente: number
 }
-interface Venta {
-  id: number; venta_total: number; nota_credito: number
-  vales: number; tarjetas: number; efectivo_calculado: number
-  fecha_registro: string; nota: string | null
-}
 
-// ─── ShiftTimeline ────────────────────────────────────────────────────────────
-interface PasoTL {
-  id: string
-  label: string
-  labelShort: string
-  done: boolean
-  ts: Date | null
-}
-
-function ShiftTimeline({ pasos, currentIdx }: { pasos: PasoTL[]; currentIdx: number }) {
-  const now = new Date()
-  const apertura = pasos[0].ts!
-  const startMin = toMins(apertura)
-  const nowMin   = toMins(now)
-  const elapsed  = Math.max(0, nowMin - startMin)
-  const endMin   = Math.max(nowMin, startMin + 30)
-  const span     = endMin - startMin
-  const tlPos    = (d: Date) => Math.max(0, Math.min(1, (toMins(d) - startMin) / span))
-  const hourTicks = Array.from({ length: Math.floor(span / 60) + 1 }, (_, i) => i * 60 / span).filter(t => t <= 1)
-
-  // Dots: done=at ts, current=at 1 (now), future=hidden
-  const dots = pasos.flatMap((p, i) => {
-    if (!p.done && i !== currentIdx) return []           // future: skip
-    if (p.done && !p.ts) return []                       // done but no timestamp: skip
-    const pos = i === currentIdx ? 1 : tlPos(p.ts!)
-    const kind: 'done' | 'current' = i === currentIdx ? 'current' : 'done'
-    return [{ ...p, pos, kind }]
-  })
-
-  const elapsedH = Math.floor(elapsed / 60)
-  const elapsedM = elapsed % 60
-
-  return { dots, hourTicks, span, startMin, nowMin, elapsedH, elapsedM, apertura, now }
-}
+interface Paso { label: string; done: boolean; doneAt: string | null; accion: () => void }
 
 // ─── Hub ─────────────────────────────────────────────────────────────────────
 export default function Hub() {
@@ -127,8 +82,6 @@ export default function Hub() {
   const [movimientos, setMovimientos] = useState<Movimiento[]>([])
   const [showMovimientos, setShowMovimientos] = useState(false)
   const [time, setTime] = useState(hora())
-  const [ventas, setVentas] = useState<Venta[]>([])
-  const [showVentas, setShowVentas] = useState(false)
   const [limpiezaDiaria, setLimpiezaDiaria] = useState(false)
   const [showMasTools, setShowMasTools] = useState(false)
   const [pendienteConsig, setPendienteConsig] = useState<{ items: PendienteConsignacion[], total_pendiente: number } | null>(null)
@@ -160,15 +113,6 @@ export default function Hub() {
     }
   }, [user?.tienda_id])  // eslint-disable-line
 
-  // Ventas del turno
-  useEffect(() => {
-    if (turno?.id && turno.tiene_ventas) {
-      api.get(`/ventas/turno/${turno.id}`).then(r => setVentas(r.data)).catch(() => null)
-    } else {
-      setVentas([])
-    }
-  }, [turno?.id, turno?.tiene_ventas])
-
   // Movimientos
   useEffect(() => {
     if (turno?.id) {
@@ -179,15 +123,22 @@ export default function Hub() {
   }, [turno?.id, turno?.ingresos_movimientos, turno?.egresos_movimientos])
 
   // ── Pasos del turno ──────────────────────────────────────────────────────
-  const pasosNav = [
-    { label: 'Apertura',        done: !!turno,                        accion: () => navigate('/apertura') },
-    { label: 'Conteo apertura', done: !!turno?.tiene_conteo_apertura, accion: () => navigate('/conteo-apertura') },
-    { label: 'Ventas',          done: !!turno?.tiene_ventas,          accion: () => navigate('/ventas') },
-    { label: 'Conteo cierre',   done: !!turno?.tiene_conteo_cierre,   accion: () => navigate('/conteo-cierre') },
-    { label: 'Cierre',          done: turno?.estado === 'cerrado',    accion: () => navigate('/cierre') },
-  ]
-  const pasoActualIdx = pasosNav.findIndex(p => !p.done)
-  const nextStep = pasoActualIdx >= 0 ? pasosNav[pasoActualIdx] : null
+  const pasos: Paso[] = turno ? [
+    { label: 'Apertura',        done: true,                          doneAt: fmtTime(parseUTC(turno.fecha_apertura)),                                                              accion: () => navigate('/apertura')       },
+    { label: 'Conteo apertura', done: !!turno.tiene_conteo_apertura, doneAt: turno.ts_conteo_apertura ? fmtTime(parseUTC(turno.ts_conteo_apertura)) : null,  accion: () => navigate('/conteo-apertura') },
+    { label: 'Ventas',          done: !!turno.tiene_ventas,          doneAt: null,                                                                                                accion: () => navigate('/ventas')         },
+    { label: 'Conteo cierre',   done: !!turno.tiene_conteo_cierre,   doneAt: turno.ts_conteo_cierre ? fmtTime(parseUTC(turno.ts_conteo_cierre)) : null,      accion: () => navigate('/conteo-cierre')  },
+    { label: 'Cierre',          done: turno.estado === 'cerrado',    doneAt: null,                                                                                                accion: () => navigate('/cierre')         },
+  ] : []
+  const currentIdx = pasos.findIndex(p => !p.done)
+  const nextStep = currentIdx >= 0 ? pasos[currentIdx] : null
+
+  // ── Elapsed time ─────────────────────────────────────────────────────────
+  const elapsed = turno ? (() => {
+    const start = parseUTC(turno.fecha_apertura)
+    const mins = Math.max(0, Math.floor((new Date().getTime() - start.getTime()) / 60000))
+    return { h: Math.floor(mins / 60), m: mins % 60, startTime: fmtTime(start) }
+  })() : null
 
   const toggleLimpieza = async () => {
     const nuevo = !limpiezaDiaria
@@ -199,20 +150,8 @@ export default function Hub() {
 
   const agotados = alertas.filter(a => a.nivel === 'agotado')
   const bajos    = alertas.filter(a => a.nivel === 'bajo')
-
-  // ── Timeline data (only when turno exists) ───────────────────────────────
-  const tlData = turno ? (() => {
-    const aperturaDate = parseUTC(turno.fecha_apertura)
-    const pasosTL: PasoTL[] = [
-      { id: 'apertura',        label: 'Apertura',      labelShort: 'Apertura',  done: true,                        ts: aperturaDate },
-      { id: 'conteo_apertura', label: 'C. apertura',   labelShort: 'C.apert.',  done: !!turno.tiene_conteo_apertura, ts: turno.ts_conteo_apertura ? parseUTC(turno.ts_conteo_apertura) : null },
-      { id: 'ventas',          label: 'Ventas',        labelShort: 'Ventas',    done: !!turno.tiene_ventas,          ts: null },
-      { id: 'conteo_cierre',   label: 'Conteo cierre', labelShort: 'C.cierre',  done: !!turno.tiene_conteo_cierre,   ts: turno.ts_conteo_cierre ? parseUTC(turno.ts_conteo_cierre) : null },
-      { id: 'cierre',          label: 'Cierre',        labelShort: 'Cierre',    done: turno.estado === 'cerrado',    ts: null },
-    ]
-    const currentIdx = pasosTL.findIndex(p => !p.done)
-    return { pasosTL, currentIdx, ...ShiftTimeline({ pasos: pasosTL, currentIdx }) }
-  })() : null
+  const hayAlertas = alertas.length > 0
+  const todoEnOrden = !hayAlertas && !nextStep && limpiezaDiaria && !!turno
 
   // ── Cuadre de llegada helpers ─────────────────────────────────────────────
   const sinEntrega  = turno ? !turno.ultima_entrega_fecha : false
@@ -259,19 +198,9 @@ export default function Hub() {
       {/* ── Scroll content ──────────────────────────────────────────────── */}
       <div className="flex-1 pb-nav" style={{ padding: '0 16px 16px' }}>
 
-        {/* Saludo */}
-        <div style={{ padding: '14px 4px 10px' }}>
-          <p style={{ fontSize: 18, fontWeight: 700, color: 'oklch(22% 0.01 60)', margin: 0 }}>
-            {saludo()}, <span style={{ color: 'oklch(35% 0.05 155)' }}>{user?.nombre?.split(' ')[0]}</span>
-          </p>
-          <p style={{ fontSize: 11, color: 'oklch(58% 0.01 60)', margin: '2px 0 0', textTransform: 'capitalize' }}>
-            {new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })}
-          </p>
-        </div>
-
         {/* ── Comunicados del admin ──────────────────────────────────────── */}
         {comunicados.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12, paddingTop: 14 }}>
             {comunicados.map(c => (
               <div key={c.id} style={{
                 display: 'flex', gap: 12, alignItems: 'flex-start',
@@ -312,199 +241,152 @@ export default function Hub() {
           </div>
         )}
 
-        {/* ── Consignaciones pendientes ──────────────────────────────────── */}
-        {pendienteConsig && pendienteConsig.items.filter(i => i.pendiente > 0).length > 0 && (() => {
+        {/* ── Consignaciones pendientes (compact) ───────────────────────── */}
+        {pendienteConsig && (() => {
           const items = pendienteConsig.items.filter(i => i.pendiente > 0)
+          if (items.length === 0) return null
           return (
-            <div style={{
-              padding: '12px 14px', borderRadius: 18, marginBottom: 12,
-              background: 'oklch(97% 0.025 65)', border: '2px solid oklch(82% 0.10 65)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ padding: '11px 14px', borderRadius: 16, marginBottom: 12, background: 'oklch(97% 0.025 65)', border: '2px solid oklch(82% 0.10 65)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                   <Banknote size={14} style={{ color: 'oklch(52% 0.18 65)' }} />
-                  <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'oklch(38% 0.12 65)' }}>
-                    {items.length === 1 ? '1 consignación pendiente' : `${items.length} consignaciones pendientes`}
+                  <span style={{ fontSize: 11.5, fontWeight: 700, color: 'oklch(38% 0.12 65)' }}>
+                    {items.length} consignación{items.length > 1 ? 'es' : ''} pendiente{items.length > 1 ? 's' : ''}
                   </span>
                 </div>
                 <span style={{ fontSize: 11, fontWeight: 700, fontVariantNumeric: 'tabular-nums', padding: '3px 9px', borderRadius: 999, background: 'oklch(88% 0.09 65)', color: 'oklch(38% 0.14 65)' }}>
                   {fmt(pendienteConsig.total_pendiente)}
                 </span>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {items.map(item => (
-                  <div key={item.turno_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderRadius: 12, background: 'oklch(93% 0.04 65)' }}>
-                    <span style={{ fontSize: 13, color: 'oklch(40% 0.08 65)', textTransform: 'capitalize' }}>
-                      {parseUTC(item.fecha_cierre).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' })}
-                    </span>
-                    <span style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'oklch(38% 0.14 65)' }}>
-                      {fmt(item.pendiente)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <button
-                onClick={() => navigate('/consignaciones')}
-                style={{ width: '100%', marginTop: 10, padding: '10px 0', borderRadius: 12, border: 'none', background: 'oklch(72% 0.14 65)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
-              >
+              <button onClick={() => navigate('/consignaciones')} style={{ width: '100%', padding: '9px 0', borderRadius: 12, border: 'none', background: 'oklch(72% 0.14 65)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
                 Registrar consignación →
               </button>
             </div>
           )
         })()}
 
-        {/* ── Hero: tarjeta de turno ─────────────────────────────────────── */}
-        {turno && tlData ? (
+        {/* ── Hero: turno con checklist ──────────────────────────────────── */}
+        {turno && elapsed ? (
           <div style={{
             borderRadius: 26, overflow: 'hidden', marginBottom: 12, color: '#fff',
             background: 'linear-gradient(165deg, oklch(32% 0.045 155) 0%, oklch(26% 0.05 155) 60%, oklch(22% 0.04 155) 100%)',
             padding: '16px 18px 18px',
             boxShadow: '0 12px 32px -20px rgba(28,55,42,.6)',
           }}>
-            {/* Status pill + step count */}
+            {/* Top row: pill + step counter */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
-              <div>
-                {/* Pill */}
-                <div style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 7,
-                  padding: '4px 11px 4px 9px', borderRadius: 999, marginBottom: 8,
-                  background: 'oklch(40% 0.06 155)', border: '1px solid oklch(50% 0.08 155)',
-                }}>
-                  <span style={{
-                    width: 6, height: 6, borderRadius: 999, background: 'oklch(78% 0.18 145)',
-                    boxShadow: '0 0 0 3px oklch(40% 0.10 145 / 0.5)', flexShrink: 0,
-                  }} />
-                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'oklch(92% 0.05 145)' }}>
-                    Turno · {new Date().getHours() < 14 ? 'Mañana' : 'Tarde'}
-                  </span>
-                </div>
-                {/* Elapsed time */}
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', color: '#fff' }}>
-                    {tlData.elapsedH}h {tlData.elapsedM.toString().padStart(2, '0')}m
-                  </span>
-                  <span style={{ fontSize: 11, color: 'oklch(72% 0.05 155)', fontWeight: 500 }}>en turno</span>
-                </div>
+              {/* Pill */}
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', gap: 7,
+                padding: '4px 11px 4px 9px', borderRadius: 999,
+                background: 'oklch(40% 0.06 155)', border: '1px solid oklch(50% 0.08 155)',
+              }}>
+                <span style={{
+                  width: 6, height: 6, borderRadius: 999, background: 'oklch(78% 0.18 145)',
+                  boxShadow: '0 0 0 3px oklch(40% 0.10 145 / 0.5)', flexShrink: 0,
+                }} />
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'oklch(92% 0.05 145)' }}>
+                  Turno {new Date().getHours() < 14 ? 'Mañana' : 'Tarde'}
+                </span>
               </div>
+              {/* Step counter */}
               <div style={{ textAlign: 'right' }}>
-                <p style={{ margin: 0, fontSize: 9, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'oklch(72% 0.05 155)' }}>Pasos</p>
-                <p style={{ margin: '2px 0 0', fontSize: 18, fontWeight: 700, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', color: '#fff' }}>
-                  {tlData.pasosTL.filter(p => p.done).length}
-                  <span style={{ color: 'oklch(72% 0.05 155)', fontWeight: 500 }}>/{tlData.pasosTL.length}</span>
+                <p style={{ margin: 0, fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'oklch(72% 0.05 155)' }}>
+                  {pasos.filter(p => p.done).length}/{pasos.length} PASOS
                 </p>
               </div>
             </div>
 
-            {/* Timeline */}
-            <div style={{ position: 'relative', padding: '14px 8px 10px' }}>
-              {/* Track */}
-              <div style={{ position: 'absolute', left: 8, right: 8, top: 22, height: 3, background: 'oklch(40% 0.05 155)', borderRadius: 999 }} />
-              {/* Traversed */}
-              <div style={{ position: 'absolute', left: 8, top: 22, height: 3, right: 8, background: 'linear-gradient(90deg, oklch(55% 0.13 145), oklch(78% 0.16 75))', borderRadius: 999 }} />
-              {/* Hour ticks */}
-              {tlData.hourTicks.map((t, i) => (
-                <span key={i} style={{ position: 'absolute', top: 18, left: `calc(8px + (100% - 16px) * ${t})`, width: 1, height: 11, background: 'oklch(50% 0.05 155)', transform: 'translateX(-50%)' }} />
-              ))}
-              {/* Step dots */}
-              <div style={{ position: 'relative', height: 48 }}>
-                {tlData.dots.map(d => (
-                  <div key={d.id} style={{
-                    position: 'absolute', top: 0,
-                    left: `calc(8px + (100% - 16px) * ${d.pos})`,
-                    transform: 'translateX(-50%)',
-                    display: 'flex', flexDirection: 'column', alignItems: 'center',
-                    width: 64,
-                  }}>
-                    <div style={{
-                      width: d.kind === 'current' ? 18 : 12,
-                      height: d.kind === 'current' ? 18 : 12,
-                      borderRadius: 999,
-                      marginTop: d.kind === 'current' ? -7.5 : -4.5,
-                      background: d.kind === 'current' ? '#d97757' : 'oklch(78% 0.16 75)',
-                      border: d.kind === 'current' ? '3px solid #fff' : '2px solid oklch(28% 0.04 155)',
-                      boxShadow: d.kind === 'current' ? '0 2px 8px oklch(60% 0.16 30 / 0.5)' : '0 0 0 3px oklch(40% 0.10 145 / 0.25)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      {d.kind === 'done' && (
-                        <svg width="7" height="7" viewBox="0 0 7 7" fill="none">
-                          <path d="M1 3.5L2.8 5.5L6 1.5" stroke="oklch(20% 0.04 155)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
-                      )}
-                    </div>
-                    <span style={{ marginTop: 7, fontSize: 9, fontWeight: 700, letterSpacing: '.02em', color: d.kind === 'current' ? 'oklch(85% 0.10 50)' : 'oklch(82% 0.04 75)', whiteSpace: 'nowrap' }}>
-                      {d.labelShort}
-                    </span>
-                    <span style={{ fontSize: 9, fontVariantNumeric: 'tabular-nums', fontWeight: 500, color: d.kind === 'current' ? 'oklch(75% 0.10 50)' : 'oklch(65% 0.04 155)' }}>
-                      {d.kind === 'done' && d.ts ? fmtTime(d.ts) : d.kind === 'current' ? 'ahora' : ''}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              {/* Range labels */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: 'oklch(60% 0.05 155)' }}>
-                <span>Abrió {fmtTime(tlData.apertura)}</span>
-                <span style={{ color: 'oklch(85% 0.10 50)' }}>● {time}</span>
-              </div>
+            {/* Elapsed time */}
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
+              <span style={{ fontSize: 34, fontWeight: 700, letterSpacing: '-0.03em', fontVariantNumeric: 'tabular-nums', color: '#fff' }}>
+                {elapsed.h}h {elapsed.m.toString().padStart(2, '0')}m
+              </span>
+              <span style={{ fontSize: 12, color: 'oklch(72% 0.05 155)', fontWeight: 500 }}>en turno</span>
             </div>
 
-            {/* Stats row */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: 8, marginTop: 14, paddingTop: 12, borderTop: '1px solid oklch(38% 0.05 155)' }}>
-              <div>
-                <p style={{ margin: 0, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'oklch(72% 0.05 155)' }}>Ventas</p>
-                <p style={{ margin: '2px 0 0', fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', color: '#fff' }}>
-                  {fmt(turno.total_ventas)}
-                </p>
-              </div>
-              <div>
-                <p style={{ margin: 0, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'oklch(72% 0.05 155)' }}>Efectivo</p>
-                <p style={{ margin: '2px 0 0', fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'oklch(88% 0.04 75)' }}>
-                  {fmt(turno.total_efectivo)}
-                </p>
-              </div>
-              <div>
-                <p style={{ margin: 0, fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'oklch(72% 0.05 155)' }}>Tarjeta</p>
-                <p style={{ margin: '2px 0 0', fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'oklch(88% 0.04 75)' }}>
-                  {fmt(turno.total_tarjeta)}
-                </p>
-              </div>
-            </div>
+            {/* Subtitle */}
+            <p style={{ margin: '0 0 14px', fontSize: 11, color: 'oklch(65% 0.06 155)', fontWeight: 500 }}>
+              Abriste a las {elapsed.startTime} · ahora son las {time}
+            </p>
 
-            {/* Historial ventas (expandible) */}
-            {ventas.length > 0 && (
-              <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid oklch(30% 0.04 155)' }}>
-                <button
-                  onClick={() => setShowVentas(v => !v)}
-                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 0 0 2px', fontFamily: 'inherit' }}
-                >
-                  <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'oklch(65% 0.05 155)' }}>
-                    {ventas.length} registro{ventas.length > 1 ? 's' : ''} de venta
-                  </span>
-                  {showVentas
-                    ? <ChevronUp size={12} style={{ color: 'oklch(65% 0.05 155)' }} />
-                    : <ChevronDown size={12} style={{ color: 'oklch(65% 0.05 155)' }} />}
-                </button>
-                {showVentas && (
-                  <div style={{ marginTop: 8, borderRadius: 12, overflow: 'hidden', background: 'oklch(26% 0.03 155)' }}>
-                    {ventas.map(v => (
-                      <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', borderBottom: '1px solid oklch(30% 0.03 155)' }}>
-                        <div>
-                          <p style={{ margin: 0, fontSize: 11, color: 'oklch(55% 0.05 155)' }}>
-                            {parseUTC(v.fecha_registro).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
-                          </p>
-                          <p style={{ margin: '2px 0 0', fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: '#fff' }}>{fmt(v.venta_total)}</p>
-                          {v.nota && <p style={{ margin: '1px 0 0', fontSize: 11, fontStyle: 'italic', color: 'oklch(55% 0.05 155)' }}>{v.nota}</p>}
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <p style={{ margin: 0, fontSize: 11, fontWeight: 600, color: 'oklch(72% 0.18 145)' }}>Ef: {fmt(v.efectivo_calculado)}</p>
-                          {v.tarjetas > 0 && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'oklch(72% 0.12 240)' }}>Tarj: {fmt(v.tarjetas)}</p>}
-                          {v.nota_credito > 0 && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'oklch(70% 0.16 30)' }}>NC: {fmt(v.nota_credito)}</p>}
-                        </div>
+            {/* Vertical checklist */}
+            <div style={{
+              background: 'oklch(28% 0.04 155 / 0.55)',
+              border: '1px solid oklch(38% 0.05 155)',
+              borderRadius: 14,
+              padding: '4px 12px',
+            }}>
+              {pasos.map((paso, idx) => {
+                const isCurrent = idx === currentIdx
+                const isDone = paso.done && !isCurrent
+                const isPending = !paso.done && !isCurrent
+                return (
+                  <div
+                    key={paso.label}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '10px 0',
+                      borderBottom: idx < pasos.length - 1 ? '1px solid oklch(36% 0.05 155 / 0.5)' : 'none',
+                    }}
+                  >
+                    {/* Status dot */}
+                    {isDone ? (
+                      <div style={{
+                        width: 20, height: 20, borderRadius: 999, flexShrink: 0,
+                        background: 'oklch(72% 0.16 145)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <Check size={11} strokeWidth={3.5} color="oklch(20% 0.04 155)" />
                       </div>
-                    ))}
+                    ) : isCurrent ? (
+                      <div style={{
+                        width: 20, height: 20, borderRadius: 999, flexShrink: 0,
+                        background: '#d97757',
+                        boxShadow: '0 0 0 4px oklch(60% 0.16 30 / 0.22)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <span style={{ width: 5, height: 5, borderRadius: 999, background: '#fff', display: 'block' }} />
+                      </div>
+                    ) : (
+                      <div style={{
+                        width: 20, height: 20, borderRadius: 999, flexShrink: 0,
+                        background: 'transparent',
+                        border: '1.5px solid oklch(50% 0.05 155)',
+                      }} />
+                    )}
+
+                    {/* Label */}
+                    <span style={{
+                      flex: 1,
+                      fontSize: 13, fontWeight: isCurrent ? 700 : isDone ? 500 : 400,
+                      color: isDone ? 'oklch(72% 0.16 145)' : isCurrent ? '#fff' : 'oklch(55% 0.04 155)',
+                    }}>
+                      {paso.label}
+                    </span>
+
+                    {/* Right status */}
+                    {isDone && paso.doneAt ? (
+                      <span style={{ fontSize: 11, fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: 'oklch(65% 0.10 145)', flexShrink: 0 }}>
+                        {paso.doneAt}
+                      </span>
+                    ) : isDone ? (
+                      <span style={{ fontSize: 11, fontWeight: 600, color: 'oklch(65% 0.10 145)', flexShrink: 0 }}>
+                        ✓
+                      </span>
+                    ) : isCurrent ? (
+                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'oklch(75% 0.15 65)', flexShrink: 0 }}>
+                        Ahora
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 10, fontWeight: 500, color: 'oklch(50% 0.04 155)', flexShrink: 0 }}>
+                        Pendiente
+                      </span>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
+                )
+              })}
+            </div>
           </div>
         ) : !turno ? (
           /* ── Sin turno: CTA abrir ── */
@@ -522,29 +404,6 @@ export default function Hub() {
           </button>
         ) : null}
 
-        {/* ── "Aún falta" strip ─────────────────────────────────────────── */}
-        {turno && tlData && tlData.currentIdx >= 0 && tlData.pasosTL.length - tlData.currentIdx > 1 && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '10px 14px', marginBottom: 12,
-            background: '#fff', border: '1px solid oklch(94% 0.008 75)', borderRadius: 14,
-          }}>
-            <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'oklch(58% 0.01 60)', flexShrink: 0 }}>
-              Aún falta
-            </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, overflow: 'hidden' }}>
-              {tlData.pasosTL.slice(tlData.currentIdx + 1).map((p, i) => (
-                <span key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {i > 0 && <span style={{ color: 'oklch(85% 0.008 75)', fontSize: 11 }}>→</span>}
-                  <span style={{ padding: '3px 9px', borderRadius: 999, background: 'oklch(96% 0.008 75)', fontSize: 11, fontWeight: 600, color: 'oklch(40% 0.01 60)', whiteSpace: 'nowrap' }}>
-                    {p.label}
-                  </span>
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* ── CTA del paso actual ───────────────────────────────────────── */}
         {nextStep && turno && (
           <button
@@ -559,7 +418,7 @@ export default function Hub() {
           >
             <div style={{ textAlign: 'left' }}>
               <p style={{ margin: 0, fontSize: 9.5, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', opacity: 0.85 }}>
-                Siguiente · Paso {pasoActualIdx + 1}
+                Siguiente · Paso {currentIdx + 1}
               </p>
               <p style={{ margin: '3px 0 0', fontSize: 16, fontWeight: 700, letterSpacing: '-0.01em' }}>
                 {nextStep.label}
@@ -571,78 +430,146 @@ export default function Hub() {
           </button>
         )}
 
-        {/* ── Cierre disponible ─────────────────────────────────────────── */}
-        {turno?.tiene_conteo_cierre && turno.estado === 'abierto' && (
+        {/* ── Stock crítico (promoted) ──────────────────────────────────── */}
+        {hayAlertas && !!turno && (
+          <div style={{
+            background: '#fff',
+            border: '1.5px solid oklch(82% 0.10 30)',
+            borderRadius: 18,
+            overflow: 'hidden',
+            marginBottom: 12,
+            boxShadow: '0 6px 18px -12px oklch(60% 0.18 30 / 0.4)',
+          }}>
+            {/* Header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '11px 14px 10px',
+              background: 'linear-gradient(180deg, oklch(98% 0.02 30), oklch(96% 0.03 30))',
+              borderBottom: '1px solid oklch(94% 0.04 30)',
+            }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: 10, flexShrink: 0,
+                background: '#c64a3a',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <AlertTriangle size={14} style={{ color: '#fff' }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700, color: '#8a3325', letterSpacing: '-0.005em' }}>Stock crítico</p>
+                <p style={{ margin: 0, fontSize: 10, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#a8493a' }}>
+                  {agotados.length} agotados · {bajos.length} bajos
+                </p>
+              </div>
+              <button
+                onClick={() => navigate('/pedido')}
+                style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '5px 10px', borderRadius: 10, background: '#c64a3a', color: '#fff', border: 'none', fontFamily: 'inherit', fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+              >
+                Pedir <ChevronRight size={11} />
+              </button>
+            </div>
+            {/* Agotados */}
+            {agotados.length > 0 && (
+              <div style={{ background: 'oklch(98% 0.018 30)', padding: '8px 14px 9px' }}>
+                <p style={{ margin: '0 0 4px', fontSize: 9, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: '#c64a3a' }}>Agotados</p>
+                {agotados.map(a => (
+                  <div key={a.producto_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: '#7a2a20' }}>{a.producto}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: '#c64a3a', padding: '2px 8px', borderRadius: 999, fontVariantNumeric: 'tabular-nums' }}>
+                      0 {a.unidad}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Por agotarse */}
+            {bajos.length > 0 && (
+              <div style={{ padding: '8px 14px 10px', borderTop: agotados.length > 0 ? '1px solid oklch(96% 0.018 30)' : 'none' }}>
+                <p style={{ margin: '0 0 4px', fontSize: 9, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'oklch(50% 0.14 75)' }}>Por agotarse</p>
+                {bajos.map(a => (
+                  <div key={a.producto_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 500, color: 'oklch(35% 0.01 60)' }}>{a.producto}</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: 'oklch(38% 0.12 75)', background: 'oklch(97% 0.04 75)', border: '1px solid oklch(90% 0.07 75)', padding: '2px 8px', borderRadius: 999 }}>
+                      {Math.round(a.stock_actual)}/{Math.round(a.stock_minimo)} {a.unidad}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Todo en orden ─────────────────────────────────────────────── */}
+        {todoEnOrden && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12,
+            padding: '14px 16px', borderRadius: 18, marginBottom: 12,
+            background: 'linear-gradient(180deg, oklch(96% 0.025 145), oklch(94% 0.04 145))',
+            border: '1.5px solid oklch(85% 0.10 145)',
+          }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 12, flexShrink: 0,
+              background: 'oklch(72% 0.16 145)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Check size={18} strokeWidth={3} color="#fff" />
+            </div>
+            <div>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: 'oklch(28% 0.08 145)' }}>Todo en orden</p>
+              <p style={{ margin: '2px 0 0', fontSize: 11, color: 'oklch(45% 0.10 145)', fontWeight: 500 }}>
+                Sin alertas · limpieza hecha · pasos al día
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Limpieza toggle ───────────────────────────────────────────── */}
+        {!!turno && (
           <button
-            onClick={() => navigate('/cierre')}
+            onClick={toggleLimpieza}
             style={{
-              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              padding: '14px 18px', marginBottom: 12, border: 'none', borderRadius: 18, cursor: 'pointer',
-              background: 'oklch(35% 0.05 155)', color: '#fff', fontSize: 14, fontWeight: 700, fontFamily: 'inherit',
+              width: '100%', display: 'flex', alignItems: 'center', gap: 12,
+              padding: '13px 14px', marginBottom: 12, borderRadius: 16, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+              background: limpiezaDiaria ? 'oklch(96% 0.018 145)' : '#fff',
+              border: `1.5px solid ${limpiezaDiaria ? 'oklch(85% 0.10 145)' : 'oklch(92% 0.008 75)'}`,
+              transition: 'all .2s',
             }}
           >
-            <Lock size={16} /> Cerrar turno <ChevronRight size={18} />
+            <div style={{
+              width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+              background: limpiezaDiaria ? 'oklch(88% 0.08 145)' : 'oklch(95% 0.04 320)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              {limpiezaDiaria
+                ? <Check size={15} strokeWidth={3} style={{ color: 'oklch(38% 0.12 145)' }} />
+                : <Sparkles size={15} style={{ color: 'oklch(55% 0.15 320)' }} />}
+            </div>
+            <div style={{ flex: 1 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: limpiezaDiaria ? 'oklch(30% 0.08 145)' : 'oklch(40% 0.01 60)', display: 'block' }}>
+                Limpieza diaria
+              </span>
+              <span style={{ fontSize: 11, color: limpiezaDiaria ? 'oklch(45% 0.10 145)' : 'oklch(58% 0.01 60)', fontWeight: 500 }}>
+                {limpiezaDiaria ? 'Completada — buen trabajo' : 'Pendiente de marcar'}
+              </span>
+            </div>
+            {/* Toggle */}
+            <div style={{
+              width: 40, height: 22, borderRadius: 999, position: 'relative', flexShrink: 0,
+              background: limpiezaDiaria ? 'oklch(60% 0.16 145)' : 'oklch(88% 0.008 75)',
+              transition: 'background .18s',
+            }}>
+              <span style={{
+                position: 'absolute', top: 2, borderRadius: 999,
+                width: 18, height: 18, background: '#fff',
+                boxShadow: '0 1px 3px rgba(0,0,0,.2)',
+                left: limpiezaDiaria ? 18 : 2,
+                transition: 'left .18s cubic-bezier(.2,.7,.3,1)',
+              }} />
+            </div>
           </button>
         )}
 
-        {/* ── Cuadre de llegada ─────────────────────────────────────────── */}
-        {turno && turno.estado === 'abierto' && (
-          sinEntrega ? (
-            <button
-              onClick={() => navigate('/entrega')}
-              style={{
-                width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-                padding: '14px 18px', marginBottom: 12, border: 'none', borderRadius: 18, cursor: 'pointer',
-                background: 'linear-gradient(135deg, oklch(68% 0.15 65), oklch(60% 0.16 50))',
-                color: '#fff', fontFamily: 'inherit',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 700 }}>
-                <UserCheck size={18} /> Cuadre de llegada
-              </div>
-              <span style={{ fontSize: 11, opacity: 0.75 }}>Registra tu entrada al turno</span>
-            </button>
-          ) : conDiff ? (
-            <button
-              onClick={() => navigate('/entrega')}
-              style={{
-                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                padding: '12px 18px', marginBottom: 12, borderRadius: 18, cursor: 'pointer',
-                border: '2px solid oklch(80% 0.12 30)', background: 'oklch(98% 0.02 30)',
-                color: '#8a3325', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
-              }}
-            >
-              <AlertTriangle size={14} /> Último cuadre con diferencia — nuevo cuadre
-            </button>
-          ) : hace4h ? (
-            <button
-              onClick={() => navigate('/entrega')}
-              style={{
-                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                padding: '12px 18px', marginBottom: 12, borderRadius: 18, cursor: 'pointer',
-                border: '2px solid oklch(88% 0.09 75)', background: 'oklch(98% 0.03 75)',
-                color: 'oklch(38% 0.12 65)', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
-              }}
-            >
-              <UserCheck size={15} /> Nuevo cuadre de llegada
-            </button>
-          ) : (
-            <button
-              onClick={() => navigate('/entrega')}
-              style={{
-                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                padding: '12px 18px', marginBottom: 12, borderRadius: 18, cursor: 'pointer',
-                border: '2px solid oklch(88% 0.06 155)', background: 'oklch(97% 0.018 155)',
-                color: 'oklch(35% 0.05 155)', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
-              }}
-            >
-              <UserCheck size={15} /> ✓ Cuadre realizado — registrar otro
-            </button>
-          )
-        )}
-
         {/* ── Herramientas ─────────────────────────────────────────────── */}
-        {turno && (
+        {!!turno && (
           <div style={{ marginBottom: 12 }}>
             <p style={{ margin: '0 4px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'oklch(58% 0.01 60)' }}>
               Herramientas
@@ -704,7 +631,7 @@ export default function Hub() {
               </div>
             )}
 
-            {/* Dashed "más" button */}
+            {/* Dashed "más" button with color dot preview */}
             <button
               onClick={() => setShowMasTools(v => !v)}
               style={{
@@ -718,6 +645,13 @@ export default function Hub() {
               <span style={{ flex: 1, textAlign: 'left', fontSize: 12, fontWeight: 700, color: 'oklch(40% 0.01 60)' }}>
                 {showMasTools ? 'Menos herramientas' : `${TOOLS_MORE.length} herramientas más`}
               </span>
+              {!showMasTools && (
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  {TOOLS_MORE.slice(0, 5).map(t => (
+                    <span key={t.path} style={{ width: 8, height: 8, borderRadius: 999, background: t.tint, flexShrink: 0 }} />
+                  ))}
+                </div>
+              )}
               {showMasTools
                 ? <ChevronUp size={14} style={{ color: 'oklch(58% 0.01 60)' }} />
                 : <ChevronRight size={14} style={{ color: 'oklch(58% 0.01 60)' }} />}
@@ -725,102 +659,61 @@ export default function Hub() {
           </div>
         )}
 
-        {/* ── Stock crítico ─────────────────────────────────────────────── */}
-        {alertas.length > 0 && (
-          <div style={{ background: '#fff', border: '1px solid oklch(90% 0.05 30)', borderRadius: 18, overflow: 'hidden', marginBottom: 12 }}>
-            {/* Header */}
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 10,
-              padding: '11px 14px 10px',
-              background: 'linear-gradient(180deg, oklch(98% 0.02 30), oklch(96% 0.03 30))',
-              borderBottom: '1px solid oklch(94% 0.04 30)',
-            }}>
-              <div style={{ width: 28, height: 28, borderRadius: 10, background: 'oklch(94% 0.05 30)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <AlertTriangle size={14} style={{ color: '#c64a3a' }} />
+        {/* ── Cuadre de llegada ─────────────────────────────────────────── */}
+        {turno && turno.estado === 'abierto' && (
+          sinEntrega ? (
+            <button
+              onClick={() => navigate('/entrega')}
+              style={{
+                width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                padding: '14px 18px', marginBottom: 12, border: 'none', borderRadius: 18, cursor: 'pointer',
+                background: 'linear-gradient(135deg, oklch(68% 0.15 65), oklch(60% 0.16 50))',
+                color: '#fff', fontFamily: 'inherit',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 700 }}>
+                <UserCheck size={18} /> Cuadre de llegada
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700, color: '#8a3325', letterSpacing: '-0.005em' }}>Stock crítico</p>
-                <p style={{ margin: 0, fontSize: 10, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#a8493a' }}>
-                  {agotados.length} agotados · {bajos.length} bajos
-                </p>
-              </div>
-              <button
-                onClick={() => navigate('/pedido')}
-                style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '5px 10px', borderRadius: 10, background: '#c64a3a', color: '#fff', border: 'none', fontFamily: 'inherit', fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
-              >
-                Pedir <ChevronRight size={11} />
-              </button>
-            </div>
-            {/* Agotados */}
-            {agotados.length > 0 && (
-              <div style={{ background: 'oklch(98% 0.018 30)', padding: '8px 14px 9px' }}>
-                <p style={{ margin: '0 0 4px', fontSize: 9, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: '#c64a3a' }}>Agotados</p>
-                {agotados.map(a => (
-                  <div key={a.producto_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
-                    <span style={{ fontSize: 12.5, fontWeight: 600, color: '#7a2a20' }}>{a.producto}</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: '#c64a3a', padding: '2px 8px', borderRadius: 999, fontVariantNumeric: 'tabular-nums' }}>
-                      0 {a.unidad}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {/* Bajos */}
-            {bajos.length > 0 && (
-              <div style={{ padding: '8px 14px 10px', borderTop: agotados.length > 0 ? '1px solid oklch(96% 0.018 30)' : 'none' }}>
-                <p style={{ margin: '0 0 4px', fontSize: 9, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'oklch(50% 0.14 75)' }}>Por agotarse</p>
-                {bajos.map(a => (
-                  <div key={a.producto_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
-                    <span style={{ fontSize: 12.5, fontWeight: 500, color: 'oklch(35% 0.01 60)' }}>{a.producto}</span>
-                    <span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: 'oklch(38% 0.12 75)', background: 'oklch(97% 0.04 75)', border: '1px solid oklch(90% 0.07 75)', padding: '2px 8px', borderRadius: 999 }}>
-                      {Math.round(a.stock_actual)}/{Math.round(a.stock_minimo)} {a.unidad}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+              <span style={{ fontSize: 11, opacity: 0.75 }}>Registra tu entrada al turno</span>
+            </button>
+          ) : conDiff ? (
+            <button
+              onClick={() => navigate('/entrega')}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                padding: '12px 18px', marginBottom: 12, borderRadius: 18, cursor: 'pointer',
+                border: '2px solid oklch(80% 0.12 30)', background: 'oklch(98% 0.02 30)',
+                color: '#8a3325', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
+              }}
+            >
+              <AlertTriangle size={14} /> Último cuadre con diferencia — nuevo cuadre
+            </button>
+          ) : hace4h ? (
+            <button
+              onClick={() => navigate('/entrega')}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                padding: '12px 18px', marginBottom: 12, borderRadius: 18, cursor: 'pointer',
+                border: '2px solid oklch(88% 0.09 75)', background: 'oklch(98% 0.03 75)',
+                color: 'oklch(38% 0.12 65)', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
+              }}
+            >
+              <UserCheck size={15} /> Nuevo cuadre de llegada
+            </button>
+          ) : (
+            <button
+              onClick={() => navigate('/entrega')}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                padding: '12px 18px', marginBottom: 12, borderRadius: 18, cursor: 'pointer',
+                border: '2px solid oklch(88% 0.06 155)', background: 'oklch(97% 0.018 155)',
+                color: 'oklch(35% 0.05 155)', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
+              }}
+            >
+              <UserCheck size={15} /> ✓ Cuadre realizado — registrar otro
+            </button>
+          )
         )}
-
-        {/* ── Limpieza ──────────────────────────────────────────────────── */}
-        <button
-          onClick={toggleLimpieza}
-          style={{
-            width: '100%', display: 'flex', alignItems: 'center', gap: 12,
-            padding: '12px 14px', marginBottom: 12, borderRadius: 16, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
-            background: limpiezaDiaria ? 'oklch(96% 0.018 155)' : '#fff',
-            border: `1px solid ${limpiezaDiaria ? 'oklch(78% 0.10 155)' : 'oklch(94% 0.008 75)'}`,
-            transition: 'all .2s',
-          }}
-        >
-          <div style={{
-            width: 30, height: 30, borderRadius: 10, flexShrink: 0,
-            background: limpiezaDiaria ? 'oklch(88% 0.06 155)' : 'oklch(96% 0.04 320)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <Sparkles size={14} style={{ color: limpiezaDiaria ? 'oklch(38% 0.10 155)' : 'oklch(55% 0.15 320)' }} />
-          </div>
-          <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: limpiezaDiaria ? 'oklch(30% 0.06 155)' : 'oklch(40% 0.01 60)' }}>
-            Limpieza diaria
-          </span>
-          <span style={{ fontSize: 11, color: limpiezaDiaria ? 'oklch(45% 0.10 155)' : 'oklch(58% 0.01 60)', fontWeight: 500 }}>
-            {limpiezaDiaria ? 'Hecha' : 'Pendiente'}
-          </span>
-          {/* Pill toggle */}
-          <div style={{
-            width: 36, height: 20, borderRadius: 999, position: 'relative', flexShrink: 0,
-            background: limpiezaDiaria ? 'oklch(48% 0.14 155)' : 'oklch(88% 0.008 75)',
-            transition: 'background .2s',
-          }}>
-            <span style={{
-              position: 'absolute', top: 3, borderRadius: 999,
-              width: 14, height: 14, background: '#fff',
-              boxShadow: '0 1px 3px rgba(0,0,0,.2)',
-              left: limpiezaDiaria ? 19 : 3,
-              transition: 'left .2s',
-            }} />
-          </div>
-        </button>
 
         {/* ── Movimientos del turno ─────────────────────────────────────── */}
         {turno && movimientos.length > 0 && (

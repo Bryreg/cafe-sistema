@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, NavLink } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
@@ -8,7 +8,24 @@ import {
   BarChart2, ClipboardList, Inbox, Sparkles, ShoppingCart,
   ClipboardCheck, FileText, Zap, LayoutGrid, Check,
   Home, DollarSign, X as XIcon,
+  Menu, LayoutDashboard, Layers, Wrench, Activity, Users,
 } from 'lucide-react'
+
+// ─── Navegación admin completa (mirror de Layout) ────────────────────────────
+const NAV_ADMIN = [
+  { to: '/dashboard',          label: 'Dashboard',      icon: LayoutDashboard },
+  { to: '/control-inventario', label: 'Inventario',     icon: Layers          },
+  { to: '/pedidos-admin',      label: 'Pedidos',        icon: ClipboardList   },
+  { to: '/compras',            label: 'Compras',        icon: ShoppingCart    },
+  { to: '/consignaciones',     label: 'Consignaciones', icon: Banknote        },
+  { to: '/mantenimientos',     label: 'Mantenimientos', icon: Wrench          },
+  { to: '/auditorias',         label: 'Auditorías',     icon: ClipboardCheck  },
+  { to: '/audit-log',          label: 'Historial',      icon: Activity        },
+  { to: '/comunicados',        label: 'Comunicados',    icon: Bell            },
+  { to: '/bandeja',            label: 'Bandeja',        icon: Inbox           },
+  { to: '/informes',           label: 'Informes',       icon: BarChart2       },
+  { to: '/usuarios',           label: 'Usuarios',       icon: Users           },
+]
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function parseUTC(s: string): Date {
@@ -107,7 +124,8 @@ export default function AdminHub() {
   const [topProductos, setTopProductos] = useState<TopProducto[]>([])
   const [periodo, setPeriodo] = useState<'hoy' | 'semana' | 'mes'>('hoy')
   const [actividadOpen, setActividadOpen] = useState(false)
-  const [showMas, setShowMas] = useState(false)
+  const [showMas,  setShowMas]  = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   // Reloj
   useEffect(() => {
@@ -169,6 +187,13 @@ export default function AdminHub() {
       <header className="sticky top-0 z-10 flex items-center justify-between header-safe px-4 pb-3"
         style={{ background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid oklch(94% 0.008 75)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          <button
+            onClick={() => setMenuOpen(true)}
+            style={{ padding: '4px 2px', background: 'transparent', border: 'none', cursor: 'pointer', color: 'oklch(45% 0.01 60)', display: 'flex', alignItems: 'center' }}
+            aria-label="Abrir menú"
+          >
+            <Menu size={20} />
+          </button>
           <div style={{ width: 28, height: 28, borderRadius: 9, background: 'oklch(95% 0.015 155)', border: '1px solid oklch(90% 0.025 155)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Coffee size={14} style={{ color: 'oklch(35% 0.05 155)' }} />
           </div>
@@ -547,6 +572,70 @@ export default function AdminHub() {
         </div>
 
       </div>{/* /scroll */}
+
+      {/* ── Drawer de navegación ─────────────────────────────────────── */}
+      {menuOpen && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex' }}>
+          {/* Backdrop */}
+          <div
+            style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.45)' }}
+            onClick={() => setMenuOpen(false)}
+          />
+          {/* Panel */}
+          <div style={{ position: 'relative', background: '#fff', width: 256, height: '100%', display: 'flex', flexDirection: 'column', boxShadow: '4px 0 24px rgba(0,0,0,.15)', paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+            {/* Drawer header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid oklch(94% 0.008 75)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Coffee size={15} style={{ color: 'oklch(35% 0.05 155)' }} />
+                <span style={{ fontWeight: 700, fontSize: 13, color: 'oklch(22% 0.01 60)', fontFamily: '"Plus Jakarta Sans", system-ui, sans-serif' }}>Sistema Café</span>
+              </div>
+              <button
+                onClick={() => setMenuOpen(false)}
+                style={{ padding: 4, background: 'transparent', border: 'none', cursor: 'pointer', color: 'oklch(58% 0.01 60)' }}
+                aria-label="Cerrar menú"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+            {/* Links */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 8px' }}>
+              {NAV_ADMIN.map(({ to, label, icon: Icon }) => (
+                <NavLink
+                  key={to} to={to}
+                  onClick={() => setMenuOpen(false)}
+                  style={({ isActive }) => ({
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '11px 14px', borderRadius: 12, marginBottom: 2,
+                    fontSize: 13.5, fontWeight: isActive ? 700 : 500,
+                    color: isActive ? 'oklch(35% 0.05 155)' : 'oklch(35% 0.01 60)',
+                    background: isActive ? 'oklch(95% 0.018 155)' : 'transparent',
+                    textDecoration: 'none', fontFamily: '"Plus Jakarta Sans", system-ui, sans-serif',
+                    transition: 'background .15s',
+                  })}
+                >
+                  <Icon size={16} />
+                  {label}
+                </NavLink>
+              ))}
+            </div>
+            {/* User footer */}
+            <div style={{ padding: '12px 16px', borderTop: '1px solid oklch(94% 0.008 75)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: 'oklch(22% 0.01 60)', fontFamily: '"Plus Jakarta Sans", system-ui, sans-serif' }}>{user?.nombre}</p>
+                  <span style={{ fontSize: 10.5, padding: '1px 7px', borderRadius: 999, fontWeight: 600, background: 'oklch(93% 0.02 290)', color: 'oklch(40% 0.1 290)', fontFamily: '"Plus Jakarta Sans", system-ui, sans-serif' }}>admin</span>
+                </div>
+                <button
+                  onClick={() => { setMenuOpen(false); if (window.confirm('¿Cerrar sesión?')) { logout(); navigate('/login') } }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'oklch(58% 0.01 60)', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: '"Plus Jakarta Sans", system-ui, sans-serif' }}
+                >
+                  <LogOut size={13} /> Salir
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── "Más herramientas" overlay ────────────────────────────────── */}
       {showMas && (

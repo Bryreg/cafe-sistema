@@ -126,7 +126,6 @@ export default function Hub() {
   const pasos: Paso[] = turno ? [
     { label: 'Apertura',        done: true,                          doneAt: fmtTime(parseUTC(turno.fecha_apertura)),                                                              accion: () => navigate('/apertura')       },
     { label: 'Conteo apertura', done: !!turno.tiene_conteo_apertura, doneAt: turno.ts_conteo_apertura ? fmtTime(parseUTC(turno.ts_conteo_apertura)) : null,  accion: () => navigate('/conteo-apertura') },
-    { label: 'Ventas',          done: !!turno.tiene_ventas,          doneAt: null,                                                                                                accion: () => navigate('/ventas')         },
     { label: 'Conteo cierre',   done: !!turno.tiene_conteo_cierre,   doneAt: turno.ts_conteo_cierre ? fmtTime(parseUTC(turno.ts_conteo_cierre)) : null,      accion: () => navigate('/conteo-cierre')  },
     { label: 'Cierre',          done: turno.estado === 'cerrado',    doneAt: null,                                                                                                accion: () => navigate('/cierre')         },
   ] : []

@@ -126,6 +126,7 @@ export default function AdminHub() {
   const [actividadOpen, setActividadOpen] = useState(false)
   const [showMas,  setShowMas]  = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [siigoTotales, setSiigoTotales] = useState<{ total: number; efectivo: number; tarjeta: number; otros: number; facturas_count: number } | null>(null)
 
   // Reloj
   useEffect(() => {
@@ -140,6 +141,20 @@ export default function AdminHub() {
     api.get(`/consignaciones/pendiente/${tiendaId}`).then(r => setConsigPendiente(r.data)).catch(() => null)
     api.get(`/caja/activo/${tiendaId}`).then(r => setTurno(r.data)).catch(() => null)
   }, [tiendaId])
+
+  // Ventas Siigo — carga al iniciar y refresca cada 5 min
+  const fetchSiigoTotales = useCallback(() => {
+    const hoy = today()
+    api.get(`/siigo/totales?fecha_desde=${hoy}&fecha_hasta=${hoy}`)
+      .then(r => setSiigoTotales(r.data))
+      .catch(() => null)
+  }, [])
+
+  useEffect(() => {
+    fetchSiigoTotales()
+    const t = setInterval(fetchSiigoTotales, 5 * 60 * 1000)
+    return () => clearInterval(t)
+  }, [fetchSiigoTotales])
 
   // Movimientos del turno activo
   useEffect(() => {
@@ -160,11 +175,11 @@ export default function AdminHub() {
   useEffect(() => { fetchTopProductos(periodo) }, [periodo, fetchTopProductos])
 
   // ── Derived ──────────────────────────────────────────────────────────────────
-  const ventasDia   = turno?.total_ventas ?? dash?.ventas_dia ?? 0
+  const ventasDia   = siigoTotales?.total ?? 0
   const ventasAyer  = dash?.ventas_ayer ?? 0
-  const efectivo    = turno?.total_efectivo ?? 0
-  const tarjeta     = turno?.total_tarjeta ?? 0
-  const nc          = Math.max(0, ventasDia - efectivo - tarjeta)
+  const efectivo    = siigoTotales?.efectivo ?? 0
+  const tarjeta     = siigoTotales?.tarjeta ?? 0
+  const otros       = siigoTotales?.otros ?? 0
   const delta       = ventasAyer > 0 ? ventasDia - ventasAyer : 0
   const deltaPct    = ventasAyer > 0 ? (delta / ventasAyer) * 100 : 0
   const positive    = delta >= 0
@@ -280,12 +295,12 @@ export default function AdminHub() {
             )}
           </div>
 
-          {/* Breakdown: Efectivo / Tarjeta / NC */}
+          {/* Breakdown: Efectivo / Tarjeta / Otros */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, padding: '10px 0 0', borderTop: '1px solid oklch(38% 0.05 155)', marginBottom: 12 }}>
             {[
               { label: 'Efectivo', v: efectivo, c: 'oklch(85% 0.13 145)' },
               { label: 'Tarjeta',  v: tarjeta,  c: 'oklch(82% 0.10 240)' },
-              { label: 'NC',       v: nc,        c: 'oklch(80% 0.10 30)'  },
+              { label: 'Otros',    v: otros,     c: 'oklch(80% 0.10 30)'  },
             ].map(m => (
               <div key={m.label}>
                 <p style={{ margin: 0, fontSize: 9, fontWeight: 700, color: 'oklch(72% 0.05 155)', letterSpacing: '.08em', textTransform: 'uppercase' }}>{m.label}</p>

@@ -10,6 +10,19 @@ def _check_configured():
         raise HTTPException(400, "Siigo no configurado: falta SIIGO_USERNAME o SIIGO_ACCESS_KEY")
 
 
+@router.get("/totales")
+async def totales(
+    fecha_desde: str = Query(..., description="YYYY-MM-DD"),
+    fecha_hasta: str = Query(..., description="YYYY-MM-DD"),
+):
+    """Return sales totals split by payment method (efectivo / tarjeta / otros)."""
+    _check_configured()
+    try:
+        return await siigo_svc.get_payment_totals(fecha_desde, fecha_hasta)
+    except Exception as e:
+        raise HTTPException(502, f"Error consultando Siigo: {e}")
+
+
 @router.get("/ventas-por-producto")
 async def ventas_por_producto(
     fecha_desde: str = Query(..., description="YYYY-MM-DD"),

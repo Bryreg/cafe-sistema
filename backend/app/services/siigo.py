@@ -146,6 +146,35 @@ def _parse_item(item: dict, factura_id: str) -> dict:
     }
 
 
+async def get_payment_totals(fecha_desde: str, fecha_hasta: str) -> dict:
+    """Fetch invoices from Siigo and return totals split by payment method."""
+    invoices = await get_invoices(fecha_desde, fecha_hasta)
+    efectivo = 0.0
+    tarjeta = 0.0
+    otros = 0.0
+
+    for inv in invoices:
+        for payment in inv.get("payments", []):
+            name = (payment.get("name") or "").lower()
+            value = float(payment.get("value") or 0)
+            if "efectivo" in name:
+                efectivo += value
+            elif any(k in name for k in ["tarjeta", "débito", "debito", "crédito", "credito",
+                                          "visa", "master", "american", "diners"]):
+                tarjeta += value
+            else:
+                otros += value
+
+    total = efectivo + tarjeta + otros
+    return {
+        "total": round(total, 2),
+        "efectivo": round(efectivo, 2),
+        "tarjeta": round(tarjeta, 2),
+        "otros": round(otros, 2),
+        "facturas_count": len(invoices),
+    }
+
+
 def aggregate_by_product(invoices: list[dict]) -> dict:
     """Group invoice line items by product and compute totals."""
     from collections import defaultdict

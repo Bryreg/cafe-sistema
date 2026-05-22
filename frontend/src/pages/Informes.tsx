@@ -57,7 +57,6 @@ function TabVentas({ tiendaId }: { tiendaId: number }) {
         tienda_id: tiendaId,
         fecha_desde: filtro.desde,
         fecha_hasta: filtro.hasta,
-        usuario_id: filtro.usuarioId,
         categoria: filtro.categoria,
         turno_id: filtro.turnoId,
         producto_search: filtro.productoSearch,
@@ -175,7 +174,6 @@ function TabMovimientos({ tiendaId }: { tiendaId: number }) {
         tienda_id: tiendaId,
         fecha_desde: filtro.desde,
         fecha_hasta: filtro.hasta,
-        usuario_id: filtro.usuarioId,
         producto_search: filtro.productoSearch,
       })
       const { data } = await api.get('/informes/movimientos', { params })
@@ -411,7 +409,6 @@ function TabCuadres({ tiendaId }: { tiendaId: number }) {
         tienda_id: tiendaId,
         fecha_desde: filtro.desde,
         fecha_hasta: filtro.hasta,
-        usuario_id: filtro.usuarioId,
         turno_id: filtro.turnoId,
       })
       const [entRes, barRes] = await Promise.all([

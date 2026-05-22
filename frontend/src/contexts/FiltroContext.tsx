@@ -4,7 +4,6 @@ export interface InformeFiltro {
   desde: string
   hasta: string
   tiendaId: number
-  usuarioId: number | null
   categoria: string | null
   turnoId: number | null
   productoSearch: string | null
@@ -32,7 +31,6 @@ export const FiltroProvider: React.FC<{ children: React.ReactNode; tiendaId: num
     desde: firstOfMonthStr(),
     hasta: todayStr(),
     tiendaId,
-    usuarioId: null,
     categoria: null,
     turnoId: null,
     productoSearch: null,

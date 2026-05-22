@@ -1,25 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useFiltro } from '../contexts/FiltroContext'
-import api from '../api/client'
-
-interface UsuarioItem {
-  id: number
-  nombre: string
-}
 
 const CATEGORIAS = ['bebida', 'pasteleria', 'insumo']
 
 export default function FilterBar() {
   const { filtro, setFiltro } = useFiltro()
-  const [usuarios, setUsuarios] = useState<UsuarioItem[]>([])
   const [searchInput, setSearchInput] = useState(filtro.productoSearch ?? '')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  useEffect(() => {
-    api.get('/auth/admin/usuarios')
-      .then(({ data }) => setUsuarios(data))
-      .catch(() => {})
-  }, [filtro.tiendaId])
 
   // Sync searchInput when filtro.productoSearch is cleared externally
   useEffect(() => {
@@ -41,7 +28,6 @@ export default function FilterBar() {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     setFiltro(prev => ({
       ...prev,
-      usuarioId: null,
       categoria: null,
       turnoId: null,
       productoSearch: null,
@@ -51,13 +37,6 @@ export default function FilterBar() {
 
   const activeChips: { label: string; onRemove: () => void }[] = []
 
-  if (filtro.usuarioId !== null) {
-    const u = usuarios.find(u => u.id === filtro.usuarioId)
-    activeChips.push({
-      label: `Barista: ${u?.nombre ?? filtro.usuarioId}`,
-      onRemove: () => setFiltro(prev => ({ ...prev, usuarioId: null })),
-    })
-  }
   if (filtro.categoria !== null) {
     activeChips.push({
       label: `Categoría: ${filtro.categoria}`,
@@ -88,7 +67,6 @@ export default function FilterBar() {
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 space-y-3">
-      {/* Date range + primary filters */}
       <div className="flex gap-2 flex-wrap items-end">
         <div>
           <label className="text-xs text-gray-500 block mb-1">Desde</label>
@@ -107,20 +85,6 @@ export default function FilterBar() {
             onChange={e => setFiltro(prev => ({ ...prev, hasta: e.target.value }))}
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
           />
-        </div>
-
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Barista</label>
-          <select
-            value={filtro.usuarioId ?? ''}
-            onChange={e => setFiltro(prev => ({ ...prev, usuarioId: e.target.value ? Number(e.target.value) : null }))}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-          >
-            <option value="">Todos</option>
-            {usuarios.map(u => (
-              <option key={u.id} value={u.id}>{u.nombre}</option>
-            ))}
-          </select>
         </div>
 
         <div>
@@ -181,7 +145,6 @@ export default function FilterBar() {
         )}
       </div>
 
-      {/* Active filter chips */}
       {activeChips.length > 0 && (
         <div className="flex gap-1.5 flex-wrap">
           {activeChips.map((chip, i) => (

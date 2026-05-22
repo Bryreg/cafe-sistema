@@ -25,8 +25,6 @@ def reporte_ventas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
     )
 
     if filtro:
-        if filtro.usuario_id is not None:
-            q = q.filter(VentaDiaria.usuario_id == filtro.usuario_id)
         if filtro.turno_id is not None:
             q = q.filter(VentaDiaria.turno_id == filtro.turno_id)
 
@@ -82,8 +80,6 @@ def reporte_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
     )
 
     if filtro:
-        if filtro.usuario_id is not None:
-            q = q.filter(Merma.usuario_id == filtro.usuario_id)
         if filtro.categoria is not None:
             q = q.join(Producto, Merma.producto_id == Producto.id).filter(
                 Producto.categoria == filtro.categoria
@@ -142,8 +138,6 @@ def reporte_inventario_consumido(db: Session, tienda_id: int, fecha_desde: date,
     )
 
     if filtro:
-        if filtro.usuario_id is not None:
-            q = q.filter(MovimientoInventario.usuario_id == filtro.usuario_id)
         if filtro.categoria is not None:
             q = q.join(Producto, MovimientoInventario.producto_id == Producto.id).filter(
                 Producto.categoria == filtro.categoria
@@ -200,8 +194,6 @@ def reporte_entregas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
     )
 
     if filtro:
-        if filtro.usuario_id is not None:
-            q = q.filter(EntregaTurno.usuario_id == filtro.usuario_id)
         if filtro.turno_id is not None:
             q = q.filter(EntregaTurno.turno_id == filtro.turno_id)
 
@@ -385,8 +377,6 @@ def reporte_turnos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
         )
     )
 
-    # NOTE: usuario_id filter is skipped for turnos — CajaTurno has usuario_apertura_id
-    # and usuario_cierre_id; filtering by a single usuario_id is ambiguous (design decision #7).
 
     turnos = q.order_by(CajaTurno.fecha_cierre.desc()).all()
 
@@ -440,8 +430,6 @@ def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_ha
         )
     )
     if filtro:
-        if filtro.usuario_id is not None:
-            q_movs = q_movs.filter(MovimientoInventario.usuario_id == filtro.usuario_id)
         if filtro.producto_search is not None:
             ids = db.query(Producto.id).filter(
                 Producto.nombre.ilike(f"%{filtro.producto_search}%")
@@ -475,8 +463,6 @@ def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_ha
         )
     )
     if filtro:
-        if filtro.usuario_id is not None:
-            q_past = q_past.filter(MovimientoInventario.usuario_id == filtro.usuario_id)
         if filtro.producto_search is not None:
             ids = db.query(Producto.id).filter(
                 Producto.nombre.ilike(f"%{filtro.producto_search}%")
@@ -508,8 +494,6 @@ def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_ha
         )
     )
     if filtro:
-        if filtro.usuario_id is not None:
-            q_mermas = q_mermas.filter(Merma.usuario_id == filtro.usuario_id)
         if filtro.producto_search is not None:
             ids = db.query(Producto.id).filter(
                 Producto.nombre.ilike(f"%{filtro.producto_search}%")
@@ -554,8 +538,6 @@ def reporte_baristas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
     )
 
     if filtro:
-        if filtro.usuario_id is not None:
-            q = q.filter(EntregaTurno.usuario_id == filtro.usuario_id)
 
     entregas = q.all()
 

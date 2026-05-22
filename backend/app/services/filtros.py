@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
@@ -8,7 +8,6 @@ class InformeFilter:
     tienda_id: int
     fecha_desde: date
     fecha_hasta: date
-    usuario_id: Optional[int] = None
     categoria: Optional[str] = None
     turno_id: Optional[int] = None
     producto_search: Optional[str] = None

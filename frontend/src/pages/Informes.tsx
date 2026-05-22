@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
+import { FiltroProvider, useFiltro } from '../contexts/FiltroContext'
+import FilterBar from '../components/FilterBar'
 import api from '../api/client'
 import { BarChart2, ArrowUpDown, Package, ChevronDown, ChevronUp, UserCheck, Clock, AlertTriangle, Download, ShoppingBag } from 'lucide-react'
 import DifferenceBadge from '../components/DifferenceBadge'
@@ -33,12 +35,9 @@ type Tab = 'ventas' | 'movimientos' | 'inventario' | 'cuadres' | 'turnos' | 'sii
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 const fmtN = (v: number, dec = 2) => v.toLocaleString('es-CO', { minimumFractionDigits: dec, maximumFractionDigits: dec })
 
-function hoy() {
-  return new Date().toISOString().slice(0, 10)
-}
-function inicioMes() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+/** Strip null/undefined values from a params object before sending to API */
+function cleanParams(params: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null))
 }
 
 // ─── Ventas ──────────────────────────────────────────────────────────────────
@@ -46,8 +45,7 @@ interface FilaVenta { fecha: string; venta_total: number; nota_credito: number; 
 interface TotalesVenta { venta_total: number; nota_credito: number; vales: number; tarjetas: number; efectivo: number; n_registros: number }
 
 function TabVentas({ tiendaId }: { tiendaId: number }) {
-  const [desde, setDesde] = useState(inicioMes())
-  const [hasta, setHasta] = useState(hoy())
+  const { filtro } = useFiltro()
   const [filas, setFilas] = useState<FilaVenta[]>([])
   const [totales, setTotales] = useState<TotalesVenta | null>(null)
   const [loading, setLoading] = useState(false)
@@ -55,14 +53,25 @@ function TabVentas({ tiendaId }: { tiendaId: number }) {
   const cargar = async () => {
     setLoading(true)
     try {
-      const { data } = await api.get('/informes/ventas', { params: { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta } })
+      const params = cleanParams({
+        tienda_id: tiendaId,
+        fecha_desde: filtro.desde,
+        fecha_hasta: filtro.hasta,
+        usuario_id: filtro.usuarioId,
+        categoria: filtro.categoria,
+        turno_id: filtro.turnoId,
+        producto_search: filtro.productoSearch,
+      })
+      const { data } = await api.get('/informes/ventas', { params })
       setFilas(data.filas)
       setTotales(data.totales)
     } finally { setLoading(false) }
   }
 
+  useEffect(() => { cargar() }, [filtro])
+
   const exportar = () => exportarExcel(
-    `ventas_${desde}_${hasta}`,
+    `ventas_${filtro.desde}_${filtro.hasta}`,
     ['Fecha', 'Venta Total', 'Nota Crédito', 'Vales', 'Tarjetas', 'Efectivo', 'Registros'],
     [
       ...filas.map(f => [f.fecha, f.venta_total, f.nota_credito, f.vales, f.tarjetas, f.efectivo, f.n_registros]),
@@ -72,17 +81,7 @@ function TabVentas({ tiendaId }: { tiendaId: number }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2 flex-wrap items-end">
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Desde</label>
-          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-        </div>
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Hasta</label>
-          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-        </div>
+      <div className="flex gap-2 flex-wrap items-center justify-between">
         <button onClick={cargar} disabled={loading}
           className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
           {loading ? 'Cargando...' : 'Consultar'}
@@ -163,47 +162,43 @@ const FILTROS_MOV = [
 ]
 
 function TabMovimientos({ tiendaId }: { tiendaId: number }) {
-  const [desde, setDesde] = useState(inicioMes())
-  const [hasta, setHasta] = useState(hoy())
+  const { filtro } = useFiltro()
   const [movimientos, setMovimientos] = useState<Movimiento[] | null>(null)
   const [conteos, setConteos] = useState<Record<string, number>>({})
-  const [filtro, setFiltro] = useState<string>('todos')
+  const [tipoFiltro, setTipoFiltro] = useState<string>('todos')
   const [loading, setLoading] = useState(false)
 
   const cargar = async () => {
     setLoading(true)
     try {
-      const { data } = await api.get('/informes/movimientos', {
-        params: { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta },
+      const params = cleanParams({
+        tienda_id: tiendaId,
+        fecha_desde: filtro.desde,
+        fecha_hasta: filtro.hasta,
+        usuario_id: filtro.usuarioId,
+        producto_search: filtro.productoSearch,
       })
+      const { data } = await api.get('/informes/movimientos', { params })
       setMovimientos(data.movimientos)
       setConteos(data.conteos)
-      setFiltro('todos')
+      setTipoFiltro('todos')
     } finally { setLoading(false) }
   }
 
-  const filtrados = movimientos?.filter(m => filtro === 'todos' || m.tipo === filtro) ?? []
+  useEffect(() => { cargar() }, [filtro])
+
+  const filtrados = movimientos?.filter(m => tipoFiltro === 'todos' || m.tipo === tipoFiltro) ?? []
 
   const exportar = () => {
     if (!filtrados.length) return
-    exportarExcel(`movimientos_${desde}_${hasta}`,
+    exportarExcel(`movimientos_${filtro.desde}_${filtro.hasta}`,
       ['Fecha', 'Tipo', 'Subtipo', 'Producto', 'Unidad', 'Cantidad', 'Usuario', 'Motivo'],
       filtrados.map(m => [m.fecha, m.tipo, m.subtipo ?? '', m.producto, m.unidad, m.cantidad, m.usuario, m.motivo]))
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2 flex-wrap items-end">
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Desde</label>
-          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-        </div>
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Hasta</label>
-          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-        </div>
+      <div className="flex gap-2 flex-wrap items-center justify-between">
         <button onClick={cargar} disabled={loading}
           className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
           {loading ? 'Cargando...' : 'Consultar'}
@@ -211,14 +206,14 @@ function TabMovimientos({ tiendaId }: { tiendaId: number }) {
         {filtrados.length > 0 && <BtnExcel onClick={exportar} />}
       </div>
 
-      {/* Chips de filtro */}
+      {/* Chips de filtro de tipo */}
       {movimientos !== null && (
         <div className="flex gap-1.5 flex-wrap">
           {FILTROS_MOV.filter(f => f.key === 'todos' || (conteos[f.key] ?? 0) > 0).map(f => (
             <button key={f.key}
-              onClick={() => setFiltro(f.key)}
+              onClick={() => setTipoFiltro(f.key)}
               className={`px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
-                filtro === f.key
+                tipoFiltro === f.key
                   ? 'bg-gray-800 text-white border-gray-800'
                   : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
               }`}>
@@ -264,8 +259,7 @@ function TabMovimientos({ tiendaId }: { tiendaId: number }) {
 
 // ─── Inventario (Rotación de stock) ─────────────────────────────────────────
 function TabInventario({ tiendaId }: { tiendaId: number }) {
-  const [desde, setDesde] = useState(inicioMes())
-  const [hasta, setHasta] = useState(hoy())
+  const { filtro } = useFiltro()
   const [rotFilas, setRotFilas] = useState<FilaRotacion[] | null>(null)
   const [resumen, setResumen] = useState<ResumenRotacion | null>(null)
   const [filtroEstado, setFiltroEstado] = useState<string>('todos')
@@ -274,37 +268,34 @@ function TabInventario({ tiendaId }: { tiendaId: number }) {
   const cargar = async () => {
     setLoading(true)
     try {
-      const { data } = await api.get('/informes/rotacion', {
-        params: { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta },
+      const params = cleanParams({
+        tienda_id: tiendaId,
+        fecha_desde: filtro.desde,
+        fecha_hasta: filtro.hasta,
+        categoria: filtro.categoria,
+        producto_search: filtro.productoSearch,
       })
+      const { data } = await api.get('/informes/rotacion', { params })
       setRotFilas(data.filas)
       setResumen(data.resumen)
       setFiltroEstado('todos')
     } finally { setLoading(false) }
   }
 
+  useEffect(() => { cargar() }, [filtro])
+
   const rotFiltradas = rotFilas?.filter(f => filtroEstado === 'todos' || f.estado === filtroEstado) ?? []
 
   const exportar = () => {
     if (!rotFilas) return
-    exportarExcel(`inventario_${desde}_${hasta}`,
+    exportarExcel(`inventario_${filtro.desde}_${filtro.hasta}`,
       ['Producto', 'Unidad', 'Stock actual', 'Stock mínimo', 'Entradas', 'Salidas', 'Rotación', 'Estado'],
       rotFilas.map(f => [f.producto, f.unidad, f.stock_actual, f.stock_minimo, f.entradas, f.salidas, f.rotacion ?? '', f.estado]))
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2 flex-wrap items-end">
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Desde</label>
-          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-        </div>
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Hasta</label>
-          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-        </div>
+      <div className="flex gap-2 flex-wrap items-center justify-between">
         <button onClick={cargar} disabled={loading}
           className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
           {loading ? 'Cargando...' : 'Consultar'}
@@ -407,8 +398,7 @@ interface FilaBarista {
 }
 
 function TabCuadres({ tiendaId }: { tiendaId: number }) {
-  const [desde, setDesde] = useState(inicioMes())
-  const [hasta, setHasta] = useState(hoy())
+  const { filtro } = useFiltro()
   const [cuadresFilas, setCuadresFilas] = useState<FilaEntrega[] | null>(null)
   const [cuadresTotales, setCuadresTotales] = useState<TotalesEntrega | null>(null)
   const [baristasFilas, setBaristasFilas] = useState<FilaBarista[] | null>(null)
@@ -417,7 +407,13 @@ function TabCuadres({ tiendaId }: { tiendaId: number }) {
   const cargar = async () => {
     setLoading(true)
     try {
-      const params = { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta }
+      const params = cleanParams({
+        tienda_id: tiendaId,
+        fecha_desde: filtro.desde,
+        fecha_hasta: filtro.hasta,
+        usuario_id: filtro.usuarioId,
+        turno_id: filtro.turnoId,
+      })
       const [entRes, barRes] = await Promise.all([
         api.get('/informes/entregas', { params }),
         api.get('/informes/baristas', { params }),
@@ -428,9 +424,11 @@ function TabCuadres({ tiendaId }: { tiendaId: number }) {
     } finally { setLoading(false) }
   }
 
+  useEffect(() => { cargar() }, [filtro])
+
   const exportar = () => {
     if (!cuadresFilas) return
-    exportarExcel(`cuadres_llegada_${desde}_${hasta}`,
+    exportarExcel(`cuadres_llegada_${filtro.desde}_${filtro.hasta}`,
       ['Fecha/Hora', 'Barista', 'Efectivo esperado', 'Efectivo real', 'Diferencia efectivo', 'Total Bold', 'Diferencia Bold'],
       cuadresFilas.map(f => [f.fecha_hora, f.usuario, f.efectivo_esperado, f.efectivo_real, f.diferencia_efectivo, f.ventas_tarjeta_bold, f.diferencia_tarjeta]))
   }
@@ -441,17 +439,7 @@ function TabCuadres({ tiendaId }: { tiendaId: number }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2 flex-wrap items-end">
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Desde</label>
-          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-        </div>
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Hasta</label>
-          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-        </div>
+      <div className="flex gap-2 flex-wrap items-center justify-between">
         <button onClick={cargar} disabled={loading}
           className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
           {loading ? 'Cargando...' : 'Consultar'}
@@ -568,8 +556,7 @@ interface TotalesTornos {
 }
 
 function TabTurnos({ tiendaId }: { tiendaId: number }) {
-  const [desde, setDesde] = useState(inicioMes())
-  const [hasta, setHasta] = useState(hoy())
+  const { filtro } = useFiltro()
   const [filas, setFilas] = useState<FilaTurno[] | null>(null)
   const [totales, setTotales] = useState<TotalesTornos | null>(null)
   const [loading, setLoading] = useState(false)
@@ -578,12 +565,20 @@ function TabTurnos({ tiendaId }: { tiendaId: number }) {
   const cargar = async () => {
     setLoading(true)
     try {
-      const { data } = await api.get('/informes/turnos', { params: { tienda_id: tiendaId, fecha_desde: desde, fecha_hasta: hasta } })
+      const params = cleanParams({
+        tienda_id: tiendaId,
+        fecha_desde: filtro.desde,
+        fecha_hasta: filtro.hasta,
+        turno_id: filtro.turnoId,
+      })
+      const { data } = await api.get('/informes/turnos', { params })
       setFilas(data.filas)
       setTotales(data.totales)
       setExpanded(new Set())
     } finally { setLoading(false) }
   }
+
+  useEffect(() => { cargar() }, [filtro])
 
   const toggle = (id: number) => setExpanded(prev => {
     const s = new Set(prev)
@@ -593,7 +588,7 @@ function TabTurnos({ tiendaId }: { tiendaId: number }) {
 
   const exportar = () => {
     if (!filas) return
-    exportarExcel(`turnos_${desde}_${hasta}`,
+    exportarExcel(`turnos_${filtro.desde}_${filtro.hasta}`,
       ['Apertura', 'Cierre', 'Abrió', 'Cerró', 'Base real', 'Total ventas', 'Efectivo', 'Tarjeta', 'Diff. cierre', 'Diff. Bold', 'Justificación'],
       filas.map(f => [f.fecha_apertura, f.fecha_cierre, f.usuario_apertura, f.usuario_cierre,
         f.base_real, f.total_ventas, f.total_efectivo, f.total_tarjeta,
@@ -602,17 +597,7 @@ function TabTurnos({ tiendaId }: { tiendaId: number }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2 flex-wrap items-end">
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Desde</label>
-          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-        </div>
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Hasta</label>
-          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-        </div>
+      <div className="flex gap-2 flex-wrap items-center justify-between">
         <button onClick={cargar} disabled={loading}
           className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
           {loading ? 'Cargando...' : 'Consultar'}
@@ -700,72 +685,105 @@ const ESTADO_CFG: Record<string, { label: string; bg: string; text: string; titl
 }
 
 
-
-
-// ─── Siigo: ventas por producto ───────────────────────────────────────────────
-interface SiigoProducto {
-  nombre: string; codigo: string; cantidad: number; total: number; porcentaje: number
-}
-interface SiigoData {
-  fecha_desde: string; fecha_hasta: string
-  total_facturas: number; total_ventas: number
-  productos: SiigoProducto[]
+// ─── Siigo: ventas sincronizadas ──────────────────────────────────────────────
+interface SiigoVentaItem {
+  id: number
+  tienda_id: number
+  fecha: string
+  codigo_producto: string
+  descripcion: string
+  cantidad: number
+  precio_unitario: number
+  total_sin_descuento: number
+  descuento_porcentaje: number | null
+  descuento_monto: number | null
+  total_con_descuento: number
+  siigo_factura_id: string
 }
 
 function TabSiigo({ tiendaId }: { tiendaId: number }) {
-  const [desde, setDesde] = useState(inicioMes())
-  const [hasta, setHasta] = useState(hoy())
-  const [data, setData] = useState<SiigoData | null>(null)
+  const { filtro } = useFiltro()
+  const [items, setItems] = useState<SiigoVentaItem[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  // tiendaId kept for future per-sede credentials
-  void tiendaId
+  const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState<string | null>(null)
 
   const cargar = async () => {
     setLoading(true)
     setError(null)
     try {
-      const { data: res } = await api.get('/siigo/ventas-por-producto', {
-        params: { fecha_desde: desde, fecha_hasta: hasta },
+      const params = cleanParams({
+        tienda_id: tiendaId,
+        fecha_desde: filtro.desde,
+        fecha_hasta: filtro.hasta,
+        producto_search: filtro.productoSearch,
+        con_descuento: filtro.conDescuento,
       })
-      setData(res)
+      const { data } = await api.get('/informes/siigo/ventas', { params })
+      setItems(data)
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg ?? 'Error consultando Siigo')
+      setError(msg ?? 'Error consultando ventas Siigo')
     } finally {
       setLoading(false)
     }
   }
 
+  useEffect(() => { cargar() }, [filtro])
+
+  const handleSync = async () => {
+    setSyncing(true)
+    setSyncMsg(null)
+    setError(null)
+    try {
+      const { data } = await api.post('/informes/siigo/sync', null, {
+        params: {
+          tienda_id: tiendaId,
+          fecha_desde: filtro.desde,
+          fecha_hasta: filtro.hasta,
+        },
+      })
+      setSyncMsg(`${data.synced_count} nuevos, ${data.skipped_count} ya existían`)
+      await cargar()
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg ?? 'Error sincronizando con Siigo')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   const exportar = () => {
-    if (!data) return
+    if (!items || !items.length) return
     exportarExcel(
-      `siigo_productos_${desde}_${hasta}`,
-      ['Producto', 'Código', 'Cantidad', 'Total', '%'],
-      data.productos.map(p => [p.nombre, p.codigo, p.cantidad, p.total, p.porcentaje])
+      `siigo_ventas_${filtro.desde}_${filtro.hasta}`,
+      ['Fecha', 'Código', 'Descripción', 'Cantidad', 'Precio Unit.', 'Total', 'Descuento %'],
+      items.map(p => [p.fecha, p.codigo_producto, p.descripcion, p.cantidad, p.precio_unitario, p.total_con_descuento, p.descuento_porcentaje ?? '—'])
     )
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2 flex-wrap items-end">
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Desde</label>
-          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
+      <div className="flex gap-2 flex-wrap items-center justify-between">
+        <div className="flex gap-2">
+          <button onClick={cargar} disabled={loading}
+            className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
+            {loading ? 'Cargando...' : 'Consultar'}
+          </button>
+          <button onClick={handleSync} disabled={syncing}
+            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
+            {syncing ? 'Sincronizando...' : 'Sincronizar Siigo'}
+          </button>
         </div>
-        <div>
-          <label className="text-xs text-gray-500 block mb-1">Hasta</label>
-          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
-        </div>
-        <button onClick={cargar} disabled={loading}
-          className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
-          {loading ? 'Consultando Siigo…' : 'Consultar'}
-        </button>
-        {data && data.productos.length > 0 && <BtnExcel onClick={exportar} />}
+        {items && items.length > 0 && <BtnExcel onClick={exportar} />}
       </div>
+
+      {syncMsg && (
+        <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-2 text-sm text-green-700">
+          ✓ {syncMsg}
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
@@ -773,64 +791,45 @@ function TabSiigo({ tiendaId }: { tiendaId: number }) {
         </div>
       )}
 
-      {data && (
-        <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-              <p className="text-xs text-gray-400">Facturas</p>
-              <p className="text-xl font-bold text-gray-800">{data.total_facturas}</p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-              <p className="text-xs text-gray-400">Venta total</p>
-              <p className="text-base font-bold text-gray-800">{fmt(data.total_ventas)}</p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-              <p className="text-xs text-gray-400">Productos</p>
-              <p className="text-xl font-bold text-gray-800">{data.productos.length}</p>
-            </div>
+      {items !== null && items.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Fecha</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Código</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Descripción</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Cant.</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Precio Unit.</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Total</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Descuento</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {items.map(p => (
+                  <tr key={p.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-2.5 text-gray-600 font-mono text-xs">{p.fecha}</td>
+                    <td className="px-4 py-2.5 text-gray-500 text-xs">{p.codigo_producto || '—'}</td>
+                    <td className="px-4 py-2.5 font-medium text-gray-800">{p.descripcion}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-gray-600">{fmtN(p.cantidad, 0)}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-gray-600">{fmt(p.precio_unitario)}</td>
+                    <td className="px-4 py-2.5 text-right font-bold text-gray-800">{fmt(p.total_con_descuento)}</td>
+                    <td className="px-4 py-2.5 text-right text-xs text-gray-500">
+                      {p.descuento_porcentaje != null ? `${p.descuento_porcentaje}%` : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+        </div>
+      )}
 
-          {data.productos.length > 0 ? (
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100">
-                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">#</th>
-                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Producto</th>
-                      <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Cant.</th>
-                      <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Total</th>
-                      <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">%</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {data.productos.map((p, i) => (
-                      <tr key={p.codigo || p.nombre} className="hover:bg-gray-50">
-                        <td className="px-4 py-2.5 text-xs text-gray-300 font-mono">{i + 1}</td>
-                        <td className="px-4 py-2.5">
-                          <p className="font-medium text-gray-800">{p.nombre}</p>
-                          {p.codigo && <p className="text-xs text-gray-400">{p.codigo}</p>}
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-mono text-gray-600">{fmtN(p.cantidad, 0)}</td>
-                        <td className="px-4 py-2.5 text-right font-bold text-gray-800">{fmt(p.total)}</td>
-                        <td className="px-4 py-2.5 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <div className="w-16 bg-gray-100 rounded-full h-1.5 hidden sm:block">
-                              <div className="bg-amber-400 h-1.5 rounded-full" style={{ width: `${p.porcentaje}%` }} />
-                            </div>
-                            <span className="text-xs text-gray-500 font-mono">{p.porcentaje}%</span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400 text-center py-6">Sin facturas en el período seleccionado.</p>
-          )}
-        </>
+      {items !== null && items.length === 0 && !loading && (
+        <p className="text-sm text-gray-400 text-center py-6">
+          Sin ítems sincronizados en el período. Usá "Sincronizar Siigo" para traer datos.
+        </p>
       )}
     </div>
   )
@@ -867,6 +866,46 @@ export default function Informes() {
   ]
 
   return (
+    <FiltroProvider tiendaId={tiendaId}>
+      <InformesContent
+        tiendaId={tiendaId}
+        setTiendaId={setTiendaId}
+        sedes={sedes}
+        isAdmin={isAdmin}
+        tab={tab}
+        setTab={setTab}
+        tabs={tabs}
+      />
+    </FiltroProvider>
+  )
+}
+
+// Inner component that has access to FiltroContext
+function InformesContent({
+  tiendaId,
+  setTiendaId,
+  sedes,
+  isAdmin,
+  tab,
+  setTab,
+  tabs,
+}: {
+  tiendaId: number
+  setTiendaId: (id: number) => void
+  sedes: Sede[]
+  isAdmin: boolean
+  tab: Tab
+  setTab: (t: Tab) => void
+  tabs: { id: Tab; label: string; icon: React.ReactNode }[]
+}) {
+  const { setFiltro } = useFiltro()
+
+  // Sync tiendaId changes into FiltroContext without remounting tabs
+  useEffect(() => {
+    setFiltro(prev => ({ ...prev, tiendaId }))
+  }, [tiendaId])
+
+  return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-base font-bold text-gray-800">Informes</h1>
@@ -900,12 +939,16 @@ export default function Informes() {
         ))}
       </div>
 
-      {tab === 'ventas'      && <TabVentas      key={tiendaId} tiendaId={tiendaId} />}
-      {tab === 'turnos'      && <TabTurnos      key={tiendaId} tiendaId={tiendaId} />}
-      {tab === 'cuadres'     && <TabCuadres     key={tiendaId} tiendaId={tiendaId} />}
-      {tab === 'movimientos' && <TabMovimientos key={tiendaId} tiendaId={tiendaId} />}
-      {tab === 'inventario'  && <TabInventario  key={tiendaId} tiendaId={tiendaId} />}
-      {tab === 'siigo'       && <TabSiigo       key={tiendaId} tiendaId={tiendaId} />}
+      {/* Shared filter bar */}
+      <FilterBar />
+
+      {/* Tab content */}
+      {tab === 'ventas'      && <TabVentas      tiendaId={tiendaId} />}
+      {tab === 'turnos'      && <TabTurnos      tiendaId={tiendaId} />}
+      {tab === 'cuadres'     && <TabCuadres     tiendaId={tiendaId} />}
+      {tab === 'movimientos' && <TabMovimientos tiendaId={tiendaId} />}
+      {tab === 'inventario'  && <TabInventario  tiendaId={tiendaId} />}
+      {tab === 'siigo'       && <TabSiigo       tiendaId={tiendaId} />}
     </div>
   )
 }

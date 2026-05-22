@@ -2,6 +2,9 @@
 
 import time
 import httpx
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+from datetime import date as date_type
 from app.config import settings
 
 SIIGO_AUTH_URL = "https://api.siigo.com/auth"
@@ -43,49 +46,96 @@ async def _get_token() -> str:
     return token
 
 
-async def get_invoices(fecha_desde: str, fecha_hasta: str) -> list[dict]:
-    """Fetch all sales invoices in [fecha_desde, fecha_hasta] (YYYY-MM-DD)."""
-    token = await _get_token()
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Partner-Id": settings.SIIGO_PARTNER_ID,
-    }
+async def _invalidate_token() -> None:
+    """Clear the in-memory token cache so the next call re-authenticates."""
+    _cache["token"] = None
+    _cache["expires_at"] = 0.0
 
-    # Siigo requires ISO 8601 datetime format
+
+async def get_invoices(fecha_desde: str, fecha_hasta: str) -> list[dict]:
+    """Fetch all sales invoices in [fecha_desde, fecha_hasta] (YYYY-MM-DD).
+
+    If Siigo returns 401 (token invalidated server-side), clears the local
+    cache and retries once with a fresh token before raising.
+    """
     date_start = f"{fecha_desde}T00:00:00Z"
     date_end   = f"{fecha_hasta}T23:59:59Z"
 
-    all_invoices: list[dict] = []
-    page = 1
+    for attempt in range(2):
+        token = await _get_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Partner-Id": settings.SIIGO_PARTNER_ID,
+        }
 
-    async with httpx.AsyncClient(timeout=20) as client:
-        while True:
-            r = await client.get(
-                f"{SIIGO_BASE}/v1/invoices",
-                headers=headers,
-                params={
-                    "date_start": date_start,
-                    "date_end":   date_end,
-                    "page":       page,
-                    "page_size":  100,
-                },
-            )
-            if not r.is_success:
-                raise ValueError(f"Siigo invoices {r.status_code}: {r.text[:300]}")
+        all_invoices: list[dict] = []
+        page = 1
+        failed = False
 
-            data = r.json()
+        async with httpx.AsyncClient(timeout=20) as client:
+            while True:
+                r = await client.get(
+                    f"{SIIGO_BASE}/v1/invoices",
+                    headers=headers,
+                    params={
+                        "date_start": date_start,
+                        "date_end":   date_end,
+                        "page":       page,
+                        "page_size":  100,
+                    },
+                )
 
-            results = data.get("results", [])
-            all_invoices.extend(results)
+                if r.status_code == 401 and attempt == 0:
+                    # Token invalidated server-side — clear cache and retry once
+                    await _invalidate_token()
+                    failed = True
+                    break
 
-            pagination = data.get("pagination", {})
-            total = pagination.get("total_results", len(results))
-            if not results or len(all_invoices) >= total:
-                break
-            page += 1
+                if not r.is_success:
+                    raise ValueError(f"Siigo invoices {r.status_code}: {r.text[:300]}")
 
-    return all_invoices
+                data = r.json()
+                results = data.get("results", [])
+                all_invoices.extend(results)
+
+                pagination = data.get("pagination", {})
+                total = pagination.get("total_results", len(results))
+                if not results or len(all_invoices) >= total:
+                    break
+                page += 1
+
+        if not failed:
+            return all_invoices
+
+    raise ValueError("Siigo invoices: token inválido después de reautenticar. Verificá las credenciales.")
+
+
+def _parse_item(item: dict, factura_id: str) -> dict:
+    """Parse a single Siigo invoice line item into a normalized dict."""
+    codigo = item.get("code", "") or ""
+    descripcion = item.get("description", "") or ""
+    cantidad = float(item.get("quantity", 0) or 0)
+    precio = float(item.get("price", 0) or 0)
+    raw_disc = item.get("discount", 0) or 0
+    if isinstance(raw_disc, dict):
+        desc_pct = float(raw_disc.get("percentage", 0) or 0)
+    else:
+        desc_pct = float(raw_disc)
+    total_sin = round(cantidad * precio, 2)
+    desc_monto = round(total_sin * desc_pct / 100, 2) if desc_pct else None
+    total_con = round(total_sin * (1 - desc_pct / 100), 2)
+    return {
+        "codigo_producto": codigo,
+        "descripcion": descripcion,
+        "cantidad": cantidad,
+        "precio_unitario": precio,
+        "total_sin_descuento": total_sin,
+        "descuento_porcentaje": desc_pct if desc_pct else None,
+        "descuento_monto": desc_monto,
+        "total_con_descuento": total_con,
+        "siigo_factura_id": factura_id,
+    }
 
 
 def aggregate_by_product(invoices: list[dict]) -> dict:
@@ -98,24 +148,96 @@ def aggregate_by_product(invoices: list[dict]) -> dict:
     total_ventas = 0.0
 
     for inv in invoices:
+        factura_id = str(inv.get("id", "") or "")
         for item in inv.get("items", []):
-            codigo = item.get("code", "") or ""
-            nombre = item.get("description", "") or ""
-            cantidad = float(item.get("quantity", 0) or 0)
-            precio = float(item.get("price", 0) or 0)
-            # discount can be a dict {"percentage": X} or a plain number
-            raw_disc = item.get("discount", 0) or 0
-            if isinstance(raw_disc, dict):
-                descuento = float(raw_disc.get("percentage", 0) or 0)
-            else:
-                descuento = float(raw_disc)
-            subtotal = round(cantidad * precio * (1 - descuento / 100), 2)
+            parsed = _parse_item(item, factura_id)
+            codigo = parsed["codigo_producto"]
+            nombre = parsed["descripcion"]
+            subtotal = parsed["total_con_descuento"]
 
             key = codigo or nombre
             productos[key]["nombre"] = nombre
             productos[key]["codigo"] = codigo
-            productos[key]["cantidad"] += cantidad
+            productos[key]["cantidad"] += parsed["cantidad"]
             productos[key]["total"] += subtotal
             total_ventas += subtotal
 
     return {"productos": dict(productos), "total_ventas": total_ventas}
+
+
+async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta: str) -> dict:
+    """Fetch invoices from Siigo and persist them locally using INSERT OR IGNORE."""
+    from app.models.models import SiigoVentaItem
+
+    invoices = await get_invoices(fecha_desde, fecha_hasta)
+    rows = []
+    for inv in invoices:
+        factura_id = str(inv.get("id", "") or "")
+        inv_fecha = (inv.get("date") or fecha_desde)[:10]
+        for item in inv.get("items", []):
+            parsed = _parse_item(item, factura_id)
+            rows.append({**parsed, "tienda_id": tienda_id, "fecha": inv_fecha})
+
+    if not rows:
+        return {"synced_count": 0, "skipped_count": 0, "date_range": f"{fecha_desde}/{fecha_hasta}"}
+
+    # Use count before/after for reliable rowcount (SQLite executemany returns -1)
+    before = db.query(SiigoVentaItem).filter(
+        SiigoVentaItem.tienda_id == tienda_id,
+        SiigoVentaItem.fecha >= fecha_desde,
+        SiigoVentaItem.fecha <= fecha_hasta,
+    ).count()
+
+    sql = text("""
+        INSERT OR IGNORE INTO siigo_venta_items
+        (tienda_id, fecha, codigo_producto, descripcion, cantidad, precio_unitario,
+         total_sin_descuento, descuento_porcentaje, descuento_monto, total_con_descuento, siigo_factura_id)
+        VALUES (:tienda_id, :fecha, :codigo_producto, :descripcion, :cantidad, :precio_unitario,
+                :total_sin_descuento, :descuento_porcentaje, :descuento_monto, :total_con_descuento, :siigo_factura_id)
+    """)
+    db.execute(sql, rows)
+    db.commit()
+
+    after = db.query(SiigoVentaItem).filter(
+        SiigoVentaItem.tienda_id == tienda_id,
+        SiigoVentaItem.fecha >= fecha_desde,
+        SiigoVentaItem.fecha <= fecha_hasta,
+    ).count()
+
+    synced = after - before
+    skipped = len(rows) - synced
+    return {"synced_count": synced, "skipped_count": skipped, "date_range": f"{fecha_desde}/{fecha_hasta}"}
+
+
+def query_ventas_siigo(db: Session, filtro) -> list:
+    """Query locally stored Siigo venta items with cross-filtering support."""
+    from app.models.models import SiigoVentaItem
+
+    q = db.query(SiigoVentaItem).filter(
+        SiigoVentaItem.tienda_id == filtro.tienda_id,
+        SiigoVentaItem.fecha >= filtro.fecha_desde,
+        SiigoVentaItem.fecha <= filtro.fecha_hasta,
+    )
+
+    if filtro.con_descuento:
+        q = q.filter(
+            (SiigoVentaItem.descuento_monto > 0) | (SiigoVentaItem.descuento_porcentaje > 0)
+        )
+
+    if filtro.producto_search:
+        term = f"%{filtro.producto_search}%"
+        q = q.filter(
+            SiigoVentaItem.descripcion.ilike(term) | SiigoVentaItem.codigo_producto.ilike(term)
+        )
+
+    rows = q.order_by(SiigoVentaItem.fecha.desc()).all()
+    result = []
+    for row in rows:
+        d = {c.name: getattr(row, c.name) for c in row.__table__.columns}
+        # Convert date/datetime to string for JSON serialization
+        if d.get("fecha"):
+            d["fecha"] = str(d["fecha"])
+        if d.get("created_at"):
+            d["created_at"] = str(d["created_at"])
+        result.append(d)
+    return result

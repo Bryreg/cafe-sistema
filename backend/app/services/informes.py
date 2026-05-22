@@ -4,25 +4,33 @@ from app.models.models import (
     VentaDiaria, Merma, MovimientoInventario, TipoMovInvEnum,
     CajaTurno, EstadoTurnoEnum, EntregaTurno, Inventario, Producto, Usuario
 )
+from app.services.filtros import InformeFilter
 from datetime import datetime, date
 from collections import defaultdict
+from typing import Optional
 
 
-def reporte_ventas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date):
+def reporte_ventas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Ventas agrupadas por día."""
     desde = datetime.combine(fecha_desde, datetime.min.time())
     hasta = datetime.combine(fecha_hasta, datetime.max.time())
 
-    ventas = (
+    q = (
         db.query(VentaDiaria)
         .filter(
             VentaDiaria.tienda_id == tienda_id,
             VentaDiaria.fecha_registro >= desde,
             VentaDiaria.fecha_registro <= hasta,
         )
-        .order_by(VentaDiaria.fecha_registro.asc())
-        .all()
     )
+
+    if filtro:
+        if filtro.usuario_id is not None:
+            q = q.filter(VentaDiaria.usuario_id == filtro.usuario_id)
+        if filtro.turno_id is not None:
+            q = q.filter(VentaDiaria.turno_id == filtro.turno_id)
+
+    ventas = q.order_by(VentaDiaria.fecha_registro.asc()).all()
 
     por_dia: dict[str, dict] = defaultdict(lambda: {
         "fecha": "",
@@ -59,21 +67,34 @@ def reporte_ventas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
     return {"filas": rows, "totales": totales}
 
 
-def reporte_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date):
+def reporte_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Mermas agrupadas por producto."""
     desde = datetime.combine(fecha_desde, datetime.min.time())
     hasta = datetime.combine(fecha_hasta, datetime.max.time())
 
-    mermas = (
+    q = (
         db.query(Merma)
         .filter(
             Merma.tienda_id == tienda_id,
             Merma.fecha_registro >= desde,
             Merma.fecha_registro <= hasta,
         )
-        .order_by(Merma.fecha_registro.asc())
-        .all()
     )
+
+    if filtro:
+        if filtro.usuario_id is not None:
+            q = q.filter(Merma.usuario_id == filtro.usuario_id)
+        if filtro.categoria is not None:
+            q = q.join(Producto, Merma.producto_id == Producto.id).filter(
+                Producto.categoria == filtro.categoria
+            )
+        if filtro.producto_search is not None:
+            ids = db.query(Producto.id).filter(
+                Producto.nombre.ilike(f"%{filtro.producto_search}%")
+            ).subquery()
+            q = q.filter(Merma.producto_id.in_(ids))
+
+    mermas = q.order_by(Merma.fecha_registro.asc()).all()
 
     por_producto: dict[int, dict] = defaultdict(lambda: {
         "producto_id": 0,
@@ -105,12 +126,12 @@ def reporte_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
     return {"filas": rows, "totales": totales}
 
 
-def reporte_inventario_consumido(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date):
+def reporte_inventario_consumido(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Movimientos de salida agrupados por producto (consumo de inventario)."""
     desde = datetime.combine(fecha_desde, datetime.min.time())
     hasta = datetime.combine(fecha_hasta, datetime.max.time())
 
-    movs = (
+    q = (
         db.query(MovimientoInventario)
         .filter(
             MovimientoInventario.tienda_id == tienda_id,
@@ -118,9 +139,22 @@ def reporte_inventario_consumido(db: Session, tienda_id: int, fecha_desde: date,
             MovimientoInventario.fecha >= desde,
             MovimientoInventario.fecha <= hasta,
         )
-        .order_by(MovimientoInventario.fecha.asc())
-        .all()
     )
+
+    if filtro:
+        if filtro.usuario_id is not None:
+            q = q.filter(MovimientoInventario.usuario_id == filtro.usuario_id)
+        if filtro.categoria is not None:
+            q = q.join(Producto, MovimientoInventario.producto_id == Producto.id).filter(
+                Producto.categoria == filtro.categoria
+            )
+        if filtro.producto_search is not None:
+            ids = db.query(Producto.id).filter(
+                Producto.nombre.ilike(f"%{filtro.producto_search}%")
+            ).subquery()
+            q = q.filter(MovimientoInventario.producto_id.in_(ids))
+
+    movs = q.order_by(MovimientoInventario.fecha.asc()).all()
 
     por_producto: dict[int, dict] = defaultdict(lambda: {
         "producto_id": 0,
@@ -151,21 +185,27 @@ def reporte_inventario_consumido(db: Session, tienda_id: int, fecha_desde: date,
     return {"filas": rows, "totales": totales}
 
 
-def reporte_entregas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date):
+def reporte_entregas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Cuadres de llegada en el período."""
     desde = datetime.combine(fecha_desde, datetime.min.time())
     hasta = datetime.combine(fecha_hasta, datetime.max.time())
 
-    entregas = (
+    q = (
         db.query(EntregaTurno)
         .filter(
             EntregaTurno.tienda_id == tienda_id,
             EntregaTurno.fecha_hora >= desde,
             EntregaTurno.fecha_hora <= hasta,
         )
-        .order_by(EntregaTurno.fecha_hora.desc())
-        .all()
     )
+
+    if filtro:
+        if filtro.usuario_id is not None:
+            q = q.filter(EntregaTurno.usuario_id == filtro.usuario_id)
+        if filtro.turno_id is not None:
+            q = q.filter(EntregaTurno.turno_id == filtro.turno_id)
+
+    entregas = q.order_by(EntregaTurno.fecha_hora.desc()).all()
 
     filas = [
         {
@@ -192,7 +232,7 @@ def reporte_entregas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
     }
 
 
-def kpi_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date):
+def kpi_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """KPI mermas: total por tipo, comparado con ventas del período."""
     desde = datetime.combine(fecha_desde, datetime.min.time())
     hasta = datetime.combine(fecha_hasta, datetime.max.time())
@@ -241,7 +281,7 @@ def kpi_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date
     }
 
 
-def reporte_rotacion(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date):
+def reporte_rotacion(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Rotación de inventario por producto en el período."""
     desde = datetime.combine(fecha_desde, datetime.min.time())
     hasta = datetime.combine(fecha_hasta, datetime.max.time())
@@ -252,14 +292,25 @@ def reporte_rotacion(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
         .all()
     )
 
+    # Apply optional filters (post-SQL — Inventario has no direct categoria/search column)
+    if filtro:
+        if filtro.categoria:
+            inventarios = [i for i in inventarios if i.producto and i.producto.categoria == filtro.categoria]
+        if filtro.producto_search:
+            term = filtro.producto_search.lower()
+            inventarios = [i for i in inventarios if i.producto and term in i.producto.nombre.lower()]
+
+    allowed_ids = {i.producto_id for i in inventarios} if filtro and (filtro.categoria or filtro.producto_search) else None
+
     # Movimientos del período
-    movs = (
-        db.query(MovimientoInventario)
-        .filter(MovimientoInventario.tienda_id == tienda_id,
-                MovimientoInventario.fecha >= desde,
-                MovimientoInventario.fecha <= hasta)
-        .all()
+    mov_q = db.query(MovimientoInventario).filter(
+        MovimientoInventario.tienda_id == tienda_id,
+        MovimientoInventario.fecha >= desde,
+        MovimientoInventario.fecha <= hasta,
     )
+    if allowed_ids is not None:
+        mov_q = mov_q.filter(MovimientoInventario.producto_id.in_(allowed_ids))
+    movs = mov_q.all()
 
     entradas_por_prod: dict[int, float] = defaultdict(float)
     salidas_por_prod: dict[int, float]  = defaultdict(float)
@@ -319,12 +370,12 @@ def reporte_rotacion(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
     }
 
 
-def reporte_turnos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date):
+def reporte_turnos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Historial de turnos cerrados en el período."""
     desde = datetime.combine(fecha_desde, datetime.min.time())
     hasta = datetime.combine(fecha_hasta, datetime.max.time())
 
-    turnos = (
+    q = (
         db.query(CajaTurno)
         .filter(
             CajaTurno.tienda_id == tienda_id,
@@ -332,9 +383,12 @@ def reporte_turnos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
             CajaTurno.fecha_cierre <= hasta,
             CajaTurno.estado == EstadoTurnoEnum.cerrado,
         )
-        .order_by(CajaTurno.fecha_cierre.desc())
-        .all()
     )
+
+    # NOTE: usuario_id filter is skipped for turnos — CajaTurno has usuario_apertura_id
+    # and usuario_cierre_id; filtering by a single usuario_id is ambiguous (design decision #7).
+
+    turnos = q.order_by(CajaTurno.fecha_cierre.desc()).all()
 
     filas = [
         {
@@ -366,7 +420,7 @@ def reporte_turnos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
     }
 
 
-def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date):
+def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Timeline unificado: entradas, ajustes, mermas y salidas de pastelería."""
     desde = datetime.combine(fecha_desde, datetime.min.time())
     hasta = datetime.combine(fecha_hasta, datetime.max.time())
@@ -374,7 +428,7 @@ def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_ha
     resultados = []
 
     # ── Entradas y ajustes de MovimientoInventario ────────────────────────────
-    movs = (
+    q_movs = (
         db.query(MovimientoInventario, Producto, Usuario)
         .join(Producto, MovimientoInventario.producto_id == Producto.id)
         .join(Usuario, MovimientoInventario.usuario_id == Usuario.id)
@@ -384,8 +438,17 @@ def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_ha
             MovimientoInventario.fecha >= desde,
             MovimientoInventario.fecha <= hasta,
         )
-        .all()
     )
+    if filtro:
+        if filtro.usuario_id is not None:
+            q_movs = q_movs.filter(MovimientoInventario.usuario_id == filtro.usuario_id)
+        if filtro.producto_search is not None:
+            ids = db.query(Producto.id).filter(
+                Producto.nombre.ilike(f"%{filtro.producto_search}%")
+            ).subquery()
+            q_movs = q_movs.filter(MovimientoInventario.producto_id.in_(ids))
+
+    movs = q_movs.all()
     for m, prod, usr in movs:
         resultados.append({
             "fecha":    m.fecha.strftime("%Y-%m-%d %H:%M"),
@@ -399,7 +462,7 @@ def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_ha
         })
 
     # ── Salidas de pastelería ─────────────────────────────────────────────────
-    past = (
+    q_past = (
         db.query(MovimientoInventario, Producto, Usuario)
         .join(Producto, MovimientoInventario.producto_id == Producto.id)
         .join(Usuario, MovimientoInventario.usuario_id == Usuario.id)
@@ -410,8 +473,17 @@ def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_ha
             MovimientoInventario.fecha >= desde,
             MovimientoInventario.fecha <= hasta,
         )
-        .all()
     )
+    if filtro:
+        if filtro.usuario_id is not None:
+            q_past = q_past.filter(MovimientoInventario.usuario_id == filtro.usuario_id)
+        if filtro.producto_search is not None:
+            ids = db.query(Producto.id).filter(
+                Producto.nombre.ilike(f"%{filtro.producto_search}%")
+            ).subquery()
+            q_past = q_past.filter(MovimientoInventario.producto_id.in_(ids))
+
+    past = q_past.all()
     for m, prod, usr in past:
         resultados.append({
             "fecha":    m.fecha.strftime("%Y-%m-%d %H:%M"),
@@ -425,7 +497,7 @@ def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_ha
         })
 
     # ── Mermas ────────────────────────────────────────────────────────────────
-    mermas_q = (
+    q_mermas = (
         db.query(Merma, Producto, Usuario)
         .join(Producto, Merma.producto_id == Producto.id)
         .join(Usuario, Merma.usuario_id == Usuario.id)
@@ -434,8 +506,17 @@ def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_ha
             Merma.fecha_registro >= desde,
             Merma.fecha_registro <= hasta,
         )
-        .all()
     )
+    if filtro:
+        if filtro.usuario_id is not None:
+            q_mermas = q_mermas.filter(Merma.usuario_id == filtro.usuario_id)
+        if filtro.producto_search is not None:
+            ids = db.query(Producto.id).filter(
+                Producto.nombre.ilike(f"%{filtro.producto_search}%")
+            ).subquery()
+            q_mermas = q_mermas.filter(Merma.producto_id.in_(ids))
+
+    mermas_q = q_mermas.all()
     for m, prod, usr in mermas_q:
         resultados.append({
             "fecha":    m.fecha_registro.strftime("%Y-%m-%d %H:%M"),
@@ -458,20 +539,25 @@ def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_ha
     return {"movimientos": resultados, "conteos": conteos}
 
 
-def reporte_baristas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date):
+def reporte_baristas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Ranking de baristas: cuadres de llegada y cierres con sus diferencias."""
     desde = datetime.combine(fecha_desde, datetime.min.time())
     hasta = datetime.combine(fecha_hasta, datetime.max.time())
 
-    entregas = (
+    q = (
         db.query(EntregaTurno)
         .filter(
             EntregaTurno.tienda_id == tienda_id,
             EntregaTurno.fecha_hora >= desde,
             EntregaTurno.fecha_hora <= hasta,
         )
-        .all()
     )
+
+    if filtro:
+        if filtro.usuario_id is not None:
+            q = q.filter(EntregaTurno.usuario_id == filtro.usuario_id)
+
+    entregas = q.all()
 
     por_usuario: dict[int, dict] = {}
     for e in entregas:

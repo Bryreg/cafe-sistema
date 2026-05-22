@@ -63,6 +63,25 @@ with engine.connect() as _conn:
         # Panel de pedidos: proveedor fijo y tiempo de entrega por producto
         "ALTER TABLE productos ADD COLUMN proveedor VARCHAR(100)",
         "ALTER TABLE productos ADD COLUMN lead_time_dias INTEGER DEFAULT 2",
+        # Siigo venta items — idempotente via CREATE TABLE IF NOT EXISTS
+        """CREATE TABLE IF NOT EXISTS siigo_venta_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tienda_id INTEGER NOT NULL REFERENCES tiendas(id),
+            fecha DATE NOT NULL,
+            codigo_producto VARCHAR NOT NULL,
+            descripcion VARCHAR NOT NULL DEFAULT '',
+            cantidad REAL NOT NULL DEFAULT 0,
+            precio_unitario REAL NOT NULL DEFAULT 0,
+            total_sin_descuento REAL NOT NULL DEFAULT 0,
+            descuento_porcentaje REAL,
+            descuento_monto REAL,
+            total_con_descuento REAL NOT NULL DEFAULT 0,
+            siigo_factura_id VARCHAR NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(siigo_factura_id, codigo_producto, fecha)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_siigo_tienda_fecha ON siigo_venta_items(tienda_id, fecha)",
+        "CREATE INDEX IF NOT EXISTS idx_siigo_codigo ON siigo_venta_items(codigo_producto)",
     ]:
         try:
             _conn.execute(_text(_sql))

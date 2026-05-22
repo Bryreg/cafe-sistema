@@ -5,11 +5,38 @@ from app.database import get_db
 from app.core.deps import ensure_tienda_access, require_admin
 from app.models.models import Usuario
 from app.services import informes as svc
+from app.services.siigo import sync_ventas, query_ventas_siigo
+from app.services.filtros import InformeFilter
 from datetime import date
+from typing import Optional
 import csv
 import io
 
 router = APIRouter(prefix="/informes", tags=["informes"])
+
+
+def _build_filtro(
+    tienda_id: int,
+    fecha_desde: date,
+    fecha_hasta: date,
+    usuario_id: Optional[int],
+    categoria: Optional[str],
+    turno_id: Optional[int],
+    producto_search: Optional[str],
+    con_descuento: Optional[bool] = None,
+) -> Optional[InformeFilter]:
+    if any([usuario_id, categoria, turno_id, producto_search, con_descuento]):
+        return InformeFilter(
+            tienda_id=tienda_id,
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            usuario_id=usuario_id,
+            categoria=categoria,
+            turno_id=turno_id,
+            producto_search=producto_search,
+            con_descuento=con_descuento,
+        )
+    return None
 
 
 @router.get("/ventas")
@@ -17,11 +44,16 @@ def ventas(
     tienda_id: int = Query(...),
     fecha_desde: date = Query(...),
     fecha_hasta: date = Query(...),
+    usuario_id: Optional[int] = Query(None),
+    categoria: Optional[str] = Query(None),
+    turno_id: Optional[int] = Query(None),
+    producto_search: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(require_admin),
 ):
     ensure_tienda_access(user, tienda_id)
-    return svc.reporte_ventas(db, tienda_id, fecha_desde, fecha_hasta)
+    filtro = _build_filtro(tienda_id, fecha_desde, fecha_hasta, usuario_id, categoria, turno_id, producto_search)
+    return svc.reporte_ventas(db, tienda_id, fecha_desde, fecha_hasta, filtro=filtro)
 
 
 @router.get("/mermas")
@@ -29,11 +61,16 @@ def mermas(
     tienda_id: int = Query(...),
     fecha_desde: date = Query(...),
     fecha_hasta: date = Query(...),
+    usuario_id: Optional[int] = Query(None),
+    categoria: Optional[str] = Query(None),
+    turno_id: Optional[int] = Query(None),
+    producto_search: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(require_admin),
 ):
     ensure_tienda_access(user, tienda_id)
-    return svc.reporte_mermas(db, tienda_id, fecha_desde, fecha_hasta)
+    filtro = _build_filtro(tienda_id, fecha_desde, fecha_hasta, usuario_id, categoria, turno_id, producto_search)
+    return svc.reporte_mermas(db, tienda_id, fecha_desde, fecha_hasta, filtro=filtro)
 
 
 @router.get("/inventario-consumido")
@@ -41,11 +78,16 @@ def inventario_consumido(
     tienda_id: int = Query(...),
     fecha_desde: date = Query(...),
     fecha_hasta: date = Query(...),
+    usuario_id: Optional[int] = Query(None),
+    categoria: Optional[str] = Query(None),
+    turno_id: Optional[int] = Query(None),
+    producto_search: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(require_admin),
 ):
     ensure_tienda_access(user, tienda_id)
-    return svc.reporte_inventario_consumido(db, tienda_id, fecha_desde, fecha_hasta)
+    filtro = _build_filtro(tienda_id, fecha_desde, fecha_hasta, usuario_id, categoria, turno_id, producto_search)
+    return svc.reporte_inventario_consumido(db, tienda_id, fecha_desde, fecha_hasta, filtro=filtro)
 
 
 @router.get("/entregas")
@@ -53,11 +95,16 @@ def entregas(
     tienda_id: int = Query(...),
     fecha_desde: date = Query(...),
     fecha_hasta: date = Query(...),
+    usuario_id: Optional[int] = Query(None),
+    categoria: Optional[str] = Query(None),
+    turno_id: Optional[int] = Query(None),
+    producto_search: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(require_admin),
 ):
     ensure_tienda_access(user, tienda_id)
-    return svc.reporte_entregas(db, tienda_id, fecha_desde, fecha_hasta)
+    filtro = _build_filtro(tienda_id, fecha_desde, fecha_hasta, usuario_id, categoria, turno_id, producto_search)
+    return svc.reporte_entregas(db, tienda_id, fecha_desde, fecha_hasta, filtro=filtro)
 
 
 @router.get("/turnos")
@@ -65,11 +112,16 @@ def turnos(
     tienda_id: int = Query(...),
     fecha_desde: date = Query(...),
     fecha_hasta: date = Query(...),
+    usuario_id: Optional[int] = Query(None),
+    categoria: Optional[str] = Query(None),
+    turno_id: Optional[int] = Query(None),
+    producto_search: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(require_admin),
 ):
     ensure_tienda_access(user, tienda_id)
-    return svc.reporte_turnos(db, tienda_id, fecha_desde, fecha_hasta)
+    filtro = _build_filtro(tienda_id, fecha_desde, fecha_hasta, usuario_id, categoria, turno_id, producto_search)
+    return svc.reporte_turnos(db, tienda_id, fecha_desde, fecha_hasta, filtro=filtro)
 
 
 @router.get("/kpi-mermas")
@@ -77,11 +129,16 @@ def kpi_mermas(
     tienda_id: int = Query(...),
     fecha_desde: date = Query(...),
     fecha_hasta: date = Query(...),
+    usuario_id: Optional[int] = Query(None),
+    categoria: Optional[str] = Query(None),
+    turno_id: Optional[int] = Query(None),
+    producto_search: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(require_admin),
 ):
     ensure_tienda_access(user, tienda_id)
-    return svc.kpi_mermas(db, tienda_id, fecha_desde, fecha_hasta)
+    filtro = _build_filtro(tienda_id, fecha_desde, fecha_hasta, usuario_id, categoria, turno_id, producto_search)
+    return svc.kpi_mermas(db, tienda_id, fecha_desde, fecha_hasta, filtro=filtro)
 
 
 @router.get("/rotacion")
@@ -89,11 +146,16 @@ def rotacion(
     tienda_id: int = Query(...),
     fecha_desde: date = Query(...),
     fecha_hasta: date = Query(...),
+    usuario_id: Optional[int] = Query(None),
+    categoria: Optional[str] = Query(None),
+    turno_id: Optional[int] = Query(None),
+    producto_search: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(require_admin),
 ):
     ensure_tienda_access(user, tienda_id)
-    return svc.reporte_rotacion(db, tienda_id, fecha_desde, fecha_hasta)
+    filtro = _build_filtro(tienda_id, fecha_desde, fecha_hasta, usuario_id, categoria, turno_id, producto_search)
+    return svc.reporte_rotacion(db, tienda_id, fecha_desde, fecha_hasta, filtro=filtro)
 
 
 @router.get("/movimientos")
@@ -101,11 +163,16 @@ def movimientos(
     tienda_id: int = Query(...),
     fecha_desde: date = Query(...),
     fecha_hasta: date = Query(...),
+    usuario_id: Optional[int] = Query(None),
+    categoria: Optional[str] = Query(None),
+    turno_id: Optional[int] = Query(None),
+    producto_search: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(require_admin),
 ):
     ensure_tienda_access(user, tienda_id)
-    return svc.reporte_movimientos(db, tienda_id, fecha_desde, fecha_hasta)
+    filtro = _build_filtro(tienda_id, fecha_desde, fecha_hasta, usuario_id, categoria, turno_id, producto_search)
+    return svc.reporte_movimientos(db, tienda_id, fecha_desde, fecha_hasta, filtro=filtro)
 
 
 @router.get("/baristas")
@@ -113,11 +180,58 @@ def baristas(
     tienda_id: int = Query(...),
     fecha_desde: date = Query(...),
     fecha_hasta: date = Query(...),
+    usuario_id: Optional[int] = Query(None),
+    categoria: Optional[str] = Query(None),
+    turno_id: Optional[int] = Query(None),
+    producto_search: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(require_admin),
 ):
     ensure_tienda_access(user, tienda_id)
-    return svc.reporte_baristas(db, tienda_id, fecha_desde, fecha_hasta)
+    filtro = _build_filtro(tienda_id, fecha_desde, fecha_hasta, usuario_id, categoria, turno_id, producto_search)
+    return svc.reporte_baristas(db, tienda_id, fecha_desde, fecha_hasta, filtro=filtro)
+
+
+@router.post("/siigo/sync")
+async def siigo_sync(
+    tienda_id: int = Query(...),
+    fecha_desde: str = Query(...),
+    fecha_hasta: str = Query(...),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(require_admin),
+):
+    ensure_tienda_access(user, tienda_id)
+    try:
+        return await sync_ventas(db, tienda_id, fecha_desde, fecha_hasta)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/siigo/ventas")
+def siigo_ventas(
+    tienda_id: int = Query(...),
+    fecha_desde: date = Query(...),
+    fecha_hasta: date = Query(...),
+    usuario_id: Optional[int] = Query(None),
+    categoria: Optional[str] = Query(None),
+    turno_id: Optional[int] = Query(None),
+    producto_search: Optional[str] = Query(None),
+    con_descuento: Optional[bool] = Query(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(require_admin),
+):
+    ensure_tienda_access(user, tienda_id)
+    filtro = InformeFilter(
+        tienda_id=tienda_id,
+        fecha_desde=fecha_desde,
+        fecha_hasta=fecha_hasta,
+        usuario_id=usuario_id,
+        categoria=categoria,
+        turno_id=turno_id,
+        producto_search=producto_search,
+        con_descuento=con_descuento,
+    )
+    return query_ventas_siigo(db, filtro)
 
 
 @router.get("/export")
@@ -126,11 +240,17 @@ def export_csv(
     tienda_id: int = Query(...),
     fecha_desde: date = Query(...),
     fecha_hasta: date = Query(...),
+    usuario_id: Optional[int] = Query(None),
+    categoria: Optional[str] = Query(None),
+    turno_id: Optional[int] = Query(None),
+    producto_search: Optional[str] = Query(None),
+    con_descuento: Optional[bool] = Query(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(require_admin),
 ):
-    """Etapa 8: Exportar reporte en formato CSV."""
+    """Export report as CSV with optional cross-filtering."""
     ensure_tienda_access(user, tienda_id)
+    filtro = _build_filtro(tienda_id, fecha_desde, fecha_hasta, usuario_id, categoria, turno_id, producto_search, con_descuento)
     fn_map = {
         "ventas": svc.reporte_ventas,
         "mermas": svc.reporte_mermas,
@@ -141,12 +261,12 @@ def export_csv(
     if tipo not in fn_map:
         raise HTTPException(status_code=400, detail=f"tipo inválido. Opciones: {list(fn_map)}")
 
-    data = fn_map[tipo](db, tienda_id, fecha_desde, fecha_hasta)
+    data = fn_map[tipo](db, tienda_id, fecha_desde, fecha_hasta, filtro=filtro)
     filas = data.get("filas", [])
 
     output = io.StringIO()
     if filas:
-        # Aplanar listas/dicts anidados a string
+        # Flatten nested lists/dicts to string
         flat_filas = [
             {k: (str(v) if isinstance(v, (list, dict)) else v) for k, v in f.items()}
             for f in filas

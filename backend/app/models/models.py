@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum as SAEnum
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum as SAEnum, Date, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -79,6 +79,7 @@ class Tienda(Base):
     notificaciones = relationship("Notificacion", back_populates="tienda")
     facturas_compra = relationship("FacturaCompra", back_populates="tienda")
     conteos_compras = relationship("ConteoCompras", back_populates="tienda")
+    siigo_venta_items = relationship("SiigoVentaItem", back_populates="tienda")
 
 
 class Usuario(Base):
@@ -657,3 +658,25 @@ class ConteoComprasItem(Base):
     diferencia = Column(Float, nullable=False)
     conteo = relationship("ConteoCompras", back_populates="items")
     producto = relationship("Producto")
+
+
+class SiigoVentaItem(Base):
+    """Row-level Siigo invoice line item stored locally for cross-filtering."""
+    __tablename__ = "siigo_venta_items"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
+    fecha = Column(Date, nullable=False)
+    codigo_producto = Column(String, nullable=False)
+    descripcion = Column(String, nullable=False, default="")
+    cantidad = Column(Float, nullable=False, default=0.0)
+    precio_unitario = Column(Float, nullable=False, default=0.0)
+    total_sin_descuento = Column(Float, nullable=False, default=0.0)
+    descuento_porcentaje = Column(Float, nullable=True)
+    descuento_monto = Column(Float, nullable=True)
+    total_con_descuento = Column(Float, nullable=False, default=0.0)
+    siigo_factura_id = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    tienda = relationship("Tienda", back_populates="siigo_venta_items")
+    __table_args__ = (
+        UniqueConstraint("siigo_factura_id", "codigo_producto", "fecha", name="uq_siigo_item"),
+    )

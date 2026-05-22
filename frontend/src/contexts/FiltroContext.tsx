@@ -1,0 +1,53 @@
+import React, { createContext, useContext, useState } from 'react'
+
+export interface InformeFiltro {
+  desde: string
+  hasta: string
+  tiendaId: number
+  usuarioId: number | null
+  categoria: string | null
+  turnoId: number | null
+  productoSearch: string | null
+  conDescuento: boolean | null
+}
+
+interface FiltroContextType {
+  filtro: InformeFiltro
+  setFiltro: React.Dispatch<React.SetStateAction<InformeFiltro>>
+}
+
+const FiltroContext = createContext<FiltroContextType | null>(null)
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function firstOfMonthStr() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+}
+
+export const FiltroProvider: React.FC<{ children: React.ReactNode; tiendaId: number }> = ({ children, tiendaId }) => {
+  const [filtro, setFiltro] = useState<InformeFiltro>({
+    desde: firstOfMonthStr(),
+    hasta: todayStr(),
+    tiendaId,
+    usuarioId: null,
+    categoria: null,
+    turnoId: null,
+    productoSearch: null,
+    conDescuento: null,
+  })
+
+  return (
+    <FiltroContext.Provider value={{ filtro, setFiltro }}>
+      {children}
+    </FiltroContext.Provider>
+  )
+}
+
+export const useFiltro = () => {
+  const ctx = useContext(FiltroContext)
+  if (!ctx) throw new Error('useFiltro must be used inside FiltroProvider')
+  return ctx
+}

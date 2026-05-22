@@ -77,7 +77,7 @@ async def get_invoices(fecha_desde: str, fecha_hasta: str) -> list[dict]:
         failed = False
 
         try:
-            async with httpx.AsyncClient(timeout=20, verify=False) as client:
+            async with httpx.AsyncClient(timeout=60, verify=False) as client:
                 while True:
                     r = await client.get(
                         f"{SIIGO_BASE}/v1/invoices",
@@ -86,7 +86,7 @@ async def get_invoices(fecha_desde: str, fecha_hasta: str) -> list[dict]:
                             "date_start": date_start,
                             "date_end":   date_end,
                             "page":       page,
-                            "page_size":  100,
+                            "page_size":  25,
                         },
                     )
 
@@ -201,17 +201,22 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
         CajaTurno.fecha_cierre.isnot(None),
     ).all()
 
+    # Index turnos by date for fast date-only fallback (when Siigo gives no time)
+    from collections import defaultdict
+    turnos_por_fecha: dict[str, list] = defaultdict(list)
+    for t in turnos:
+        turnos_por_fecha[t.fecha_apertura.strftime("%Y-%m-%d")].append(t)
+
     rows = []
     for inv in invoices:
         factura_id = str(inv.get("id", "") or "")
         raw_date = inv.get("date") or fecha_desde
         inv_fecha = str(raw_date)[:10]
 
-        # Try to parse a full datetime from the invoice for turno attribution
+        # Try to parse a full datetime from the invoice for time-window attribution
         inv_dt = None
         if "T" in str(raw_date):
             try:
-                # Strip any timezone suffix so comparison against naive CajaTurno datetimes works
                 raw_str = str(raw_date).replace("Z", "")
                 if "+" in raw_str[10:]:
                     raw_str = raw_str[:10 + raw_str[10:].index("+")]
@@ -221,7 +226,12 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
             except (ValueError, IndexError):
                 pass
 
+        # Primary: time-window match. Fallback: if date has exactly 1 turno, use it.
         turno_id = _find_turno_id(inv_dt, turnos)
+        if turno_id is None:
+            day_turnos = turnos_por_fecha.get(inv_fecha, [])
+            if len(day_turnos) == 1:
+                turno_id = day_turnos[0].id
 
         for item in inv.get("items", []):
             parsed = _parse_item(item, factura_id)

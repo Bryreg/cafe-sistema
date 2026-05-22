@@ -247,13 +247,14 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
     ).count()
 
     sql = text("""
-        INSERT OR IGNORE INTO siigo_venta_items
+        INSERT INTO siigo_venta_items
         (tienda_id, fecha, codigo_producto, descripcion, cantidad, precio_unitario,
          total_sin_descuento, descuento_porcentaje, descuento_monto, total_con_descuento,
          siigo_factura_id, turno_id)
         VALUES (:tienda_id, :fecha, :codigo_producto, :descripcion, :cantidad, :precio_unitario,
                 :total_sin_descuento, :descuento_porcentaje, :descuento_monto, :total_con_descuento,
                 :siigo_factura_id, :turno_id)
+        ON CONFLICT (siigo_factura_id, codigo_producto, fecha) DO NOTHING
     """)
     db.execute(sql, rows)
 

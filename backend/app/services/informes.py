@@ -537,8 +537,6 @@ def reporte_baristas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
         )
     )
 
-    if filtro:
-
     entregas = q.all()
 
     por_usuario: dict[int, dict] = {}

@@ -191,14 +191,13 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
 
     invoices = await get_invoices(fecha_desde, fecha_hasta)
 
-    # Load all closed turnos for the date range to attribute each invoice to a barista
+    # Load all turnos (open or closed) for the date range for invoice attribution
     desde_dt = dt.fromisoformat(f"{fecha_desde}T00:00:00")
     hasta_dt = dt.fromisoformat(f"{fecha_hasta}T23:59:59")
     turnos = db.query(CajaTurno).filter(
         CajaTurno.tienda_id == tienda_id,
         CajaTurno.fecha_apertura >= desde_dt,
         CajaTurno.fecha_apertura <= hasta_dt,
-        CajaTurno.fecha_cierre.isnot(None),
     ).all()
 
     # Index turnos by date for fast date-only fallback (when Siigo gives no time)

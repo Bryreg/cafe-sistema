@@ -203,8 +203,14 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
         inv_dt = None
         if "T" in str(raw_date):
             try:
-                inv_dt = dt.fromisoformat(str(raw_date).replace("Z", "+00:00").replace("+00:00", ""))
-            except ValueError:
+                # Strip any timezone suffix so comparison against naive CajaTurno datetimes works
+                raw_str = str(raw_date).replace("Z", "")
+                if "+" in raw_str[10:]:
+                    raw_str = raw_str[:10 + raw_str[10:].index("+")]
+                elif len(raw_str) > 19 and raw_str[19] == "-":
+                    raw_str = raw_str[:19]
+                inv_dt = dt.fromisoformat(raw_str)
+            except (ValueError, IndexError):
                 pass
 
         turno_id = _find_turno_id(inv_dt, turnos)
@@ -232,6 +238,27 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
                 :siigo_factura_id, :turno_id)
     """)
     db.execute(sql, rows)
+
+    # Back-fill turno_id on previously-synced rows that were skipped by INSERT OR IGNORE
+    rows_with_turno = [r for r in rows if r["turno_id"] is not None]
+    if rows_with_turno:
+        upd = text("""
+            UPDATE siigo_venta_items SET turno_id = :turno_id
+            WHERE tienda_id = :tienda_id
+              AND siigo_factura_id = :siigo_factura_id
+              AND codigo_producto = :codigo_producto
+              AND fecha = :fecha
+              AND turno_id IS NULL
+        """)
+        for r in rows_with_turno:
+            db.execute(upd, {
+                "turno_id": r["turno_id"],
+                "tienda_id": r["tienda_id"],
+                "siigo_factura_id": r["siigo_factura_id"],
+                "codigo_producto": r["codigo_producto"],
+                "fecha": r["fecha"],
+            })
+
     db.commit()
 
     after = db.query(SiigoVentaItem).filter(

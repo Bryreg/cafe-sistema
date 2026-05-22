@@ -192,7 +192,7 @@ async def siigo_sync(
     ensure_tienda_access(user, tienda_id)
     try:
         return await sync_ventas(db, tienda_id, fecha_desde, fecha_hasta)
-    except ValueError as e:
+    except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
 

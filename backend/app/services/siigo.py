@@ -27,15 +27,18 @@ async def _get_token() -> str:
         "Siigo auth attempt: user=%s key_len=%d", username, len(access_key)
     )
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.post(
-            SIIGO_AUTH_URL,
-            json={"username": username, "access_key": access_key},
-            headers={"Content-Type": "application/json", "Partner-Id": settings.SIIGO_PARTNER_ID},
-        )
-        if not r.is_success:
-            raise ValueError(f"Siigo auth {r.status_code}: {r.text[:300]}")
-        data = r.json()
+    try:
+        async with httpx.AsyncClient(timeout=10, verify=False) as client:
+            r = await client.post(
+                SIIGO_AUTH_URL,
+                json={"username": username, "access_key": access_key},
+                headers={"Content-Type": "application/json", "Partner-Id": settings.SIIGO_PARTNER_ID},
+            )
+    except httpx.HTTPError as exc:
+        raise ValueError(f"Siigo auth: error de red: {exc}") from exc
+    if not r.is_success:
+        raise ValueError(f"Siigo auth {r.status_code}: {r.text[:300]}")
+    data = r.json()
 
     token = data.get("access_token") or data.get("token") or data.get("accessToken")
     if not token:
@@ -73,37 +76,42 @@ async def get_invoices(fecha_desde: str, fecha_hasta: str) -> list[dict]:
         page = 1
         failed = False
 
-        async with httpx.AsyncClient(timeout=20) as client:
-            while True:
-                r = await client.get(
-                    f"{SIIGO_BASE}/v1/invoices",
-                    headers=headers,
-                    params={
-                        "date_start": date_start,
-                        "date_end":   date_end,
-                        "page":       page,
-                        "page_size":  100,
-                    },
-                )
+        try:
+            async with httpx.AsyncClient(timeout=20, verify=False) as client:
+                while True:
+                    r = await client.get(
+                        f"{SIIGO_BASE}/v1/invoices",
+                        headers=headers,
+                        params={
+                            "date_start": date_start,
+                            "date_end":   date_end,
+                            "page":       page,
+                            "page_size":  100,
+                        },
+                    )
 
-                if r.status_code == 401 and attempt == 0:
-                    # Token invalidated server-side — clear cache and retry once
-                    await _invalidate_token()
-                    failed = True
-                    break
+                    if r.status_code == 401 and attempt == 0:
+                        # Token invalidated server-side — clear cache and retry once
+                        await _invalidate_token()
+                        failed = True
+                        break
 
-                if not r.is_success:
-                    raise ValueError(f"Siigo invoices {r.status_code}: {r.text[:300]}")
+                    if not r.is_success:
+                        raise ValueError(f"Siigo invoices {r.status_code}: {r.text[:300]}")
 
-                data = r.json()
-                results = data.get("results", [])
-                all_invoices.extend(results)
+                    data = r.json()
+                    results = data.get("results", [])
+                    all_invoices.extend(results)
 
-                pagination = data.get("pagination", {})
-                total = pagination.get("total_results", len(results))
-                if not results or len(all_invoices) >= total:
-                    break
-                page += 1
+                    pagination = data.get("pagination", {})
+                    total = pagination.get("total_results", len(results))
+                    if not results or len(all_invoices) >= total:
+                        break
+                    page += 1
+        except ValueError:
+            raise
+        except httpx.HTTPError as exc:
+            raise ValueError(f"Siigo invoices: error de red: {exc}") from exc
 
         if not failed:
             return all_invoices

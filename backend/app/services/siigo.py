@@ -236,6 +236,8 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
         turnos_por_fecha[t.fecha_apertura.strftime("%Y-%m-%d")].append(t)
 
     rows = []
+    payment_by_turno: dict = defaultdict(lambda: {"efectivo": 0.0, "tarjeta": 0.0})
+
     for inv in invoices:
         factura_id = str(inv.get("id", "") or "")
         raw_date = inv.get("date") or fecha_desde
@@ -260,6 +262,18 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
             day_turnos = turnos_por_fecha.get(inv_fecha, [])
             if len(day_turnos) == 1:
                 turno_id = day_turnos[0].id
+
+        # Accumulate payment split per turno
+        if turno_id is not None:
+            for payment in inv.get("payments", []):
+                name = (payment.get("name") or "").lower()
+                value = float(payment.get("value") or 0)
+                if any(k in name for k in ["tarjeta", "débito", "debito", "crédito", "credito",
+                                            "visa", "master", "american", "diners"]):
+                    payment_by_turno[turno_id]["tarjeta"] += value
+                else:
+                    # efectivo + otros (nequi, transfer, etc.) → efectivo bucket
+                    payment_by_turno[turno_id]["efectivo"] += value
 
         for item in inv.get("items", []):
             parsed = _parse_item(item, factura_id)
@@ -317,7 +331,7 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
     synced = after - before
     skipped = len(rows) - synced
 
-    ventas_result = auto_poblar_venta_diaria(db, tienda_id, fecha_desde, fecha_hasta)
+    ventas_result = auto_poblar_venta_diaria(db, tienda_id, fecha_desde, fecha_hasta, payment_by_turno=dict(payment_by_turno))
     return {
         "synced_count": synced,
         "skipped_count": skipped,
@@ -326,7 +340,7 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
     }
 
 
-def auto_poblar_venta_diaria(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta: str) -> dict:
+def auto_poblar_venta_diaria(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta: str, payment_by_turno: dict | None = None) -> dict:
     """Aggregate synced Siigo items by turno and upsert VentaDiaria automatically."""
     from app.models.models import SiigoVentaItem, CajaTurno, VentaDiaria
     from sqlalchemy import func
@@ -362,14 +376,18 @@ def auto_poblar_venta_diaria(db: Session, tienda_id: int, fecha_desde: str, fech
         ).delete()
 
         total_r = round(total, 2)
+        pay = (payment_by_turno or {}).get(turno_id, {})
+        tarjeta_r = round(pay.get("tarjeta", 0.0), 2)
+        # efectivo = total - tarjeta so the math always adds up
+        efectivo_r = round(total_r - tarjeta_r, 2)
         venta = VentaDiaria(
             tienda_id=tienda_id,
             turno_id=turno_id,
             venta_total=total_r,
             nota_credito=0.0,
             vales=0.0,
-            tarjetas=0.0,
-            efectivo_calculado=total_r,
+            tarjetas=tarjeta_r,
+            efectivo_calculado=efectivo_r,
             usuario_id=turno.usuario_apertura_id,
             nota="sync:siigo",
         )

@@ -80,6 +80,9 @@ function TabVentas({ tiendaId }: { tiendaId: number }) {
 
   return (
     <div className="space-y-4">
+      <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-amber-800">
+        ⚠️ Este tab muestra registros históricos manuales. Para las ventas actuales usá el tab <strong>Siigo</strong>.
+      </div>
       <div className="flex gap-2 flex-wrap items-center justify-between">
         <button onClick={cargar} disabled={loading}
           className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
@@ -836,7 +839,7 @@ function TabSiigo({ tiendaId }: { tiendaId: number }) {
 export default function Informes() {
   const { user } = useAuth()
   const isAdmin = user?.rol === 'admin'
-  const [tab, setTab] = useState<Tab>('ventas')
+  const [tab, setTab] = useState<Tab>('siigo')
   const [sedes, setSedes] = useState<Sede[]>([])
   const [tiendaId, setTiendaId] = useState<number | null>(user?.tienda_id ?? null)
 

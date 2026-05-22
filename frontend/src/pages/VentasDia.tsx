@@ -97,7 +97,6 @@ export default function VentasDia() {
     <BaristaLayout title="Registrar ventas">
       <div className="space-y-5">
         <div>
-          <p className="text-xs font-semibold text-amber-600 uppercase tracking-widest mb-0.5">Paso 3 de 5</p>
           <h1 className="text-xl font-bold text-gray-900">Ventas del día</h1>
         </div>
 

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
-  Home, DollarSign, Banknote, LayoutGrid, X as XIcon,
+  Home, Banknote, LayoutGrid, X as XIcon,
   Trash2, ShoppingCart, Coins, ClipboardList,
   Truck, ClipboardCheck, Sparkles, Package, UserCheck,
 } from 'lucide-react'
@@ -33,7 +33,6 @@ export default function BaristaBottomNav({ alertaBadge }: Props) {
 
   const tabs = [
     { id: 'inicio', to: '/hub',    label: 'Inicio', icon: Home       },
-    { id: 'ventas', to: '/ventas', label: 'Ventas', icon: DollarSign },
     { id: 'caja',   to: null,      label: 'Caja',   icon: Banknote   },
     { id: 'mas',    to: null,      label: 'Más',    icon: LayoutGrid, badge: alertaBadge },
   ]

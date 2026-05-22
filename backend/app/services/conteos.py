@@ -97,9 +97,6 @@ def registrar_conteo(db: Session, tienda_id: int, tipo: str,
     if tipo == "cierre" and turno.tiene_conteo_cierre:
         raise HTTPException(status_code=400, detail="El conteo de cierre ya fue registrado")
 
-    if tipo == "cierre" and not turno.tiene_ventas:
-        raise HTTPException(status_code=400, detail="Debes registrar las ventas primero")
-
     conteo = ConteoFisico(
         tienda_id=tienda_id,
         turno_id=turno.id,

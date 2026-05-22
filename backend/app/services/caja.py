@@ -183,11 +183,6 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
     ).scalar() or 0.0
 
     efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
-    if round(ventas_efectivo_siigo) != round(turno.total_efectivo):
-        raise HTTPException(
-            status_code=400,
-            detail="El efectivo reportado en Siigo no coincide con las ventas registradas del turno. Revisa ventas antes de guardar la entrega."
-        )
     diferencia_efectivo = efectivo_real - efectivo_esperado
     diferencia_tarjeta = ventas_tarjeta_bold - turno.total_tarjeta
 

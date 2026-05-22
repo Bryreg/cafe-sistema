@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.core.deps import ensure_turno_access, ensure_tienda_access, get_current_user
+from app.core.deps import ensure_turno_access, ensure_tienda_access, require_admin
 from app.models.models import Usuario
 from app.schemas.ventas import RegistrarVentaRequest, VentaDiariaOut
 from app.services import ventas as svc
@@ -12,7 +12,8 @@ router = APIRouter(prefix="/ventas", tags=["ventas"])
 
 @router.post("/", response_model=VentaDiariaOut)
 def registrar(data: RegistrarVentaRequest, db: Session = Depends(get_db),
-              user: Usuario = Depends(get_current_user)):
+              user: Usuario = Depends(require_admin)):
+    """Registro manual de ventas — solo admin, fallback si Siigo no está disponible."""
     ensure_tienda_access(user, data.tienda_id)
     return svc.registrar_venta(
         db, data.tienda_id, data.venta_total, data.nota_credito,

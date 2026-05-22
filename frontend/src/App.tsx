@@ -31,7 +31,6 @@ import ConteoCompras from './pages/ConteoCompras'
 
 // Admin pages
 import ControlInventario from './pages/ControlInventario'
-import Dashboard from './pages/Dashboard'
 import AdminHub from './pages/AdminHub'
 import Bandeja from './pages/Bandeja'
 import Informes from './pages/Informes'
@@ -104,7 +103,7 @@ function AppRoutes() {
         <ProtectedRoute role="barista"><Hub /></ProtectedRoute>
       } />
       <Route path="/ventas" element={
-        <ProtectedRoute role="barista"><VentasDia /></ProtectedRoute>
+        <ProtectedRoute role="admin"><VentasDia /></ProtectedRoute>
       } />
       <Route path="/conteo-cierre" element={
         <ProtectedRoute role="barista"><ConteoCierre /></ProtectedRoute>

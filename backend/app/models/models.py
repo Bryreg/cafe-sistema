@@ -675,8 +675,10 @@ class SiigoVentaItem(Base):
     descuento_monto = Column(Float, nullable=True)
     total_con_descuento = Column(Float, nullable=False, default=0.0)
     siigo_factura_id = Column(String, nullable=False)
+    turno_id = Column(Integer, ForeignKey("caja_turnos.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     tienda = relationship("Tienda", back_populates="siigo_venta_items")
+    turno = relationship("CajaTurno", foreign_keys=[turno_id])
     __table_args__ = (
         UniqueConstraint("siigo_factura_id", "codigo_producto", "fecha", name="uq_siigo_item"),
     )

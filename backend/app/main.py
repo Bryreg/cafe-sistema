@@ -82,6 +82,8 @@ with engine.connect() as _conn:
         )""",
         "CREATE INDEX IF NOT EXISTS idx_siigo_tienda_fecha ON siigo_venta_items(tienda_id, fecha)",
         "CREATE INDEX IF NOT EXISTS idx_siigo_codigo ON siigo_venta_items(codigo_producto)",
+        # Turno attribution para cruzar ventas Siigo con barista por horario
+        "ALTER TABLE siigo_venta_items ADD COLUMN turno_id INTEGER REFERENCES caja_turnos(id)",
     ]:
         try:
             _conn.execute(_text(_sql))

@@ -165,23 +165,57 @@ def aggregate_by_product(invoices: list[dict]) -> dict:
     return {"productos": dict(productos), "total_ventas": total_ventas}
 
 
+def _find_turno_id(inv_dt, turnos: list) -> int | None:
+    """Return the CajaTurno.id whose apertura–cierre window contains inv_dt, or None."""
+    if inv_dt is None:
+        return None
+    for turno in turnos:
+        if turno.fecha_apertura and turno.fecha_cierre:
+            if turno.fecha_apertura <= inv_dt <= turno.fecha_cierre:
+                return turno.id
+    return None
+
+
 async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta: str) -> dict:
-    """Fetch invoices from Siigo and persist them locally using INSERT OR IGNORE."""
-    from app.models.models import SiigoVentaItem
+    """Fetch invoices from Siigo, persist line items, then auto-populate VentaDiaria."""
+    from app.models.models import SiigoVentaItem, CajaTurno
+    from datetime import datetime as dt
 
     invoices = await get_invoices(fecha_desde, fecha_hasta)
+
+    # Load all closed turnos for the date range to attribute each invoice to a barista
+    desde_dt = dt.fromisoformat(f"{fecha_desde}T00:00:00")
+    hasta_dt = dt.fromisoformat(f"{fecha_hasta}T23:59:59")
+    turnos = db.query(CajaTurno).filter(
+        CajaTurno.tienda_id == tienda_id,
+        CajaTurno.fecha_apertura >= desde_dt,
+        CajaTurno.fecha_apertura <= hasta_dt,
+        CajaTurno.fecha_cierre.isnot(None),
+    ).all()
+
     rows = []
     for inv in invoices:
         factura_id = str(inv.get("id", "") or "")
-        inv_fecha = (inv.get("date") or fecha_desde)[:10]
+        raw_date = inv.get("date") or fecha_desde
+        inv_fecha = str(raw_date)[:10]
+
+        # Try to parse a full datetime from the invoice for turno attribution
+        inv_dt = None
+        if "T" in str(raw_date):
+            try:
+                inv_dt = dt.fromisoformat(str(raw_date).replace("Z", "+00:00").replace("+00:00", ""))
+            except ValueError:
+                pass
+
+        turno_id = _find_turno_id(inv_dt, turnos)
+
         for item in inv.get("items", []):
             parsed = _parse_item(item, factura_id)
-            rows.append({**parsed, "tienda_id": tienda_id, "fecha": inv_fecha})
+            rows.append({**parsed, "tienda_id": tienda_id, "fecha": inv_fecha, "turno_id": turno_id})
 
     if not rows:
-        return {"synced_count": 0, "skipped_count": 0, "date_range": f"{fecha_desde}/{fecha_hasta}"}
+        return {"synced_count": 0, "skipped_count": 0, "date_range": f"{fecha_desde}/{fecha_hasta}", "ventas_pobladas": 0}
 
-    # Use count before/after for reliable rowcount (SQLite executemany returns -1)
     before = db.query(SiigoVentaItem).filter(
         SiigoVentaItem.tienda_id == tienda_id,
         SiigoVentaItem.fecha >= fecha_desde,
@@ -191,9 +225,11 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
     sql = text("""
         INSERT OR IGNORE INTO siigo_venta_items
         (tienda_id, fecha, codigo_producto, descripcion, cantidad, precio_unitario,
-         total_sin_descuento, descuento_porcentaje, descuento_monto, total_con_descuento, siigo_factura_id)
+         total_sin_descuento, descuento_porcentaje, descuento_monto, total_con_descuento,
+         siigo_factura_id, turno_id)
         VALUES (:tienda_id, :fecha, :codigo_producto, :descripcion, :cantidad, :precio_unitario,
-                :total_sin_descuento, :descuento_porcentaje, :descuento_monto, :total_con_descuento, :siigo_factura_id)
+                :total_sin_descuento, :descuento_porcentaje, :descuento_monto, :total_con_descuento,
+                :siigo_factura_id, :turno_id)
     """)
     db.execute(sql, rows)
     db.commit()
@@ -206,7 +242,75 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
 
     synced = after - before
     skipped = len(rows) - synced
-    return {"synced_count": synced, "skipped_count": skipped, "date_range": f"{fecha_desde}/{fecha_hasta}"}
+
+    ventas_result = auto_poblar_venta_diaria(db, tienda_id, fecha_desde, fecha_hasta)
+    return {
+        "synced_count": synced,
+        "skipped_count": skipped,
+        "date_range": f"{fecha_desde}/{fecha_hasta}",
+        "ventas_pobladas": ventas_result["ventas_pobladas"],
+    }
+
+
+def auto_poblar_venta_diaria(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta: str) -> dict:
+    """Aggregate synced Siigo items by turno and upsert VentaDiaria automatically."""
+    from app.models.models import SiigoVentaItem, CajaTurno, VentaDiaria
+    from sqlalchemy import func
+    from collections import defaultdict
+
+    # Sum total_con_descuento per turno_id for items that could be attributed
+    items = db.query(SiigoVentaItem).filter(
+        SiigoVentaItem.tienda_id == tienda_id,
+        SiigoVentaItem.fecha >= fecha_desde,
+        SiigoVentaItem.fecha <= fecha_hasta,
+        SiigoVentaItem.turno_id.isnot(None),
+    ).all()
+
+    if not items:
+        return {"ventas_pobladas": 0}
+
+    totales: dict[int, float] = defaultdict(float)
+    for item in items:
+        totales[item.turno_id] += item.total_con_descuento
+
+    turnos = {t.id: t for t in db.query(CajaTurno).filter(CajaTurno.id.in_(totales.keys())).all()}
+
+    count = 0
+    for turno_id, total in totales.items():
+        turno = turnos.get(turno_id)
+        if not turno:
+            continue
+
+        # Replace previous auto-sync entry for this turno (re-sync is idempotent)
+        db.query(VentaDiaria).filter(
+            VentaDiaria.turno_id == turno_id,
+            VentaDiaria.nota == "sync:siigo",
+        ).delete()
+
+        total_r = round(total, 2)
+        venta = VentaDiaria(
+            tienda_id=tienda_id,
+            turno_id=turno_id,
+            venta_total=total_r,
+            nota_credito=0.0,
+            vales=0.0,
+            tarjetas=0.0,
+            efectivo_calculado=total_r,
+            usuario_id=turno.usuario_apertura_id,
+            nota="sync:siigo",
+        )
+        db.add(venta)
+        db.flush()
+
+        # Recalculate turno totals from ALL VentaDiaria (synced + any manual admin entries)
+        turno.total_ventas = db.query(func.sum(VentaDiaria.venta_total)).filter(VentaDiaria.turno_id == turno_id).scalar() or 0.0
+        turno.total_efectivo = db.query(func.sum(VentaDiaria.efectivo_calculado)).filter(VentaDiaria.turno_id == turno_id).scalar() or 0.0
+        turno.total_tarjeta = db.query(func.sum(VentaDiaria.tarjetas)).filter(VentaDiaria.turno_id == turno_id).scalar() or 0.0
+        turno.tiene_ventas = True
+        count += 1
+
+    db.commit()
+    return {"ventas_pobladas": count}
 
 
 def query_ventas_siigo(db: Session, filtro) -> list:

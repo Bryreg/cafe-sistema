@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.core.deps import ensure_turno_access, ensure_tienda_access, require_admin
+from app.core.deps import ensure_turno_access, ensure_tienda_access, require_admin, get_current_user
 from app.models.models import Usuario
 from app.schemas.ventas import RegistrarVentaRequest, VentaDiariaOut
 from app.services import ventas as svc

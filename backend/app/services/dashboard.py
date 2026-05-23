@@ -16,7 +16,22 @@ def get_dashboard(db: Session, tienda_id: int):
         CajaTurno.estado == EstadoTurnoEnum.abierto
     ).first()
 
-    ventas_dia = turno.total_ventas if turno else 0.0
+    # Ventas del día desde Siigo (local DB — no depende de turno activo)
+    from app.models.models import SiigoVentaItem, VentaDiaria
+    fecha_hoy_str = str(hoy)
+    siigo_hoy = db.query(func.sum(SiigoVentaItem.total_con_descuento)).filter(
+        SiigoVentaItem.tienda_id == tienda_id,
+        SiigoVentaItem.fecha == fecha_hoy_str,
+    ).scalar() or 0.0
+    ventas_dia = siigo_hoy if siigo_hoy > 0 else (turno.total_ventas if turno else 0.0)
+
+    # Efectivo y tarjeta del día — suma de todos los turnos (abiertos + cerrados)
+    turnos_hoy = db.query(CajaTurno).filter(
+        CajaTurno.tienda_id == tienda_id,
+        func.date(CajaTurno.fecha_apertura) == hoy,
+    ).all()
+    efectivo_dia = sum(t.total_efectivo or 0 for t in turnos_hoy)
+    tarjeta_dia  = sum(t.total_tarjeta  or 0 for t in turnos_hoy)
 
     # Ventas de ayer (turnos cerrados)
     turnos_ayer = db.query(CajaTurno).filter(
@@ -115,6 +130,8 @@ def get_dashboard(db: Session, tienda_id: int):
         "tienda_id": tienda_id,
         "tienda_nombre": tienda.nombre if tienda else "",
         "ventas_dia": ventas_dia,
+        "efectivo_dia": efectivo_dia,
+        "tarjeta_dia": tarjeta_dia,
         "ventas_ayer": ventas_ayer,
         "estado_caja": estado_caja,
         "diferencia_caja": diferencia_caja,

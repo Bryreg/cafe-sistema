@@ -175,10 +175,11 @@ export default function AdminHub() {
   useEffect(() => { fetchTopProductos(periodo) }, [periodo, fetchTopProductos])
 
   // ── Derived ──────────────────────────────────────────────────────────────────
-  const ventasDia   = siigoTotales?.total ?? 0
+  // siigoTotales: live refresh every 5 min; dash: immediate fallback from local DB
+  const ventasDia   = siigoTotales?.total    ?? dash?.ventas_dia    ?? 0
   const ventasAyer  = dash?.ventas_ayer ?? 0
-  const efectivo    = siigoTotales?.efectivo ?? 0
-  const tarjeta     = siigoTotales?.tarjeta ?? 0
+  const efectivo    = siigoTotales?.efectivo ?? (dash as any)?.efectivo_dia ?? 0
+  const tarjeta     = siigoTotales?.tarjeta  ?? (dash as any)?.tarjeta_dia  ?? 0
   const otros       = siigoTotales?.otros ?? 0
   const delta       = ventasAyer > 0 ? ventasDia - ventasAyer : 0
   const deltaPct    = ventasAyer > 0 ? (delta / ventasAyer) * 100 : 0

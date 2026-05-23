@@ -42,7 +42,7 @@ def get_admin_resumen(tienda_id: int, db: Session = Depends(get_db), user: Usuar
 
 
 @router.get("/{tienda_id}/debug-siigo")
-def debug_siigo(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+def debug_siigo(tienda_id: int, db: Session = Depends(get_db)):
     """Temporal: diagnóstico de por qué ventas_dia puede ser 0."""
     from datetime import datetime
     from sqlalchemy import func, text

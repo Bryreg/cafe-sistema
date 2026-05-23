@@ -41,6 +41,43 @@ def get_admin_resumen(tienda_id: int, db: Session = Depends(get_db), user: Usuar
     return svc.get_admin_resumen(db, tienda_id)
 
 
+@router.get("/{tienda_id}/debug-siigo")
+def debug_siigo(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    """Temporal: diagnóstico de por qué ventas_dia puede ser 0."""
+    from datetime import datetime
+    from sqlalchemy import func, text
+    from app.models.models import SiigoVentaItem
+    hoy = datetime.utcnow().date()
+    count = db.query(SiigoVentaItem).filter(SiigoVentaItem.tienda_id == tienda_id).count()
+    count_hoy = db.query(SiigoVentaItem).filter(
+        SiigoVentaItem.tienda_id == tienda_id,
+        SiigoVentaItem.fecha == hoy,
+    ).count()
+    suma_hoy = db.query(func.sum(SiigoVentaItem.total_con_descuento)).filter(
+        SiigoVentaItem.tienda_id == tienda_id,
+        SiigoVentaItem.fecha == hoy,
+    ).scalar()
+    # Raw SQL para descartar problemas de ORM
+    raw = db.execute(text(
+        "SELECT COUNT(*), SUM(total_con_descuento), MIN(fecha), MAX(fecha) "
+        "FROM siigo_venta_items WHERE tienda_id = :tid AND fecha = CURRENT_DATE"
+    ), {"tid": tienda_id}).fetchone()
+    sample = db.execute(text(
+        "SELECT fecha, total_con_descuento FROM siigo_venta_items WHERE tienda_id = :tid ORDER BY id DESC LIMIT 5"
+    ), {"tid": tienda_id}).fetchall()
+    return {
+        "utc_hoy": str(hoy),
+        "total_items_tienda": count,
+        "items_hoy_orm": count_hoy,
+        "suma_hoy_orm": suma_hoy,
+        "raw_current_date_count": raw[0],
+        "raw_current_date_sum": raw[1],
+        "raw_min_fecha": str(raw[2]) if raw[2] else None,
+        "raw_max_fecha": str(raw[3]) if raw[3] else None,
+        "sample_rows": [{"fecha": str(r[0]), "total": r[1]} for r in sample],
+    }
+
+
 @router.get("/{tienda_id}")
 def get_dashboard(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     ensure_tienda_access(user, tienda_id)

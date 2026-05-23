@@ -18,11 +18,9 @@ def get_dashboard(db: Session, tienda_id: int):
 
     # Ventas del día desde Siigo (local DB — no depende de turno activo)
     from app.models.models import SiigoVentaItem, VentaDiaria
-    fecha_hoy_str = str(hoy)
     siigo_hoy = db.query(func.sum(SiigoVentaItem.total_con_descuento)).filter(
         SiigoVentaItem.tienda_id == tienda_id,
-        SiigoVentaItem.fecha >= fecha_hoy_str,
-        SiigoVentaItem.fecha <= fecha_hoy_str,
+        SiigoVentaItem.fecha == hoy,
     ).scalar() or 0.0
     ventas_dia = siigo_hoy if siigo_hoy > 0 else (turno.total_ventas if turno else 0.0)
 

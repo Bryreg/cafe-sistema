@@ -27,6 +27,7 @@ export interface Turno {
   ts_conteo_cierre: string | null
   ultima_entrega_fecha: string | null
   ultima_entrega_diferencia_efectivo: number | null
+  consignaciones_turno: number
 }
 
 interface TurnoCtx {

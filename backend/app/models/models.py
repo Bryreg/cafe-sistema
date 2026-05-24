@@ -186,6 +186,7 @@ class MovimientoInventario(Base):
     fecha = Column(DateTime, default=datetime.utcnow)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     motivo = Column(String(200), nullable=True)
+    siigo_sync_key = Column(String, nullable=True)
     producto = relationship("Producto", back_populates="movimientos_inv")
     tienda = relationship("Tienda", back_populates="movimientos_inv")
     usuario = relationship("Usuario")
@@ -682,3 +683,16 @@ class SiigoVentaItem(Base):
     __table_args__ = (
         UniqueConstraint("siigo_factura_id", "codigo_producto", "fecha", name="uq_siigo_item"),
     )
+
+
+class SiigoProductoMapeo(Base):
+    """Maps a Siigo invoice product code to a local Producto for inventory deduction."""
+    __tablename__ = "siigo_producto_mapeo"
+    id = Column(Integer, primary_key=True)
+    codigo_siigo = Column(String, nullable=False)
+    descripcion_siigo = Column(String, nullable=False, default="")
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
+    factor_conversion = Column(Float, nullable=False, default=1.0)
+    activo = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    producto = relationship("Producto")

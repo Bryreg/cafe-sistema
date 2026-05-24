@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 
@@ -76,4 +76,32 @@ class TurnoOut(BaseModel):
     ts_conteo_cierre: Optional[datetime] = None
     ultima_entrega_fecha: Optional[datetime] = None
     ultima_entrega_diferencia_efectivo: Optional[float] = None
+    consignaciones_turno: float = 0.0
     class Config: from_attributes = True
+
+
+class MovimientoFlujoItem(BaseModel):
+    tipo: str  # "ingreso" | "egreso"
+    concepto: str
+    valor: float
+
+
+class ConsignacionFlujoItem(BaseModel):
+    id: int
+    valor: float
+    fecha: str  # ISO date string
+
+
+class FlujoCajaOut(BaseModel):
+    turno_id: int
+    barista: str
+    fecha_apertura: str
+    base_real: float
+    ventas_total: float
+    ventas_efectivo: float
+    ventas_tarjeta: float
+    movimientos: List[MovimientoFlujoItem]
+    consignaciones: List[ConsignacionFlujoItem]
+    efectivo_esperado: float
+    efectivo_final_real: Optional[float]
+    diferencia_cierre: Optional[float]

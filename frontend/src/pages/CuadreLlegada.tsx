@@ -139,6 +139,29 @@ export default function CuadreLlegada() {
       {/* Body */}
       <div className="flex-1 overflow-auto px-4 pb-28 space-y-4 pt-1">
 
+        {/* Ventas del día */}
+        <div className="rounded-2xl p-4"
+          style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
+          <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
+            Ventas del día
+          </p>
+          <p className="text-[28px] font-bold font-mono leading-none mb-3"
+            style={{ color: dark.ink, letterSpacing: '-1px' }}>
+            {fmt(turno.total_ventas ?? 0)}
+          </p>
+          <div className="grid grid-cols-2 gap-2 pt-3" style={{ borderTop: `1px solid ${dark.border}` }}>
+            {[
+              { l: 'Efectivo',  v: fmt(turno.total_efectivo ?? 0) },
+              { l: 'Tarjeta',   v: fmt(turno.total_tarjeta ?? 0) },
+            ].map(row => (
+              <div key={row.l} className="flex justify-between items-baseline gap-2">
+                <span className="text-[11px]" style={{ color: dark.inkSubtle }}>{row.l}</span>
+                <span className="text-[12px] font-semibold font-mono" style={{ color: dark.ink }}>{row.v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* Hero — efectivo esperado */}
         <div className="rounded-2xl p-4"
           style={{ background: 'oklch(16% 0.015 55)', border: `1px solid ${dark.border}` }}>
@@ -161,6 +184,15 @@ export default function CuadreLlegada() {
                 <span className="text-[12px] font-semibold font-mono" style={{ color: dark.ink }}>{row.v}</span>
               </div>
             ))}
+            {(turno.consignaciones_turno ?? 0) > 0 && (
+              <div className="col-span-2 flex justify-between items-baseline gap-2 mt-1 pt-1"
+                style={{ borderTop: `1px solid ${dark.border}` }}>
+                <span className="text-[11px]" style={{ color: dark.inkSubtle }}>− Consignación</span>
+                <span className="text-[12px] font-semibold font-mono" style={{ color: dark.dangerDim }}>
+                  {fmt(turno.consignaciones_turno ?? 0)}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

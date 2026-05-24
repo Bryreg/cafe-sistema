@@ -4,7 +4,7 @@ import api from '../api/client'
 import {
   Banknote, User, ImageIcon, Check, X, ZoomIn,
   ChevronDown, ChevronUp, AlertTriangle, CheckCircle2,
-  Download, FileText,
+  Download, FileText, TrendingUp,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -190,10 +190,236 @@ function descargarReporteHTML(dias: ResumenDia[]) {
   URL.revokeObjectURL(url)
 }
 
+// ─── Tipos Flujo ──────────────────────────────────────────────────────────────
+
+interface TurnoHistorial {
+  id: number
+  fecha_apertura: string
+  fecha_cierre: string | null
+  estado: string
+}
+
+interface MovimientoFlujo {
+  tipo: string
+  concepto: string
+  valor: number
+}
+
+interface ConsignacionFlujo {
+  id: number
+  valor: number
+  fecha: string
+}
+
+interface FlujoCaja {
+  turno_id: number
+  barista: string
+  fecha_apertura: string
+  base_real: number
+  ventas_total: number
+  ventas_efectivo: number
+  ventas_tarjeta: number
+  movimientos: MovimientoFlujo[]
+  consignaciones: ConsignacionFlujo[]
+  efectivo_esperado: number
+  efectivo_final_real: number | null
+  diferencia_cierre: number | null
+}
+
+// ─── Tab: Flujo por turno ─────────────────────────────────────────────────────
+
+function FlujoPorTurno({ tiendaId }: { tiendaId: number | null }) {
+  const [turnos, setTurnos]         = useState<TurnoHistorial[]>([])
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [flujo, setFlujo]           = useState<FlujoCaja | null>(null)
+  const [loadingTurnos, setLoadingTurnos] = useState(false)
+  const [loadingFlujo, setLoadingFlujo]   = useState(false)
+  const [errorFlujo, setErrorFlujo] = useState('')
+
+  useEffect(() => {
+    if (tiendaId === null) return
+    setLoadingTurnos(true)
+    api.get(`/caja/historial/${tiendaId}`)
+      .then(({ data }) => {
+        const cerrados = (data as TurnoHistorial[]).filter(t => t.estado === 'cerrado')
+        setTurnos(cerrados)
+        setSelectedId(null)
+        setFlujo(null)
+      })
+      .catch(() => {})
+      .finally(() => setLoadingTurnos(false))
+  }, [tiendaId])
+
+  const cargarFlujo = async (turnoId: number) => {
+    setSelectedId(turnoId)
+    setFlujo(null)
+    setErrorFlujo('')
+    setLoadingFlujo(true)
+    try {
+      const { data } = await api.get(`/caja/${turnoId}/flujo`)
+      setFlujo(data)
+    } catch {
+      setErrorFlujo('No se pudo cargar el flujo de este turno')
+    } finally {
+      setLoadingFlujo(false)
+    }
+  }
+
+  const ingresos = flujo?.movimientos.filter(m => m.tipo === 'ingreso') ?? []
+  const egresos  = flujo?.movimientos.filter(m => m.tipo === 'egreso')  ?? []
+  const difColor = flujo?.diferencia_cierre == null
+    ? '#6b7280'
+    : Math.abs(flujo.diferencia_cierre) <= 0.5
+      ? '#16a34a'
+      : '#dc2626'
+
+  if (loadingTurnos) return <p className="text-sm text-gray-400 py-8 text-center">Cargando turnos...</p>
+
+  if (turnos.length === 0) return (
+    <div className="bg-white rounded-2xl border border-gray-200 p-10 text-center">
+      <TrendingUp size={32} className="text-gray-300 mx-auto mb-3" />
+      <p className="text-sm text-gray-400">No hay turnos cerrados para esta sede</p>
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      {/* Selector de turno */}
+      <div>
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1.5">
+          Seleccionar turno
+        </label>
+        <select
+          value={selectedId ?? ''}
+          onChange={e => cargarFlujo(Number(e.target.value))}
+          className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white text-gray-800 outline-none focus:border-amber-400"
+        >
+          <option value="" disabled>— Elegir turno —</option>
+          {turnos.map(t => (
+            <option key={t.id} value={t.id}>
+              {t.fecha_cierre
+                ? fmtFecha(t.fecha_cierre) + ' — ' + fmtHora(t.fecha_cierre)
+                : fmtFecha(t.fecha_apertura)} (#{t.id})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {loadingFlujo && <p className="text-sm text-gray-400 text-center py-6">Cargando flujo...</p>}
+
+      {errorFlujo && (
+        <div className="flex items-center gap-2 text-sm px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-red-600">
+          <AlertTriangle size={14} /> {errorFlujo}
+        </div>
+      )}
+
+      {flujo && !loadingFlujo && (
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+          {/* Encabezado del turno */}
+          <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Barista</p>
+            <p className="text-sm font-semibold text-gray-800 mt-0.5">{flujo.barista}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{fmtFecha(flujo.fecha_apertura)} · {fmtHora(flujo.fecha_apertura)}</p>
+          </div>
+
+          {/* Cascada de efectivo */}
+          <div className="px-5 py-4 space-y-2 text-sm">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Flujo de efectivo</p>
+
+            {/* Base */}
+            <div className="flex justify-between">
+              <span className="text-gray-600">Base apertura</span>
+              <span className="font-semibold text-gray-800">{fmt(flujo.base_real)}</span>
+            </div>
+
+            {/* Ventas */}
+            <div className="flex justify-between font-medium">
+              <span className="text-gray-700">Ventas total</span>
+              <span className="text-gray-800">{fmt(flujo.ventas_total)}</span>
+            </div>
+            <div className="flex justify-between pl-4 text-xs text-gray-500">
+              <span>Efectivo</span>
+              <span>{fmt(flujo.ventas_efectivo)}</span>
+            </div>
+            <div className="flex justify-between pl-4 text-xs text-gray-500">
+              <span>Tarjeta</span>
+              <span>{fmt(flujo.ventas_tarjeta)}</span>
+            </div>
+
+            {/* Movimientos ingresos */}
+            {ingresos.map((m, i) => (
+              <div key={i} className="flex justify-between text-green-700">
+                <span className="text-xs pl-2">+ {m.concepto}</span>
+                <span className="text-xs font-semibold">{fmt(m.valor)}</span>
+              </div>
+            ))}
+
+            {/* Movimientos egresos */}
+            {egresos.map((m, i) => (
+              <div key={i} className="flex justify-between text-red-600">
+                <span className="text-xs pl-2">− {m.concepto}</span>
+                <span className="text-xs font-semibold">{fmt(m.valor)}</span>
+              </div>
+            ))}
+
+            {/* Consignaciones */}
+            {flujo.consignaciones.length > 0 && (
+              <>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide pt-1">Consignaciones</p>
+                {flujo.consignaciones.map(c => (
+                  <div key={c.id} className="flex justify-between text-blue-600">
+                    <span className="text-xs pl-2">− Consignación · {fmtHora(c.fecha)}</span>
+                    <span className="text-xs font-semibold">{fmt(c.valor)}</span>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {/* Efectivo esperado */}
+            <div className="border-t border-gray-200 pt-2 flex justify-between font-bold">
+              <span className="text-gray-700">Efectivo esperado</span>
+              <span className="text-blue-700">{fmt(flujo.efectivo_esperado)}</span>
+            </div>
+
+            {/* Efectivo final real */}
+            {flujo.efectivo_final_real != null && (
+              <div className="flex justify-between">
+                <span className="text-gray-600">Efectivo final real</span>
+                <span className="font-semibold text-gray-800">{fmt(flujo.efectivo_final_real)}</span>
+              </div>
+            )}
+
+            {/* Diferencia */}
+            {flujo.diferencia_cierre != null && (
+              <div className="flex justify-between font-bold pt-1 border-t border-gray-200"
+                style={{ color: difColor }}>
+                <span className="flex items-center gap-1">
+                  {Math.abs(flujo.diferencia_cierre) <= 0.5
+                    ? <CheckCircle2 size={14} />
+                    : <AlertTriangle size={14} />}
+                  Diferencia cierre
+                </span>
+                <span>
+                  {Math.abs(flujo.diferencia_cierre) <= 0.5
+                    ? 'Sin diferencia'
+                    : fmt(flujo.diferencia_cierre)}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
+
+type Tab = 'consignaciones' | 'flujo'
 
 export default function ConsignacionesAdmin() {
   const { user } = useAuth()
+  const [tab, setTab] = useState<Tab>('consignaciones')
   const [sedes, setSedes] = useState<Sede[]>([])
   const [tiendaId, setTiendaId] = useState<number | null>(user?.tienda_id ?? null)
   const [dias, setDias] = useState<ResumenDia[]>([])
@@ -246,39 +472,64 @@ export default function ConsignacionesAdmin() {
   const totalPendiente  = dias.reduce((s, d) => s + Math.max(0, d.esperado_consignar - d.total_consignado), 0)
   const diasConDiferencia = dias.filter(d => Math.abs(d.diferencia) > 0.5).length
 
-  if (loading) return <p className="text-sm text-gray-400 text-center py-12">Cargando...</p>
-
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Consignaciones</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Reconciliación de efectivo por día — ventas en cash ± movimientos = debe consignarse
-          </p>
-        </div>
-        {dias.length > 0 && (
-          <div className="flex gap-2 flex-wrap">
-            <button
-              onClick={() => exportarExcelConsig(dias)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-white transition-colors"
-              style={{ background: 'oklch(48% 0.15 155)' }}
-              title="Descargar Excel con fecha, valor y link de foto"
-            >
-              <Download size={14} /> Excel
-            </button>
-            <button
-              onClick={() => descargarReporteHTML(dias)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors"
-              title="Reporte HTML con fotos — abre en el navegador, imprimible a PDF"
-            >
-              <FileText size={14} /> Reporte con fotos
-            </button>
+      {/* Encabezado + tabs */}
+      <div>
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Consignaciones</h1>
+            <p className="text-sm text-gray-500 mt-1">
+              Reconciliación de efectivo por día — ventas en cash ± movimientos = debe consignarse
+            </p>
           </div>
-        )}
+          {tab === 'consignaciones' && dias.length > 0 && (
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={() => exportarExcelConsig(dias)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-white transition-colors"
+                style={{ background: 'oklch(48% 0.15 155)' }}
+                title="Descargar Excel con fecha, valor y link de foto"
+              >
+                <Download size={14} /> Excel
+              </button>
+              <button
+                onClick={() => descargarReporteHTML(dias)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors"
+                title="Reporte HTML con fotos — abre en el navegador, imprimible a PDF"
+              >
+                <FileText size={14} /> Reporte con fotos
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Tab bar */}
+        <div className="flex gap-1 border-b border-gray-200">
+          <button
+            onClick={() => setTab('consignaciones')}
+            className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors -mb-px ${
+              tab === 'consignaciones'
+                ? 'border-amber-500 text-amber-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Consignaciones
+          </button>
+          <button
+            onClick={() => setTab('flujo')}
+            className={`flex items-center gap-1.5 px-4 py-2 text-sm font-semibold border-b-2 transition-colors -mb-px ${
+              tab === 'flujo'
+                ? 'border-amber-500 text-amber-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <TrendingUp size={14} /> Flujo por turno
+          </button>
+        </div>
       </div>
 
-      {/* Selector de sede */}
+      {/* Selector de sede — compartido entre tabs */}
       {sedes.length > 1 && (
         <div className="flex gap-1.5 flex-wrap">
           {sedes.map(s => (
@@ -294,40 +545,47 @@ export default function ConsignacionesAdmin() {
         </div>
       )}
 
-      {/* Resumen global */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
-        {/* Por consignar — fila completa en móvil */}
-        <div className={`col-span-2 sm:col-span-1 border-2 rounded-2xl p-4 ${totalPendiente > 0 ? 'bg-amber-50 border-amber-300' : 'bg-green-50 border-green-200'}`}>
-          <p className={`text-xs font-semibold uppercase tracking-wide ${totalPendiente > 0 ? 'text-amber-700' : 'text-green-600'}`}>
-            Por consignar
-          </p>
-          <p className={`text-2xl font-bold mt-1 ${totalPendiente > 0 ? 'text-amber-800' : 'text-green-700'}`}>
-            {fmt(totalPendiente)}
-          </p>
-          {totalPendiente === 0 && (
-            <p className="text-xs text-green-600 mt-0.5">Al día ✓</p>
-          )}
-        </div>
-        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-3 sm:p-4">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ya consignado</p>
-          <p className="text-base sm:text-xl font-bold text-gray-700 mt-1">{fmt(totalConsignado)}</p>
-        </div>
-        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3 sm:p-4">
-          <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide">Total esperado</p>
-          <p className="text-base sm:text-xl font-bold text-blue-800 mt-1">{fmt(totalEsperado)}</p>
-        </div>
-      </div>
+      {/* ─── Tab: Consignaciones ─────────────────────────────────────────────── */}
+      {tab === 'consignaciones' && (
+        <>
+          {loading
+            ? <p className="text-sm text-gray-400 text-center py-12">Cargando...</p>
+            : (
+              <>
+                {/* Resumen global */}
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
+                  {/* Por consignar — fila completa en móvil */}
+                  <div className={`col-span-2 sm:col-span-1 border-2 rounded-2xl p-4 ${totalPendiente > 0 ? 'bg-amber-50 border-amber-300' : 'bg-green-50 border-green-200'}`}>
+                    <p className={`text-xs font-semibold uppercase tracking-wide ${totalPendiente > 0 ? 'text-amber-700' : 'text-green-600'}`}>
+                      Por consignar
+                    </p>
+                    <p className={`text-2xl font-bold mt-1 ${totalPendiente > 0 ? 'text-amber-800' : 'text-green-700'}`}>
+                      {fmt(totalPendiente)}
+                    </p>
+                    {totalPendiente === 0 && (
+                      <p className="text-xs text-green-600 mt-0.5">Al día ✓</p>
+                    )}
+                  </div>
+                  <div className="bg-gray-50 border border-gray-200 rounded-2xl p-3 sm:p-4">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ya consignado</p>
+                    <p className="text-base sm:text-xl font-bold text-gray-700 mt-1">{fmt(totalConsignado)}</p>
+                  </div>
+                  <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3 sm:p-4">
+                    <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide">Total esperado</p>
+                    <p className="text-base sm:text-xl font-bold text-blue-800 mt-1">{fmt(totalEsperado)}</p>
+                  </div>
+                </div>
 
-      {/* Lista de días */}
-      {dias.length === 0 && (
-        <div className="bg-white rounded-2xl border border-gray-200 p-10 text-center">
-          <Banknote size={32} className="text-gray-300 mx-auto mb-3" />
-          <p className="text-sm text-gray-400">No hay turnos cerrados aún</p>
-        </div>
-      )}
+                {/* Lista de días */}
+                {dias.length === 0 && (
+                  <div className="bg-white rounded-2xl border border-gray-200 p-10 text-center">
+                    <Banknote size={32} className="text-gray-300 mx-auto mb-3" />
+                    <p className="text-sm text-gray-400">No hay turnos cerrados aún</p>
+                  </div>
+                )}
 
-      <div className="space-y-3">
-        {dias.map(dia => {
+                <div className="space-y-3">
+                {dias.map(dia => {
           const abierto = expandido === dia.turno_id
           const pendientes = dia.consignaciones.filter(c => c.estado === 'pendiente')
           const ok = Math.abs(dia.diferencia) <= 0.5
@@ -498,7 +756,15 @@ export default function ConsignacionesAdmin() {
             </div>
           )
         })}
-      </div>
+                </div>
+              </>
+            )
+          }
+        </>
+      )}
+
+      {/* ─── Tab: Flujo por turno ────────────────────────────────────────────── */}
+      {tab === 'flujo' && <FlujoPorTurno tiendaId={tiendaId} />}
 
       {/* Modal foto */}
       {fotoModal && (

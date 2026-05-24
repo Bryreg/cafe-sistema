@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, UploadFile, File, Form
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.deps import ensure_tienda_access, ensure_turno_access, get_current_user
 from app.models.models import Usuario, CajaTurno
-from app.schemas.caja import AbrirCajaRequest, CerrarCajaRequest, MovimientoCajaRequest, TurnoOut, EntregaTurnoOut
+from app.schemas.caja import AbrirCajaRequest, CerrarCajaRequest, MovimientoCajaRequest, TurnoOut, EntregaTurnoOut, FlujoCajaOut
 from app.services import caja as svc
 from app.core.storage import upload_imagen
 from typing import List, Optional
@@ -14,6 +14,14 @@ router = APIRouter(prefix="/caja", tags=["caja"])
 def abrir(data: AbrirCajaRequest, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     ensure_tienda_access(user, data.tienda_id)
     return svc.abrir_caja(db, data.tienda_id, data.base_real, data.justificacion_apertura, user.id)
+
+@router.get("/{turno_id}/flujo", response_model=FlujoCajaOut)
+def get_flujo(turno_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    ensure_turno_access(db, user, turno_id)
+    result = svc.get_flujo_turno(db, turno_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+    return result
 
 @router.post("/{turno_id}/cerrar", response_model=TurnoOut)
 def cerrar(turno_id: int, data: CerrarCajaRequest, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):

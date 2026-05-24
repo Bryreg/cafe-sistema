@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime
 from fastapi import HTTPException
-from app.models.models import CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum, EntregaTurno
+from app.models.models import CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum, EntregaTurno, Consignacion
 from app.services import audit, notificaciones
 import logging
 
@@ -28,11 +28,15 @@ def get_turno_activo(db: Session, tienda_id: int):
         MovimientoCaja.caja_turno_id == turno.id,
         MovimientoCaja.tipo == "egreso"
     ).scalar() or 0.0
+    consigs_sum = db.query(func.sum(Consignacion.valor)).filter(
+        Consignacion.caja_turno_id == turno.id
+    ).scalar() or 0.0
     turno.ultima_entrega_fecha = ultima.fecha_hora if ultima else None
     turno.ultima_entrega_diferencia_efectivo = ultima.diferencia_efectivo if ultima else None
     turno.ingresos_movimientos = ingresos
     turno.egresos_movimientos = egresos
     turno.efectivo_esperado_actual = turno.base_real + turno.total_efectivo + ingresos - egresos
+    turno.consignaciones_turno = consigs_sum
     return turno
 
 
@@ -313,6 +317,51 @@ def get_movimientos(db: Session, turno_id: int):
     return db.query(MovimientoCaja).filter(
         MovimientoCaja.caja_turno_id == turno_id
     ).order_by(MovimientoCaja.fecha.desc()).all()
+
+
+def get_flujo_turno(db: Session, turno_id: int) -> dict | None:
+    turno = db.query(CajaTurno).filter(CajaTurno.id == turno_id).first()
+    if not turno:
+        return None
+
+    barista = turno.usuario_apertura.nombre if turno.usuario_apertura else "—"
+
+    movimientos = db.query(MovimientoCaja).filter(
+        MovimientoCaja.caja_turno_id == turno_id
+    ).all()
+
+    consignaciones = db.query(Consignacion).filter(
+        Consignacion.caja_turno_id == turno_id
+    ).all()
+
+    from app.models.models import TipoMovCajaEnum
+    ingresos = sum(m.valor for m in movimientos if m.tipo == TipoMovCajaEnum.ingreso)
+    egresos  = sum(m.valor for m in movimientos if m.tipo == TipoMovCajaEnum.egreso)
+    consigs_sum = sum(c.valor for c in consignaciones)
+    efectivo_esperado = (turno.base_real or 0) + (turno.total_efectivo or 0) + ingresos - egresos - consigs_sum
+
+    return {
+        "turno_id": turno.id,
+        "barista": barista,
+        "fecha_apertura": turno.fecha_apertura.isoformat(),
+        "base_real": turno.base_real or 0,
+        "ventas_total": turno.total_ventas or 0,
+        "ventas_efectivo": turno.total_efectivo or 0,
+        "ventas_tarjeta": turno.total_tarjeta or 0,
+        "movimientos": [
+            {"tipo": str(m.tipo.value if hasattr(m.tipo, 'value') else m.tipo),
+             "concepto": m.concepto,
+             "valor": m.valor}
+            for m in movimientos
+        ],
+        "consignaciones": [
+            {"id": c.id, "valor": c.valor, "fecha": c.fecha.isoformat()}
+            for c in consignaciones
+        ],
+        "efectivo_esperado": efectivo_esperado,
+        "efectivo_final_real": turno.efectivo_final_real,
+        "diferencia_cierre": turno.diferencia_cierre,
+    }
 
 
 def _tick_checklist(db: Session, tienda_id: int, **kwargs):

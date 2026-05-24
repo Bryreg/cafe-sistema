@@ -213,6 +213,74 @@ def _find_turno_id(inv_dt, turnos: list) -> int | None:
     return None
 
 
+def _descontar_inventario_por_sync(db, tienda_id: int, rows: list) -> dict:
+    """Deducts inventory for synced Siigo items. Never raises — logs errors and continues."""
+    from app.models.models import SiigoProductoMapeo, Producto, MovimientoInventario
+    from app.services.inventario import registrar_movimiento
+
+    descontados = 0
+    errores = []
+
+    for row in rows:
+        codigo = row.get("codigo_producto", "")
+        if not codigo:
+            continue
+
+        sync_key = f"{row['siigo_factura_id']}:{codigo}:{tienda_id}"
+
+        ya_existe = db.query(MovimientoInventario).filter(
+            MovimientoInventario.siigo_sync_key == sync_key
+        ).first()
+        if ya_existe:
+            continue
+
+        mapeos = db.query(SiigoProductoMapeo).filter(
+            SiigoProductoMapeo.codigo_siigo == codigo,
+            SiigoProductoMapeo.activo == True,
+        ).all()
+
+        for mapeo in mapeos:
+            try:
+                producto = db.query(Producto).filter(
+                    Producto.id == mapeo.producto_id,
+                    Producto.controla_stock == True,
+                ).first()
+                if not producto:
+                    continue
+
+                cantidad = float(row.get("cantidad", 0)) * mapeo.factor_conversion
+                registrar_movimiento(
+                    db=db,
+                    tienda_id=tienda_id,
+                    producto_id=mapeo.producto_id,
+                    tipo="salida",
+                    cantidad=cantidad,
+                    motivo=f"Sync Siigo: {codigo}",
+                    usuario_id=None,
+                    commit=False,
+                    siigo_sync_key=sync_key,
+                )
+                descontados += 1
+            except Exception as e:
+                errores.append({"codigo": codigo, "detalle": str(e)})
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+
+    if descontados > 0:
+        try:
+            db.commit()
+        except Exception as e:
+            errores.append({"codigo": "commit", "detalle": str(e)})
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+    return {"items_descontados": descontados, "errores": errores}
+
+
 async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta: str) -> dict:
     """Fetch invoices from Siigo, persist line items, then auto-populate VentaDiaria."""
     from app.models.models import SiigoVentaItem, CajaTurno
@@ -322,6 +390,8 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
 
     db.commit()
 
+    desc_result = _descontar_inventario_por_sync(db, tienda_id, rows)
+
     after = db.query(SiigoVentaItem).filter(
         SiigoVentaItem.tienda_id == tienda_id,
         SiigoVentaItem.fecha >= fecha_desde,
@@ -337,6 +407,8 @@ async def sync_ventas(db: Session, tienda_id: int, fecha_desde: str, fecha_hasta
         "skipped_count": skipped,
         "date_range": f"{fecha_desde}/{fecha_hasta}",
         "ventas_pobladas": ventas_result["ventas_pobladas"],
+        "items_descontados": desc_result["items_descontados"],
+        "errores_inventario": desc_result["errores"],
     }
 
 

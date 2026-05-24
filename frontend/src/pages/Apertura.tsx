@@ -345,6 +345,30 @@ export default function Apertura() {
           </p>
         </div>
 
+        {turno && (
+          <div className="rounded-2xl p-4"
+            style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
+            <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
+              Ventas del día
+            </p>
+            <p className="text-[28px] font-bold font-mono leading-none mb-3"
+              style={{ color: dark.ink, letterSpacing: '-1px' }}>
+              {fmt(turno.total_ventas ?? 0)}
+            </p>
+            <div className="grid grid-cols-2 gap-2 pt-3" style={{ borderTop: `1px solid ${dark.border}` }}>
+              {[
+                { l: 'Efectivo', v: fmt(turno.total_efectivo ?? 0) },
+                { l: 'Tarjeta',  v: fmt(turno.total_tarjeta ?? 0) },
+              ].map(row => (
+                <div key={row.l} className="flex justify-between items-baseline gap-2">
+                  <span className="text-xs" style={{ color: dark.inkSubtle }}>{row.l}</span>
+                  <span className="text-sm font-semibold font-mono" style={{ color: dark.ink }}>{row.v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="flex items-center gap-2 text-sm px-4 py-3 rounded-xl"
             style={{ background: 'oklch(18% 0.05 25)', color: dark.danger, border: `1px solid ${dark.dangerDim}` }}>

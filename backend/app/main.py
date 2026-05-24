@@ -84,6 +84,17 @@ with engine.connect() as _conn:
         "CREATE INDEX IF NOT EXISTS idx_siigo_codigo ON siigo_venta_items(codigo_producto)",
         # Turno attribution para cruzar ventas Siigo con barista por horario
         "ALTER TABLE siigo_venta_items ADD COLUMN turno_id INTEGER REFERENCES caja_turnos(id)",
+        # Mapeo de productos Siigo → inventario local
+        """CREATE TABLE IF NOT EXISTS siigo_producto_mapeo (
+            id SERIAL PRIMARY KEY,
+            codigo_siigo VARCHAR NOT NULL,
+            descripcion_siigo VARCHAR NOT NULL DEFAULT '',
+            producto_id INTEGER NOT NULL REFERENCES productos(id),
+            factor_conversion REAL NOT NULL DEFAULT 1.0,
+            activo BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        "ALTER TABLE movimientos_inventario ADD COLUMN siigo_sync_key VARCHAR(200)",
     ]:
         try:
             _conn.execute(_text(_sql))

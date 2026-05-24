@@ -1,10 +1,14 @@
 from datetime import datetime, timedelta
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.deps import ensure_tienda_access, get_current_user, require_admin
 from app.models.models import Usuario, Producto, Inventario, Tienda, CategoriaProductoEnum, LoteInventario
-from app.schemas.inventario import MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate
+from app.schemas.inventario import (
+    MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate,
+    SiigoMapeoCreate, SiigoMapeoUpdate, SiigoMapeoOut,
+)
 from app.services import inventario as svc
 
 router = APIRouter(prefix="/inventario", tags=["inventario"])
@@ -129,6 +133,59 @@ def lotes(tienda_id: int, producto_id: int, db: Session = Depends(get_db),
           user: Usuario = Depends(require_admin)):
     ensure_tienda_access(user, tienda_id)
     return svc.get_lotes(db, tienda_id, producto_id)
+
+
+@router.get("/siigo-mapeo", response_model=List[SiigoMapeoOut])
+def list_siigo_mapeos(db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    mapeos = svc.get_siigo_mapeos(db)
+    return [
+        SiigoMapeoOut(
+            id=m.id,
+            codigo_siigo=m.codigo_siigo,
+            descripcion_siigo=m.descripcion_siigo,
+            producto_id=m.producto_id,
+            factor_conversion=m.factor_conversion,
+            activo=m.activo,
+            producto_nombre=m.producto.nombre if m.producto else None,
+        )
+        for m in mapeos
+    ]
+
+
+@router.get("/siigo-mapeo/sin-mapeo")
+def codigos_sin_mapeo(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    return svc.get_codigos_sin_mapeo(db, tienda_id)
+
+
+@router.post("/siigo-mapeo", response_model=SiigoMapeoOut, status_code=201)
+def create_mapeo(data: SiigoMapeoCreate, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    m = svc.create_siigo_mapeo(db, data.dict())
+    return SiigoMapeoOut(
+        id=m.id, codigo_siigo=m.codigo_siigo, descripcion_siigo=m.descripcion_siigo,
+        producto_id=m.producto_id, factor_conversion=m.factor_conversion, activo=m.activo,
+        producto_nombre=m.producto.nombre if m.producto else None,
+    )
+
+
+@router.put("/siigo-mapeo/{mapeo_id}", response_model=SiigoMapeoOut)
+def update_mapeo(mapeo_id: int, data: SiigoMapeoUpdate, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    updates = {k: v for k, v in data.dict().items() if v is not None}
+    m = svc.update_siigo_mapeo(db, mapeo_id, updates)
+    if not m:
+        raise HTTPException(status_code=404, detail="Mapeo no encontrado")
+    return SiigoMapeoOut(
+        id=m.id, codigo_siigo=m.codigo_siigo, descripcion_siigo=m.descripcion_siigo,
+        producto_id=m.producto_id, factor_conversion=m.factor_conversion, activo=m.activo,
+        producto_nombre=m.producto.nombre if m.producto else None,
+    )
+
+
+@router.delete("/siigo-mapeo/{mapeo_id}")
+def delete_mapeo(mapeo_id: int, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    ok = svc.delete_siigo_mapeo(db, mapeo_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Mapeo no encontrado")
+    return {"ok": True}
 
 
 @router.get("/pasteleria-impulso/{tienda_id}")

@@ -28,6 +28,7 @@ export interface Turno {
   ultima_entrega_fecha: string | null
   ultima_entrega_diferencia_efectivo: number | null
   consignaciones_turno: number
+  consignaciones_deducidas?: number
 }
 
 interface TurnoCtx {

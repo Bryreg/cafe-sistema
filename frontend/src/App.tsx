@@ -41,6 +41,7 @@ import PedidosAdmin from './pages/PedidosAdmin'
 import MantenimientosAdmin from './pages/MantenimientosAdmin'
 import AuditoriasAdmin from './pages/AuditoriasAdmin'
 import AuditLog from './pages/AuditLog'
+import SiigoMapeo from './pages/SiigoMapeo'
 
 // ─── Smart redirect basado en estado del turno ───────────────────────────────
 function SmartRedirect() {
@@ -197,6 +198,9 @@ function AppRoutes() {
       } />
       <Route path="/audit-log" element={
         <ProtectedRoute role="admin"><Layout><AuditLog /></Layout></ProtectedRoute>
+      } />
+      <Route path="/siigo-mapeo" element={
+        <ProtectedRoute role="admin"><Layout><SiigoMapeo /></Layout></ProtectedRoute>
       } />
 
       <Route path="*" element={<Navigate to="/" replace />} />

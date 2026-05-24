@@ -95,6 +95,7 @@ with engine.connect() as _conn:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
         "ALTER TABLE movimientos_inventario ADD COLUMN siigo_sync_key VARCHAR(200)",
+        "ALTER TABLE caja_turnos ADD COLUMN consignaciones_deducidas FLOAT DEFAULT 0",
     ]:
         try:
             _conn.execute(_text(_sql))

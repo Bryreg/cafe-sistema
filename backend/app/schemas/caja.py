@@ -77,6 +77,7 @@ class TurnoOut(BaseModel):
     ultima_entrega_fecha: Optional[datetime] = None
     ultima_entrega_diferencia_efectivo: Optional[float] = None
     consignaciones_turno: float = 0.0
+    consignaciones_deducidas: Optional[float] = None
     class Config: from_attributes = True
 
 

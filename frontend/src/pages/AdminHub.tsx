@@ -8,7 +8,7 @@ import {
   BarChart2, ClipboardList, Inbox, Sparkles, ShoppingCart,
   ClipboardCheck, FileText, Zap, LayoutGrid, Check,
   Home, DollarSign, X as XIcon,
-  Menu, LayoutDashboard, Layers, Wrench, Activity, Users,
+  Menu, LayoutDashboard, Layers, Wrench, Activity, Users, Link2,
 } from 'lucide-react'
 
 // ─── Navegación admin completa (mirror de Layout) ────────────────────────────
@@ -25,6 +25,7 @@ const NAV_ADMIN = [
   { to: '/bandeja',            label: 'Bandeja',        icon: Inbox           },
   { to: '/informes',           label: 'Informes',       icon: BarChart2       },
   { to: '/usuarios',           label: 'Usuarios',       icon: Users           },
+  { to: '/siigo-mapeo',        label: 'Mapeo Siigo',    icon: Link2           },
 ]
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

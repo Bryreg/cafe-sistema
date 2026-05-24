@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime
 from fastapi import HTTPException
-from app.models.models import CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum, EntregaTurno, Consignacion
+from app.models.models import CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum, EntregaTurno, Consignacion, EstadoConsignacionEnum
 from app.services import audit, notificaciones
 import logging
 
@@ -51,7 +51,13 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
         CajaTurno.estado == EstadoTurnoEnum.cerrado
     ).order_by(CajaTurno.fecha_cierre.desc()).first()
 
-    base_sistema = ultimo.efectivo_final_real if ultimo and ultimo.efectivo_final_real is not None else 0.0
+    consigs_deducidas = 0.0
+    if ultimo:
+        consigs_deducidas = db.query(func.sum(Consignacion.valor)).filter(
+            Consignacion.caja_turno_id == ultimo.id,
+            Consignacion.estado == EstadoConsignacionEnum.realizada,
+        ).scalar() or 0.0
+    base_sistema = (ultimo.efectivo_final_real or 0.0) - consigs_deducidas if ultimo else 0.0
     diferencia = base_real - base_sistema
 
     if round(diferencia, 2) != 0 and not justificacion:
@@ -71,6 +77,7 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
         tiene_conteo_apertura=False,
         tiene_ventas=False,
         tiene_conteo_cierre=False,
+        consignaciones_deducidas=consigs_deducidas,
     )
     db.add(turno)
     db.flush()
@@ -80,7 +87,8 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
         db, accion="apertura_caja", tabla="caja_turnos",
         registro_id=turno.id, usuario_id=usuario_id, tienda_id=tienda_id,
         datos_despues={"base_real": base_real, "base_sistema": base_sistema,
-                       "diferencia_apertura": diferencia},
+                       "diferencia_apertura": diferencia,
+                       "consignaciones_deducidas": consigs_deducidas},
     )
     db.commit()
     db.refresh(turno)

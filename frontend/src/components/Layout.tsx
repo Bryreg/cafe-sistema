@@ -5,7 +5,7 @@ import api from '../api/client'
 import {
   Coffee, LayoutDashboard, Package, Banknote, LogOut, Inbox,
   BarChart2, ShoppingCart, Bell, Users, Menu, X, ClipboardList, Wrench, ClipboardCheck,
-  Activity, CheckCheck, Layers,
+  Activity, CheckCheck, Layers, Link2,
 } from 'lucide-react'
 
 const NAV_ADMIN = [
@@ -21,6 +21,7 @@ const NAV_ADMIN = [
   { to: '/bandeja',         label: 'Bandeja',          icon: Inbox },
   { to: '/informes',        label: 'Informes',         icon: BarChart2 },
   { to: '/usuarios',        label: 'Usuarios',         icon: Users },
+  { to: '/siigo-mapeo',     label: 'Mapeo Siigo',      icon: Link2 },
 ]
 
 // ─── Notificaciones ──────────────────────────────────────────────────────────

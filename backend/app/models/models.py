@@ -116,6 +116,7 @@ class CajaTurno(Base):
     datafono_real = Column(Float, nullable=True)          # total datáfono Bold al cierre
     diferencia_cierre = Column(Float, nullable=True)
     diferencia_tarjeta = Column(Float, nullable=True)
+    consignaciones_deducidas = Column(Float, default=0.0, nullable=True)
     justificacion_cierre = Column(Text, nullable=True)
     estado = Column(SAEnum(EstadoTurnoEnum), default=EstadoTurnoEnum.abierto)
     # Flags de flujo obligatorio — solo el backend las activa

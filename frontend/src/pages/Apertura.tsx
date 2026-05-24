@@ -250,6 +250,7 @@ export default function Apertura() {
   const [loading, setLoading] = useState(false)
   const [showContador, setShowContador] = useState(true)
   const [baseSistema, setBaseSistema] = useState(0)
+  const [consignacionesDeducidas, setConsignacionesDeducidas] = useState(0)
 
   // Depender de turno?.id (no del objeto completo) evita re-disparos en cada
   // poll cuando turno ya existe pero el objeto es una nueva referencia.
@@ -261,7 +262,10 @@ export default function Apertura() {
     if (!user?.tienda_id) return
     api.get(`/caja/historial/${user.tienda_id}`).then(({ data }) => {
       if (data.length > 0 && data[0].efectivo_final_real != null) {
-        setBaseSistema(data[0].efectivo_final_real)
+        const ultimo = data[0]
+        const consigs = ultimo.consignaciones_deducidas ?? 0
+        setConsignacionesDeducidas(consigs)
+        setBaseSistema((ultimo.efectivo_final_real ?? 0) - consigs)
       }
     }).catch(() => {})
   }, [user?.tienda_id])
@@ -430,7 +434,10 @@ export default function Apertura() {
             </div>
             {baseSistema > 0 && (
               <p className="text-xs mt-1.5" style={{ color: dark.inkSubtle }}>
-                Base esperada: <span className="font-mono font-semibold" style={{ color: dark.inkMuted }}>{fmt(baseSistema)}</span>
+                Base sistema: <span className="font-mono font-semibold" style={{ color: dark.inkMuted }}>{fmt(baseSistema)}</span>
+                {consignacionesDeducidas > 0 && (
+                  <span style={{ color: dark.inkSubtle }}> (tras descontar <span className="font-mono" style={{ color: dark.amberDim }}>{fmt(consignacionesDeducidas)}</span> en consignaciones)</span>
+                )}
               </p>
             )}
           </div>

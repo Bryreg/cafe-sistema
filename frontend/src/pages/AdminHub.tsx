@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useNavigate, NavLink } from 'react-router-dom'
+import { useNavigate, NavLink, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
@@ -113,6 +113,7 @@ interface TopProducto {
 export default function AdminHub() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const tiendaId = user?.tienda_id ?? 1
 
@@ -205,6 +206,7 @@ export default function AdminHub() {
         style={{ background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid oklch(94% 0.008 75)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           <button
+            className="md:hidden"
             onClick={() => setMenuOpen(true)}
             style={{ padding: '4px 2px', background: 'transparent', border: 'none', cursor: 'pointer', color: 'oklch(45% 0.01 60)', display: 'flex', alignItems: 'center' }}
             aria-label="Abrir menú"
@@ -222,6 +224,38 @@ export default function AdminHub() {
               {new Date().toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })} · {time}
             </p>
           </div>
+          {/* Desktop nav — hidden on mobile */}
+          <nav className="hidden md:flex items-center gap-1 ml-6">
+            {[
+              { label: 'Inicio',         path: '/dashboard' },
+              { label: 'Inventario',     path: '/inventario' },
+              { label: 'Informes',       path: '/informes' },
+              { label: 'Consignaciones', path: '/consignaciones' },
+              { label: 'Comunicados',    path: '/comunicados' },
+              { label: 'Pedidos',        path: '/pedidos-admin' },
+              { label: 'Compras',        path: '/compras' },
+              { label: 'Bandeja',        path: '/bandeja' },
+            ].map(item => (
+              <button
+                key={item.path}
+                onClick={() => navigate(item.path)}
+                style={{
+                  padding: '5px 10px',
+                  borderRadius: 7,
+                  border: 'none',
+                  background: location.pathname === item.path ? 'oklch(93% 0.025 155)' : 'transparent',
+                  color: location.pathname === item.path ? 'oklch(30% 0.06 155)' : 'oklch(50% 0.01 60)',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ position: 'relative' }}>
@@ -242,7 +276,7 @@ export default function AdminHub() {
       </header>
 
       {/* ── Scroll body ────────────────────────────────────────────────── */}
-      <div className="flex-1 pb-nav" style={{ padding: '0 16px 16px' }}>
+      <div className="flex-1 pb-nav max-w-5xl mx-auto w-full" style={{ padding: '0 16px 16px' }}>
 
         {/* ── HERO: Resumen del día ──────────────────────────────────── */}
         <div style={{
@@ -689,7 +723,7 @@ export default function AdminHub() {
       )}
 
       {/* ── Admin bottom nav ─────────────────────────────────────────── */}
-      <nav style={{ display: 'flex', borderTop: '1px solid oklch(94% 0.008 75)', background: 'rgba(255,255,255,.95)', paddingBottom: 'env(safe-area-inset-bottom, 0px)', backdropFilter: 'blur(12px)' }}>
+      <nav className="md:hidden" style={{ display: 'flex', borderTop: '1px solid oklch(94% 0.008 75)', background: 'rgba(255,255,255,.95)', paddingBottom: 'env(safe-area-inset-bottom, 0px)', backdropFilter: 'blur(12px)' }}>
         {[
           { icon: Home,         label: 'Inicio',  path: '/dashboard',   active: true  },
           { icon: DollarSign,   label: 'Ventas',  path: '/informes',    active: false },

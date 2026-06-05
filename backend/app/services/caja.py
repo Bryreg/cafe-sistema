@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from fastapi import HTTPException
 from app.models.models import CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum, EntregaTurno, Consignacion, EstadoConsignacionEnum
@@ -80,7 +81,14 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
         consignaciones_deducidas=consigs_deducidas,
     )
     db.add(turno)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Ya hay un turno abierto para esta tienda. Otro barista puede haberlo abierto.",
+        )
 
     _tick_checklist(db, tienda_id, apertura_realizada=True)
     audit.registrar(

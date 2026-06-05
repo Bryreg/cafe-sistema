@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from app.models.models import (
     VentaDiaria, Merma, MovimientoInventario, TipoMovInvEnum,
@@ -72,6 +72,7 @@ def reporte_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
 
     q = (
         db.query(Merma)
+        .options(joinedload(Merma.producto))
         .filter(
             Merma.tienda_id == tienda_id,
             Merma.fecha_registro >= desde,
@@ -129,6 +130,7 @@ def reporte_inventario_consumido(db: Session, tienda_id: int, fecha_desde: date,
 
     q = (
         db.query(MovimientoInventario)
+        .options(joinedload(MovimientoInventario.producto))
         .filter(
             MovimientoInventario.tienda_id == tienda_id,
             MovimientoInventario.tipo == TipoMovInvEnum.salida,
@@ -186,6 +188,7 @@ def reporte_entregas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
 
     q = (
         db.query(EntregaTurno)
+        .options(joinedload(EntregaTurno.usuario))
         .filter(
             EntregaTurno.tienda_id == tienda_id,
             EntregaTurno.fecha_hora >= desde,
@@ -231,6 +234,7 @@ def kpi_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date
 
     mermas = (
         db.query(Merma)
+        .options(joinedload(Merma.producto))
         .filter(Merma.tienda_id == tienda_id,
                 Merma.fecha_registro >= desde,
                 Merma.fecha_registro <= hasta)
@@ -280,6 +284,7 @@ def reporte_rotacion(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
 
     inventarios = (
         db.query(Inventario)
+        .options(joinedload(Inventario.producto))
         .filter(Inventario.tienda_id == tienda_id)
         .all()
     )
@@ -530,6 +535,7 @@ def reporte_baristas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
 
     q = (
         db.query(EntregaTurno)
+        .options(joinedload(EntregaTurno.usuario))
         .filter(
             EntregaTurno.tienda_id == tienda_id,
             EntregaTurno.fecha_hora >= desde,

@@ -1,4 +1,5 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import update as sa_update
 from fastapi import HTTPException
 from app.models.models import Inventario, MovimientoInventario, LoteInventario, Producto
 from datetime import datetime
@@ -6,7 +7,7 @@ from app.services import audit
 
 
 def get_inventario_tienda(db: Session, tienda_id: int):
-    items = db.query(Inventario).filter(Inventario.tienda_id == tienda_id).all()
+    items = db.query(Inventario).options(joinedload(Inventario.producto)).filter(Inventario.tienda_id == tienda_id).all()
     result = []
     for item in items:
         result.append({
@@ -33,6 +34,7 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
         raise HTTPException(status_code=400, detail="cantidad debe ser mayor a 0")
     if tipo == "ajuste" and cantidad < 0:
         raise HTTPException(status_code=400, detail="cantidad no puede ser negativa en ajuste")
+    # Verify product exists first (needed for all branches)
     inv = db.query(Inventario).filter(
         Inventario.producto_id == producto_id,
         Inventario.tienda_id == tienda_id
@@ -41,23 +43,56 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
         raise HTTPException(status_code=404, detail="Producto no encontrado en inventario de esta tienda")
 
     if tipo == "entrada":
-        inv.stock_actual += cantidad
+        # Atomic increment — no read-modify-write race
+        db.execute(
+            sa_update(Inventario)
+            .where(
+                Inventario.producto_id == producto_id,
+                Inventario.tienda_id == tienda_id,
+            )
+            .values(stock_actual=Inventario.stock_actual + cantidad)
+        )
         agregar_lote(db, producto_id, tienda_id, cantidad, usuario_id, fecha_vencimiento)
     elif tipo == "salida":
-        if inv.stock_actual - cantidad < 0:
+        # Atomic decrement with stock sufficiency check
+        rows = db.execute(
+            sa_update(Inventario)
+            .where(
+                Inventario.producto_id == producto_id,
+                Inventario.tienda_id == tienda_id,
+                Inventario.stock_actual >= cantidad,
+            )
+            .values(stock_actual=Inventario.stock_actual - cantidad)
+        ).rowcount
+        if rows == 0:
             raise HTTPException(status_code=400, detail="Stock insuficiente")
-        inv.stock_actual -= cantidad
         consumir_fifo(db, producto_id, tienda_id, cantidad)
     elif tipo == "ajuste":
+        # Read current stock to compute FIFO delta, then set atomically
+        stock_antes = inv.stock_actual
+        db.execute(
+            sa_update(Inventario)
+            .where(
+                Inventario.producto_id == producto_id,
+                Inventario.tienda_id == tienda_id,
+            )
+            .values(stock_actual=cantidad)
+        )
         # Etapa 2: sincronizar lotes FIFO al ajustar stock
-        diferencia = cantidad - inv.stock_actual
-        inv.stock_actual = cantidad
+        diferencia = cantidad - stock_antes
         if diferencia > 0:
             # Stock aumentó → lote de ajuste positivo
             agregar_lote(db, producto_id, tienda_id, diferencia, usuario_id)
         elif diferencia < 0:
             # Stock disminuyó → consumir diferencia de lotes más antiguos
             consumir_fifo(db, producto_id, tienda_id, abs(diferencia))
+
+    # Re-fetch to get the updated value for audit and return
+    db.flush()
+    inv = db.query(Inventario).filter(
+        Inventario.producto_id == producto_id,
+        Inventario.tienda_id == tienda_id
+    ).first()
 
     mov = MovimientoInventario(
         producto_id=producto_id, tienda_id=tienda_id, tipo=tipo,
@@ -123,7 +158,7 @@ def get_lotes(db: Session, tienda_id: int, producto_id: int):
 
 
 def get_alertas(db: Session, tienda_id: int):
-    items = db.query(Inventario).filter(
+    items = db.query(Inventario).options(joinedload(Inventario.producto)).filter(
         Inventario.tienda_id == tienda_id,
         Inventario.stock_actual <= Inventario.stock_minimo
     ).all()

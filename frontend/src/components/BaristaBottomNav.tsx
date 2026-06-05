@@ -131,7 +131,7 @@ export default function BaristaBottomNav({ alertaBadge }: Props) {
                   <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${bg}`}>
                     <Icon size={17} className={color} />
                   </div>
-                  <span className="text-[9px] font-semibold text-warm-500 text-center leading-tight px-0.5">
+                  <span className="text-xs font-semibold text-warm-500 text-center leading-tight px-0.5">
                     {label}
                   </span>
                 </button>

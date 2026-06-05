@@ -92,7 +92,13 @@ function InventarioAdmin() {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [])
+  const POLL_MS = 30_000
+
+  useEffect(() => {
+    load()
+    const id = setInterval(load, POLL_MS)
+    return () => clearInterval(id)
+  }, [])
 
   // ── Stock actions ─────────────────────────────────────────────────────────────
   const registrar = async () => {
@@ -502,7 +508,13 @@ function InventarioBarista() {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [user])
+  const POLL_MS = 30_000
+
+  useEffect(() => {
+    load()
+    const id = setInterval(load, POLL_MS)
+    return () => clearInterval(id)
+  }, [user])
 
   const registrar = async () => {
     if (!selected || !user?.tienda_id) return
@@ -515,7 +527,11 @@ function InventarioBarista() {
       setCantidad(''); setMotivo(''); setSelected(null)
       load()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Error')
+      const detail: string = e.response?.data?.detail || ''
+      const isInsuficiente = e.response?.status === 400 && detail.toLowerCase().includes('insuficiente')
+      setError(isInsuficiente
+        ? 'Stock insuficiente. Los datos se actualizaron — verificá el stock actual.'
+        : detail || 'Error')
     } finally { setSaving(false) }
   }
 

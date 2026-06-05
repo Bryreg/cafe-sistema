@@ -3,25 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
-import { ArrowRight, AlertTriangle, Plus, Minus, ChevronDown, ChevronUp, Coins, LogOut } from 'lucide-react'
+import { ArrowRight, AlertTriangle, ChevronDown, ChevronUp, Coins, LogOut } from 'lucide-react'
+import { dark } from '../constants/darkTheme'
+import FilaDenom from '../components/FilaDenom'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
-
-const dark = {
-  bg:         'oklch(10% 0.005 60)',
-  surface:    'oklch(14% 0.008 60)',
-  surfaceAlt: 'oklch(17% 0.008 60)',
-  border:     'oklch(22% 0.01 60)',
-  ink:        'oklch(94% 0.005 60)',
-  inkMuted:   'oklch(60% 0.01 60)',
-  inkSubtle:  'oklch(40% 0.01 60)',
-  amber:      'oklch(82% 0.13 75)',
-  amberDim:   'oklch(68% 0.14 65)',
-  green:      'oklch(78% 0.13 155)',
-  greenDim:   'oklch(48% 0.12 155)',
-  danger:     'oklch(75% 0.16 25)',
-  dangerDim:  'oklch(45% 0.16 25)',
-}
 
 const MONEDAS = [
   { valor: 50,    label: '$50'    },
@@ -39,64 +25,6 @@ const BILLETES = [
   { valor: 100000, label: '$100.000' },
 ]
 
-function FilaDenom({ valor, label, isBillete, cantidad, onChange }: {
-  valor: number; label: string; isBillete: boolean; cantidad: number; onChange: (n: number) => void
-}) {
-  const subtotal = valor * cantidad
-  return (
-    <div className="flex items-center gap-3 px-4 py-2.5 transition-colors" style={{
-      background: cantidad > 0
-        ? (isBillete ? 'oklch(18% 0.05 155 / 0.6)' : 'oklch(18% 0.05 70 / 0.6)')
-        : 'transparent',
-    }}>
-      <div className="w-16 shrink-0 text-center py-1 rounded-lg text-[11px] font-bold" style={{
-        background: isBillete ? 'oklch(26% 0.07 155)' : 'oklch(26% 0.07 65)',
-        color: isBillete ? dark.green : dark.amber,
-      }}>
-        {label}
-      </div>
-      <div className="flex items-center gap-2 flex-1 justify-center">
-        <button
-          onClick={() => onChange(Math.max(0, cantidad - 1))}
-          disabled={cantidad === 0}
-          className="w-9 h-9 rounded-xl flex items-center justify-center transition-colors"
-          style={{ background: dark.surfaceAlt, color: dark.inkMuted, opacity: cantidad === 0 ? 0.3 : 1 }}
-        >
-          <Minus size={13} />
-        </button>
-        <input
-          type="number"
-          value={cantidad === 0 ? '' : cantidad}
-          onChange={e => onChange(Math.max(0, parseInt(e.target.value) || 0))}
-          placeholder="0"
-          inputMode="numeric"
-          className="w-14 text-center rounded-xl py-1.5 text-base font-bold outline-none"
-          style={{
-            background: dark.surface,
-            border: `2px solid ${dark.border}`,
-            color: dark.ink,
-            fontFamily: '"JetBrains Mono", monospace',
-          }}
-          onFocus={e => (e.target.style.borderColor = dark.amberDim)}
-          onBlur={e => (e.target.style.borderColor = dark.border)}
-        />
-        <button
-          onClick={() => onChange(cantidad + 1)}
-          className="w-9 h-9 rounded-xl flex items-center justify-center transition-colors"
-          style={{ background: dark.amberDim, color: dark.bg }}
-        >
-          <Plus size={13} />
-        </button>
-      </div>
-      <div className="w-[88px] text-right shrink-0" style={{ fontFamily: '"JetBrains Mono", monospace' }}>
-        {subtotal > 0
-          ? <span className="text-sm font-semibold" style={{ color: dark.amber }}>{fmt(subtotal)}</span>
-          : <span className="text-xs" style={{ color: dark.inkSubtle }}>—</span>
-        }
-      </div>
-    </div>
-  )
-}
 
 function ContadorEfectivo({ onTotal }: { onTotal: (total: number) => void }) {
   const [cantidades, setCantidades] = useState<Record<number, number>>({})
@@ -410,12 +338,13 @@ export default function Apertura() {
           background: dark.surface, border: `1px solid ${dark.border}`,
         }}>
           <div>
-            <label className="text-xs font-bold uppercase tracking-wide block mb-2" style={{ color: dark.inkMuted }}>
+            <label htmlFor="total-caja" className="text-xs font-bold uppercase tracking-wide block mb-2" style={{ color: dark.inkMuted }}>
               Total en caja
             </label>
             <div className="relative">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold" style={{ color: dark.inkSubtle }}>$</span>
               <input
+                id="total-caja"
                 type="number"
                 inputMode="numeric"
                 value={baseReal}
@@ -480,8 +409,9 @@ export default function Apertura() {
       </div>
 
       {/* CTA sticky */}
-      <div className="fixed bottom-0 left-0 right-0 p-4 max-w-md mx-auto" style={{
+      <div className="fixed bottom-0 left-0 right-0 px-4 pt-4 max-w-md mx-auto" style={{
         background: `linear-gradient(to top, ${dark.bg} 70%, transparent)`,
+        paddingBottom: 'env(safe-area-inset-bottom, 16px)',
       }}>
         <button
           onClick={abrir}

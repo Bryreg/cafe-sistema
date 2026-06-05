@@ -86,6 +86,7 @@ export default function Hub() {
   const [showMasTools, setShowMasTools] = useState(false)
   const [pendienteConsig, setPendienteConsig] = useState<{ items: PendienteConsignacion[], total_pendiente: number } | null>(null)
   const [, setTick] = useState(0)
+  const [loadError, setLoadError] = useState(false)
 
   // Reloj + elapsed time refresh
   useEffect(() => {
@@ -93,14 +94,22 @@ export default function Hub() {
     return () => clearInterval(t)
   }, [])
 
+  const loadAlertas = () => {
+    if (!user?.tienda_id) return
+    api.get(`/inventario/alertas/${user.tienda_id}`)
+      .then(r => setAlertas(r.data))
+      .catch(e => console.error(e))
+  }
+
   // Carga inicial
   useEffect(() => {
     if (!user?.tienda_id) return
-    api.get(`/inventario/alertas/${user.tienda_id}`).then(r => setAlertas(r.data)).catch(() => null)
-    api.get(`/dashboard/${user.tienda_id}`).then(r => setLimpiezaDiaria(r.data.limpieza_check)).catch(() => null)
-    api.get(`/consignaciones/pendiente/${user.tienda_id}`).then(r => setPendienteConsig(r.data)).catch(() => null)
+    const handleError = (e: unknown) => { console.error(e); setLoadError(true) }
+    loadAlertas()
+    api.get(`/dashboard/${user.tienda_id}`).then(r => setLimpiezaDiaria(r.data.limpieza_check)).catch(handleError)
+    api.get(`/consignaciones/pendiente/${user.tienda_id}`).then(r => setPendienteConsig(r.data)).catch(handleError)
     refresh()
-    api.get('/comunicados/mis-comunicados').then(r => setComunicados(r.data)).catch(() => null)
+    api.get('/comunicados/mis-comunicados').then(r => setComunicados(r.data)).catch(handleError)
 
     const sessionKey = `impulso_visto_${user.tienda_id}`
     if (!sessionStorage.getItem(sessionKey)) {
@@ -109,8 +118,16 @@ export default function Hub() {
           if (r.data.length > 0) { setImpulso(r.data); setShowImpulso(true) }
           sessionStorage.setItem(sessionKey, '1')
         })
-        .catch(() => null)
+        .catch(e => console.error(e))
     }
+  }, [user?.tienda_id])  // eslint-disable-line
+
+  // Polling de alertas de stock
+  const ALERTS_POLL_MS = 60_000
+
+  useEffect(() => {
+    const id = setInterval(loadAlertas, ALERTS_POLL_MS)
+    return () => clearInterval(id)
   }, [user?.tienda_id])  // eslint-disable-line
 
   // Movimientos
@@ -193,6 +210,21 @@ export default function Hub() {
           </button>
         </div>
       </header>
+
+      {/* ── Error banner ──────────────────────────────────────────────── */}
+      {loadError && (
+        <div className="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold"
+          style={{ background: 'oklch(97% 0.015 25)', borderBottom: '1px solid oklch(88% 0.06 25)', color: 'oklch(45% 0.16 25)' }}>
+          <AlertTriangle size={13} />
+          Error al cargar datos. Intentá de nuevo.
+          <button
+            onClick={() => { setLoadError(false); window.location.reload() }}
+            className="ml-auto underline font-bold"
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
 
       {/* ── Scroll content ──────────────────────────────────────────────── */}
       <div className="flex-1 pb-nav" style={{ padding: '0 16px 16px' }}>

@@ -59,10 +59,16 @@ export default function Mermas() {
       setMermas(mermasRes.data)
       setSedes(sedesRes.data)
       setTraslados(trasladosRes.data)
-    } catch { /* silencioso */ }
+    } catch (e) { console.error('Error al cargar datos de mermas:', e) }
   }
 
-  useEffect(() => { load() }, [user?.tienda_id])
+  const POLL_MS = 30_000
+
+  useEffect(() => {
+    load()
+    const id = setInterval(load, POLL_MS)
+    return () => clearInterval(id)
+  }, [user?.tienda_id])
 
   const selected = items.find(i => i.producto_id === productoId)
   const sedesDestino = sedes.filter(s => s.id !== user?.tienda_id)

@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
+from collections import defaultdict
+from time import time
 from app.database import get_db
 from app.schemas.auth import LoginRequest, LoginPinRequest, RegisterRequest, TokenResponse, UsuarioPublic, UsuarioAdmin, ActualizarUsuario, SetPinRequest
 from app.models.models import Usuario, Tienda
@@ -9,6 +11,23 @@ from app.core.security import verify_password, hash_password, create_access_toke
 from app.core.deps import require_admin, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# ─── PIN brute-force protection (in-memory, resets on restart) ────────────────
+_pin_attempts: dict[int, list[float]] = defaultdict(list)
+MAX_ATTEMPTS = 5
+WINDOW_SECONDS = 900  # 15 minutes
+
+
+def _check_rate_limit(user_id: int) -> None:
+    now = time()
+    attempts = [t for t in _pin_attempts[user_id] if now - t < WINDOW_SECONDS]
+    _pin_attempts[user_id] = attempts
+    if len(attempts) >= MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiados intentos. Intentá en 15 minutos.",
+        )
+    _pin_attempts[user_id].append(now)
 
 
 @router.post("/seleccionar-sede", response_model=TokenResponse)
@@ -56,8 +75,11 @@ def login_pin(data: LoginPinRequest, db: Session = Depends(get_db)):
     user = db.query(Usuario).filter(Usuario.id == data.user_id, Usuario.activo == True).first()
     if not user or not user.pin_hash:
         raise HTTPException(status_code=401, detail="PIN no configurado")
+    _check_rate_limit(user.id)
     if not verify_password(data.pin, user.pin_hash):
         raise HTTPException(status_code=401, detail="PIN incorrecto")
+    # Successful login: clear failed attempts
+    _pin_attempts[user.id] = []
     user.ultimo_acceso = datetime.utcnow()
     db.commit()
     token = create_access_token({"sub": str(user.id)})
@@ -65,6 +87,12 @@ def login_pin(data: LoginPinRequest, db: Session = Depends(get_db)):
         access_token=token, rol=user.rol.value,
         nombre=user.nombre, tienda_id=user.tienda_id, user_id=user.id
     )
+
+
+@router.post("/logout")
+def logout():
+    """Stateless logout — client must discard the token from storage."""
+    return {"message": "Logged out"}
 
 
 @router.get("/me")

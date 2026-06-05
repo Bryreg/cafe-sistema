@@ -3,24 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
 import { AlertTriangle, Camera, Check, ChevronLeft, Lock, X } from 'lucide-react'
+import { dark } from '../constants/darkTheme'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 const fmtSigned = (v: number) => (v === 0 ? '$0' : (v > 0 ? '+' : '') + fmt(Math.abs(v)))
-
-const dark = {
-  bg:         'oklch(10% 0.005 60)',
-  surface:    'oklch(14% 0.008 60)',
-  border:     'oklch(22% 0.01 60)',
-  ink:        'oklch(94% 0.005 60)',
-  inkMuted:   'oklch(60% 0.01 60)',
-  inkSubtle:  'oklch(40% 0.01 60)',
-  amber:      'oklch(82% 0.13 75)',
-  amberDim:   'oklch(68% 0.14 65)',
-  green:      'oklch(78% 0.13 155)',
-  greenDim:   'oklch(48% 0.12 155)',
-  danger:     'oklch(75% 0.16 25)',
-  dangerDim:  'oklch(45% 0.16 25)',
-}
 
 function StepHeader({ n, title, done, active }: { n: number; title: string; done: boolean; active: boolean }) {
   return (
@@ -173,8 +159,9 @@ export default function Entrega() {
           <StepHeader n={1} title="Cuenta el efectivo" done={step1Done} active={currentStep === 1} />
           <div className="rounded-xl px-4 py-3 flex items-center justify-between gap-3"
             style={{ background: dark.surface, border: `1px solid ${currentStep === 1 ? dark.amberDim : dark.border}` }}>
-            <span className="text-[12px]" style={{ color: dark.inkMuted }}>Efectivo real en caja</span>
+            <label htmlFor="entrega-efectivo" className="text-[12px]" style={{ color: dark.inkMuted }}>Efectivo real en caja</label>
             <input
+              id="entrega-efectivo"
               type="number" inputMode="numeric"
               value={efectivoReal} onChange={e => setEfectivoReal(e.target.value)}
               placeholder="0"
@@ -209,12 +196,13 @@ export default function Entrega() {
           <div className="rounded-xl px-4 py-3 flex items-center justify-between gap-3"
             style={{ background: dark.surface, border: `1px solid ${currentStep === 2 ? dark.amberDim : dark.border}` }}>
             <div>
-              <p className="text-[12px]" style={{ color: dark.inkMuted }}>Ventas efectivo Siigo</p>
+              <label htmlFor="entrega-siigo" className="text-[12px]" style={{ color: dark.inkMuted }}>Ventas efectivo Siigo</label>
               <p className="text-[10px] mt-0.5" style={{ color: dark.inkSubtle }}>
                 Sistema: {fmt(turno.total_efectivo ?? 0)}
               </p>
             </div>
             <input
+              id="entrega-siigo"
               type="number" inputMode="numeric"
               value={ventasEfectivoSiigo} onChange={e => setVentasEfectivoSiigo(e.target.value)}
               placeholder="$ ___"
@@ -249,12 +237,13 @@ export default function Entrega() {
           <div className="rounded-xl px-4 py-3 flex items-center justify-between gap-3"
             style={{ background: dark.surface, border: `1px solid ${currentStep === 3 ? dark.amberDim : dark.border}` }}>
             <div>
-              <p className="text-[12px] font-semibold" style={{ color: dark.ink }}>Ventas tarjeta Bold</p>
+              <label htmlFor="entrega-bold" className="text-[12px] font-semibold" style={{ color: dark.ink }}>Ventas tarjeta Bold</label>
               <p className="text-[10px] mt-0.5" style={{ color: dark.inkSubtle }}>
                 Sistema: {fmt(turno.total_tarjeta ?? 0)}
               </p>
             </div>
             <input
+              id="entrega-bold"
               type="number" inputMode="numeric"
               value={ventasTarjetaBold} onChange={e => setVentasTarjetaBold(e.target.value)}
               placeholder="$ ___"
@@ -320,10 +309,11 @@ export default function Entrega() {
       </div>
 
       {/* CTA sticky */}
-      <div className="fixed bottom-0 left-0 right-0 px-4 pb-8 pt-3"
+      <div className="fixed bottom-0 left-0 right-0 px-4 pt-3"
         style={{
           background: `linear-gradient(to top, ${dark.bg} 70%, transparent)`,
           borderTop: `1px solid ${dark.border}`,
+          paddingBottom: 'env(safe-area-inset-bottom, 16px)',
         }}>
         {!siigoCuadra && ventasEfectivoSiigo.trim() !== '' && (
           <p className="text-center text-[11px] mb-2" style={{ color: dark.danger }}>

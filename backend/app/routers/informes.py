@@ -221,9 +221,28 @@ def siigo_ventas(
     return query_ventas_siigo(db, filtro)
 
 
+def _extraer_filas_csv(tipo: str, data: dict) -> list[dict]:
+    """Normaliza la respuesta de cada reporte a una lista plana de filas para CSV."""
+    if tipo == "movimientos":
+        return data.get("movimientos", [])
+    if tipo == "kpi-mermas":
+        # Aplanar top_productos (lista de productos con mayor cantidad de mermas)
+        return [
+            {
+                "nombre": p.get("nombre", ""),
+                "unidad": p.get("unidad", ""),
+                "tipo": p.get("tipo", ""),
+                "cantidad": p.get("cantidad", 0),
+                "n_registros": p.get("n", 0),
+            }
+            for p in data.get("top_productos", [])
+        ]
+    return data.get("filas", [])
+
+
 @router.get("/export")
 def export_csv(
-    tipo: str = Query(..., description="ventas | mermas | inventario | turnos | entregas"),
+    tipo: str = Query(..., description="ventas | mermas | inventario | turnos | entregas | baristas | rotacion | movimientos | kpi-mermas"),
     tienda_id: int = Query(...),
     fecha_desde: date = Query(...),
     fecha_hasta: date = Query(...),
@@ -234,7 +253,7 @@ def export_csv(
     db: Session = Depends(get_db),
     user: Usuario = Depends(require_admin),
 ):
-    """Export report as CSV with optional cross-filtering."""
+    """Exporta un informe como CSV. Soporta filtros opcionales."""
     ensure_tienda_access(user, tienda_id)
     filtro = _build_filtro(tienda_id, fecha_desde, fecha_hasta, categoria, turno_id, producto_search, con_descuento)
     fn_map = {
@@ -243,12 +262,16 @@ def export_csv(
         "inventario": svc.reporte_inventario_consumido,
         "turnos": svc.reporte_turnos,
         "entregas": svc.reporte_entregas,
+        "baristas": svc.reporte_baristas,
+        "rotacion": svc.reporte_rotacion,
+        "movimientos": svc.reporte_movimientos,
+        "kpi-mermas": svc.kpi_mermas,
     }
     if tipo not in fn_map:
         raise HTTPException(status_code=400, detail=f"tipo inválido. Opciones: {list(fn_map)}")
 
     data = fn_map[tipo](db, tienda_id, fecha_desde, fecha_hasta, filtro=filtro)
-    filas = data.get("filas", [])
+    filas = _extraer_filas_csv(tipo, data)
 
     output = io.StringIO()
     if filas:

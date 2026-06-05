@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum as SAEnum, Date, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum as SAEnum, Date, UniqueConstraint, Numeric
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -59,6 +59,12 @@ class TipoPagoEnum(str, enum.Enum):
     transferencia = "transferencia"
 
 
+class TipoMermaEnum(str, enum.Enum):
+    consumo = "consumo"
+    traslado = "traslado"
+    dano = "daño"
+
+
 class Tienda(Base):
     __tablename__ = "tiendas"
     id = Column(Integer, primary_key=True)
@@ -90,35 +96,44 @@ class Usuario(Base):
     password_hash = Column(String(255), nullable=False)
     pin_hash = Column(String(255), nullable=True)
     rol = Column(SAEnum(RolEnum), nullable=False, default=RolEnum.barista)
-    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="RESTRICT"), nullable=True)
     activo = Column(Boolean, default=True)
     ultimo_acceso = Column(DateTime, nullable=True)   # Etapa 9: seguridad
     tienda = relationship("Tienda", back_populates="usuarios")
+    movimientos_caja = relationship("MovimientoCaja", back_populates="usuario")
+    movimientos_inv = relationship("MovimientoInventario", back_populates="usuario")
+    ventas_diarias = relationship("VentaDiaria", back_populates="usuario")
+    conteos_fisicos = relationship("ConteoFisico", back_populates="usuario")
+    mermas = relationship("Merma", back_populates="usuario")
+    entregas_turno = relationship("EntregaTurno", back_populates="usuario")
+    pastelerias = relationship("PasteleriaDiaria", back_populates="usuario")
+    consignaciones = relationship("Consignacion", back_populates="usuario")
+    lotes_inventario = relationship("LoteInventario", back_populates="usuario")
 
 
 class CajaTurno(Base):
     __tablename__ = "caja_turnos"
     id = Column(Integer, primary_key=True)
-    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
-    usuario_apertura_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
-    usuario_cierre_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False, index=True)
+    usuario_apertura_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
+    usuario_cierre_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=True)
     fecha_apertura = Column(DateTime, default=datetime.utcnow)
     fecha_cierre = Column(DateTime, nullable=True)
-    base_sistema = Column(Float, default=0.0)
-    base_real = Column(Float, nullable=False)
-    diferencia_apertura = Column(Float, default=0.0)
+    base_sistema = Column(Numeric(12, 2), default=0.0)
+    base_real = Column(Numeric(12, 2), nullable=False)
+    diferencia_apertura = Column(Numeric(12, 2), default=0.0)
     justificacion_apertura = Column(Text, nullable=True)
     # Totales calculados automáticamente desde VentaDiaria
-    total_ventas = Column(Float, default=0.0)
-    total_efectivo = Column(Float, default=0.0)
-    total_tarjeta = Column(Float, default=0.0)
-    efectivo_final_real = Column(Float, nullable=True)   # total contado en caja al cierre
-    datafono_real = Column(Float, nullable=True)          # total datáfono Bold al cierre
-    diferencia_cierre = Column(Float, nullable=True)
-    diferencia_tarjeta = Column(Float, nullable=True)
-    consignaciones_deducidas = Column(Float, default=0.0, nullable=True)
+    total_ventas = Column(Numeric(12, 2), default=0.0)
+    total_efectivo = Column(Numeric(12, 2), default=0.0)
+    total_tarjeta = Column(Numeric(12, 2), default=0.0)
+    efectivo_final_real = Column(Numeric(12, 2), nullable=True)   # total contado en caja al cierre
+    datafono_real = Column(Numeric(12, 2), nullable=True)          # total datáfono Bold al cierre
+    diferencia_cierre = Column(Numeric(12, 2), nullable=True)
+    diferencia_tarjeta = Column(Numeric(12, 2), nullable=True)
+    consignaciones_deducidas = Column(Numeric(12, 2), default=0.0, nullable=True)
     justificacion_cierre = Column(Text, nullable=True)
-    estado = Column(SAEnum(EstadoTurnoEnum), default=EstadoTurnoEnum.abierto)
+    estado = Column(SAEnum(EstadoTurnoEnum), default=EstadoTurnoEnum.abierto, index=True)
     # Flags de flujo obligatorio — solo el backend las activa
     tiene_conteo_apertura = Column(Boolean, default=False)
     tiene_ventas = Column(Boolean, default=False)
@@ -139,15 +154,15 @@ class CajaTurno(Base):
 class MovimientoCaja(Base):
     __tablename__ = "movimientos_caja"
     id = Column(Integer, primary_key=True)
-    caja_turno_id = Column(Integer, ForeignKey("caja_turnos.id"), nullable=False)
+    caja_turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="RESTRICT"), nullable=False)
     tipo = Column(SAEnum(TipoMovCajaEnum), nullable=False)
     concepto = Column(String(200), nullable=False)
-    valor = Column(Float, nullable=False)
+    valor = Column(Numeric(12, 2), nullable=False)
     fecha = Column(DateTime, default=datetime.utcnow)
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
     imagen_url = Column(String(300), nullable=True)
     turno = relationship("CajaTurno", back_populates="movimientos")
-    usuario = relationship("Usuario")
+    usuario = relationship("Usuario", back_populates="movimientos_caja")
 
 
 class Producto(Base):
@@ -169,28 +184,31 @@ class Producto(Base):
 class Inventario(Base):
     __tablename__ = "inventario"
     id = Column(Integer, primary_key=True)
-    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
-    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False, index=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False, index=True)
     stock_actual = Column(Float, default=0.0)
     stock_minimo = Column(Float, default=0.0)
     producto = relationship("Producto", back_populates="inventarios")
     tienda = relationship("Tienda", back_populates="inventarios")
+    __table_args__ = (
+        UniqueConstraint("producto_id", "tienda_id", name="uq_inventario_producto_tienda"),
+    )
 
 
 class MovimientoInventario(Base):
     __tablename__ = "movimientos_inventario"
     id = Column(Integer, primary_key=True)
-    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
-    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id", ondelete="RESTRICT"), nullable=False, index=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="RESTRICT"), nullable=False, index=True)
     tipo = Column(SAEnum(TipoMovInvEnum), nullable=False)
     cantidad = Column(Float, nullable=False)
-    fecha = Column(DateTime, default=datetime.utcnow)
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    fecha = Column(DateTime, default=datetime.utcnow, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
     motivo = Column(String(200), nullable=True)
     siigo_sync_key = Column(String, nullable=True)
     producto = relationship("Producto", back_populates="movimientos_inv")
     tienda = relationship("Tienda", back_populates="movimientos_inv")
-    usuario = relationship("Usuario")
+    usuario = relationship("Usuario", back_populates="movimientos_inv")
 
 
 class LoteInventario(Base):
@@ -206,7 +224,7 @@ class LoteInventario(Base):
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     producto = relationship("Producto", back_populates="lotes")
     tienda = relationship("Tienda", back_populates="lotes")
-    usuario = relationship("Usuario")
+    usuario = relationship("Usuario", back_populates="lotes_inventario")
 
 
 class VentaDiaria(Base):
@@ -214,17 +232,17 @@ class VentaDiaria(Base):
     __tablename__ = "ventas_diarias"
     id = Column(Integer, primary_key=True)
     tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
-    turno_id = Column(Integer, ForeignKey("caja_turnos.id"), nullable=False)
-    venta_total = Column(Float, nullable=False)
-    nota_credito = Column(Float, default=0.0)
-    vales = Column(Float, default=0.0)
-    tarjetas = Column(Float, default=0.0)
-    efectivo_calculado = Column(Float, nullable=False)  # venta_total - nota_credito - vales - tarjetas
-    fecha_registro = Column(DateTime, default=datetime.utcnow)
+    turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="RESTRICT"), nullable=False, index=True)
+    venta_total = Column(Numeric(12, 2), nullable=False)
+    nota_credito = Column(Numeric(12, 2), default=0.0)
+    vales = Column(Numeric(12, 2), default=0.0)
+    tarjetas = Column(Numeric(12, 2), default=0.0)
+    efectivo_calculado = Column(Numeric(12, 2), nullable=False)  # venta_total - nota_credito - vales - tarjetas
+    fecha_registro = Column(DateTime, default=datetime.utcnow, index=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     nota = Column(String(300), nullable=True)
     turno = relationship("CajaTurno", back_populates="ventas")
-    usuario = relationship("Usuario")
+    usuario = relationship("Usuario", back_populates="ventas_diarias")
 
 
 class ConteoFisico(Base):
@@ -232,13 +250,16 @@ class ConteoFisico(Base):
     __tablename__ = "conteos_fisicos"
     id = Column(Integer, primary_key=True)
     tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
-    turno_id = Column(Integer, ForeignKey("caja_turnos.id"), nullable=False)
+    turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="RESTRICT"), nullable=False)
     tipo = Column(SAEnum(TipoConteoEnum), nullable=False)
     fecha_registro = Column(DateTime, default=datetime.utcnow)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     turno = relationship("CajaTurno", back_populates="conteos")
-    usuario = relationship("Usuario")
+    usuario = relationship("Usuario", back_populates="conteos_fisicos")
     items = relationship("ConteoFisicoItem", back_populates="conteo", cascade="all, delete-orphan")
+    __table_args__ = (
+        UniqueConstraint("turno_id", "tipo", name="uq_conteo_turno_tipo"),
+    )
 
 
 class ConteoFisicoItem(Base):
@@ -261,7 +282,7 @@ class Merma(Base):
     producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
     cantidad = Column(Float, nullable=False)
     motivo = Column(String(300), nullable=False)
-    tipo = Column(String(20), default="consumo", nullable=False)   # consumo | traslado | daño
+    tipo = Column(SAEnum(TipoMermaEnum), default=TipoMermaEnum.consumo, nullable=False)
     tienda_destino_id = Column(Integer, ForeignKey("tiendas.id"), nullable=True)
     recibido = Column(Boolean, default=False, nullable=False)
     fecha_recibido = Column(DateTime, nullable=True)
@@ -270,7 +291,7 @@ class Merma(Base):
     tienda = relationship("Tienda", back_populates="mermas", foreign_keys=[tienda_id])
     tienda_destino = relationship("Tienda", foreign_keys=[tienda_destino_id])
     producto = relationship("Producto", back_populates="mermas")
-    usuario = relationship("Usuario")
+    usuario = relationship("Usuario", back_populates="mermas")
 
 
 class SolicitudPedido(Base):
@@ -313,7 +334,7 @@ class SolicitudSencilla(Base):
     tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
     fecha_solicitud = Column(DateTime, default=datetime.utcnow)
     estado = Column(SAEnum(EstadoSolicitudEnum), default=EstadoSolicitudEnum.pendiente)
-    monto_solicitado = Column(Float, nullable=False)
+    monto_solicitado = Column(Numeric(12, 2), nullable=False)
     motivo = Column(String(300), nullable=False)
     detalle = Column(Text, nullable=True)  # JSON: [{label, valor, cantidad, subtotal}]
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
@@ -332,16 +353,16 @@ class EntregaTurno(Base):
     tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     fecha_hora = Column(DateTime, default=datetime.utcnow)
-    efectivo_esperado = Column(Float, nullable=False)
-    efectivo_real = Column(Float, nullable=False)
-    ventas_efectivo_siigo = Column(Float, nullable=False)
-    ventas_tarjeta_bold = Column(Float, nullable=False)
-    diferencia_efectivo = Column(Float, nullable=False)
-    diferencia_tarjeta = Column(Float, nullable=False)
+    efectivo_esperado = Column(Numeric(12, 2), nullable=False)
+    efectivo_real = Column(Numeric(12, 2), nullable=False)
+    ventas_efectivo_siigo = Column(Numeric(12, 2), nullable=False)
+    ventas_tarjeta_bold = Column(Numeric(12, 2), nullable=False)
+    diferencia_efectivo = Column(Numeric(12, 2), nullable=False)
+    diferencia_tarjeta = Column(Numeric(12, 2), nullable=False)
     imagen_url = Column(String(300), nullable=True)
     tipo = Column(String(20), default="entrega", nullable=False, server_default="entrega")
     turno = relationship("CajaTurno", back_populates="entregas")
-    usuario = relationship("Usuario")
+    usuario = relationship("Usuario", back_populates="entregas_turno")
 
 
 class PasteleriaDiaria(Base):
@@ -358,22 +379,22 @@ class PasteleriaDiaria(Base):
     activo = Column(Boolean, default=True)
     tienda = relationship("Tienda", back_populates="pastelerias")
     producto = relationship("Producto", back_populates="pastelerias")
-    usuario = relationship("Usuario")
+    usuario = relationship("Usuario", back_populates="pastelerias")
 
 
 class Consignacion(Base):
     __tablename__ = "consignaciones"
     id = Column(Integer, primary_key=True)
     tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
-    caja_turno_id = Column(Integer, ForeignKey("caja_turnos.id"), nullable=True)
+    caja_turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="RESTRICT"), nullable=True)
     fecha = Column(DateTime, default=datetime.utcnow)
-    valor = Column(Float, nullable=False)
+    valor = Column(Numeric(12, 2), nullable=False)
     imagen_url = Column(String(300), nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     estado = Column(SAEnum(EstadoConsignacionEnum), default=EstadoConsignacionEnum.pendiente)
     tienda = relationship("Tienda", back_populates="consignaciones")
     turno = relationship("CajaTurno", foreign_keys=[caja_turno_id])
-    usuario = relationship("Usuario")
+    usuario = relationship("Usuario", back_populates="consignaciones")
 
 
 class ChecklistDiario(Base):
@@ -408,7 +429,7 @@ class Mantenimiento(Base):
     titulo = Column(String(200), nullable=False)
     descripcion = Column(Text, nullable=True)
     fecha_realizado = Column(DateTime, nullable=False)
-    costo = Column(Float, nullable=True)
+    costo = Column(Numeric(12, 2), nullable=True)
     tecnico = Column(String(150), nullable=True)
     imagen_url = Column(String(300), nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
@@ -503,7 +524,7 @@ class AuditLog(Base):
     registro_id = Column(Integer, nullable=True)
     datos_antes = Column(Text, nullable=True)         # JSON serializado
     datos_despues = Column(Text, nullable=True)       # JSON serializado
-    fecha = Column(DateTime, default=datetime.utcnow)
+    fecha = Column(DateTime, default=datetime.utcnow, index=True)
     usuario = relationship("Usuario")
 
 
@@ -527,7 +548,7 @@ class Receta(Base):
     id           = Column(Integer, primary_key=True)
     nombre       = Column(String(150), nullable=False)
     categoria    = Column(String(50), nullable=False, default="bebida")  # bebida | pasteleria | comida
-    precio_venta = Column(Float, nullable=True)   # precio de venta para calcular food cost %
+    precio_venta = Column(Numeric(12, 2), nullable=True)   # precio de venta para calcular food cost %
     activa       = Column(Boolean, default=True)
     created_at   = Column(DateTime, default=datetime.utcnow)
     ingredientes = relationship("RecetaIngrediente", back_populates="receta", cascade="all, delete-orphan")
@@ -547,11 +568,11 @@ class Notificacion(Base):
     """Etapa 7: Notificaciones operativas internas para el admin."""
     __tablename__ = "notificaciones"
     id = Column(Integer, primary_key=True)
-    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False, index=True)
     tipo = Column(String(50), nullable=False)         # "diferencia_caja", "inventario_critico", ...
     mensaje = Column(String(300), nullable=False)
     nivel = Column(String(20), default="info")        # "info", "advertencia", "critico"
-    leida = Column(Boolean, default=False)
+    leida = Column(Boolean, default=False, index=True)
     fecha = Column(DateTime, default=datetime.utcnow)
     referencia_id = Column(Integer, nullable=True)    # turno_id, producto_id, etc.
     tienda = relationship("Tienda", back_populates="notificaciones")
@@ -590,6 +611,9 @@ class ComunicadoLeido(Base):
 
     comunicado  = relationship("Comunicado", back_populates="leidos")
     usuario     = relationship("Usuario")
+    __table_args__ = (
+        UniqueConstraint("comunicado_id", "usuario_id", name="uq_comunicado_leido"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -604,7 +628,7 @@ class FacturaCompra(Base):
     numero_factura = Column(String(100), nullable=True)
     numero_lote = Column(String(100), nullable=True)
     fecha_recibido = Column(DateTime, nullable=False)
-    valor_total = Column(Float, nullable=False)
+    valor_total = Column(Numeric(12, 2), nullable=False)
     tipo_pago = Column(SAEnum(TipoPagoEnum), nullable=False)
     imagen_url = Column(String(300), nullable=True)
     fecha_registro = Column(DateTime, default=datetime.utcnow)
@@ -620,7 +644,7 @@ class FacturaCompraItem(Base):
     factura_id = Column(Integer, ForeignKey("facturas_compra.id"), nullable=False)
     producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
     cantidad = Column(Float, nullable=False)
-    precio_unitario = Column(Float, nullable=True)
+    precio_unitario = Column(Numeric(12, 2), nullable=True)
     numero_lote = Column(String(100), nullable=True)
     fecha_vencimiento = Column(DateTime, nullable=True)
     factura = relationship("FacturaCompra", back_populates="items")
@@ -671,11 +695,11 @@ class SiigoVentaItem(Base):
     codigo_producto = Column(String, nullable=False)
     descripcion = Column(String, nullable=False, default="")
     cantidad = Column(Float, nullable=False, default=0.0)
-    precio_unitario = Column(Float, nullable=False, default=0.0)
-    total_sin_descuento = Column(Float, nullable=False, default=0.0)
+    precio_unitario = Column(Numeric(12, 2), nullable=False, default=0.0)
+    total_sin_descuento = Column(Numeric(12, 2), nullable=False, default=0.0)
     descuento_porcentaje = Column(Float, nullable=True)
-    descuento_monto = Column(Float, nullable=True)
-    total_con_descuento = Column(Float, nullable=False, default=0.0)
+    descuento_monto = Column(Numeric(12, 2), nullable=True)
+    total_con_descuento = Column(Numeric(12, 2), nullable=False, default=0.0)
     siigo_factura_id = Column(String, nullable=False)
     turno_id = Column(Integer, ForeignKey("caja_turnos.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

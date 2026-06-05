@@ -3,26 +3,9 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
-  Coffee, LayoutDashboard, Package, Banknote, LogOut, Inbox,
-  BarChart2, ShoppingCart, Bell, Users, Menu, X, ClipboardList, Wrench, ClipboardCheck,
-  Activity, CheckCheck, Layers, Link2,
+  Coffee, LogOut, Bell, Menu, X, CheckCheck,
 } from 'lucide-react'
-
-const NAV_ADMIN = [
-  { to: '/dashboard',          label: 'Dashboard',     icon: LayoutDashboard },
-  { to: '/control-inventario', label: 'Inventario',    icon: Layers },
-  { to: '/pedidos-admin',      label: 'Pedidos',       icon: ClipboardList },
-  { to: '/compras',         label: 'Compras',          icon: ShoppingCart },
-  { to: '/consignaciones',  label: 'Consignaciones',   icon: Banknote },
-  { to: '/mantenimientos',  label: 'Mantenimientos',   icon: Wrench },
-  { to: '/auditorias',      label: 'Auditorías',       icon: ClipboardCheck },
-  { to: '/audit-log',       label: 'Historial',        icon: Activity },
-  { to: '/comunicados',     label: 'Comunicados',      icon: Bell },
-  { to: '/bandeja',         label: 'Bandeja',          icon: Inbox },
-  { to: '/informes',        label: 'Informes',         icon: BarChart2 },
-  { to: '/usuarios',        label: 'Usuarios',         icon: Users },
-  { to: '/siigo-mapeo',     label: 'Mapeo Siigo',      icon: Link2 },
-]
+import { NAV_ADMIN } from '../constants/nav'
 
 // ─── Notificaciones ──────────────────────────────────────────────────────────
 interface Notif {
@@ -53,7 +36,7 @@ function NotifBell({ tiendaId }: { tiendaId: number }) {
   const fetchNotifs = () => {
     api.get(`/notificaciones/${tiendaId}`)
       .then(r => setNotifs(r.data))
-      .catch(() => {})
+      .catch(e => console.error('Error al cargar notificaciones:', e))
   }
 
   useEffect(() => {
@@ -74,13 +57,13 @@ function NotifBell({ tiendaId }: { tiendaId: number }) {
   const marcarTodas = () => {
     api.patch(`/notificaciones/${tiendaId}/leer-todas`)
       .then(() => setNotifs(prev => prev.map(n => ({ ...n, leida: true }))))
-      .catch(() => {})
+      .catch(e => console.error('Error al marcar notificaciones:', e))
   }
 
   const marcarUna = (id: number) => {
     api.patch(`/notificaciones/${tiendaId}/${id}/leer`)
       .then(() => setNotifs(prev => prev.map(n => n.id === id ? { ...n, leida: true } : n)))
-      .catch(() => {})
+      .catch(e => console.error('Error al marcar notificación:', e))
   }
 
   return (

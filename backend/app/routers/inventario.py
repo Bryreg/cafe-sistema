@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.core.deps import ensure_tienda_access, get_current_user, require_admin
 from app.models.models import Usuario, Producto, Inventario, Tienda, CategoriaProductoEnum, LoteInventario
@@ -88,12 +88,24 @@ def actualizar_minimo(tienda_id: int, producto_id: int, data: StockMinimoUpdate,
 def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
     """Todos los productos con stock por tienda — para el panel de admin."""
     tiendas = db.query(Tienda).filter_by(activa=True).all()
+    tienda_ids = [t.id for t in tiendas]
     productos = db.query(Producto).order_by(Producto.categoria, Producto.nombre).all()
+
+    # Single query for all inventarios across all active stores — eliminates N×M loop
+    inventarios = (
+        db.query(Inventario)
+        .filter(Inventario.tienda_id.in_(tienda_ids))
+        .all()
+    )
+    inv_map: dict[tuple[int, int], Inventario] = {
+        (i.producto_id, i.tienda_id): i for i in inventarios
+    }
+
     result = []
     for p in productos:
         stocks = {}
         for t in tiendas:
-            inv = db.query(Inventario).filter_by(producto_id=p.id, tienda_id=t.id).first()
+            inv = inv_map.get((p.id, t.id))
             stocks[str(t.id)] = {
                 "stock_actual": inv.stock_actual if inv else 0,
                 "stock_minimo": inv.stock_minimo if inv else 0,
@@ -202,6 +214,7 @@ def pasteleria_impulso(tienda_id: int, db: Session = Depends(get_db),
     lotes_q = (
         db.query(LoteInventario)
         .join(Producto, LoteInventario.producto_id == Producto.id)
+        .options(joinedload(LoteInventario.producto))
         .filter(
             LoteInventario.tienda_id == tienda_id,
             LoteInventario.cantidad_restante > 0,

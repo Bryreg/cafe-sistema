@@ -1,0 +1,15 @@
+export const dark = {
+  bg:         'oklch(10% 0.005 60)',
+  surface:    'oklch(14% 0.008 60)',
+  surfaceAlt: 'oklch(17% 0.008 60)',
+  border:     'oklch(22% 0.01 60)',
+  ink:        'oklch(94% 0.005 60)',
+  inkMuted:   'oklch(60% 0.01 60)',
+  inkSubtle:  'oklch(40% 0.01 60)',
+  amber:      'oklch(82% 0.13 75)',
+  amberDim:   'oklch(68% 0.14 65)',
+  green:      'oklch(78% 0.13 155)',
+  greenDim:   'oklch(48% 0.12 155)',
+  danger:     'oklch(75% 0.16 25)',
+  dangerDim:  'oklch(45% 0.16 25)',
+}

@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
-import { AlertTriangle, Lock, ChevronLeft, Plus, Minus, ChevronDown, ChevronUp, Check, X } from 'lucide-react'
+import { AlertTriangle, Lock, ChevronLeft, ChevronDown, ChevronUp, Check, X } from 'lucide-react'
+import { dark } from '../constants/darkTheme'
+import FilaDenom from '../components/FilaDenom'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 
@@ -23,77 +25,6 @@ const MONEDAS = [
   { valor: 1000, label: '$1.000' },
 ]
 
-const dark = {
-  bg:         'oklch(10% 0.005 60)',
-  surface:    'oklch(14% 0.008 60)',
-  surfaceAlt: 'oklch(17% 0.008 60)',
-  border:     'oklch(22% 0.01 60)',
-  ink:        'oklch(94% 0.005 60)',
-  inkMuted:   'oklch(60% 0.01 60)',
-  inkSubtle:  'oklch(40% 0.01 60)',
-  amber:      'oklch(82% 0.13 75)',
-  amberDim:   'oklch(68% 0.14 65)',
-  green:      'oklch(78% 0.13 155)',
-  greenDim:   'oklch(48% 0.12 155)',
-  danger:     'oklch(75% 0.16 25)',
-  dangerDim:  'oklch(45% 0.16 25)',
-}
-
-function FilaDenom({ valor, label, isBillete, cantidad, onChange }: {
-  valor: number; label: string; isBillete: boolean; cantidad: number; onChange: (n: number) => void
-}) {
-  const subtotal = valor * cantidad
-  return (
-    <div className="flex items-center gap-3 px-4 py-2.5 transition-colors" style={{
-      background: cantidad > 0
-        ? (isBillete ? 'oklch(18% 0.05 155 / 0.6)' : 'oklch(18% 0.05 70 / 0.6)')
-        : 'transparent',
-    }}>
-      <div className="w-16 shrink-0 text-center py-1 rounded-lg text-[11px] font-bold" style={{
-        background: isBillete ? 'oklch(26% 0.07 155)' : 'oklch(26% 0.07 65)',
-        color: isBillete ? dark.green : dark.amber,
-      }}>
-        {label}
-      </div>
-      <div className="flex items-center gap-2 flex-1 justify-center">
-        <button
-          onClick={() => onChange(Math.max(0, cantidad - 1))}
-          disabled={cantidad === 0}
-          className="w-9 h-9 rounded-xl flex items-center justify-center transition-colors"
-          style={{ background: dark.surfaceAlt, color: dark.inkMuted, opacity: cantidad === 0 ? 0.3 : 1 }}
-        >
-          <Minus size={13} />
-        </button>
-        <input
-          type="number"
-          value={cantidad === 0 ? '' : cantidad}
-          onChange={e => onChange(Math.max(0, parseInt(e.target.value) || 0))}
-          placeholder="0"
-          inputMode="numeric"
-          className="w-14 text-center rounded-xl py-1.5 text-base font-bold outline-none"
-          style={{
-            background: dark.surface,
-            border: `2px solid ${dark.border}`,
-            color: dark.ink,
-            fontFamily: '"JetBrains Mono", monospace',
-          }}
-        />
-        <button
-          onClick={() => onChange(cantidad + 1)}
-          className="w-9 h-9 rounded-xl flex items-center justify-center"
-          style={{ background: dark.greenDim, color: '#fff' }}
-        >
-          <Plus size={13} />
-        </button>
-      </div>
-      <div className="w-20 text-right shrink-0" style={{ fontFamily: '"JetBrains Mono", monospace' }}>
-        {subtotal > 0
-          ? <span className="text-sm font-bold" style={{ color: dark.ink }}>{fmt(subtotal)}</span>
-          : <span className="text-xs" style={{ color: dark.inkSubtle }}>—</span>}
-      </div>
-    </div>
-  )
-}
 
 function PanelCuadre({ label, contado, sistema }: {
   label: string; contado: number; sistema: number
@@ -152,6 +83,7 @@ export default function Cierre() {
   const [justificacion, setJustificacion] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showConfirmModal, setShowConfirmModal] = useState(false)
 
   // Depende solo de los campos relevantes para navegación, NO del objeto completo.
   // Si dependiera de `turno`, el efecto se dispararía en cada poll de 15 s
@@ -211,6 +143,7 @@ export default function Cierre() {
           onClick={() => navigate('/hub')}
           className="w-7 h-7 rounded-lg flex items-center justify-center"
           style={{ background: 'rgba(255,255,255,0.06)', color: dark.inkMuted }}
+          aria-label="Volver"
         >
           <ChevronLeft size={16} />
         </button>
@@ -299,7 +232,7 @@ export default function Cierre() {
             {showBilletes && (
               <div style={{ borderTop: `1px solid ${dark.border}` }}>
                 {BILLETES.map(b => (
-                  <FilaDenom key={b.valor} valor={b.valor} label={b.label} isBillete cantidad={getB(b.valor)} onChange={n => setB(b.valor, n)} />
+                  <FilaDenom key={b.valor} valor={b.valor} label={b.label} isBillete cantidad={getB(b.valor)} onChange={n => setB(b.valor, n)} accentColor="green" />
                 ))}
               </div>
             )}
@@ -326,7 +259,7 @@ export default function Cierre() {
             {showMonedas && (
               <div style={{ borderTop: `1px solid ${dark.border}` }}>
                 {MONEDAS.map(m => (
-                  <FilaDenom key={m.valor} valor={m.valor} label={m.label} isBillete={false} cantidad={getM(m.valor)} onChange={n => setM(m.valor, n)} />
+                  <FilaDenom key={m.valor} valor={m.valor} label={m.label} isBillete={false} cantidad={getM(m.valor)} onChange={n => setM(m.valor, n)} accentColor="green" />
                 ))}
               </div>
             )}
@@ -359,8 +292,9 @@ export default function Cierre() {
           </div>
           <div className="rounded-xl px-4 py-3 flex items-center justify-between gap-3"
             style={{ background: dark.surfaceAlt, border: `1px solid ${datafonoDigitado ? dark.amberDim : dark.border}` }}>
-            <span className="text-[12px]" style={{ color: dark.inkMuted }}>Total datáfono</span>
+            <label htmlFor="total-datafono" className="text-[12px]" style={{ color: dark.inkMuted }}>Total datáfono</label>
             <input
+              id="total-datafono"
               type="number"
               value={datafono}
               onChange={e => setDatafono(e.target.value)}
@@ -462,13 +396,14 @@ export default function Cierre() {
       </div>
 
       {/* CTA sticky */}
-      <div className="fixed bottom-0 left-0 right-0 px-4 pb-8 pt-3"
+      <div className="fixed bottom-0 left-0 right-0 px-4 pt-3"
         style={{
           background: `linear-gradient(to top, ${dark.bg} 70%, transparent)`,
           borderTop: `1px solid ${dark.border}`,
+          paddingBottom: 'env(safe-area-inset-bottom, 16px)',
         }}>
         <button
-          onClick={canSubmit ? cerrar : undefined}
+          onClick={canSubmit ? () => setShowConfirmModal(true) : undefined}
           disabled={!canSubmit || loading}
           className="w-full py-4 rounded-2xl text-[15px] font-bold flex items-center justify-center gap-2 transition-all"
           style={{
@@ -484,6 +419,52 @@ export default function Cierre() {
           }
         </button>
       </div>
+
+      {/* Modal de confirmación de cierre */}
+      {showConfirmModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: 'rgba(0,0,0,0.7)' }}
+          onClick={() => setShowConfirmModal(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl p-6 space-y-4"
+            style={{ background: dark.surface, border: `1px solid ${dark.border}` }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="text-center">
+              <div className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3"
+                style={{ background: 'oklch(20% 0.06 155)' }}>
+                <Lock size={20} style={{ color: dark.green }} />
+              </div>
+              <p className="text-base font-bold" style={{ color: dark.ink }}>¿Cerrar turno?</p>
+              <p className="text-sm mt-1" style={{ color: dark.inkMuted }}>
+                Esta acción es irreversible. Los datos del turno quedarán registrados definitivamente.
+              </p>
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => setShowConfirmModal(false)}
+                className="flex-1 py-3 rounded-xl text-sm font-bold transition-colors"
+                style={{
+                  background: dark.surfaceAlt,
+                  border: `1px solid ${dark.border}`,
+                  color: dark.inkMuted,
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { setShowConfirmModal(false); cerrar() }}
+                className="flex-1 py-3 rounded-xl text-sm font-bold transition-colors"
+                style={{ background: dark.greenDim, color: '#fff' }}
+              >
+                Sí, cerrar turno
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

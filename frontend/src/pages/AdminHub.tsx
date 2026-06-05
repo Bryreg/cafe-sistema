@@ -6,27 +6,11 @@ import {
   Coffee, LogOut, Bell, ChevronRight, ChevronUp, ChevronDown,
   AlertTriangle, Banknote, Package, TrendingUp, TrendingDown,
   BarChart2, ClipboardList, Inbox, Sparkles, ShoppingCart,
-  ClipboardCheck, FileText, Zap, LayoutGrid, Check,
+  ClipboardCheck, Zap, LayoutGrid, Check,
   Home, DollarSign, X as XIcon,
-  Menu, LayoutDashboard, Layers, Wrench, Activity, Users, Link2,
+  Menu,
 } from 'lucide-react'
-
-// ─── Navegación admin completa (mirror de Layout) ────────────────────────────
-const NAV_ADMIN = [
-  { to: '/dashboard',          label: 'Dashboard',      icon: LayoutDashboard },
-  { to: '/control-inventario', label: 'Inventario',     icon: Layers          },
-  { to: '/pedidos-admin',      label: 'Pedidos',        icon: ClipboardList   },
-  { to: '/compras',            label: 'Compras',        icon: ShoppingCart    },
-  { to: '/consignaciones',     label: 'Consignaciones', icon: Banknote        },
-  { to: '/mantenimientos',     label: 'Mantenimientos', icon: Wrench          },
-  { to: '/auditorias',         label: 'Auditorías',     icon: ClipboardCheck  },
-  { to: '/audit-log',          label: 'Historial',      icon: Activity        },
-  { to: '/comunicados',        label: 'Comunicados',    icon: Bell            },
-  { to: '/bandeja',            label: 'Bandeja',        icon: Inbox           },
-  { to: '/informes',           label: 'Informes',       icon: BarChart2       },
-  { to: '/usuarios',           label: 'Usuarios',       icon: Users           },
-  { to: '/siigo-mapeo',        label: 'Mapeo Siigo',    icon: Link2           },
-]
+import { NAV_ADMIN } from '../constants/nav'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function parseUTC(s: string): Date {

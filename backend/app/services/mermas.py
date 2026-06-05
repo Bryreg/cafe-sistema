@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import update as sa_update
 from fastapi import HTTPException
 from datetime import datetime
 from app.models.models import Merma, Inventario, MovimientoInventario, TipoMovInvEnum, Tienda
@@ -26,14 +27,13 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
         if not db.query(Tienda).filter_by(id=tienda_destino_id).first():
             raise HTTPException(404, "Sede destino no encontrada")
 
+    # Verify product exists and check stock before attempting atomic update
     inv = db.query(Inventario).filter(
         Inventario.producto_id == producto_id,
         Inventario.tienda_id == tienda_id,
     ).first()
     if not inv:
         raise HTTPException(404, "Producto no encontrado en inventario")
-    if inv.stock_actual < cantidad:
-        raise HTTPException(400, f"Stock insuficiente. Disponible: {inv.stock_actual}")
 
     merma = Merma(
         tienda_id=tienda_id,
@@ -63,7 +63,18 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
     )
     db.add(mov)
 
-    inv.stock_actual -= cantidad
+    # Atomic decrement with stock sufficiency check
+    rows = db.execute(
+        sa_update(Inventario)
+        .where(
+            Inventario.producto_id == producto_id,
+            Inventario.tienda_id == tienda_id,
+            Inventario.stock_actual >= cantidad,
+        )
+        .values(stock_actual=Inventario.stock_actual - cantidad)
+    ).rowcount
+    if rows == 0:
+        raise HTTPException(400, f"Stock insuficiente.")
     consumir_fifo(db, producto_id, tienda_id, cantidad)
 
     audit.registrar(
@@ -89,13 +100,20 @@ def recibir_traslado(db: Session, merma_id: int, tienda_destino_id: int, usuario
     if not merma:
         raise HTTPException(404, "Traslado no encontrado o ya confirmado")
 
-    # Ingresar al inventario de la sede destino
+    # Ingresar al inventario de la sede destino — atomic increment
     inv = db.query(Inventario).filter(
         Inventario.producto_id == merma.producto_id,
         Inventario.tienda_id == tienda_destino_id,
     ).first()
     if inv:
-        inv.stock_actual += merma.cantidad
+        db.execute(
+            sa_update(Inventario)
+            .where(
+                Inventario.producto_id == merma.producto_id,
+                Inventario.tienda_id == tienda_destino_id,
+            )
+            .values(stock_actual=Inventario.stock_actual + merma.cantidad)
+        )
     else:
         inv = Inventario(
             producto_id=merma.producto_id,

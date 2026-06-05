@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os, logging
+from sqlalchemy import event
 from app.database import engine, SessionLocal
 from app.models.models import Base
 from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
@@ -15,19 +16,24 @@ from app.config import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ─── SQLite: enforce foreign keys (dev/prod parity) ───────────────────────────
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    if "sqlite" in str(engine.url):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
 # Migraciones inline ANTES de create_all
 from sqlalchemy import text as _text
 with engine.connect() as _conn:
-    # Drop entregas_turno si tiene schema viejo (sin tienda_id) — create_all la recreará
+    # Migrate entregas_turno: add tienda_id column if missing (never drop the table)
     try:
-        _conn.execute(_text("SELECT tienda_id FROM entregas_turno LIMIT 1"))
-    except Exception:
-        # columna no existe → schema viejo o tabla no existe → dropar para que create_all la cree fresca
-        try:
-            _conn.execute(_text("DROP TABLE IF EXISTS entregas_turno"))
-            _conn.commit()
-        except Exception:
-            pass
+        _conn.execute(_text("ALTER TABLE entregas_turno ADD COLUMN tienda_id INTEGER"))
+        _conn.commit()
+    except Exception as e:
+        _conn.rollback()
+        logger.warning("Migration skipped (already applied or error): %s", e)
     for _sql in [
         "ALTER TABLE solicitudes_sencilla ADD COLUMN detalle TEXT",
         "ALTER TABLE caja_turnos ADD COLUMN tiene_conteo_apertura BOOLEAN DEFAULT 0",
@@ -96,13 +102,17 @@ with engine.connect() as _conn:
         )""",
         "ALTER TABLE movimientos_inventario ADD COLUMN siigo_sync_key VARCHAR(200)",
         "ALTER TABLE caja_turnos ADD COLUMN consignaciones_deducidas FLOAT DEFAULT 0",
+        # Concurrency: only one open shift per store at any time
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_one_turno_abierto ON caja_turnos (tienda_id) WHERE estado = 'abierto'",
+        # Concurrency: only one conteo of each type (apertura/cierre) per shift
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_conteo_turno_tipo ON conteos_fisicos (turno_id, tipo)",
     ]:
         try:
             _conn.execute(_text(_sql))
             _conn.commit()
-        except Exception:
+        except Exception as e:
             _conn.rollback()  # necesario en PostgreSQL: libera el estado de error antes del siguiente statement
-            pass  # columna ya existe
+            logger.warning("Migration skipped (already applied or error): %s", e)  # columna ya existe
 
 Base.metadata.create_all(bind=engine)
 

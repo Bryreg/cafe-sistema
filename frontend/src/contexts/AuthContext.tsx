@@ -55,11 +55,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = () => {
+    const uid = localStorage.getItem('user_id')
     localStorage.removeItem('token')
     localStorage.removeItem('rol')
     localStorage.removeItem('nombre')
     localStorage.removeItem('tienda_id')
     localStorage.removeItem('user_id')
+    if (uid) {
+      localStorage.removeItem(`tipo_turno_${uid}`)
+      localStorage.removeItem(`cuadre_llegada_${uid}`)
+    }
     setUser(null)
     setTipoTurnoState(null)
     setCuadreLlegadaState(null)

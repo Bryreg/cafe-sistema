@@ -67,7 +67,10 @@ function SmartRedirect() {
 
   // intermedio o cierre: debe haber turno activo y haber hecho cuadre de llegada
   if (!turno) return <Navigate to="/seleccionar-turno" replace />
-  if (cuadre_llegada_turno_id !== turno.id) return <Navigate to="/cuadre-llegada" replace />
+  // Fuente de verdad: backend (ultima_entrega_fecha) o localStorage.
+  // Si recargaron antes de que localStorage se actualizara, el backend manda.
+  const cuadreDone = cuadre_llegada_turno_id === turno.id || turno.ultima_entrega_fecha !== null
+  if (!cuadreDone) return <Navigate to="/cuadre-llegada" replace />
   return <Navigate to="/hub" replace />
 }
 

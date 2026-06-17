@@ -43,6 +43,7 @@ import MantenimientosAdmin from './pages/MantenimientosAdmin'
 import AuditoriasAdmin from './pages/AuditoriasAdmin'
 import AuditLog from './pages/AuditLog'
 import SiigoMapeo from './pages/SiigoMapeo'
+import Catalogo from './pages/Catalogo'
 
 // ─── Smart redirect basado en estado del turno ───────────────────────────────
 function SmartRedirect() {
@@ -194,6 +195,9 @@ function AppRoutes() {
       } />
       <Route path="/control-inventario" element={
         <ProtectedRoute role="admin"><Layout><ControlInventario /></Layout></ProtectedRoute>
+      } />
+      <Route path="/catalogo" element={
+        <ProtectedRoute role="admin"><Layout><Catalogo /></Layout></ProtectedRoute>
       } />
       <Route path="/pedidos-admin" element={
         <ProtectedRoute role="admin"><Layout><PedidosAdmin /></Layout></ProtectedRoute>

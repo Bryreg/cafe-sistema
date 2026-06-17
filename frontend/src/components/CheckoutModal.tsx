@@ -1,7 +1,24 @@
 import { useState, useEffect, useRef } from 'react'
 import { X, CreditCard, Banknote, AlertTriangle } from 'lucide-react'
 import api from '../api/client'
+import { useAuth } from '../contexts/AuthContext'
 import TicketRecibo, { type TicketData } from './TicketRecibo'
+
+// Extrae un mensaje de error legible. El backend puede devolver `detail` como
+// string (errores de negocio) o como array de objetos (errores de validación
+// 422 de FastAPI: [{type, loc, msg, input}]). Nunca devolver un objeto: si se
+// pasa a setError y se renderiza en JSX, React lanza el error #31 y la app
+// queda en blanco.
+function extractError(e: any): string {
+  const d = e?.response?.data?.detail
+  if (typeof d === 'string') return d
+  if (Array.isArray(d)) {
+    const msg = d.map((x: any) => x?.msg).filter(Boolean).join(', ')
+    return msg || 'Datos inválidos en el cobro'
+  }
+  if (d && typeof d === 'object' && typeof d.msg === 'string') return d.msg
+  return 'Error al procesar el cobro'
+}
 
 interface CartItem {
   producto_id: number
@@ -24,6 +41,7 @@ const MONTOS_RAPIDOS = [10_000, 20_000, 50_000, 100_000]
 type Metodo = 'efectivo' | 'tarjeta' | 'mixto'
 
 export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess }: Props) {
+  const { user } = useAuth()
   const [metodo, setMetodo] = useState<Metodo>('efectivo')
   const [recibido, setRecibido] = useState('')
   const [montoEfectivo, setMontoEfectivo] = useState('')
@@ -54,6 +72,7 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
     setLoading(true)
     try {
       const body: Record<string, unknown> = {
+        tienda_id: user?.tienda_id,
         items: items.map(i => ({ producto_id: i.producto_id, cantidad: i.cantidad })),
         metodo_pago: metodo,
       }
@@ -72,7 +91,7 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
         onSuccess()
       }, 150)
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Error al procesar el cobro')
+      setError(extractError(e))
     } finally {
       setLoading(false)
     }

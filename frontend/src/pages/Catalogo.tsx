@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import api from '../api/client'
-import { Plus, Pencil, Check, X, AlertTriangle, Package } from 'lucide-react'
+import { Plus, Pencil, Check, X, AlertTriangle, Package, Tag } from 'lucide-react'
 
 interface Tienda { id: number; nombre: string }
 interface StockInfo { stock_actual: number; stock_minimo: number; alerta: boolean }
@@ -8,6 +8,7 @@ interface Producto {
   id: number; nombre: string; categoria: string
   unidad_medida: string; controla_stock: boolean
   stocks: Record<string, StockInfo>
+  precio_venta?: number
 }
 
 const CATEGORIAS = ['pasteleria', 'bebida', 'insumo'] as const
@@ -42,6 +43,7 @@ export default function Catalogo() {
   const [nuevoForm, setNuevoForm] = useState({ nombre: '', categoria: 'insumo', unidad_medida: 'und', controla_stock: true })
   const [mostrarNuevo, setMostrarNuevo] = useState(false)
   const [minimoEditing, setMinimoEditing] = useState<{ productoId: number; tiendaId: number; valor: string } | null>(null)
+  const [precioEditing, setPrecioEditing] = useState<{ productoId: number; valor: string } | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -90,6 +92,17 @@ export default function Catalogo() {
       setMinimoEditing(null)
       load()
     } catch (e: any) { setError(e.response?.data?.detail || 'Error') }
+  }
+
+  const guardarPrecio = async () => {
+    if (!precioEditing) return
+    const precio = Number(precioEditing.valor)
+    if (isNaN(precio) || precio < 0) { setError('Precio inválido'); return }
+    try {
+      await api.patch(`/pos/productos/${precioEditing.productoId}/precio`, { precio_venta: precio })
+      setPrecioEditing(null)
+      load()
+    } catch (e: any) { setError(e.response?.data?.detail || 'Error al guardar precio') }
   }
 
   const alertasTotal = productos.reduce((n, p) =>
@@ -220,6 +233,9 @@ export default function Catalogo() {
                         {t.nombre}
                       </th>
                     ))}
+                    <th className="text-center px-3 py-2 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: 'oklch(38% 0.12 155)' }}>
+                      Precio POS
+                    </th>
                     <th className="w-16"></th>
                   </tr>
                 </thead>
@@ -239,6 +255,7 @@ export default function Catalogo() {
                             </select>
                           </td>
                           {tiendas.map(t => <td key={t.id} />)}
+                          <td />
                           <td className="px-3 py-2">
                             <div className="flex gap-1">
                               <button onClick={guardarEdicion} disabled={saving}
@@ -296,6 +313,37 @@ export default function Catalogo() {
                               </td>
                             )
                           })}
+                          {/* Precio POS inline */}
+                          <td className="px-3 py-2 text-center">
+                            {precioEditing?.productoId === p.id ? (
+                              <div className="flex items-center gap-1 justify-center">
+                                <span className="text-xs text-gray-400">$</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="100"
+                                  value={precioEditing.valor}
+                                  onChange={e => setPrecioEditing(pe => pe ? { ...pe, valor: e.target.value } : null)}
+                                  className="w-20 border border-gray-300 rounded px-1.5 py-1 text-xs text-right font-semibold focus:outline-none focus:ring-2"
+                                  style={{ '--tw-ring-color': 'oklch(48% 0.12 155)' } as React.CSSProperties}
+                                  autoFocus
+                                  onKeyDown={e => { if (e.key === 'Enter') guardarPrecio(); if (e.key === 'Escape') setPrecioEditing(null) }}
+                                />
+                                <button onClick={guardarPrecio} className="text-green-600 hover:text-green-700"><Check size={11} /></button>
+                                <button onClick={() => setPrecioEditing(null)} className="text-gray-400 hover:text-gray-600"><X size={11} /></button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setPrecioEditing({ productoId: p.id, valor: String(p.precio_venta ?? 0) })}
+                                className="flex items-center gap-1 mx-auto text-xs font-semibold transition-colors px-2 py-1 rounded-lg hover:bg-green-50"
+                                style={{ color: p.precio_venta ? 'oklch(38% 0.12 155)' : 'oklch(65% 0.01 60)' }}
+                                title="Editar precio POS"
+                              >
+                                <Tag size={10} />
+                                {p.precio_venta ? `$${p.precio_venta.toLocaleString('es-CO')}` : 'Sin precio'}
+                              </button>
+                            )}
+                          </td>
                           <td className="px-3 py-2">
                             <button
                               onClick={() => { setEditandoId(p.id); setEditForm({ nombre: p.nombre, categoria: p.categoria, unidad_medida: p.unidad_medida, controla_stock: p.controla_stock }) }}

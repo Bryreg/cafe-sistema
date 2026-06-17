@@ -3,13 +3,14 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import {
   Home, Banknote, LayoutGrid, X as XIcon,
   Trash2, ShoppingCart, Coins, ClipboardList,
-  Truck, ClipboardCheck, Sparkles, Package, UserCheck,
+  Truck, ClipboardCheck, Sparkles, Package, UserCheck, Calculator,
 } from 'lucide-react'
 import { useTurno } from '../contexts/TurnoContext'
 import MovimientoCajaModal from './MovimientoCajaModal'
 
 // ─── Herramientas disponibles en el drawer ────────────────────────────────────
 const TOOLS = [
+  { label: 'POS',        icon: Calculator,    to: '/pos',            color: 'text-green-600',  bg: 'bg-green-50'   },
   { label: 'Mermas',     icon: Trash2,        to: '/mermas',         color: 'text-orange-500', bg: 'bg-orange-50'  },
   { label: 'Inventario', icon: Package,        to: '/inventario',     color: 'text-blue-500',   bg: 'bg-blue-50'    },
   { label: 'Pedido',     icon: ShoppingCart,   to: '/pedido',         color: 'text-forest',     bg: 'bg-forest-50'  },

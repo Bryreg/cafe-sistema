@@ -174,6 +174,7 @@ class Producto(Base):
     controla_stock = Column(Boolean, default=True)
     proveedor = Column(String(100), nullable=True)
     lead_time_dias = Column(Integer, default=2, server_default="2")
+    precio_venta = Column(Numeric(12, 2, asdecimal=False), nullable=False, server_default="0")
     inventarios = relationship("Inventario", back_populates="producto")
     movimientos_inv = relationship("MovimientoInventario", back_populates="producto")
     pastelerias = relationship("PasteleriaDiaria", back_populates="producto")
@@ -721,3 +722,42 @@ class SiigoProductoMapeo(Base):
     activo = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     producto = relationship("Producto")
+
+
+# ---------------------------------------------------------------------------
+# POS nativo (reemplazo de Siigo): tickets de venta itemizados
+# ---------------------------------------------------------------------------
+
+class Ticket(Base):
+    """Venta itemizada generada por el POS nativo. Cabecera de la venta."""
+    __tablename__ = "tickets"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False, index=True)
+    caja_turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="RESTRICT"), nullable=False, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
+    fecha = Column(DateTime, default=datetime.utcnow, index=True)
+    total = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    metodo_pago = Column(String(20), nullable=False)        # 'efectivo' | 'tarjeta' | 'mixto'
+    monto_efectivo = Column(Numeric(12, 2, asdecimal=False), default=0)
+    monto_tarjeta = Column(Numeric(12, 2, asdecimal=False), default=0)
+    efectivo_recibido = Column(Numeric(12, 2, asdecimal=False), nullable=True)
+    cambio = Column(Numeric(12, 2, asdecimal=False), nullable=True)
+    estado = Column(String(20), default="completado")
+    items = relationship("TicketItem", back_populates="ticket", cascade="all, delete-orphan")
+    tienda = relationship("Tienda", foreign_keys=[tienda_id])
+    turno = relationship("CajaTurno", foreign_keys=[caja_turno_id])
+    usuario = relationship("Usuario", foreign_keys=[usuario_id])
+
+
+class TicketItem(Base):
+    """Línea de un ticket POS — snapshot de nombre y precio al momento de la venta."""
+    __tablename__ = "ticket_items"
+    id = Column(Integer, primary_key=True)
+    ticket_id = Column(Integer, ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False, index=True)
+    producto_id = Column(Integer, ForeignKey("productos.id", ondelete="RESTRICT"), nullable=False)
+    nombre_producto = Column(String(150), nullable=False)
+    cantidad = Column(Integer, nullable=False)
+    precio_unitario = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    subtotal = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    ticket = relationship("Ticket", back_populates="items")
+    producto = relationship("Producto", foreign_keys=[producto_id])

@@ -10,7 +10,7 @@ from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
                           dashboard, ventas, conteos, mermas, solicitudes,
                           informes, audit, alertas, notificaciones, limpieza,
                           facturas, compras, comunicados, pedidos, mantenimientos,
-                          auditorias, siigo)
+                          auditorias, siigo, pos)
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -102,6 +102,8 @@ with engine.connect() as _conn:
         )""",
         "ALTER TABLE movimientos_inventario ADD COLUMN siigo_sync_key VARCHAR(200)",
         "ALTER TABLE caja_turnos ADD COLUMN consignaciones_deducidas FLOAT DEFAULT 0",
+        # POS nativo: precio de venta por producto (tickets/ticket_items los crea create_all)
+        "ALTER TABLE productos ADD COLUMN precio_venta NUMERIC(12,2) DEFAULT 0",
         # Concurrency: only one open shift per store at any time
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_one_turno_abierto ON caja_turnos (tienda_id) WHERE estado = 'abierto'",
         # Concurrency: only one conteo of each type (apertura/cierre) per shift
@@ -501,6 +503,7 @@ app.include_router(pedidos.router, prefix="/api/v1")
 app.include_router(mantenimientos.router, prefix="/api/v1")
 app.include_router(auditorias.router, prefix="/api/v1")
 app.include_router(siigo.router, prefix="/api/v1")
+app.include_router(pos.router, prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────
 _frontend_dist = os.path.abspath(

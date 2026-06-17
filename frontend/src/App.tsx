@@ -28,6 +28,7 @@ import ConteoFisico from './pages/ConteoFisico'
 import Limpieza from './pages/Limpieza'
 import Ingresos from './pages/Ingresos'
 import ConteoCompras from './pages/ConteoCompras'
+import POS from './pages/POS'
 
 // Admin pages
 import ControlInventario from './pages/ControlInventario'
@@ -141,6 +142,9 @@ function AppRoutes() {
       } />
       <Route path="/conteo-compras" element={
         <ProtectedRoute role="barista"><ConteoCompras /></ProtectedRoute>
+      } />
+      <Route path="/pos" element={
+        <ProtectedRoute role="barista"><POS /></ProtectedRoute>
       } />
       <Route path="/limpieza" element={
         <ProtectedRoute>

@@ -8,6 +8,8 @@ Reglas de negocio:
   - La venta es todo-o-nada: si falta stock de un producto contable, se aborta.
 """
 import logging
+from datetime import datetime, timedelta
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from fastapi import HTTPException
 
@@ -21,11 +23,34 @@ METODOS_PAGO = {"efectivo", "tarjeta", "mixto"}
 
 
 def get_productos_pos(db: Session, categoria: str | None = None):
-    """Productos vendibles (precio_venta > 0), opcionalmente por categoría."""
-    q = db.query(Producto).filter(Producto.precio_venta > 0)
+    """Productos vendibles (precio_venta > 0), ordenados por lo MÁS VENDIDO.
+
+    La grilla del POS muestra primero los productos con más unidades vendidas
+    en los últimos 7 días (los "favoritos" reales de la operación), luego el
+    resto alfabético. Reduce el tiempo de búsqueda de la barista en cada venta.
+    Productos sin ventas recientes caen al final ordenados por nombre.
+    """
+    desde = datetime.utcnow() - timedelta(days=7)
+    # Subquery: unidades vendidas por producto en la ventana reciente.
+    pop_sq = (
+        db.query(
+            TicketItem.producto_id.label("pid"),
+            func.sum(TicketItem.cantidad).label("vendidos"),
+        )
+        .join(Ticket, Ticket.id == TicketItem.ticket_id)
+        .filter(Ticket.fecha >= desde)
+        .group_by(TicketItem.producto_id)
+        .subquery()
+    )
+    vendidos = func.coalesce(pop_sq.c.vendidos, 0)
+    q = (
+        db.query(Producto, vendidos.label("vendidos"))
+        .outerjoin(pop_sq, pop_sq.c.pid == Producto.id)
+        .filter(Producto.precio_venta > 0)
+    )
     if categoria:
         q = q.filter(Producto.categoria == categoria)
-    productos = q.order_by(Producto.categoria, Producto.nombre).all()
+    rows = q.order_by(vendidos.desc(), Producto.nombre).all()
     return [
         {
             "id": p.id,
@@ -34,8 +59,9 @@ def get_productos_pos(db: Session, categoria: str | None = None):
             "precio_venta": p.precio_venta or 0.0,
             "controla_stock": p.controla_stock,
             "unidad_medida": p.unidad_medida,
+            "vendidos_7d": int(v or 0),
         }
-        for p in productos
+        for p, v in rows
     ]
 
 

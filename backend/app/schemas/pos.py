@@ -29,6 +29,7 @@ class ProductoPOSOut(BaseModel):
     precio_venta: float
     controla_stock: bool
     unidad_medida: str
+    vendidos_7d: int = 0  # unidades vendidas últimos 7 días (para "Favoritos")
 
 
 class TicketItemOut(BaseModel):

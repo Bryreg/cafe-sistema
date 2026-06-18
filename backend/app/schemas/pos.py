@@ -61,3 +61,51 @@ class TicketOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ---------------------------------------------------------------------------
+# Anulación de ticket
+# ---------------------------------------------------------------------------
+
+class TicketAnularRequest(BaseModel):
+    motivo: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Analytics (read-only, agregaciones sobre tickets reales)
+# ---------------------------------------------------------------------------
+
+class AnalyticsResumenOut(BaseModel):
+    total_ventas: float
+    n_tickets: int
+    ticket_promedio: float
+    total_efectivo: float
+    total_tarjeta: float
+    n_items: int
+
+
+class ProductoTopOut(BaseModel):
+    producto_id: int
+    nombre_producto: str
+    unidades: int
+    total: float
+
+
+class VentaPorHoraOut(BaseModel):
+    hora: int          # 0-23
+    n_tickets: int
+    total: float
+
+
+class VentaPorBaristaOut(BaseModel):
+    usuario_id: int
+    nombre: str
+    total: float
+    n_tickets: int
+    ticket_promedio: float
+
+
+class MetodoPagoOut(BaseModel):
+    metodo_pago: str   # 'efectivo' | 'tarjeta' | 'mixto'
+    n_tickets: int
+    total: float

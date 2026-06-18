@@ -8,12 +8,12 @@ Reglas de negocio:
   - La venta es todo-o-nada: si falta stock de un producto contable, se aborta.
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from fastapi import HTTPException
 
-from app.models.models import Producto, Ticket, TicketItem, CajaTurno
+from app.models.models import Producto, Ticket, TicketItem, CajaTurno, Usuario
 from app.services.caja import get_turno_activo
 from app.services import inventario as inv_svc, audit
 
@@ -232,3 +232,275 @@ def set_precio(db: Session, producto_id: int, precio_venta: float):
     db.commit()
     db.refresh(prod)
     return prod
+
+
+# ---------------------------------------------------------------------------
+# Analytics — agregaciones sobre los tickets reales del POS.
+# Todas excluyen tickets anulados y aceptan rango de fechas + tienda opcional.
+# ---------------------------------------------------------------------------
+
+def _rango_fechas(fecha_desde: date | None, fecha_hasta: date | None) -> tuple[datetime, datetime]:
+    """Normaliza el rango. Default = hoy (00:00:00 → 23:59:59.999999).
+
+    Sigue la convención del resto de informes: datetime.combine con min/max time,
+    compatible con SQLite y PostgreSQL sin funciones de fecha SQL-específicas.
+    """
+    hoy = date.today()
+    desde = fecha_desde or hoy
+    hasta = fecha_hasta or hoy
+    return (
+        datetime.combine(desde, datetime.min.time()),
+        datetime.combine(hasta, datetime.max.time()),
+    )
+
+
+def _base_tickets_query(db: Session, fecha_desde: date | None, fecha_hasta: date | None,
+                        tienda_id: int | None):
+    """Query base de tickets NO anulados dentro del rango (+ tienda opcional)."""
+    desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
+    q = (
+        db.query(Ticket)
+        .filter(Ticket.estado != "anulado")
+        .filter(Ticket.fecha >= desde, Ticket.fecha <= hasta)
+    )
+    if tienda_id is not None:
+        q = q.filter(Ticket.tienda_id == tienda_id)
+    return q
+
+
+def get_analytics_resumen(db: Session, fecha_desde: date | None = None,
+                          fecha_hasta: date | None = None, tienda_id: int | None = None):
+    """KPIs del período: ventas, tickets, ticket promedio, efectivo/tarjeta, items."""
+    desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
+    filtros = [Ticket.estado != "anulado", Ticket.fecha >= desde, Ticket.fecha <= hasta]
+    if tienda_id is not None:
+        filtros.append(Ticket.tienda_id == tienda_id)
+
+    row = (
+        db.query(
+            func.coalesce(func.sum(Ticket.total), 0.0),
+            func.count(Ticket.id),
+            func.coalesce(func.sum(Ticket.monto_efectivo), 0.0),
+            func.coalesce(func.sum(Ticket.monto_tarjeta), 0.0),
+        )
+        .filter(*filtros)
+        .one()
+    )
+    total_ventas, n_tickets, total_efectivo, total_tarjeta = row
+
+    # Unidades vendidas (suma de cantidades de líneas) en los mismos tickets.
+    n_items = (
+        db.query(func.coalesce(func.sum(TicketItem.cantidad), 0))
+        .join(Ticket, Ticket.id == TicketItem.ticket_id)
+        .filter(*filtros)
+        .scalar()
+    )
+
+    n_tickets = int(n_tickets or 0)
+    total_ventas = round(float(total_ventas or 0.0), 2)
+    ticket_promedio = round(total_ventas / n_tickets, 2) if n_tickets else 0.0
+    return {
+        "total_ventas": total_ventas,
+        "n_tickets": n_tickets,
+        "ticket_promedio": ticket_promedio,
+        "total_efectivo": round(float(total_efectivo or 0.0), 2),
+        "total_tarjeta": round(float(total_tarjeta or 0.0), 2),
+        "n_items": int(n_items or 0),
+    }
+
+
+def get_analytics_productos_top(db: Session, fecha_desde: date | None = None,
+                                fecha_hasta: date | None = None, tienda_id: int | None = None):
+    """Por producto: unidades vendidas y $ ingresado, ordenado desc por $."""
+    desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
+    filtros = [Ticket.estado != "anulado", Ticket.fecha >= desde, Ticket.fecha <= hasta]
+    if tienda_id is not None:
+        filtros.append(Ticket.tienda_id == tienda_id)
+
+    rows = (
+        db.query(
+            TicketItem.producto_id.label("producto_id"),
+            TicketItem.nombre_producto.label("nombre_producto"),
+            func.sum(TicketItem.cantidad).label("unidades"),
+            func.sum(TicketItem.subtotal).label("total"),
+        )
+        .join(Ticket, Ticket.id == TicketItem.ticket_id)
+        .filter(*filtros)
+        .group_by(TicketItem.producto_id, TicketItem.nombre_producto)
+        .order_by(func.sum(TicketItem.subtotal).desc())
+        .all()
+    )
+    return [
+        {
+            "producto_id": r.producto_id,
+            "nombre_producto": r.nombre_producto,
+            "unidades": int(r.unidades or 0),
+            "total": round(float(r.total or 0.0), 2),
+        }
+        for r in rows
+    ]
+
+
+def get_analytics_ventas_por_hora(db: Session, fecha_desde: date | None = None,
+                                  fecha_hasta: date | None = None, tienda_id: int | None = None):
+    """Agrupa por hora del día (0-23): n_tickets y $. Para el mapa de calor.
+
+    La hora se extrae en Python desde Ticket.fecha para evitar funciones de fecha
+    SQL-específicas (strftime/EXTRACT difieren entre SQLite y PostgreSQL).
+    Devuelve siempre las 24 horas (las vacías en 0).
+    """
+    rows = (
+        _base_tickets_query(db, fecha_desde, fecha_hasta, tienda_id)
+        .with_entities(Ticket.fecha, Ticket.total)
+        .all()
+    )
+    buckets = {h: {"n_tickets": 0, "total": 0.0} for h in range(24)}
+    for fecha, total in rows:
+        b = buckets[fecha.hour]
+        b["n_tickets"] += 1
+        b["total"] += float(total or 0.0)
+    return [
+        {"hora": h, "n_tickets": buckets[h]["n_tickets"], "total": round(buckets[h]["total"], 2)}
+        for h in range(24)
+    ]
+
+
+def get_analytics_por_barista(db: Session, fecha_desde: date | None = None,
+                              fecha_hasta: date | None = None, tienda_id: int | None = None):
+    """Por usuario: total, n_tickets, ticket_promedio (JOIN usuarios para el nombre)."""
+    desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
+    filtros = [Ticket.estado != "anulado", Ticket.fecha >= desde, Ticket.fecha <= hasta]
+    if tienda_id is not None:
+        filtros.append(Ticket.tienda_id == tienda_id)
+
+    rows = (
+        db.query(
+            Ticket.usuario_id.label("usuario_id"),
+            Usuario.nombre.label("nombre"),
+            func.coalesce(func.sum(Ticket.total), 0.0).label("total"),
+            func.count(Ticket.id).label("n_tickets"),
+        )
+        .join(Usuario, Usuario.id == Ticket.usuario_id)
+        .filter(*filtros)
+        .group_by(Ticket.usuario_id, Usuario.nombre)
+        .order_by(func.sum(Ticket.total).desc())
+        .all()
+    )
+    result = []
+    for r in rows:
+        n = int(r.n_tickets or 0)
+        total = round(float(r.total or 0.0), 2)
+        result.append({
+            "usuario_id": r.usuario_id,
+            "nombre": r.nombre,
+            "total": total,
+            "n_tickets": n,
+            "ticket_promedio": round(total / n, 2) if n else 0.0,
+        })
+    return result
+
+
+def get_analytics_metodo_pago(db: Session, fecha_desde: date | None = None,
+                              fecha_hasta: date | None = None, tienda_id: int | None = None):
+    """Split por método de pago (efectivo/tarjeta/mixto): count y suma de montos."""
+    desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
+    filtros = [Ticket.estado != "anulado", Ticket.fecha >= desde, Ticket.fecha <= hasta]
+    if tienda_id is not None:
+        filtros.append(Ticket.tienda_id == tienda_id)
+
+    rows = (
+        db.query(
+            Ticket.metodo_pago.label("metodo_pago"),
+            func.count(Ticket.id).label("n_tickets"),
+            func.coalesce(func.sum(Ticket.total), 0.0).label("total"),
+        )
+        .filter(*filtros)
+        .group_by(Ticket.metodo_pago)
+        .order_by(func.sum(Ticket.total).desc())
+        .all()
+    )
+    return [
+        {
+            "metodo_pago": r.metodo_pago,
+            "n_tickets": int(r.n_tickets or 0),
+            "total": round(float(r.total or 0.0), 2),
+        }
+        for r in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Anulación de ticket — reversión atómica todo-o-nada (como crear_ticket).
+# ---------------------------------------------------------------------------
+
+def anular_ticket(db: Session, ticket_id: int, usuario_id: int, motivo: str | None = None):
+    """Anula un ticket revirtiendo stock y totales del turno de forma atómica.
+
+    - Repone stock (entrada) de cada item cuyo Producto tenga controla_stock=True.
+    - Revierte los acumulados del CajaTurno (total/efectivo/tarjeta).
+    - Marca estado='anulado' y deja traza en audit.
+    Si cualquier paso falla, rollback total (nada queda a medias).
+    """
+    ticket = (
+        db.query(Ticket)
+        .options(joinedload(Ticket.items))
+        .filter(Ticket.id == ticket_id)
+        .first()
+    )
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket no encontrado")
+    if ticket.estado == "anulado":
+        raise HTTPException(status_code=400, detail="Ya anulado")
+
+    try:
+        # 1) Reponer stock de los productos contables (atómico, sin commit).
+        #    Se cargan los productos del ticket para conocer controla_stock.
+        producto_ids = [it.producto_id for it in ticket.items]
+        productos = {
+            p.id: p
+            for p in db.query(Producto).filter(Producto.id.in_(producto_ids)).all()
+        } if producto_ids else {}
+        for item in ticket.items:
+            prod = productos.get(item.producto_id)
+            if prod and prod.controla_stock:
+                inv_svc.registrar_movimiento(
+                    db, producto_id=item.producto_id, tienda_id=ticket.tienda_id,
+                    tipo="entrada", cantidad=item.cantidad,
+                    motivo="Anulación venta POS", usuario_id=usuario_id, commit=False,
+                )
+
+        # 2) Revertir totales del turno (restar lo que el ticket había sumado).
+        turno_db = db.query(CajaTurno).filter(CajaTurno.id == ticket.caja_turno_id).first()
+        if turno_db:
+            turno_db.total_ventas = (turno_db.total_ventas or 0.0) - (ticket.total or 0.0)
+            turno_db.total_efectivo = (turno_db.total_efectivo or 0.0) - (ticket.monto_efectivo or 0.0)
+            turno_db.total_tarjeta = (turno_db.total_tarjeta or 0.0) - (ticket.monto_tarjeta or 0.0)
+
+        # 3) Marcar el ticket como anulado.
+        ticket.estado = "anulado"
+
+        # 4) Traza de auditoría.
+        audit.registrar(
+            db, accion="anulacion_venta", tabla="tickets",
+            registro_id=ticket.id, usuario_id=usuario_id, tienda_id=ticket.tienda_id,
+            datos_antes={"estado": "completado", "total": ticket.total},
+            datos_despues={
+                "estado": "anulado", "motivo": motivo,
+                "total_revertido": ticket.total,
+                "efectivo_revertido": ticket.monto_efectivo,
+                "tarjeta_revertido": ticket.monto_tarjeta,
+            },
+        )
+
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
+    db.refresh(ticket)
+    logger.info("Ticket %s anulado por usuario %s (motivo: %s)",
+                ticket.id, usuario_id, motivo or "—")
+    return ticket

@@ -1,11 +1,14 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import date
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.deps import get_current_user, require_admin, ensure_tienda_access
 from app.models.models import Usuario
 from app.schemas.pos import (
     TicketCreate, PrecioUpdate, ProductoPOSOut, TicketOut,
+    TicketAnularRequest, AnalyticsResumenOut, ProductoTopOut,
+    VentaPorHoraOut, VentaPorBaristaOut, MetodoPagoOut,
 )
 from app.services import pos as svc
 
@@ -63,3 +66,65 @@ def set_precio(producto_id: int, data: PrecioUpdate, db: Session = Depends(get_d
         controla_stock=prod.controla_stock,
         unidad_medida=prod.unidad_medida,
     )
+
+
+# ---------------------------------------------------------------------------
+# Anulación de ticket
+# ---------------------------------------------------------------------------
+
+@router.post("/ticket/{ticket_id}/anular", response_model=TicketOut)
+def anular_ticket(ticket_id: int, data: TicketAnularRequest = TicketAnularRequest(),
+                  db: Session = Depends(get_db),
+                  user: Usuario = Depends(require_admin)):
+    ticket = svc.anular_ticket(db, ticket_id, usuario_id=user.id, motivo=data.motivo)
+    return ticket
+
+
+# ---------------------------------------------------------------------------
+# Analytics (read-only, admin) — agregaciones sobre tickets reales del POS.
+# Rango de fechas opcional (default = hoy) y tienda_id opcional.
+# ---------------------------------------------------------------------------
+
+@router.get("/analytics/resumen", response_model=AnalyticsResumenOut)
+def analytics_resumen(fecha_desde: Optional[date] = Query(None),
+                      fecha_hasta: Optional[date] = Query(None),
+                      tienda_id: Optional[int] = Query(None),
+                      db: Session = Depends(get_db),
+                      user: Usuario = Depends(require_admin)):
+    return svc.get_analytics_resumen(db, fecha_desde, fecha_hasta, tienda_id)
+
+
+@router.get("/analytics/productos-top", response_model=List[ProductoTopOut])
+def analytics_productos_top(fecha_desde: Optional[date] = Query(None),
+                            fecha_hasta: Optional[date] = Query(None),
+                            tienda_id: Optional[int] = Query(None),
+                            db: Session = Depends(get_db),
+                            user: Usuario = Depends(require_admin)):
+    return svc.get_analytics_productos_top(db, fecha_desde, fecha_hasta, tienda_id)
+
+
+@router.get("/analytics/ventas-por-hora", response_model=List[VentaPorHoraOut])
+def analytics_ventas_por_hora(fecha_desde: Optional[date] = Query(None),
+                              fecha_hasta: Optional[date] = Query(None),
+                              tienda_id: Optional[int] = Query(None),
+                              db: Session = Depends(get_db),
+                              user: Usuario = Depends(require_admin)):
+    return svc.get_analytics_ventas_por_hora(db, fecha_desde, fecha_hasta, tienda_id)
+
+
+@router.get("/analytics/por-barista", response_model=List[VentaPorBaristaOut])
+def analytics_por_barista(fecha_desde: Optional[date] = Query(None),
+                          fecha_hasta: Optional[date] = Query(None),
+                          tienda_id: Optional[int] = Query(None),
+                          db: Session = Depends(get_db),
+                          user: Usuario = Depends(require_admin)):
+    return svc.get_analytics_por_barista(db, fecha_desde, fecha_hasta, tienda_id)
+
+
+@router.get("/analytics/metodo-pago", response_model=List[MetodoPagoOut])
+def analytics_metodo_pago(fecha_desde: Optional[date] = Query(None),
+                          fecha_hasta: Optional[date] = Query(None),
+                          tienda_id: Optional[int] = Query(None),
+                          db: Session = Depends(get_db),
+                          user: Usuario = Depends(require_admin)):
+    return svc.get_analytics_metodo_pago(db, fecha_desde, fecha_hasta, tienda_id)

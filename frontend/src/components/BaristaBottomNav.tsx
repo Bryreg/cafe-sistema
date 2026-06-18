@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import {
   Home, Banknote, LayoutGrid, X as XIcon,
   Trash2, ShoppingCart, Coins, ClipboardList,
-  Truck, ClipboardCheck, Sparkles, Package, UserCheck, Calculator,
+  Truck, ClipboardCheck, Sparkles, Package, UserCheck, Calculator, TrendingUp,
 } from 'lucide-react'
 import { useTurno } from '../contexts/TurnoContext'
 import MovimientoCajaModal from './MovimientoCajaModal'
@@ -20,6 +20,7 @@ const TOOLS = [
   { label: 'Conteo C.',  icon: ClipboardCheck, to: '/conteo-compras', color: 'text-indigo-500', bg: 'bg-indigo-50'  },
   { label: 'Limpieza',   icon: Sparkles,       to: '/limpieza',       color: 'text-pink-500',   bg: 'bg-pink-50'    },
   { label: 'Cuadre',     icon: UserCheck,      to: '/entrega',        color: 'text-warm-500',   bg: 'bg-warm-100'   },
+  { label: 'Mis ventas', icon: TrendingUp,     to: '/ventas-hoy',     color: 'text-success-600', bg: 'bg-success-50' },
 ]
 
 interface Props { alertaBadge?: number }

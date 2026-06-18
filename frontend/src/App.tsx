@@ -17,6 +17,7 @@ import Cierre from './pages/Cierre'
 import Entrega from './pages/Entrega'
 
 // Barista tool pages
+import VentasHoy from './pages/VentasHoy'
 import Inventario from './pages/Inventario'
 import Mermas from './pages/Mermas'
 import Pasteleria from './pages/Pasteleria'
@@ -31,6 +32,7 @@ import ConteoCompras from './pages/ConteoCompras'
 import POS from './pages/POS'
 
 // Admin pages
+import Analytics from './pages/Analytics'
 import ControlInventario from './pages/ControlInventario'
 import AdminHub from './pages/AdminHub'
 import Bandeja from './pages/Bandeja'
@@ -151,6 +153,9 @@ function AppRoutes() {
       <Route path="/pos" element={
         <ProtectedRoute role="barista"><POS /></ProtectedRoute>
       } />
+      <Route path="/ventas-hoy" element={
+        <ProtectedRoute role="barista"><VentasHoy /></ProtectedRoute>
+      } />
       <Route path="/limpieza" element={
         <ProtectedRoute>
           {user?.rol === 'admin'
@@ -181,6 +186,9 @@ function AppRoutes() {
       {/* ── Admin ── */}
       <Route path="/dashboard" element={
         <ProtectedRoute role="admin"><AdminHub /></ProtectedRoute>
+      } />
+      <Route path="/analytics" element={
+        <ProtectedRoute role="admin"><Layout><Analytics /></Layout></ProtectedRoute>
       } />
       <Route path="/bandeja" element={
         <ProtectedRoute role="admin"><Layout><Bandeja /></Layout></ProtectedRoute>

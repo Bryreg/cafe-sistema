@@ -179,22 +179,22 @@ export default function Hub() {
     && turno.ultima_entrega_diferencia_efectivo !== 0
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'oklch(97% 0.012 75)', fontFamily: '"Plus Jakarta Sans", -apple-system, system-ui, sans-serif' }}>
+    <div className="min-h-screen flex flex-col bg-warm-50" style={{ fontFamily: '"Plus Jakarta Sans", -apple-system, system-ui, sans-serif' }}>
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
-      <header className="border-b px-4 pb-3 header-safe flex items-center justify-between sticky top-0 z-10"
-        style={{ background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(12px)', borderColor: 'oklch(94% 0.008 75)' }}>
+      <header className="border-b px-4 pb-3 header-safe flex items-center justify-between sticky top-0 z-10 border-warm-200"
+        style={{ background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(12px)' }}>
         <div className="flex items-center gap-2">
-          <Coffee size={15} style={{ color: 'oklch(35% 0.05 155)' }} />
-          <span style={{ fontSize: 12, fontWeight: 700, color: 'oklch(35% 0.05 155)', letterSpacing: '.02em' }}>
+          <Coffee size={15} className="text-forest" />
+          <span className="text-forest" style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.02em' }}>
             Hub · {user?.nombre?.split(' ')[0]}
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'oklch(58% 0.01 60)', fontVariantNumeric: 'tabular-nums' }}>{time}</span>
+          <span className="text-warm-500" style={{ fontSize: 11, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{time}</span>
           {comunicados.length > 0 && (
             <div className="relative">
-              <Bell size={15} style={{ color: 'oklch(58% 0.01 60)' }} />
+              <Bell size={15} className="text-warm-500" />
               <span className="absolute -top-1.5 -right-1.5 text-white flex items-center justify-center font-bold"
                 style={{ background: '#d97757', fontSize: 8, width: 13, height: 13, borderRadius: 999, border: '1.5px solid oklch(97% 0.012 75)' }}>
                 {comunicados.length}
@@ -203,8 +203,7 @@ export default function Hub() {
           )}
           <button
             onClick={() => { if (window.confirm('¿Cerrar sesión?')) { logout(); navigate('/login') } }}
-            className="p-1.5 transition-colors"
-            style={{ color: 'oklch(72% 0.008 60)' }}
+            className="p-1.5 transition-colors text-warm-400"
           >
             <LogOut size={14} />
           </button>
@@ -213,8 +212,8 @@ export default function Hub() {
 
       {/* ── Error banner ──────────────────────────────────────────────── */}
       {loadError && (
-        <div className="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold"
-          style={{ background: 'oklch(97% 0.015 25)', borderBottom: '1px solid oklch(88% 0.06 25)', color: 'oklch(45% 0.16 25)' }}>
+        <div className="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold bg-danger-50 text-danger-600"
+          style={{ borderBottom: '1px solid oklch(88% 0.06 25)' }}>
           <AlertTriangle size={13} />
           Error al cargar datos. Intentá de nuevo.
           <button
@@ -277,19 +276,19 @@ export default function Hub() {
           const items = pendienteConsig.items.filter(i => i.pendiente > 0)
           if (items.length === 0) return null
           return (
-            <div style={{ padding: '11px 14px', borderRadius: 16, marginBottom: 12, background: 'oklch(97% 0.025 65)', border: '2px solid oklch(82% 0.10 65)' }}>
+            <div className="bg-gold-50" style={{ padding: '11px 14px', borderRadius: 16, marginBottom: 12, border: '2px solid oklch(82% 0.10 65)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                   <Banknote size={14} style={{ color: 'oklch(52% 0.18 65)' }} />
-                  <span style={{ fontSize: 11.5, fontWeight: 700, color: 'oklch(38% 0.12 65)' }}>
+                  <span className="text-gold-700" style={{ fontSize: 11.5, fontWeight: 700 }}>
                     {items.length} consignación{items.length > 1 ? 'es' : ''} pendiente{items.length > 1 ? 's' : ''}
                   </span>
                 </div>
-                <span style={{ fontSize: 11, fontWeight: 700, fontVariantNumeric: 'tabular-nums', padding: '3px 9px', borderRadius: 999, background: 'oklch(88% 0.09 65)', color: 'oklch(38% 0.14 65)' }}>
+                <span className="text-gold-700 tabular-nums" style={{ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999, background: 'oklch(88% 0.09 65)' }}>
                   {fmt(pendienteConsig.total_pendiente)}
                 </span>
               </div>
-              <button onClick={() => navigate('/consignaciones')} style={{ width: '100%', padding: '9px 0', borderRadius: 12, border: 'none', background: 'oklch(72% 0.14 65)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+              <button onClick={() => navigate('/consignaciones')} className="bg-gold-400 text-white" style={{ width: '100%', padding: '9px 0', borderRadius: 12, border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
                 Registrar consignación →
               </button>
             </div>
@@ -463,14 +462,14 @@ export default function Hub() {
 
         {/* ── Stock crítico (promoted) ──────────────────────────────────── */}
         {hayAlertas && !!turno && (
-          <div style={{
-            background: '#fff',
-            border: '1.5px solid oklch(82% 0.10 30)',
-            borderRadius: 18,
-            overflow: 'hidden',
-            marginBottom: 12,
-            boxShadow: '0 6px 18px -12px oklch(60% 0.18 30 / 0.4)',
-          }}>
+          <div className="bg-white border-danger-200"
+            style={{
+              border: '1.5px solid',
+              borderRadius: 18,
+              overflow: 'hidden',
+              marginBottom: 12,
+              boxShadow: '0 6px 18px -12px oklch(60% 0.18 30 / 0.4)',
+            }}>
             {/* Header */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: 10,
@@ -478,34 +477,32 @@ export default function Hub() {
               background: 'linear-gradient(180deg, oklch(98% 0.02 30), oklch(96% 0.03 30))',
               borderBottom: '1px solid oklch(94% 0.04 30)',
             }}>
-              <div style={{
-                width: 28, height: 28, borderRadius: 10, flexShrink: 0,
-                background: '#c64a3a',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                <AlertTriangle size={14} style={{ color: '#fff' }} />
+              <div className="bg-danger flex items-center justify-center flex-shrink-0"
+                style={{ width: 28, height: 28, borderRadius: 10 }}>
+                <AlertTriangle size={14} className="text-white" />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ margin: 0, fontSize: 12.5, fontWeight: 700, color: '#8a3325', letterSpacing: '-0.005em' }}>Stock crítico</p>
+                <p className="text-danger-700" style={{ margin: 0, fontSize: 12.5, fontWeight: 700, letterSpacing: '-0.005em' }}>Stock crítico</p>
                 <p style={{ margin: 0, fontSize: 10, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#a8493a' }}>
                   {agotados.length} agotados · {bajos.length} bajos
                 </p>
               </div>
               <button
                 onClick={() => navigate('/pedido')}
-                style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '5px 10px', borderRadius: 10, background: '#c64a3a', color: '#fff', border: 'none', fontFamily: 'inherit', fontSize: 11, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                className="bg-danger text-white flex items-center gap-1 flex-shrink-0"
+                style={{ padding: '5px 10px', borderRadius: 10, border: 'none', fontFamily: 'inherit', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
               >
                 Pedir <ChevronRight size={11} />
               </button>
             </div>
             {/* Agotados */}
             {agotados.length > 0 && (
-              <div style={{ background: 'oklch(98% 0.018 30)', padding: '8px 14px 9px' }}>
-                <p style={{ margin: '0 0 4px', fontSize: 9, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: '#c64a3a' }}>Agotados</p>
+              <div className="bg-danger-50" style={{ padding: '8px 14px 9px' }}>
+                <p className="text-danger" style={{ margin: '0 0 4px', fontSize: 9, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase' }}>Agotados</p>
                 {agotados.map(a => (
                   <div key={a.producto_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
                     <span style={{ fontSize: 12.5, fontWeight: 600, color: '#7a2a20' }}>{a.producto}</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: '#c64a3a', padding: '2px 8px', borderRadius: 999, fontVariantNumeric: 'tabular-nums' }}>
+                    <span className="text-white bg-danger tabular-nums" style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999 }}>
                       0 {a.unidad}
                     </span>
                   </div>
@@ -518,8 +515,8 @@ export default function Hub() {
                 <p style={{ margin: '0 0 4px', fontSize: 9, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'oklch(50% 0.14 75)' }}>Por agotarse</p>
                 {bajos.map(a => (
                   <div key={a.producto_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
-                    <span style={{ fontSize: 12.5, fontWeight: 500, color: 'oklch(35% 0.01 60)' }}>{a.producto}</span>
-                    <span style={{ fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: 'oklch(38% 0.12 75)', background: 'oklch(97% 0.04 75)', border: '1px solid oklch(90% 0.07 75)', padding: '2px 8px', borderRadius: 999 }}>
+                    <span className="text-bark-700" style={{ fontSize: 12.5, fontWeight: 500 }}>{a.producto}</span>
+                    <span className="tabular-nums" style={{ fontSize: 10, fontWeight: 600, color: 'oklch(38% 0.12 75)', background: 'oklch(97% 0.04 75)', border: '1px solid oklch(90% 0.07 75)', padding: '2px 8px', borderRadius: 999 }}>
                       {Math.round(a.stock_actual)}/{Math.round(a.stock_minimo)} {a.unidad}
                     </span>
                   </div>
@@ -531,21 +528,19 @@ export default function Hub() {
 
         {/* ── Todo en orden ─────────────────────────────────────────────── */}
         {todoEnOrden && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 12,
-            padding: '14px 16px', borderRadius: 18, marginBottom: 12,
-            background: 'linear-gradient(180deg, oklch(96% 0.025 145), oklch(94% 0.04 145))',
-            border: '1.5px solid oklch(85% 0.10 145)',
-          }}>
-            <div style={{
-              width: 36, height: 36, borderRadius: 12, flexShrink: 0,
-              background: 'oklch(72% 0.16 145)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+          <div className="bg-success-50 border-success-200"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '14px 16px', borderRadius: 18, marginBottom: 12,
+              background: 'linear-gradient(180deg, oklch(96% 0.025 145), oklch(94% 0.04 145))',
+              border: '1.5px solid',
             }}>
+            <div className="bg-success-400 flex items-center justify-center flex-shrink-0"
+              style={{ width: 36, height: 36, borderRadius: 12 }}>
               <Check size={18} strokeWidth={3} color="#fff" />
             </div>
             <div>
-              <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: 'oklch(28% 0.08 145)' }}>Todo en orden</p>
+              <p className="text-success-700" style={{ margin: 0, fontSize: 13, fontWeight: 700 }}>Todo en orden</p>
               <p style={{ margin: '2px 0 0', fontSize: 11, color: 'oklch(45% 0.10 145)', fontWeight: 500 }}>
                 Sin alertas · limpieza hecha · pasos al día
               </p>
@@ -602,7 +597,7 @@ export default function Hub() {
         {/* ── Herramientas ─────────────────────────────────────────────── */}
         {!!turno && (
           <div style={{ marginBottom: 12 }}>
-            <p style={{ margin: '0 4px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'oklch(58% 0.01 60)' }}>
+            <p className="text-warm-500" style={{ margin: '0 4px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase' }}>
               Herramientas
             </p>
             {/* 2×2 grid */}
@@ -611,10 +606,11 @@ export default function Hub() {
                 <button
                   key={path}
                   onClick={() => navigate(path)}
+                  className="bg-white border-warm-200"
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10,
                     padding: '12px 12px', borderRadius: 16,
-                    background: '#fff', border: '1px solid oklch(94% 0.008 75)',
+                    border: '1px solid',
                     cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
                   }}
                 >
@@ -627,8 +623,8 @@ export default function Hub() {
                     <Icon size={17} style={{ color: tint }} />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: 'oklch(28% 0.01 60)', letterSpacing: '-0.005em' }}>{label}</p>
-                    <p style={{ margin: '1px 0 0', fontSize: 10, color: 'oklch(58% 0.01 60)', fontWeight: 500 }}>{sublabel}</p>
+                    <p className="text-bark-700" style={{ margin: 0, fontSize: 13, fontWeight: 700, letterSpacing: '-0.005em' }}>{label}</p>
+                    <p className="text-warm-500" style={{ margin: '1px 0 0', fontSize: 10, fontWeight: 500 }}>{sublabel}</p>
                   </div>
                 </button>
               ))}
@@ -641,10 +637,11 @@ export default function Hub() {
                   <button
                     key={path}
                     onClick={() => navigate(path)}
+                    className="bg-white border-warm-200"
                     style={{
                       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
                       padding: '12px 8px', borderRadius: 16,
-                      background: '#fff', border: '1px solid oklch(94% 0.008 75)',
+                      border: '1px solid',
                       cursor: 'pointer', fontFamily: 'inherit',
                     }}
                   >
@@ -656,7 +653,7 @@ export default function Hub() {
                     }}>
                       <Icon size={15} style={{ color: tint }} />
                     </div>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: 'oklch(35% 0.01 60)', textAlign: 'center', lineHeight: 1.2 }}>{label}</span>
+                    <span className="text-bark-700" style={{ fontSize: 11, fontWeight: 600, textAlign: 'center', lineHeight: 1.2 }}>{label}</span>
                   </button>
                 ))}
               </div>
@@ -665,15 +662,16 @@ export default function Hub() {
             {/* Dashed "más" button with color dot preview */}
             <button
               onClick={() => setShowMasTools(v => !v)}
+              className="bg-warm-100 border-warm-300"
               style={{
                 width: '100%', display: 'flex', alignItems: 'center', gap: 10,
                 padding: '11px 14px', marginTop: 8,
-                background: 'oklch(95% 0.012 75)', border: '1px dashed oklch(85% 0.012 75)',
+                border: '1px dashed',
                 borderRadius: 14, cursor: 'pointer', fontFamily: 'inherit',
               }}
             >
-              <LayoutGrid size={14} style={{ color: 'oklch(58% 0.01 60)' }} />
-              <span style={{ flex: 1, textAlign: 'left', fontSize: 12, fontWeight: 700, color: 'oklch(40% 0.01 60)' }}>
+              <LayoutGrid size={14} className="text-warm-500" />
+              <span className="text-warm-600" style={{ flex: 1, textAlign: 'left', fontSize: 12, fontWeight: 700 }}>
                 {showMasTools ? 'Menos herramientas' : `${TOOLS_MORE.length} herramientas más`}
               </span>
               {!showMasTools && (
@@ -684,8 +682,8 @@ export default function Hub() {
                 </div>
               )}
               {showMasTools
-                ? <ChevronUp size={14} style={{ color: 'oklch(58% 0.01 60)' }} />
-                : <ChevronRight size={14} style={{ color: 'oklch(58% 0.01 60)' }} />}
+                ? <ChevronUp size={14} className="text-warm-500" />
+                : <ChevronRight size={14} className="text-warm-500" />}
             </button>
           </div>
         )}
@@ -710,11 +708,12 @@ export default function Hub() {
           ) : conDiff ? (
             <button
               onClick={() => navigate('/entrega')}
+              className="bg-danger-50 text-danger-700"
               style={{
                 width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                 padding: '12px 18px', marginBottom: 12, borderRadius: 18, cursor: 'pointer',
-                border: '2px solid oklch(80% 0.12 30)', background: 'oklch(98% 0.02 30)',
-                color: '#8a3325', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
+                border: '2px solid oklch(80% 0.12 30)',
+                fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
               }}
             >
               <AlertTriangle size={14} /> Último cuadre con diferencia — nuevo cuadre
@@ -722,11 +721,12 @@ export default function Hub() {
           ) : hace4h ? (
             <button
               onClick={() => navigate('/entrega')}
+              className="bg-gold-50 text-gold-700"
               style={{
                 width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                 padding: '12px 18px', marginBottom: 12, borderRadius: 18, cursor: 'pointer',
-                border: '2px solid oklch(88% 0.09 75)', background: 'oklch(98% 0.03 75)',
-                color: 'oklch(38% 0.12 65)', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
+                border: '2px solid oklch(88% 0.09 75)',
+                fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
               }}
             >
               <UserCheck size={15} /> Nuevo cuadre de llegada
@@ -734,11 +734,12 @@ export default function Hub() {
           ) : (
             <button
               onClick={() => navigate('/entrega')}
+              className="text-forest"
               style={{
                 width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                 padding: '12px 18px', marginBottom: 12, borderRadius: 18, cursor: 'pointer',
                 border: '2px solid oklch(88% 0.06 155)', background: 'oklch(97% 0.018 155)',
-                color: 'oklch(35% 0.05 155)', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
+                fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
               }}
             >
               <UserCheck size={15} /> ✓ Cuadre realizado — registrar otro
@@ -748,20 +749,20 @@ export default function Hub() {
 
         {/* ── Movimientos del turno ─────────────────────────────────────── */}
         {turno && movimientos.length > 0 && (
-          <div style={{ background: '#fff', border: '1px solid oklch(94% 0.008 75)', borderRadius: 18, overflow: 'hidden', marginBottom: 12 }}>
+          <div className="bg-white border-warm-200" style={{ border: '1px solid', borderRadius: 18, overflow: 'hidden', marginBottom: 12 }}>
             <button
               onClick={() => setShowMovimientos(v => !v)}
               style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <TrendingUp size={13} style={{ color: 'oklch(65% 0.01 60)' }} />
-                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'oklch(40% 0.01 60)' }}>Movimientos</span>
-                <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'oklch(94% 0.008 75)', color: 'oklch(40% 0.01 60)' }}>
+                <TrendingUp size={13} className="text-warm-400" />
+                <span className="text-warm-600" style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase' }}>Movimientos</span>
+                <span className="text-warm-600 bg-warm-200" style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999 }}>
                   {movimientos.length}
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 11, fontVariantNumeric: 'tabular-nums', color: 'oklch(58% 0.01 60)' }}>
+                <span className="text-warm-500 tabular-nums" style={{ fontSize: 11 }}>
                   {movimientos.filter(m => m.tipo === 'ingreso').length > 0 && (
                     <><TrendingUp size={10} style={{ display: 'inline', color: 'oklch(52% 0.18 145)' }} /> {movimientos.filter(m => m.tipo === 'ingreso').length} </>
                   )}
@@ -770,28 +771,28 @@ export default function Hub() {
                   )}
                 </span>
                 {showMovimientos
-                  ? <ChevronUp size={14} style={{ color: 'oklch(65% 0.01 60)' }} />
-                  : <ChevronDown size={14} style={{ color: 'oklch(65% 0.01 60)' }} />}
+                  ? <ChevronUp size={14} className="text-warm-400" />
+                  : <ChevronDown size={14} className="text-warm-400" />}
               </div>
             </button>
             {showMovimientos && (
-              <div style={{ borderTop: '1px solid oklch(96% 0.006 75)' }}>
+              <div className="border-t border-warm-100">
                 {movimientos.map(m => (
-                  <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderBottom: '1px solid oklch(97% 0.004 75)' }}>
+                  <div key={m.id} className="border-b border-warm-50" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px' }}>
                     {m.imagen_url ? (
-                      <img src={m.imagen_url} alt="" style={{ width: 40, height: 40, borderRadius: 12, objectFit: 'cover', flexShrink: 0, border: '1px solid oklch(92% 0.008 75)' }} />
+                      <img src={m.imagen_url} alt="" className="border-warm-200" style={{ width: 40, height: 40, borderRadius: 12, objectFit: 'cover', flexShrink: 0, border: '1px solid' }} />
                     ) : (
-                      <div style={{ width: 40, height: 40, borderRadius: 12, background: 'oklch(95% 0.008 75)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        <ImageIcon size={14} style={{ color: 'oklch(65% 0.01 60)' }} />
+                      <div className="bg-warm-100" style={{ width: 40, height: 40, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <ImageIcon size={14} className="text-warm-400" />
                       </div>
                     )}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'oklch(28% 0.01 60)' }}>{m.concepto}</p>
-                      <p style={{ margin: '2px 0 0', fontSize: 11, color: 'oklch(58% 0.01 60)' }}>
+                      <p className="text-bark-700" style={{ margin: 0, fontSize: 13, fontWeight: 600 }}>{m.concepto}</p>
+                      <p className="text-warm-500" style={{ margin: '2px 0 0', fontSize: 11 }}>
                         {parseUTC(m.fecha).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                       </p>
                     </div>
-                    <span style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums', flexShrink: 0, color: m.tipo === 'ingreso' ? 'oklch(45% 0.18 145)' : 'oklch(50% 0.18 30)' }}>
+                    <span className="tabular-nums flex-shrink-0" style={{ fontSize: 13, fontWeight: 700, color: m.tipo === 'ingreso' ? 'oklch(45% 0.18 145)' : 'oklch(50% 0.18 30)' }}>
                       {m.tipo === 'ingreso' ? '+' : '−'}{fmt(m.valor)}
                     </span>
                   </div>
@@ -815,8 +816,9 @@ export default function Hub() {
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 20px 14px', background: 'linear-gradient(135deg, oklch(94% 0.04 65), oklch(97% 0.02 75))' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ width: 40, height: 40, borderRadius: 14, background: 'oklch(72% 0.13 65)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Cake size={20} style={{ color: '#fff' }} />
+                <div className="bg-gold-400 flex items-center justify-center"
+                  style={{ width: 40, height: 40, borderRadius: 14 }}>
+                  <Cake size={20} className="text-white" />
                 </div>
                 <div>
                   <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: 'oklch(28% 0.06 60)' }}>Pastelería por impulsar</p>
@@ -825,19 +827,19 @@ export default function Hub() {
                   </p>
                 </div>
               </div>
-              <button onClick={() => setShowImpulso(false)} style={{ padding: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: 'oklch(58% 0.01 60)' }}>
+              <button onClick={() => setShowImpulso(false)} className="text-warm-500" style={{ padding: 6, background: 'transparent', border: 'none', cursor: 'pointer' }}>
                 <XIcon size={18} />
               </button>
             </div>
             <div style={{ maxHeight: 256, overflowY: 'auto' }}>
               {impulso.map(item => (
-                <div key={item.lote_id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', borderBottom: '1px solid oklch(96% 0.006 75)', background: item.urgente ? 'oklch(99% 0.01 30)' : 'transparent' }}>
+                <div key={item.lote_id} className="border-b border-warm-100" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', background: item.urgente ? 'oklch(99% 0.01 30)' : 'transparent' }}>
                   <div style={{ width: 36, height: 36, borderRadius: 11, background: item.urgente ? 'oklch(94% 0.04 30)' : 'oklch(94% 0.06 75)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Clock size={15} style={{ color: item.urgente ? '#c64a3a' : 'oklch(52% 0.15 65)' }} />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'oklch(28% 0.01 60)' }}>{item.producto_nombre}</p>
-                    <p style={{ margin: '2px 0 0', fontSize: 11, color: 'oklch(55% 0.01 60)' }}>
+                    <p className="text-bark-700" style={{ margin: 0, fontSize: 13, fontWeight: 600 }}>{item.producto_nombre}</p>
+                    <p className="text-warm-500" style={{ margin: '2px 0 0', fontSize: 11 }}>
                       {item.cantidad_restante} {item.cantidad_restante === 1 ? 'unidad' : 'unidades'} disponibles
                     </p>
                   </div>
@@ -845,13 +847,13 @@ export default function Hub() {
                     <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999, background: item.urgente ? 'oklch(94% 0.04 30)' : 'oklch(94% 0.06 75)', color: item.urgente ? '#c64a3a' : 'oklch(40% 0.14 65)' }}>
                       {item.dias_en_inventario}d
                     </span>
-                    {item.urgente && <p style={{ margin: '3px 0 0', fontSize: 10, fontWeight: 700, color: '#c64a3a' }}>¡Último día!</p>}
+                    {item.urgente && <p className="text-danger" style={{ margin: '3px 0 0', fontSize: 10, fontWeight: 700 }}>¡Último día!</p>}
                   </div>
                 </div>
               ))}
             </div>
-            <div style={{ padding: '14px 20px 28px', background: 'oklch(98% 0.006 75)' }}>
-              <p style={{ margin: '0 0 12px', fontSize: 11, color: 'oklch(58% 0.01 60)', textAlign: 'center' }}>
+            <div className="bg-warm-50" style={{ padding: '14px 20px 28px' }}>
+              <p className="text-warm-500" style={{ margin: '0 0 12px', fontSize: 11, textAlign: 'center' }}>
                 💡 Ofrécelos activamente — llevan {Math.min(...impulso.map(i => i.dias_en_inventario))}–{Math.max(...impulso.map(i => i.dias_en_inventario))} días en inventario
               </p>
               <button

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { FiltroProvider, useFiltro } from '../contexts/FiltroContext'
 import FilterBar from '../components/FilterBar'
 import api from '../api/client'
-import { BarChart2, ArrowUpDown, Package, ChevronDown, ChevronUp, UserCheck, Clock, AlertTriangle, Download, ShoppingBag } from 'lucide-react'
+import { ArrowUpDown, Package, ChevronDown, ChevronUp, UserCheck, Clock, AlertTriangle, Download, TrendingUp } from 'lucide-react'
 import DifferenceBadge from '../components/DifferenceBadge'
 
 interface Sede { id: number; nombre: string }
@@ -30,7 +31,7 @@ function BtnExcel({ onClick }: { onClick: () => void }) {
   )
 }
 
-type Tab = 'ventas' | 'movimientos' | 'inventario' | 'cuadres' | 'turnos' | 'siigo'
+type Tab = 'ventas' | 'movimientos' | 'inventario' | 'cuadres' | 'turnos'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 const fmtN = (v: number, dec = 2) => v.toLocaleString('es-CO', { minimumFractionDigits: dec, maximumFractionDigits: dec })
@@ -40,103 +41,28 @@ function cleanParams(params: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null))
 }
 
-// ─── Ventas ──────────────────────────────────────────────────────────────────
-interface FilaVenta { fecha: string; venta_total: number; nota_credito: number; vales: number; tarjetas: number; efectivo: number; n_registros: number }
-interface TotalesVenta { venta_total: number; nota_credito: number; vales: number; tarjetas: number; efectivo: number; n_registros: number }
-
-function TabVentas({ tiendaId }: { tiendaId: number }) {
-  const { filtro } = useFiltro()
-  const [filas, setFilas] = useState<FilaVenta[]>([])
-  const [totales, setTotales] = useState<TotalesVenta | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  const cargar = async () => {
-    setLoading(true)
-    try {
-      const params = cleanParams({
-        tienda_id: tiendaId,
-        fecha_desde: filtro.desde,
-        fecha_hasta: filtro.hasta,
-        categoria: filtro.categoria,
-        turno_id: filtro.turnoId,
-        producto_search: filtro.productoSearch,
-      })
-      const { data } = await api.get('/informes/ventas', { params })
-      setFilas(data.filas)
-      setTotales(data.totales)
-    } finally { setLoading(false) }
-  }
-
-  useEffect(() => { cargar() }, [filtro])
-
-  const exportar = () => exportarExcel(
-    `ventas_${filtro.desde}_${filtro.hasta}`,
-    ['Fecha', 'Venta Total', 'Nota Crédito', 'Vales', 'Tarjetas', 'Efectivo', 'Registros'],
-    [
-      ...filas.map(f => [f.fecha, f.venta_total, f.nota_credito, f.vales, f.tarjetas, f.efectivo, f.n_registros]),
-      ...(totales ? [['TOTAL', totales.venta_total, totales.nota_credito, totales.vales, totales.tarjetas, totales.efectivo, totales.n_registros]] : []),
-    ]
-  )
+// ─── Ventas (redirect to Analytics) ─────────────────────────────────────────
+function TabVentas() {
+  const navigate = useNavigate()
 
   return (
-    <div className="space-y-4">
-      <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-amber-800">
-        ⚠️ Este tab muestra registros históricos manuales. Para las ventas actuales usá el tab <strong>Siigo</strong>.
+    <div className="flex flex-col items-center justify-center py-16 px-4 text-center space-y-5">
+      <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-center">
+        <TrendingUp size={28} className="text-amber-600" />
       </div>
-      <div className="flex gap-2 flex-wrap items-center justify-between">
-        <button onClick={cargar} disabled={loading}
-          className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
-          {loading ? 'Cargando...' : 'Consultar'}
-        </button>
-        {filas.length > 0 && <BtnExcel onClick={exportar} />}
+      <div className="space-y-1.5">
+        <p className="text-base font-semibold text-gray-800">Las ventas ahora están en Analítica</p>
+        <p className="text-sm text-gray-500 max-w-sm">
+          Los datos de ventas del POS —tickets, métodos de pago, productos, tendencias— se consultan en tiempo real desde la pantalla de Analítica.
+        </p>
       </div>
-
-      {filas.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-100">
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Fecha</th>
-                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Venta total</th>
-                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">N. crédito</th>
-                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Vales</th>
-                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Tarjetas</th>
-                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Efectivo</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filas.map(f => (
-                  <tr key={f.fecha} className="hover:bg-gray-50">
-                    <td className="px-4 py-2.5 font-medium text-gray-700">{f.fecha}</td>
-                    <td className="px-4 py-2.5 text-right font-bold text-gray-800">{fmt(f.venta_total)}</td>
-                    <td className="px-4 py-2.5 text-right text-red-600">{f.nota_credito > 0 ? fmt(f.nota_credito) : '—'}</td>
-                    <td className="px-4 py-2.5 text-right text-orange-600">{f.vales > 0 ? fmt(f.vales) : '—'}</td>
-                    <td className="px-4 py-2.5 text-right text-blue-600">{f.tarjetas > 0 ? fmt(f.tarjetas) : '—'}</td>
-                    <td className="px-4 py-2.5 text-right text-green-700 font-semibold">{fmt(f.efectivo)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              {totales && (
-                <tfoot>
-                  <tr className="bg-amber-50 border-t-2 border-amber-200 font-bold">
-                    <td className="px-4 py-2.5 text-xs text-amber-700 uppercase">Total ({totales.n_registros} registros)</td>
-                    <td className="px-4 py-2.5 text-right text-amber-800">{fmt(totales.venta_total)}</td>
-                    <td className="px-4 py-2.5 text-right text-red-700">{fmt(totales.nota_credito)}</td>
-                    <td className="px-4 py-2.5 text-right text-orange-700">{fmt(totales.vales)}</td>
-                    <td className="px-4 py-2.5 text-right text-blue-700">{fmt(totales.tarjetas)}</td>
-                    <td className="px-4 py-2.5 text-right text-green-800">{fmt(totales.efectivo)}</td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
-        </div>
-      )}
-
-      {filas.length === 0 && totales && (
-        <p className="text-sm text-gray-400 text-center py-6">Sin registros en el período seleccionado.</p>
-      )}
+      <button
+        onClick={() => navigate('/analytics')}
+        className="flex items-center gap-2 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg text-sm transition-colors"
+      >
+        <TrendingUp size={15} />
+        Ir a Analítica
+      </button>
     </div>
   )
 }
@@ -685,161 +611,11 @@ const ESTADO_CFG: Record<string, { label: string; bg: string; text: string; titl
 }
 
 
-// ─── Siigo: ventas sincronizadas ──────────────────────────────────────────────
-interface SiigoVentaItem {
-  id: number
-  tienda_id: number
-  fecha: string
-  codigo_producto: string
-  descripcion: string
-  cantidad: number
-  precio_unitario: number
-  total_sin_descuento: number
-  descuento_porcentaje: number | null
-  descuento_monto: number | null
-  total_con_descuento: number
-  siigo_factura_id: string
-}
-
-function TabSiigo({ tiendaId }: { tiendaId: number }) {
-  const { filtro } = useFiltro()
-  const [items, setItems] = useState<SiigoVentaItem[] | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [syncing, setSyncing] = useState(false)
-  const [syncMsg, setSyncMsg] = useState<string | null>(null)
-
-  const cargar = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const params = cleanParams({
-        tienda_id: tiendaId,
-        fecha_desde: filtro.desde,
-        fecha_hasta: filtro.hasta,
-        producto_search: filtro.productoSearch,
-        con_descuento: filtro.conDescuento,
-      })
-      const { data } = await api.get('/informes/siigo/ventas', { params })
-      setItems(data)
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg ?? 'Error consultando ventas Siigo')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => { cargar() }, [filtro])
-
-  const handleSync = async () => {
-    setSyncing(true)
-    setSyncMsg(null)
-    setError(null)
-    try {
-      const { data } = await api.post('/informes/siigo/sync', null, {
-        params: {
-          tienda_id: tiendaId,
-          fecha_desde: filtro.desde,
-          fecha_hasta: filtro.hasta,
-        },
-      })
-      setSyncMsg(`${data.synced_count} nuevos, ${data.skipped_count} ya existían`)
-      await cargar()
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg ?? 'Error sincronizando con Siigo')
-    } finally {
-      setSyncing(false)
-    }
-  }
-
-  const exportar = () => {
-    if (!items || !items.length) return
-    exportarExcel(
-      `siigo_ventas_${filtro.desde}_${filtro.hasta}`,
-      ['Fecha', 'Código', 'Descripción', 'Cantidad', 'Precio Unit.', 'Total', 'Descuento %'],
-      items.map(p => [p.fecha, p.codigo_producto, p.descripcion, p.cantidad, p.precio_unitario, p.total_con_descuento, p.descuento_porcentaje ?? '—'])
-    )
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex gap-2 flex-wrap items-center justify-between">
-        <div className="flex gap-2">
-          <button onClick={cargar} disabled={loading}
-            className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
-            {loading ? 'Cargando...' : 'Consultar'}
-          </button>
-          <button onClick={handleSync} disabled={syncing}
-            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
-            {syncing ? 'Sincronizando...' : 'Sincronizar Siigo'}
-          </button>
-        </div>
-        {items && items.length > 0 && <BtnExcel onClick={exportar} />}
-      </div>
-
-      {syncMsg && (
-        <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-2 text-sm text-green-700">
-          ✓ {syncMsg}
-        </div>
-      )}
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
-
-      {items !== null && items.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-100">
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Fecha</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Código</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Descripción</th>
-                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Cant.</th>
-                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Precio Unit.</th>
-                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Total</th>
-                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Descuento</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {items.map(p => (
-                  <tr key={p.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-2.5 text-gray-600 font-mono text-xs">{p.fecha}</td>
-                    <td className="px-4 py-2.5 text-gray-500 text-xs">{p.codigo_producto || '—'}</td>
-                    <td className="px-4 py-2.5 font-medium text-gray-800">{p.descripcion}</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-gray-600">{fmtN(p.cantidad, 0)}</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-gray-600">{fmt(p.precio_unitario)}</td>
-                    <td className="px-4 py-2.5 text-right font-bold text-gray-800">{fmt(p.total_con_descuento)}</td>
-                    <td className="px-4 py-2.5 text-right text-xs text-gray-500">
-                      {p.descuento_porcentaje != null ? `${p.descuento_porcentaje}%` : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {items !== null && items.length === 0 && !loading && (
-        <p className="text-sm text-gray-400 text-center py-6">
-          Sin ítems sincronizados en el período. Usá "Sincronizar Siigo" para traer datos.
-        </p>
-      )}
-    </div>
-  )
-}
-
 // ─── Página principal ─────────────────────────────────────────────────────────
 export default function Informes() {
   const { user } = useAuth()
   const isAdmin = user?.rol === 'admin'
-  const [tab, setTab] = useState<Tab>('siigo')
+  const [tab, setTab] = useState<Tab>('ventas')
   const [sedes, setSedes] = useState<Sede[]>([])
   const [tiendaId, setTiendaId] = useState<number | null>(user?.tienda_id ?? null)
 
@@ -857,12 +633,11 @@ export default function Informes() {
   )
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'ventas',       label: 'Ventas',       icon: <BarChart2 size={14} /> },
+    { id: 'ventas',       label: 'Ventas',       icon: <TrendingUp size={14} /> },
     { id: 'turnos',       label: 'Turnos',       icon: <Clock size={14} /> },
     { id: 'cuadres',      label: 'Cuadres',      icon: <UserCheck size={14} /> },
     { id: 'movimientos',  label: 'Movimientos',  icon: <ArrowUpDown size={14} /> },
     { id: 'inventario',   label: 'Inventario',   icon: <Package size={14} /> },
-    { id: 'siigo',        label: 'Siigo',        icon: <ShoppingBag size={14} /> },
   ]
 
   return (
@@ -943,12 +718,11 @@ function InformesContent({
       <FilterBar />
 
       {/* Tab content */}
-      {tab === 'ventas'      && <TabVentas      tiendaId={tiendaId} />}
+      {tab === 'ventas'      && <TabVentas />}
       {tab === 'turnos'      && <TabTurnos      tiendaId={tiendaId} />}
       {tab === 'cuadres'     && <TabCuadres     tiendaId={tiendaId} />}
       {tab === 'movimientos' && <TabMovimientos tiendaId={tiendaId} />}
       {tab === 'inventario'  && <TabInventario  tiendaId={tiendaId} />}
-      {tab === 'siigo'       && <TabSiigo       tiendaId={tiendaId} />}
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, CreditCard, Banknote, AlertTriangle } from 'lucide-react'
+import { X, CreditCard, Banknote, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import api from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import TicketRecibo, { type TicketData } from './TicketRecibo'
@@ -49,6 +49,8 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [ticket, setTicket] = useState<TicketData | null>(null)
+  const [confirmed, setConfirmed] = useState(false)
+  const [cambioFinal, setCambioFinal] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -84,6 +86,8 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
 
       const { data } = await api.post<TicketData>('/pos/ticket', body)
       setTicket(data)
+      setConfirmed(true)
+      setCambioFinal(metodo === 'efectivo' ? numRecibido - totalEstimado : 0)
 
       // Pequeño delay para que el DOM del ticket monte antes de imprimir
       setTimeout(() => {
@@ -99,10 +103,10 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop — bloqueado durante el procesamiento para evitar cierre accidental */}
       <div
         className="fixed inset-0 z-50 bg-black/60 flex items-end justify-center"
-        onClick={onClose}
+        onClick={loading ? undefined : onClose}
       >
         <div
           className="w-full max-w-lg bg-white rounded-t-3xl"
@@ -119,13 +123,32 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
             <p className="text-base font-bold text-gray-800">Cobrar</p>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-warm-100 transition-colors"
+              disabled={loading}
+              className="p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-warm-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <X size={18} />
             </button>
           </div>
 
           <div className="px-5 pt-4 space-y-4">
+            {/* Estado de éxito — se muestra brevemente antes de que onSuccess cierre el modal */}
+            {confirmed && (
+              <div className="flex flex-col items-center gap-3 py-6">
+                <CheckCircle2 size={52} className="text-green-500" />
+                <p className="text-lg font-bold text-gray-800">Venta registrada</p>
+                {cambioFinal > 0 && (
+                  <div className="bg-green-50 border border-green-200 rounded-2xl px-6 py-3 text-center">
+                    <p className="text-xs font-semibold text-green-600 uppercase tracking-wide mb-0.5">Cambio</p>
+                    <p className="text-3xl font-bold text-green-700">{fmtCO(cambioFinal)}</p>
+                  </div>
+                )}
+                <p className="text-sm text-gray-400">Imprimiendo ticket…</p>
+              </div>
+            )}
+
+            {/* Formulario de cobro — oculto tras confirmar */}
+            {!confirmed && (
+            <>
             {/* Total */}
             <div className="bg-gray-50 rounded-2xl p-4 text-center border border-gray-100">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Total a cobrar</p>
@@ -281,10 +304,16 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
               </div>
             )}
 
-            {/* Error */}
+            {/* Error — panel visible, invita a reintentar sin perder el carrito */}
             {error && (
-              <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-xl">
-                <AlertTriangle size={14} className="shrink-0" /> {error}
+              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 space-y-1.5">
+                <div className="flex items-center gap-2 text-red-700 text-sm font-semibold">
+                  <AlertTriangle size={14} className="shrink-0" />
+                  {error}
+                </div>
+                <p className="text-xs text-red-500 pl-5">
+                  Tu cuenta sigue intacta — podés reintentar o cambiar el método de pago.
+                </p>
               </div>
             )}
 
@@ -300,6 +329,8 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
             >
               {loading ? 'Procesando...' : `Confirmar y cobrar ${fmtCO(totalEstimado)}`}
             </button>
+            </>
+            )}
           </div>
         </div>
       </div>

@@ -52,6 +52,7 @@ export default function POS() {
   const [cart, setCart] = useState<CartItem[]>([])
   const [showCheckout, setShowCheckout] = useState(false)
   const [loadError, setLoadError] = useState('')
+  const [cancelToast, setCancelToast] = useState(false)
 
   const turnoListo = !!turno && turno.tiene_conteo_apertura
 
@@ -126,6 +127,14 @@ export default function POS() {
         {loadError && (
           <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-xl">
             <AlertTriangle size={14} className="shrink-0" /> {loadError}
+          </div>
+        )}
+
+        {/* Toast de cancelación — aparece ~3s cuando se cierra el modal sin cobrar */}
+        {cancelToast && (
+          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-3 rounded-xl">
+            <AlertTriangle size={14} className="shrink-0 text-amber-500" />
+            <span>Cobro cancelado — tu cuenta sigue acá, podés reintentar.</span>
           </div>
         )}
 
@@ -292,10 +301,17 @@ export default function POS() {
         <CheckoutModal
           items={cart}
           totalEstimado={total}
-          onClose={() => setShowCheckout(false)}
+          onClose={() => {
+            setShowCheckout(false)
+            // Solo muestra el toast de cancelación si se cerró sin confirmar
+            // (onSuccess limpia el carrito → este handler no se llama en caso de éxito)
+            setCancelToast(true)
+            setTimeout(() => setCancelToast(false), 3000)
+          }}
           onSuccess={() => {
             setShowCheckout(false)
             setCart([])
+            // No se toca cancelToast — el carrito se limpió, la venta fue exitosa
           }}
         />
       )}

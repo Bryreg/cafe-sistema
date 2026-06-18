@@ -64,6 +64,9 @@ function SmartRedirect() {
 
   if (tipo_turno === 'apertura') {
     if (!turno) return <Navigate to="/apertura" replace />
+    // Listo para vender: conteo de apertura ya hecho → aterrizar en POS
+    if (turno.tiene_conteo_apertura) return <Navigate to="/pos" replace />
+    // Apertura iniciada pero conteo pendiente → Hub para completar el flujo
     return <Navigate to="/hub" replace />
   }
 
@@ -73,7 +76,8 @@ function SmartRedirect() {
   // Si recargaron antes de que localStorage se actualizara, el backend manda.
   const cuadreDone = cuadre_llegada_turno_id === turno.id || turno.ultima_entrega_fecha !== null
   if (!cuadreDone) return <Navigate to="/cuadre-llegada" replace />
-  return <Navigate to="/hub" replace />
+  // Turno intermedio/cierre listo → aterrizar en POS
+  return <Navigate to="/pos" replace />
 }
 
 // ─── Rutas internas ──────────────────────────────────────────────────────────

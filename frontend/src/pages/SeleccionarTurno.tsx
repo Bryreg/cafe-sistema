@@ -4,17 +4,28 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import { Coffee, Sun, Repeat2, Moon, LogOut, ArrowRight } from 'lucide-react'
 
+interface TurnoActivo {
+  id: number
+  usuario_apertura_id: number | null
+  tiene_conteo_apertura: boolean
+}
+
 export default function SeleccionarTurno() {
   const { user, logout, setTipoTurno } = useAuth()
   const navigate = useNavigate()
-  const [turnoActivo, setTurnoActivo] = useState<boolean | null>(null)
+  const [turno, setTurno] = useState<TurnoActivo | null | undefined>(undefined)
 
   useEffect(() => {
     if (!user?.tienda_id) return
     api.get(`/caja/activo/${user.tienda_id}`)
-      .then(({ data }) => setTurnoActivo(!!data))
-      .catch(() => setTurnoActivo(false))
+      .then(({ data }) => setTurno(data ?? null))
+      .catch(() => setTurno(null))
   }, [user?.tienda_id])
+
+  // Derivar visibilidad de botones según la matriz de estados
+  const esMiTurno = turno !== null && turno !== undefined && turno.usuario_apertura_id === user?.user_id
+  const esTurnoAjeno = turno !== null && turno !== undefined && !esMiTurno
+  const puedeRelevar = esTurnoAjeno && turno!.tiene_conteo_apertura
 
   const elegir = (tipo: string) => {
     setTipoTurno(tipo)
@@ -33,7 +44,7 @@ export default function SeleccionarTurno() {
         <p className="text-xs text-warm-500 mb-8">{user.nombre}</p>
       )}
 
-      {turnoActivo === null ? (
+      {turno === undefined ? (
         <p className="text-sm text-warm-500 animate-pulse">Consultando estado del día...</p>
       ) : (
         <div className="w-full max-w-sm">
@@ -42,7 +53,8 @@ export default function SeleccionarTurno() {
           </p>
 
           <div className="flex flex-col gap-3">
-            {!turnoActivo && (
+            {/* Sin turno abierto → solo Apertura */}
+            {turno === null && (
               <button
                 onClick={() => elegir('apertura')}
                 className="bg-bark-800 border border-bark-700 rounded-xl px-5 py-5 flex items-center gap-4
@@ -58,22 +70,26 @@ export default function SeleccionarTurno() {
               </button>
             )}
 
-            {turnoActivo && (
-              <>
-                <button
-                  onClick={() => elegir('apertura')}
-                  className="bg-amber-600 border border-amber-500 rounded-xl px-5 py-5 flex items-center gap-4
-                             hover:bg-amber-500 active:scale-95 transition-all"
-                >
-                  <div className="w-11 h-11 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-                    <ArrowRight size={20} className="text-white" />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-sm font-bold text-white">Continuar mi turno</p>
-                    <p className="text-xs text-amber-100 mt-0.5">Ya abriste hoy · volver al dashboard</p>
-                  </div>
-                </button>
+            {/* Mi propio turno, o turno ajeno sin conteo aún → Continuar mi turno */}
+            {(esMiTurno || (esTurnoAjeno && !puedeRelevar)) && (
+              <button
+                onClick={() => elegir('apertura')}
+                className="bg-amber-600 border border-amber-500 rounded-xl px-5 py-5 flex items-center gap-4
+                           hover:bg-amber-500 active:scale-95 transition-all"
+              >
+                <div className="w-11 h-11 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                  <ArrowRight size={20} className="text-white" />
+                </div>
+                <div className="text-left">
+                  <p className="text-sm font-bold text-white">Continuar mi turno</p>
+                  <p className="text-xs text-amber-100 mt-0.5">Ya abriste hoy · volver al dashboard</p>
+                </div>
+              </button>
+            )}
 
+            {/* Turno ajeno con conteo de apertura completo → opciones de relevo */}
+            {puedeRelevar && (
+              <>
                 <button
                   onClick={() => elegir('intermedio')}
                   className="bg-bark-800 border border-bark-700 rounded-xl px-5 py-5 flex items-center gap-4

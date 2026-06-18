@@ -10,7 +10,6 @@ import MovimientoCajaModal from './MovimientoCajaModal'
 
 // ─── Herramientas disponibles en el drawer ────────────────────────────────────
 const TOOLS = [
-  { label: 'POS',        icon: Calculator,    to: '/pos',            color: 'text-green-600',  bg: 'bg-green-50'   },
   { label: 'Mermas',     icon: Trash2,        to: '/mermas',         color: 'text-orange-500', bg: 'bg-orange-50'  },
   { label: 'Inventario', icon: Package,        to: '/inventario',     color: 'text-blue-500',   bg: 'bg-blue-50'    },
   { label: 'Pedido',     icon: ShoppingCart,   to: '/pedido',         color: 'text-forest',     bg: 'bg-forest-50'  },
@@ -34,6 +33,7 @@ export default function BaristaBottomNav({ alertaBadge }: Props) {
 
   const tabs = [
     { id: 'inicio', to: '/hub',    label: 'Inicio', icon: Home       },
+    { id: 'pos',    to: '/pos',    label: 'POS',    icon: Calculator },
     { id: 'caja',   to: null,      label: 'Caja',   icon: Banknote   },
     { id: 'mas',    to: null,      label: 'Más',    icon: LayoutGrid, badge: alertaBadge },
   ]
@@ -55,14 +55,16 @@ export default function BaristaBottomNav({ alertaBadge }: Props) {
                 ? () => turno && setShowCaja(true)
                 : () => setShowMas(true)
 
+            const isPOS = tab.id === 'pos'
+
             return (
               <button
                 key={tab.id}
                 onClick={handleClick}
                 disabled={tab.id === 'caja' && !turno}
-                className={`relative flex-1 flex flex-col items-center gap-0.5 py-2.5 transition-all active:scale-95 ${
+                className={`relative flex-1 flex flex-col items-center gap-0.5 transition-all active:scale-95 ${
                   tab.id === 'caja' && !turno ? 'opacity-30' : ''
-                }`}
+                } ${isPOS ? 'py-1.5' : 'py-2.5'}`}
               >
                 {/* Badge */}
                 {tab.badge != null && tab.badge > 0 && (
@@ -70,18 +72,37 @@ export default function BaristaBottomNav({ alertaBadge }: Props) {
                     {tab.badge > 9 ? '9+' : tab.badge}
                   </span>
                 )}
-                <Icon
-                  size={21}
-                  className={isActive ? 'text-forest' : 'text-warm-400'}
-                  strokeWidth={isActive ? 2.2 : 1.8}
-                />
-                <span className={`text-[10px] font-semibold ${isActive ? 'text-forest' : 'text-warm-400'}`}>
-                  {tab.label}
-                </span>
-                {/* Active indicator dot */}
-                {isActive && (
-                  <span className="absolute top-0 left-1/2 -translate-x-1/2 w-6 h-0.5 rounded-full"
-                    style={{ background: 'oklch(35% 0.05 155)' }} />
+
+                {isPOS ? (
+                  /* POS: pill destacado */
+                  <span className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-2xl transition-colors ${
+                    isActive ? 'bg-green-600' : 'bg-green-50'
+                  }`}>
+                    <Icon
+                      size={20}
+                      className={isActive ? 'text-white' : 'text-green-600'}
+                      strokeWidth={2.2}
+                    />
+                    <span className={`text-[10px] font-bold ${isActive ? 'text-white' : 'text-green-600'}`}>
+                      {tab.label}
+                    </span>
+                  </span>
+                ) : (
+                  <>
+                    <Icon
+                      size={21}
+                      className={isActive ? 'text-forest' : 'text-warm-400'}
+                      strokeWidth={isActive ? 2.2 : 1.8}
+                    />
+                    <span className={`text-[10px] font-semibold ${isActive ? 'text-forest' : 'text-warm-400'}`}>
+                      {tab.label}
+                    </span>
+                    {/* Active indicator dot */}
+                    {isActive && (
+                      <span className="absolute top-0 left-1/2 -translate-x-1/2 w-6 h-0.5 rounded-full"
+                        style={{ background: 'oklch(35% 0.05 155)' }} />
+                    )}
+                  </>
                 )}
               </button>
             )

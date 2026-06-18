@@ -69,6 +69,7 @@ class TurnoOut(BaseModel):
     diferencia_tarjeta: Optional[float]
     justificacion_cierre: Optional[str]
     estado: str
+    usuario_apertura_id: Optional[int] = None
     tiene_conteo_apertura: bool
     tiene_ventas: bool
     tiene_conteo_cierre: bool

@@ -1,43 +1,70 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Minus, Plus, Trash2, ShoppingBag, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, ShoppingBag, Printer, ChevronUp } from 'lucide-react'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
-import BaristaLayout from '../components/BaristaLayout'
+import BaristaBottomNav from '../components/BaristaBottomNav'
 import CheckoutModal from '../components/CheckoutModal'
+import TicketRecibo, { TicketData } from '../components/TicketRecibo'
+import ProductGrid, { Producto } from '../components/ProductGrid'
+import Cart, { CartItem } from '../components/Cart'
+import { Toast, Sheet, Pill } from '../components/ui'
 
-// ─── Tipos ───────────────────────────────────────────────────────────────────
-
-interface Producto {
-  id: number
-  nombre: string
-  categoria: string
-  precio_venta: number
-  controla_stock: boolean
-  unidad_medida: string
-}
-
-interface CartItem {
-  producto_id: number
-  nombre: string
-  cantidad: number
-  precio_venta: number
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────
 
 const fmtCO = (v: number) => `$${v.toLocaleString('es-CO')}`
 
-const CAT_LABEL: Record<string, string> = {
-  bebida: 'Bebidas',
-  pasteleria: 'Pastelería',
-  insumo: 'Insumos',
+// Shape que devuelve GET /pos/tickets (TicketOut del backend).
+interface TicketApi {
+  id: number
+  fecha: string
+  total: number
+  cambio: number | null
+  metodo_pago: 'efectivo' | 'tarjeta' | 'mixto'
+  efectivo_recibido?: number | null
+  monto_efectivo?: number | null
+  monto_tarjeta?: number | null
+  items: Array<{
+    nombre_producto: string
+    cantidad: number
+    precio_unitario: number
+    subtotal: number
+  }>
 }
 
-const CAT_COLOR: Record<string, { bg: string; text: string }> = {
-  bebida:     { bg: 'oklch(95% 0.015 155)', text: 'oklch(30% 0.10 155)' },
-  pasteleria: { bg: 'oklch(96% 0.015 60)',  text: 'oklch(40% 0.12 55)'  },
-  insumo:     { bg: 'oklch(95% 0.015 245)', text: 'oklch(30% 0.12 245)' },
+function toTicketData(t: TicketApi): TicketData {
+  return {
+    id: t.id,
+    fecha: t.fecha,
+    total: t.total,
+    cambio: t.cambio ?? 0,
+    metodo_pago: t.metodo_pago,
+    efectivo_recibido: t.efectivo_recibido ?? undefined,
+    monto_efectivo: t.monto_efectivo ?? undefined,
+    monto_tarjeta: t.monto_tarjeta ?? undefined,
+    items: t.items,
+  }
+}
+
+// ─── Guard wrapper ───────────────────────────────────────────────────────────
+
+function GuardShell({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate()
+  return (
+    <div className="min-h-screen bg-warm-50 flex flex-col">
+      <header className="bg-white border-b border-warm-200 px-4 pb-3 header-safe flex items-center gap-3 sticky top-0 z-10">
+        <button
+          onClick={() => navigate('/hub')}
+          className="p-2 rounded-xl text-warm-400 hover:text-warm-700 hover:bg-warm-100 transition-colors -ml-1"
+        >
+          <ArrowLeft size={18} />
+        </button>
+        <span className="flex-1 text-sm font-bold text-warm-700">POS</span>
+      </header>
+      <main className="flex-1 p-4 max-w-lg mx-auto w-full pb-nav">{children}</main>
+      <BaristaBottomNav />
+    </div>
+  )
 }
 
 // ─── Componente ──────────────────────────────────────────────────────────────
@@ -46,52 +73,37 @@ export default function POS() {
   const { turno } = useTurno()
   const navigate = useNavigate()
 
-  // Todos los hooks van antes de cualquier return condicional
+  // Hooks antes de cualquier return condicional.
   const [productos, setProductos] = useState<Producto[]>([])
-  const [catFiltro, setCatFiltro] = useState<string>('todas')
   const [cart, setCart] = useState<CartItem[]>([])
+  const [search, setSearch] = useState('')
+  const [catFiltro, setCatFiltro] = useState('todas')
+  const [soloFavoritos, setSoloFavoritos] = useState(false)
   const [showCheckout, setShowCheckout] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [cancelToast, setCancelToast] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [cartSheet, setCartSheet] = useState(false)
+  const [reprintTicket, setReprintTicket] = useState<TicketData | null>(null)
+  const [reprintMsg, setReprintMsg] = useState('')
 
   const turnoListo = !!turno && turno.tiene_conteo_apertura
 
   useEffect(() => {
     if (!turnoListo) return
-    api.get<Producto[]>('/pos/productos')
+    setLoading(true)
+    api
+      .get<Producto[]>('/pos/productos')
       .then(r => setProductos(r.data))
       .catch(() => setLoadError('No se pudieron cargar los productos'))
+      .finally(() => setLoading(false))
   }, [turnoListo])
 
-  // Guards — después de todos los hooks
-  if (!turno) return (
-    <BaristaLayout title="POS">
-      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 text-sm text-amber-700 text-center mt-8">
-        No hay turno abierto.{' '}
-        <button onClick={() => navigate('/apertura')} className="font-bold underline">
-          Abrir caja →
-        </button>
-      </div>
-    </BaristaLayout>
+  const total = useMemo(
+    () => cart.reduce((s, i) => s + i.precio_venta * i.cantidad, 0),
+    [cart],
   )
-
-  if (!turno.tiene_conteo_apertura) return (
-    <BaristaLayout title="POS">
-      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 text-sm text-amber-700 text-center mt-8">
-        Completa el conteo de apertura primero.
-        <button onClick={() => navigate('/conteo-apertura')} className="block mx-auto mt-2 font-bold underline">
-          Ir al conteo →
-        </button>
-      </div>
-    </BaristaLayout>
-  )
-
-  // Categorías dinámicas desde los datos
-  const categorias = Array.from(new Set(productos.map(p => p.categoria))).sort()
-
-  const productosFiltrados = catFiltro === 'todas'
-    ? productos
-    : productos.filter(p => p.categoria === catFiltro)
+  const cartCount = useMemo(() => cart.reduce((s, i) => s + i.cantidad, 0), [cart])
 
   // ── Carrito ────────────────────────────────────────────────────────────────
 
@@ -99,222 +111,229 @@ export default function POS() {
     setCart(prev => {
       const existing = prev.find(i => i.producto_id === p.id)
       if (existing) {
-        return prev.map(i => i.producto_id === p.id ? { ...i, cantidad: i.cantidad + 1 } : i)
+        return prev.map(i =>
+          i.producto_id === p.id ? { ...i, cantidad: i.cantidad + 1 } : i,
+        )
       }
-      return [...prev, { producto_id: p.id, nombre: p.nombre, cantidad: 1, precio_venta: p.precio_venta }]
+      return [
+        ...prev,
+        { producto_id: p.id, nombre: p.nombre, cantidad: 1, precio_venta: p.precio_venta },
+      ]
     })
   }
 
-  const updateCantidad = (producto_id: number, delta: number) => {
+  const incItem = (producto_id: number) =>
+    setCart(prev =>
+      prev.map(i => (i.producto_id === producto_id ? { ...i, cantidad: i.cantidad + 1 } : i)),
+    )
+
+  const decItem = (producto_id: number) =>
     setCart(prev =>
       prev
-        .map(i => i.producto_id === producto_id ? { ...i, cantidad: i.cantidad + delta } : i)
-        .filter(i => i.cantidad > 0)
+        .map(i => (i.producto_id === producto_id ? { ...i, cantidad: i.cantidad - 1 } : i))
+        .filter(i => i.cantidad > 0),
     )
-  }
 
-  const removeFromCart = (producto_id: number) => {
+  const removeItem = (producto_id: number) =>
     setCart(prev => prev.filter(i => i.producto_id !== producto_id))
+
+  // ── Reimprimir último ticket ─────────────────────────────────────────────────
+
+  const reimprimirUltimo = async () => {
+    if (!turno) return
+    setReprintMsg('')
+    try {
+      const r = await api.get<TicketApi[]>('/pos/tickets', { params: { turno_id: turno.id } })
+      const ultimo = r.data[0] // backend ordena por fecha desc
+      if (!ultimo) {
+        setReprintMsg('No hay tickets en este turno todavía')
+        return
+      }
+      const data = toTicketData(ultimo)
+      setReprintTicket(data)
+      // El componente monta el DOM oculto; esperamos un frame y disparamos print.
+      requestAnimationFrame(() => requestAnimationFrame(() => window.print()))
+    } catch {
+      setReprintMsg('No se pudo obtener el último ticket')
+    }
   }
 
-  const total = cart.reduce((s, i) => s + i.precio_venta * i.cantidad, 0)
-  const cartCount = cart.reduce((s, i) => s + i.cantidad, 0)
+  const abrirCobro = () => {
+    setCartSheet(false)
+    setShowCheckout(true)
+  }
+
+  // ── Guards (después de todos los hooks) ──────────────────────────────────────
+
+  if (!turno)
+    return (
+      <GuardShell>
+        <div className="bg-warm-100 border border-warm-200 rounded-2xl p-5 text-sm text-bark-700 text-center mt-8">
+          No hay turno abierto.{' '}
+          <button onClick={() => navigate('/apertura')} className="font-bold text-clay-600 underline">
+            Abrir caja →
+          </button>
+        </div>
+      </GuardShell>
+    )
+
+  if (!turno.tiene_conteo_apertura)
+    return (
+      <GuardShell>
+        <div className="bg-warm-100 border border-warm-200 rounded-2xl p-5 text-sm text-bark-700 text-center mt-8">
+          Completá el conteo de apertura primero.
+          <button
+            onClick={() => navigate('/conteo-apertura')}
+            className="block mx-auto mt-2 font-bold text-clay-600 underline"
+          >
+            Ir al conteo →
+          </button>
+        </div>
+      </GuardShell>
+    )
+
+  // ── Layout principal ─────────────────────────────────────────────────────────
 
   return (
-    <BaristaLayout title="POS · Cobros" backTo="/hub">
-      <div className="flex flex-col gap-4">
+    <div className="min-h-screen bg-warm-50 flex flex-col">
+      {/* ── Header ── */}
+      <header className="bg-white border-b border-warm-200 px-4 pb-3 header-safe flex items-center gap-3 sticky top-0 z-20">
+        <button
+          onClick={() => navigate('/hub')}
+          className="p-2 rounded-xl text-warm-400 hover:text-warm-700 hover:bg-warm-100 transition-colors -ml-1"
+        >
+          <ArrowLeft size={18} />
+        </button>
+        <span className="flex-1 text-sm font-bold text-warm-700">POS · Cobros</span>
+        <button
+          onClick={reimprimirUltimo}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-warm-600 border border-warm-200 hover:bg-warm-100 transition-colors"
+        >
+          <Printer size={14} />
+          <span className="hidden sm:inline">Reimprimir último</span>
+        </button>
+      </header>
 
-        {loadError && (
-          <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-xl">
-            <AlertTriangle size={14} className="shrink-0" /> {loadError}
-          </div>
-        )}
+      {/* ── Cuerpo: 2 paneles en lg ── */}
+      <main className="flex-1 w-full max-w-7xl mx-auto px-4 pt-4 pb-nav lg:pb-6 lg:grid lg:grid-cols-[1fr_380px] lg:gap-6 lg:items-start">
+        {/* Panel izquierdo: grilla */}
+        <div className="flex flex-col gap-3">
+          {loadError && (
+            <Toast tone="danger">{loadError}</Toast>
+          )}
+          {reprintMsg && (
+            <Toast tone="warm" duration={3500} onDismiss={() => setReprintMsg('')}>
+              {reprintMsg}
+            </Toast>
+          )}
+          {cancelToast && (
+            <Toast tone="warm" duration={3000} onDismiss={() => setCancelToast(false)}>
+              Cobro cancelado — tu cuenta sigue acá, podés reintentar.
+            </Toast>
+          )}
 
-        {/* Toast de cancelación — aparece ~3s cuando se cierra el modal sin cobrar */}
-        {cancelToast && (
-          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-3 rounded-xl">
-            <AlertTriangle size={14} className="shrink-0 text-amber-500" />
-            <span>Cobro cancelado — tu cuenta sigue acá, podés reintentar.</span>
-          </div>
-        )}
-
-        {/* ── Filtros de categoría ─────────────────────────────────────────── */}
-        <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-          <button
-            onClick={() => setCatFiltro('todas')}
-            className="px-3 py-1.5 rounded-xl text-xs font-semibold border-2 transition-all shrink-0"
-            style={catFiltro === 'todas' ? {
-              background: 'oklch(35% 0.05 155)', borderColor: 'oklch(35% 0.05 155)', color: '#fff',
-            } : {
-              background: '#fff', borderColor: 'oklch(88% 0.006 75)', color: 'oklch(40% 0.01 60)',
-            }}
-          >
-            Todos
-          </button>
-          {categorias.map(cat => {
-            const colors = CAT_COLOR[cat] ?? { bg: 'oklch(95% 0.005 60)', text: 'oklch(40% 0.005 60)' }
-            const isActive = catFiltro === cat
-            return (
-              <button
-                key={cat}
-                onClick={() => setCatFiltro(cat)}
-                className="px-3 py-1.5 rounded-xl text-xs font-semibold border-2 transition-all shrink-0"
-                style={isActive ? {
-                  background: colors.bg, borderColor: colors.text, color: colors.text,
-                } : {
-                  background: '#fff', borderColor: 'oklch(88% 0.006 75)', color: 'oklch(40% 0.01 60)',
-                }}
-              >
-                {CAT_LABEL[cat] ?? cat}
-              </button>
-            )
-          })}
+          <ProductGrid
+            productos={productos}
+            cart={cart}
+            onAdd={addToCart}
+            search={search}
+            onSearch={setSearch}
+            catFiltro={catFiltro}
+            onCatFiltro={setCatFiltro}
+            soloFavoritos={soloFavoritos}
+            onToggleFavoritos={() => setSoloFavoritos(v => !v)}
+            loading={loading}
+          />
         </div>
 
-        {/* ── Grilla de productos ──────────────────────────────────────────── */}
-        {productosFiltrados.length === 0 && !loadError && (
-          <div className="text-center text-sm text-gray-400 py-10">
-            {productos.length === 0 ? 'Cargando productos...' : 'Sin productos en esta categoría'}
+        {/* Panel derecho: cuenta SIEMPRE visible (sticky) — solo lg+ */}
+        <aside className="hidden lg:block lg:sticky lg:top-[88px]">
+          <div className="bg-white rounded-2xl border border-warm-200 p-4 flex flex-col max-h-[calc(100vh-110px)]">
+            <Cart
+              items={cart}
+              onInc={incItem}
+              onDec={decItem}
+              onRemove={removeItem}
+              onClear={() => setCart([])}
+              onCobrar={abrirCobro}
+            />
           </div>
-        )}
+        </aside>
+      </main>
 
-        <div className="grid grid-cols-2 gap-2.5">
-          {productosFiltrados.map(p => {
-            const inCart = cart.find(i => i.producto_id === p.id)
-            const colors = CAT_COLOR[p.categoria] ?? { bg: 'oklch(95% 0.005 60)', text: 'oklch(40% 0.005 60)' }
-            return (
-              <button
-                key={p.id}
-                onClick={() => addToCart(p)}
-                className="relative flex flex-col gap-1 p-3.5 bg-white rounded-2xl border-2 text-left active:scale-95 transition-all"
-                style={inCart ? {
-                  borderColor: 'oklch(48% 0.12 155)',
-                  background: 'oklch(97% 0.015 155)',
-                } : {
-                  borderColor: 'oklch(88% 0.006 75)',
-                }}
-              >
-                {inCart && (
-                  <span
-                    className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
-                    style={{ background: 'oklch(48% 0.12 155)' }}
-                  >
-                    {inCart.cantidad}
-                  </span>
-                )}
-                <span
-                  className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md self-start"
-                  style={{ background: colors.bg, color: colors.text }}
-                >
-                  {CAT_LABEL[p.categoria] ?? p.categoria}
-                </span>
-                <p className="text-sm font-bold text-gray-800 leading-tight">{p.nombre}</p>
-                <p className="text-base font-bold" style={{ color: 'oklch(35% 0.10 155)' }}>
-                  {fmtCO(p.precio_venta)}
-                </p>
-              </button>
-            )
-          })}
-        </div>
+      {/* ── Mobile (<lg): barra de carrito sobre la bottom-nav ── */}
+      {cart.length > 0 && (
+        <button
+          onClick={() => setCartSheet(true)}
+          className="lg:hidden fixed left-3 right-3 bottom-[72px] z-30 bg-clay text-white rounded-2xl shadow-lg shadow-clay/30 px-4 py-3 flex items-center justify-between active:scale-[0.99] transition-all"
+          style={{ marginBottom: 'env(safe-area-inset-bottom, 0px)' }}
+        >
+          <span className="flex items-center gap-2 font-bold text-sm">
+            <ShoppingBag size={18} />
+            {cartCount} {cartCount === 1 ? 'ítem' : 'ítems'}
+            <ChevronUp size={16} className="opacity-80" />
+          </span>
+          <span className="font-bold tabular-nums">{fmtCO(total)} · Cobrar</span>
+        </button>
+      )}
 
-        {/* ── Carrito ──────────────────────────────────────────────────────── */}
-        {cart.length > 0 && (
-          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-50 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <ShoppingBag size={15} style={{ color: 'oklch(48% 0.12 155)' }} />
-                <p className="text-xs font-bold uppercase tracking-wide text-gray-400">
-                  Cuenta — {cartCount} {cartCount === 1 ? 'ítem' : 'ítems'}
-                </p>
-              </div>
+      {/* ── Hoja inferior con la cuenta (mobile) ── */}
+      <Sheet
+        open={cartSheet}
+        onClose={() => setCartSheet(false)}
+        title={
+          <span className="flex items-center gap-2">
+            Tu cuenta
+            <Pill tone="clay" className="tabular-nums">
+              {cartCount} {cartCount === 1 ? 'ítem' : 'ítems'}
+            </Pill>
+          </span>
+        }
+      >
+        <div className="max-h-[60vh] flex flex-col pb-2">
+          <div className="flex justify-end pb-2">
+            {cart.length > 0 && (
               <button
                 onClick={() => setCart([])}
-                className="text-xs text-red-400 hover:text-red-600 font-semibold transition-colors"
+                className="text-xs font-bold text-danger-500 hover:text-danger-700 transition-colors"
               >
                 Limpiar
               </button>
-            </div>
-
-            <div className="divide-y divide-gray-50">
-              {cart.map(item => (
-                <div key={item.producto_id} className="flex items-center gap-3 px-4 py-3">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-800 truncate">{item.nombre}</p>
-                    <p className="text-xs text-gray-400">
-                      {fmtCO(item.precio_venta)} c/u · subtotal{' '}
-                      <span className="font-bold text-gray-600">{fmtCO(item.precio_venta * item.cantidad)}</span>
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      onClick={() => updateCantidad(item.producto_id, -1)}
-                      className="w-7 h-7 rounded-lg border-2 border-gray-200 flex items-center justify-center text-gray-500 hover:border-gray-300 active:scale-90 transition-all"
-                    >
-                      <Minus size={12} />
-                    </button>
-                    <span className="w-6 text-center text-sm font-bold text-gray-800">{item.cantidad}</span>
-                    <button
-                      onClick={() => updateCantidad(item.producto_id, 1)}
-                      className="w-7 h-7 rounded-lg border-2 flex items-center justify-center text-white active:scale-90 transition-all"
-                      style={{ borderColor: 'oklch(48% 0.12 155)', background: 'oklch(48% 0.12 155)' }}
-                    >
-                      <Plus size={12} />
-                    </button>
-                    <button
-                      onClick={() => removeFromCart(item.producto_id)}
-                      className="w-7 h-7 rounded-lg flex items-center justify-center text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors ml-1"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="px-4 pt-3 pb-1 border-t border-gray-100 flex items-center justify-between">
-              <span className="text-sm font-semibold text-gray-500">Total estimado</span>
-              <span className="text-2xl font-bold" style={{ color: 'oklch(28% 0.01 60)' }}>{fmtCO(total)}</span>
-            </div>
-            <p className="px-4 pb-3 text-[10px] text-gray-400">
-              * El total real lo confirma el servidor al cobrar
-            </p>
+            )}
           </div>
-        )}
+          <Cart
+            items={cart}
+            onInc={incItem}
+            onDec={decItem}
+            onRemove={removeItem}
+            onClear={() => setCart([])}
+            onCobrar={abrirCobro}
+            hideHeader
+          />
+        </div>
+      </Sheet>
 
-        {/* ── Botón cobrar (sticky sobre bottom nav) ───────────────────────── */}
-        {cart.length > 0 && (
-          <div className="sticky bottom-20 z-20">
-            <button
-              onClick={() => setShowCheckout(true)}
-              className="w-full font-bold py-4 rounded-2xl text-base flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-lg"
-              style={{ background: 'linear-gradient(135deg, oklch(48% 0.12 155), oklch(40% 0.12 155))', color: '#fff' }}
-            >
-              <ShoppingBag size={18} />
-              Cobrar {fmtCO(total)}
-            </button>
-          </div>
-        )}
-      </div>
+      <BaristaBottomNav />
 
-      {/* ── Modal de cobro ───────────────────────────────────────────────────── */}
+      {/* ── Modal de cobro ── */}
       {showCheckout && (
         <CheckoutModal
           items={cart}
           totalEstimado={total}
           onClose={() => {
             setShowCheckout(false)
-            // Solo muestra el toast de cancelación si se cerró sin confirmar
-            // (onSuccess limpia el carrito → este handler no se llama en caso de éxito)
+            // Solo cancelación: onSuccess limpia el carrito y NO pasa por acá.
             setCancelToast(true)
-            setTimeout(() => setCancelToast(false), 3000)
           }}
           onSuccess={() => {
             setShowCheckout(false)
             setCart([])
-            // No se toca cancelToast — el carrito se limpió, la venta fue exitosa
           }}
         />
       )}
-    </BaristaLayout>
+
+      {/* ── Ticket oculto para reimpresión (window.print) ── */}
+      {reprintTicket && <TicketRecibo ticket={reprintTicket} />}
+    </div>
   )
 }

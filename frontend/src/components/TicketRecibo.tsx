@@ -39,17 +39,35 @@ export default function TicketRecibo({ ticket, negocio = 'Café' }: Props) {
 
     const style = document.createElement('style')
     style.id = styleId
+    // Patrón "imprimir solo este div" con visibility (NO display:none).
+    // El ticket está anidado dentro de #root; si se oculta el padre con
+    // display:none, el hijo no se muestra aunque tenga display:block. visibility
+    // sí se hereda y se puede revertir en los descendientes, así que ocultamos
+    // todo y volvemos a mostrar solo el subárbol del ticket.
     style.textContent = `
       @media print {
         @page {
           size: 80mm auto;
           margin: 0;
         }
-        body > * {
-          display: none !important;
+        html, body {
+          margin: 0 !important;
+          padding: 0 !important;
+          background: #fff !important;
+        }
+        body * {
+          visibility: hidden !important;
+        }
+        #ticket-print-root,
+        #ticket-print-root * {
+          visibility: visible !important;
         }
         #ticket-print-root {
           display: block !important;
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 80mm;
         }
       }
     `

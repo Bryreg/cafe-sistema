@@ -136,14 +136,70 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleLogout = () => { logout(); navigate('/login') }
 
   return (
-    <div className="min-h-screen bg-warm-50 flex flex-col">
+    <div className="min-h-screen bg-warm-50 flex flex-col lg:flex-row">
 
-      {/* ── Header ────────────────────────────────────────────────────────── */}
-      <header className="bg-white border-b border-warm-200 px-4 pb-3 header-safe flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {/* Hamburger — visible only on mobile */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          DESKTOP: fixed left sidebar (lg+)
+          MOBILE:  hidden — drawer handles it
+      ══════════════════════════════════════════════════════════════════════ */}
+      <aside className="hidden lg:flex lg:flex-col lg:w-60 lg:shrink-0 bg-white border-r border-warm-200 min-h-screen">
+
+        {/* Sidebar — logo / brand */}
+        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-warm-100">
+          <Coffee size={18} className="text-forest shrink-0" />
+          <span className="font-bold text-warm-700 text-sm leading-tight">Sistema Café</span>
+        </div>
+
+        {/* Sidebar — nav links */}
+        <nav className="flex-1 overflow-y-auto py-3 px-2">
+          {NAV_ADMIN.map(({ to, label, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2 rounded-xl mb-0.5 text-sm font-medium transition-colors ${
+                  isActive
+                    ? 'bg-forest-50 text-forest-700 font-semibold'
+                    : 'text-warm-600 hover:text-warm-800 hover:bg-warm-100'
+                }`
+              }
+            >
+              <Icon size={15} className="shrink-0" />
+              <span>{label}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        {/* Sidebar — user footer */}
+        <div className="p-4 border-t border-warm-100">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-warm-700 truncate">{user?.nombre}</p>
+              <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${
+                user?.rol === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-forest-50 text-forest'
+              }`}>{user?.rol}</span>
+            </div>
+            {user?.rol === 'admin' && user.tienda_id && (
+              <NotifBell tiendaId={user.tienda_id} />
+            )}
+          </div>
           <button
-            className="md:hidden p-1 -ml-1 text-warm-500 hover:text-warm-700 transition-colors"
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 text-xs text-warm-400 hover:text-red-500 transition-colors w-full"
+          >
+            <LogOut size={13} />
+            <span>Cerrar sesión</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          MOBILE: top header (< lg)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <header className="lg:hidden bg-white border-b border-warm-200 px-4 pb-3 header-safe flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <button
+            className="p-1 -ml-1 text-warm-500 hover:text-warm-700 transition-colors"
             onClick={() => setMenuOpen(true)}
             aria-label="Abrir menú"
           >
@@ -170,28 +226,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      {/* ── Desktop nav (hidden on mobile) ───────────────────────────────── */}
-      <nav className="hidden md:block bg-white border-b border-warm-200 px-4">
-        <div className="flex gap-1 py-2 overflow-x-auto">
-          {NAV_ADMIN.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to}
-              className={({ isActive }) =>
-                `flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${
-                  isActive
-                    ? 'bg-forest-50 text-forest font-semibold'
-                    : 'text-warm-500 hover:text-warm-700 hover:bg-warm-100'
-                }`
-              }
-            >
-              <Icon size={14} /> {label}
-            </NavLink>
-          ))}
-        </div>
-      </nav>
-
-      {/* ── Mobile drawer ────────────────────────────────────────────────── */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          MOBILE: drawer (< lg)
+      ══════════════════════════════════════════════════════════════════════ */}
       {menuOpen && (
-        <div className="md:hidden fixed inset-0 z-50 flex">
+        <div className="lg:hidden fixed inset-0 z-50 flex">
           {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/40"
@@ -222,7 +261,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   className={({ isActive }) =>
                     `flex items-center gap-3 px-4 py-3 rounded-xl mb-0.5 text-sm font-medium transition-colors ${
                       isActive
-                        ? 'bg-forest-50 text-forest font-semibold'
+                        ? 'bg-forest-50 text-forest-700 font-semibold'
                         : 'text-warm-600 hover:text-warm-800 hover:bg-warm-100'
                     }`
                   }
@@ -254,8 +293,35 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {/* ── Page content ─────────────────────────────────────────────────── */}
-      <main className="flex-1 p-3 sm:p-4 max-w-5xl mx-auto w-full">{children}</main>
+      {/* ══════════════════════════════════════════════════════════════════════
+          Page content
+          Desktop: fills the remaining width beside the sidebar
+          Mobile:  full width below the header
+      ══════════════════════════════════════════════════════════════════════ */}
+      <div className="flex flex-col flex-1 min-w-0">
+        {/* Desktop top-bar: just user controls (sidebar already has logo/nav) */}
+        <header className="hidden lg:flex items-center justify-end gap-3 bg-white border-b border-warm-200 px-8 py-3">
+          <span className="text-sm text-warm-500">{user?.nombre}</span>
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+            user?.rol === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-forest-50 text-forest'
+          }`}>{user?.rol}</span>
+          {user?.rol === 'admin' && user.tienda_id && (
+            <NotifBell tiendaId={user.tienda_id} />
+          )}
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 text-xs text-warm-400 hover:text-red-500 transition-colors"
+          >
+            <LogOut size={13} />
+            <span>Cerrar sesión</span>
+          </button>
+        </header>
+
+        <main className="flex-1 px-4 py-3 lg:px-8 lg:py-6 max-w-screen-2xl w-full mx-auto">
+          {children}
+        </main>
+      </div>
+
     </div>
   )
 }

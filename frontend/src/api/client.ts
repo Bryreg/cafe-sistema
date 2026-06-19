@@ -21,7 +21,8 @@ api.interceptors.response.use(
       localStorage.removeItem('nombre')
       localStorage.removeItem('tienda_id')
       localStorage.removeItem('user_id')
-      window.location.href = '/login'
+      localStorage.removeItem('kiosk')
+      window.location.href = '/'
     }
     return Promise.reject(error)
   }

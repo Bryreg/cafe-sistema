@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { Lock, Wifi, AlertTriangle } from 'lucide-react'
 
@@ -86,9 +87,20 @@ export default function KioskSetup() {
           </button>
         </div>
 
-        <p className="text-center text-xs" style={{ color: 'oklch(40% 0.01 60)' }}>
-          El admin configura el KIOSK_PIN en el servidor
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-xs" style={{ color: 'oklch(40% 0.01 60)' }}>
+            El admin configura el KIOSK_PIN en el servidor
+          </p>
+          <Link
+            to="/admin-login"
+            className="text-xs font-semibold transition-colors"
+            style={{ color: 'oklch(52% 0.01 60)' }}
+            onMouseOver={e => (e.currentTarget.style.color = 'oklch(72% 0.01 60)')}
+            onMouseOut={e => (e.currentTarget.style.color = 'oklch(52% 0.01 60)')}
+          >
+            Admin →
+          </Link>
+        </div>
       </div>
     </div>
   )

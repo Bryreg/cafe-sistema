@@ -30,6 +30,7 @@ export interface Turno {
   consignaciones_turno: number
   consignaciones_deducidas?: number
   usuario_apertura_id?: number
+  tipo_turno: string | null
   baristas: string[]
 }
 
@@ -57,7 +58,7 @@ export function TurnoProvider({ children }: { children: ReactNode }) {
         ? `/caja/activo-pub/${tiendaId}`
         : `/caja/activo/${tiendaId}`
       const { data } = await api.get(endpoint)
-      setTurno(data ? { baristas: [], ...data } : null)
+      setTurno(data ? { baristas: [], tipo_turno: null, ...data } : null)
     } catch {
       if (!silent) setTurno(null)
     } finally {

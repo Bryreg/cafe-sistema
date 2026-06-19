@@ -43,7 +43,7 @@ def get_turno_activo(db: Session, tienda_id: int):
     return turno
 
 
-def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str | None, usuario_id: int, barista_ids: list[int] | None = None):
+def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str | None, usuario_id: int, barista_ids: list[int] | None = None, tipo_turno: str | None = None):
     if base_real < 0:
         raise HTTPException(status_code=400, detail="base_real no puede ser negativa")
     if get_turno_activo(db, tienda_id):
@@ -76,6 +76,7 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
         base_real=base_real,
         diferencia_apertura=diferencia,
         justificacion_apertura=justificacion,
+        tipo_turno=tipo_turno,
         estado=EstadoTurnoEnum.abierto,
         tiene_conteo_apertura=False,
         tiene_ventas=False,

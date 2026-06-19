@@ -78,12 +78,10 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
     if not items:
         raise HTTPException(status_code=400, detail="El ticket no tiene items")
 
-    # Turno activo + flujo obligatorio
+    # Turno activo
     turno = get_turno_activo(db, tienda_id)
     if not turno:
         raise HTTPException(status_code=400, detail="No hay turno abierto")
-    if not turno.tiene_conteo_apertura:
-        raise HTTPException(status_code=400, detail="Debes completar el conteo de apertura antes de vender")
 
     # Normalizar items y agregar cantidades por producto (evita líneas duplicadas)
     pedidos: dict[int, int] = {}
@@ -161,22 +159,23 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
             subtotal=subtotal,
         ))
 
-    # Inventario: descuento atómico solo para productos contables.
-    # registrar_movimiento(commit=False) lanza HTTPException(400) si falta stock;
-    # eso aborta toda la transacción → venta todo-o-nada.
-    try:
-        for prod, cantidad, _, _ in lineas:
-            if prod.controla_stock:
+    # Inventario: descuento atómico. Stock negativo permitido (allow_negative=True).
+    # Si el producto no tiene registro en inventario, se omite sin bloquear la venta.
+    for prod, cantidad, _, _ in lineas:
+        if prod.controla_stock:
+            try:
                 inv_svc.registrar_movimiento(
                     db, producto_id=prod.id, tienda_id=tienda_id,
                     tipo="salida", cantidad=cantidad, motivo="Venta POS",
-                    usuario_id=usuario_id, commit=False,
+                    usuario_id=usuario_id, commit=False, allow_negative=True,
                 )
-    except HTTPException as e:
-        db.rollback()
-        if e.status_code == 400 and "insuficiente" in (e.detail or "").lower():
-            raise HTTPException(status_code=400, detail="Stock insuficiente para completar la venta")
-        raise
+            except HTTPException as e:
+                if e.status_code == 404:
+                    # Sin registro de inventario — venta igual se procesa
+                    logger.warning(f"Producto {prod.id} sin inventario, venta procesada de todas formas")
+                else:
+                    db.rollback()
+                    raise
 
     # Actualizar totales del turno (mantiene el cierre/cuadre funcionando)
     turno_db = db.query(CajaTurno).filter(CajaTurno.id == turno.id).first()

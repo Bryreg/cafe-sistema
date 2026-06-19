@@ -148,6 +148,7 @@ class CajaTurno(Base):
     ventas = relationship("VentaDiaria", back_populates="turno")
     conteos = relationship("ConteoFisico", back_populates="turno")
     entregas = relationship("EntregaTurno", back_populates="turno")
+    baristas_turno = relationship("TurnoBarista", back_populates="turno", cascade="all, delete-orphan")
 
 
 class MovimientoCaja(Base):
@@ -722,3 +723,20 @@ class TicketItem(Base):
     subtotal = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     ticket = relationship("Ticket", back_populates="items")
     producto = relationship("Producto", foreign_keys=[producto_id])
+
+
+# ---------------------------------------------------------------------------
+# Turno multi-barista (responsabilidad compartida)
+# ---------------------------------------------------------------------------
+
+class TurnoBarista(Base):
+    """Baristas asignados a un turno para trazabilidad colectiva."""
+    __tablename__ = "turno_baristas"
+    id = Column(Integer, primary_key=True)
+    turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="CASCADE"), nullable=False, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    nombre_snapshot = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("turno_id", "usuario_id", name="uq_turno_barista"),)
+    turno = relationship("CajaTurno", back_populates="baristas_turno")
+    usuario = relationship("Usuario")

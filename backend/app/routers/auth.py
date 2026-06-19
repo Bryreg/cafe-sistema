@@ -1,14 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 from time import time
+import secrets
 from app.database import get_db
 from app.schemas.auth import LoginRequest, LoginPinRequest, RegisterRequest, TokenResponse, UsuarioPublic, UsuarioAdmin, ActualizarUsuario, SetPinRequest
-from app.models.models import Usuario, Tienda
+from app.models.models import Usuario, Tienda, RolEnum
 from app.core.security import verify_password, hash_password, create_access_token
 from app.core.deps import require_admin, get_current_user
+from app.config import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -167,6 +169,35 @@ def set_pin(user_id: int, data: SetPinRequest, db: Session = Depends(get_db), _:
     user.pin_hash = hash_password(data.pin)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/kiosk-init", response_model=TokenResponse)
+def kiosk_init(tienda_id: int, kiosk_pin: str, db: Session = Depends(get_db)):
+    """Activa modo kiosco para un dispositivo. Requiere KIOSK_PIN configurado en el servidor."""
+    if not settings.KIOSK_PIN or kiosk_pin != settings.KIOSK_PIN:
+        raise HTTPException(status_code=401, detail="PIN de kiosco incorrecto")
+    tienda = db.query(Tienda).filter(Tienda.id == tienda_id, Tienda.activa == True).first()
+    if not tienda:
+        raise HTTPException(status_code=404, detail="Tienda no encontrada")
+    kiosk_email = f"kiosk@tienda{tienda_id}.device"
+    kiosk_user = db.query(Usuario).filter(Usuario.email == kiosk_email).first()
+    if not kiosk_user:
+        kiosk_user = Usuario(
+            nombre="Kiosk", email=kiosk_email,
+            password_hash=hash_password(secrets.token_hex(32)),
+            rol=RolEnum.barista, tienda_id=tienda_id, activo=True,
+        )
+        db.add(kiosk_user)
+        db.commit()
+        db.refresh(kiosk_user)
+    token = create_access_token(
+        {"sub": str(kiosk_user.id), "tienda_id": tienda_id, "kiosk": True},
+        expires_delta=timedelta(days=365 * 10),
+    )
+    return TokenResponse(
+        access_token=token, rol="barista", nombre="Kiosk",
+        tienda_id=tienda_id, user_id=kiosk_user.id, kiosk=True,
+    )
 
 
 @router.post("/usuarios")

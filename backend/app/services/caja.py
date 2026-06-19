@@ -3,7 +3,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from fastapi import HTTPException
-from app.models.models import CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum, EntregaTurno, Consignacion, EstadoConsignacionEnum
+from app.models.models import CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum, EntregaTurno, Consignacion, EstadoConsignacionEnum, TurnoBarista, Usuario
 from app.services import audit, notificaciones
 import logging
 
@@ -38,10 +38,12 @@ def get_turno_activo(db: Session, tienda_id: int):
     turno.egresos_movimientos = egresos
     turno.efectivo_esperado_actual = turno.base_real + turno.total_efectivo + ingresos - egresos
     turno.consignaciones_turno = consigs_sum
+    baristas_db = db.query(TurnoBarista).filter(TurnoBarista.turno_id == turno.id).all()
+    turno.baristas = [b.nombre_snapshot for b in baristas_db]
     return turno
 
 
-def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str | None, usuario_id: int):
+def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str | None, usuario_id: int, barista_ids: list[int] | None = None):
     if base_real < 0:
         raise HTTPException(status_code=400, detail="base_real no puede ser negativa")
     if get_turno_activo(db, tienda_id):
@@ -90,16 +92,24 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
             detail="Ya hay un turno abierto para esta tienda. Otro barista puede haberlo abierto.",
         )
 
+    # Registrar baristas del turno (responsabilidad compartida)
+    if barista_ids:
+        usuarios = db.query(Usuario).filter(Usuario.id.in_(barista_ids), Usuario.activo == True).all()
+        for u in usuarios:
+            db.add(TurnoBarista(turno_id=turno.id, usuario_id=u.id, nombre_snapshot=u.nombre))
+
     _tick_checklist(db, tienda_id, apertura_realizada=True)
     audit.registrar(
         db, accion="apertura_caja", tabla="caja_turnos",
         registro_id=turno.id, usuario_id=usuario_id, tienda_id=tienda_id,
         datos_despues={"base_real": base_real, "base_sistema": base_sistema,
                        "diferencia_apertura": diferencia,
-                       "consignaciones_deducidas": consigs_deducidas},
+                       "consignaciones_deducidas": consigs_deducidas,
+                       "barista_ids": barista_ids or []},
     )
     db.commit()
     db.refresh(turno)
+    turno.baristas = [u.nombre for u in (usuarios if barista_ids else [])]
     logger.info(f"Turno {turno.id} abierto en tienda {tienda_id} por usuario {usuario_id}")
     return turno
 

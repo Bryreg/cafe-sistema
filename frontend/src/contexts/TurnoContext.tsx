@@ -29,6 +29,8 @@ export interface Turno {
   ultima_entrega_diferencia_efectivo: number | null
   consignaciones_turno: number
   consignaciones_deducidas?: number
+  usuario_apertura_id?: number
+  baristas: string[]
 }
 
 interface TurnoCtx {
@@ -39,48 +41,40 @@ interface TurnoCtx {
 
 const TurnoContext = createContext<TurnoCtx>({} as TurnoCtx)
 
+const POLL_INTERVAL = 8_000  // 8s — sync casi real-time
+
 export function TurnoProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth()
+  const { tiendaId, user } = useAuth()
   const [turno, setTurno] = useState<Turno | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Carga explícita: muestra spinner, limpia turno en error.
-  // Usada en carga inicial y cuando el barista completa un paso.
-  const refresh = useCallback(async () => {
-    if (!user?.tienda_id) { setLoading(false); return }
-    setLoading(true)
+  const fetchTurno = useCallback(async (silent = false) => {
+    if (!tiendaId) { if (!silent) { setTurno(null); setLoading(false) }; return }
+    if (!silent) setLoading(true)
     try {
-      const { data } = await api.get(`/caja/activo/${user.tienda_id}`)
-      setTurno(data)
+      // Kiosko usa el endpoint público; usuarios autenticados usan el protegido
+      const endpoint = user?.kiosk
+        ? `/caja/activo-pub/${tiendaId}`
+        : `/caja/activo/${tiendaId}`
+      const { data } = await api.get(endpoint)
+      setTurno(data ? { baristas: [], ...data } : null)
     } catch {
-      setTurno(null)
+      if (!silent) setTurno(null)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
-  }, [user?.tienda_id])
+  }, [tiendaId, user?.kiosk])
+
+  const refresh = useCallback(async () => { await fetchTurno(false) }, [fetchTurno])
 
   useEffect(() => {
-    if (user?.rol !== 'barista') { setTurno(null); setLoading(false); return }
+    if (!tiendaId) { setTurno(null); setLoading(false); return }
 
-    // Carga inicial — muestra spinner
-    refresh()
+    fetchTurno(false)
 
-    // Polls en segundo plano — SILENCIOSOS:
-    // No activan loading (evita flicker cada 15 s) y no limpian turno
-    // ante errores de red (evita sacar al barista de la página de cierre)
-    const tiendaId = user.tienda_id
-    const t = setInterval(async () => {
-      if (!tiendaId) return
-      try {
-        const { data } = await api.get(`/caja/activo/${tiendaId}`)
-        setTurno(data)
-      } catch {
-        // silencioso: error de red no borra el estado actual
-      }
-    }, 15_000)
-
-    return () => clearInterval(t)
-  }, [user?.tienda_id, user?.rol]) // eslint-disable-line react-hooks/exhaustive-deps
+    const interval = setInterval(() => fetchTurno(true), POLL_INTERVAL)
+    return () => clearInterval(interval)
+  }, [tiendaId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <TurnoContext.Provider value={{ turno, loading, refresh }}>

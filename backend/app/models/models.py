@@ -85,7 +85,6 @@ class Tienda(Base):
     notificaciones = relationship("Notificacion", back_populates="tienda")
     facturas_compra = relationship("FacturaCompra", back_populates="tienda")
     conteos_compras = relationship("ConteoCompras", back_populates="tienda")
-    siigo_venta_items = relationship("SiigoVentaItem", back_populates="tienda")
 
 
 class Usuario(Base):
@@ -206,7 +205,6 @@ class MovimientoInventario(Base):
     fecha = Column(DateTime, default=datetime.utcnow, index=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
     motivo = Column(String(200), nullable=True)
-    siigo_sync_key = Column(String, nullable=True)
     producto = relationship("Producto", back_populates="movimientos_inv")
     tienda = relationship("Tienda", back_populates="movimientos_inv")
     usuario = relationship("Usuario", back_populates="movimientos_inv")
@@ -684,43 +682,6 @@ class ConteoComprasItem(Base):
     cantidad_real = Column(Float, nullable=False)
     diferencia = Column(Float, nullable=False)
     conteo = relationship("ConteoCompras", back_populates="items")
-    producto = relationship("Producto")
-
-
-class SiigoVentaItem(Base):
-    """Row-level Siigo invoice line item stored locally for cross-filtering."""
-    __tablename__ = "siigo_venta_items"
-    id = Column(Integer, primary_key=True)
-    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
-    fecha = Column(Date, nullable=False)
-    codigo_producto = Column(String, nullable=False)
-    descripcion = Column(String, nullable=False, default="")
-    cantidad = Column(Float, nullable=False, default=0.0)
-    precio_unitario = Column(Numeric(12, 2, asdecimal=False), nullable=False, default=0.0)
-    total_sin_descuento = Column(Numeric(12, 2, asdecimal=False), nullable=False, default=0.0)
-    descuento_porcentaje = Column(Float, nullable=True)
-    descuento_monto = Column(Numeric(12, 2, asdecimal=False), nullable=True)
-    total_con_descuento = Column(Numeric(12, 2, asdecimal=False), nullable=False, default=0.0)
-    siigo_factura_id = Column(String, nullable=False)
-    turno_id = Column(Integer, ForeignKey("caja_turnos.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    tienda = relationship("Tienda", back_populates="siigo_venta_items")
-    turno = relationship("CajaTurno", foreign_keys=[turno_id])
-    __table_args__ = (
-        UniqueConstraint("siigo_factura_id", "codigo_producto", "fecha", name="uq_siigo_item"),
-    )
-
-
-class SiigoProductoMapeo(Base):
-    """Maps a Siigo invoice product code to a local Producto for inventory deduction."""
-    __tablename__ = "siigo_producto_mapeo"
-    id = Column(Integer, primary_key=True)
-    codigo_siigo = Column(String, nullable=False)
-    descripcion_siigo = Column(String, nullable=False, default="")
-    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
-    factor_conversion = Column(Float, nullable=False, default=1.0)
-    activo = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
     producto = relationship("Producto")
 
 

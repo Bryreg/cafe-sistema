@@ -13,7 +13,7 @@ router = APIRouter(prefix="/ventas", tags=["ventas"])
 @router.post("/", response_model=VentaDiariaOut)
 def registrar(data: RegistrarVentaRequest, db: Session = Depends(get_db),
               user: Usuario = Depends(require_admin)):
-    """Registro manual de ventas — solo admin, fallback si Siigo no está disponible."""
+    """Registro manual de ventas — solo admin, entrada de emergencia fuera del POS."""
     ensure_tienda_access(user, data.tienda_id)
     return svc.registrar_venta(
         db, data.tienda_id, data.venta_total, data.nota_credito,

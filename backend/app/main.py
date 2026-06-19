@@ -10,7 +10,7 @@ from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
                           dashboard, ventas, conteos, mermas, solicitudes,
                           informes, audit, alertas, notificaciones, limpieza,
                           facturas, compras, comunicados, pedidos, mantenimientos,
-                          auditorias, siigo, pos)
+                          auditorias, pos)
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -69,38 +69,6 @@ with engine.connect() as _conn:
         # Panel de pedidos: proveedor fijo y tiempo de entrega por producto
         "ALTER TABLE productos ADD COLUMN proveedor VARCHAR(100)",
         "ALTER TABLE productos ADD COLUMN lead_time_dias INTEGER DEFAULT 2",
-        # Siigo venta items — idempotente via CREATE TABLE IF NOT EXISTS
-        """CREATE TABLE IF NOT EXISTS siigo_venta_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tienda_id INTEGER NOT NULL REFERENCES tiendas(id),
-            fecha DATE NOT NULL,
-            codigo_producto VARCHAR NOT NULL,
-            descripcion VARCHAR NOT NULL DEFAULT '',
-            cantidad REAL NOT NULL DEFAULT 0,
-            precio_unitario REAL NOT NULL DEFAULT 0,
-            total_sin_descuento REAL NOT NULL DEFAULT 0,
-            descuento_porcentaje REAL,
-            descuento_monto REAL,
-            total_con_descuento REAL NOT NULL DEFAULT 0,
-            siigo_factura_id VARCHAR NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(siigo_factura_id, codigo_producto, fecha)
-        )""",
-        "CREATE INDEX IF NOT EXISTS idx_siigo_tienda_fecha ON siigo_venta_items(tienda_id, fecha)",
-        "CREATE INDEX IF NOT EXISTS idx_siigo_codigo ON siigo_venta_items(codigo_producto)",
-        # Turno attribution para cruzar ventas Siigo con barista por horario
-        "ALTER TABLE siigo_venta_items ADD COLUMN turno_id INTEGER REFERENCES caja_turnos(id)",
-        # Mapeo de productos Siigo → inventario local
-        """CREATE TABLE IF NOT EXISTS siigo_producto_mapeo (
-            id SERIAL PRIMARY KEY,
-            codigo_siigo VARCHAR NOT NULL,
-            descripcion_siigo VARCHAR NOT NULL DEFAULT '',
-            producto_id INTEGER NOT NULL REFERENCES productos(id),
-            factor_conversion REAL NOT NULL DEFAULT 1.0,
-            activo BOOLEAN NOT NULL DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )""",
-        "ALTER TABLE movimientos_inventario ADD COLUMN siigo_sync_key VARCHAR(200)",
         "ALTER TABLE caja_turnos ADD COLUMN consignaciones_deducidas FLOAT DEFAULT 0",
         # POS nativo: precio de venta por producto (tickets/ticket_items los crea create_all)
         "ALTER TABLE productos ADD COLUMN precio_venta NUMERIC(12,2) DEFAULT 0",
@@ -502,7 +470,6 @@ app.include_router(comunicados.router, prefix="/api/v1")
 app.include_router(pedidos.router, prefix="/api/v1")
 app.include_router(mantenimientos.router, prefix="/api/v1")
 app.include_router(auditorias.router, prefix="/api/v1")
-app.include_router(siigo.router, prefix="/api/v1")
 app.include_router(pos.router, prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────

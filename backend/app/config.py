@@ -20,9 +20,6 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "uploads"
     ENV: str = "development"
     CLOUDINARY_URL: str = ""   # cloudinary://api_key:api_secret@cloud_name
-    SIIGO_USERNAME: str = ""
-    SIIGO_ACCESS_KEY: str = ""
-    SIIGO_PARTNER_ID: str = ""
 
     @field_validator("SECRET_KEY")
     @classmethod
@@ -40,5 +37,6 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = _env_file
+        extra = "ignore"  # ignora variables de entorno sobrantes (ej. SIIGO_* viejas) sin tumbar el arranque
 
 settings = Settings()

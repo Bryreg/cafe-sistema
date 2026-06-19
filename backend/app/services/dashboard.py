@@ -100,7 +100,7 @@ def get_dashboard(db: Session, tienda_id: int):
     cumplimiento = 0.0
     if checklist:
         campos = [checklist.apertura_realizada, checklist.inventario_check,
-                  checklist.pasteleria_check, checklist.siigo_check,
+                  checklist.pasteleria_check,
                   checklist.limpieza_check, checklist.cierre_realizado]
         cumplimiento = sum(1 for c in campos if c) / len(campos) * 100
 
@@ -143,7 +143,6 @@ def get_dashboard(db: Session, tienda_id: int):
         "apertura_realizada": checklist.apertura_realizada if checklist else False,
         "inventario_check": checklist.inventario_check if checklist else False,
         "pasteleria_check": checklist.pasteleria_check if checklist else False,
-        "siigo_check": checklist.siigo_check if checklist else False,
         "limpieza_check": checklist.limpieza_check if checklist else False,
         "cierre_realizado": checklist.cierre_realizado if checklist else False,
     }
@@ -288,7 +287,7 @@ def get_admin_resumen(db: Session, tienda_id: int):
 
 
 def actualizar_checklist_manual(db: Session, tienda_id: int, campo: str, valor: bool):
-    campos_permitidos = {"siigo_check", "limpieza_check"}
+    campos_permitidos = {"limpieza_check"}
     if campo not in campos_permitidos:
         return None  # caller raises 400
 

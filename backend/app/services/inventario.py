@@ -26,8 +26,7 @@ def get_inventario_tienda(db: Session, tienda_id: int):
 
 def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: str,
                           cantidad: float, motivo: str | None, usuario_id: int,
-                          fecha_vencimiento: datetime | None = None, commit: bool = True,
-                          siigo_sync_key: str | None = None):
+                          fecha_vencimiento: datetime | None = None, commit: bool = True):
     if tipo not in {"entrada", "salida", "ajuste"}:
         raise HTTPException(status_code=400, detail="tipo debe ser entrada, salida o ajuste")
     if tipo in {"entrada", "salida"} and cantidad <= 0:
@@ -97,7 +96,6 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
     mov = MovimientoInventario(
         producto_id=producto_id, tienda_id=tienda_id, tipo=tipo,
         cantidad=cantidad, usuario_id=usuario_id, motivo=motivo,
-        siigo_sync_key=siigo_sync_key,
     )
     db.add(mov)
 
@@ -178,53 +176,3 @@ def _tick_checklist_inventario(db: Session, tienda_id: int):
     _tick_checklist(db, tienda_id, inventario_check=True)
 
 
-def get_siigo_mapeos(db: Session):
-    from app.models.models import SiigoProductoMapeo
-    return db.query(SiigoProductoMapeo).order_by(SiigoProductoMapeo.codigo_siigo).all()
-
-
-def get_codigos_sin_mapeo(db: Session, tienda_id: int):
-    from app.models.models import SiigoProductoMapeo, SiigoVentaItem
-    mapped_codes = db.query(SiigoProductoMapeo.codigo_siigo).filter(
-        SiigoProductoMapeo.activo == True
-    ).subquery()
-    rows = db.query(
-        SiigoVentaItem.codigo_producto,
-        SiigoVentaItem.descripcion,
-    ).filter(
-        SiigoVentaItem.tienda_id == tienda_id,
-        SiigoVentaItem.codigo_producto != "",
-        ~SiigoVentaItem.codigo_producto.in_(mapped_codes),
-    ).distinct().limit(100).all()
-    return [{"codigo": r[0], "descripcion": r[1]} for r in rows]
-
-
-def create_siigo_mapeo(db: Session, data: dict):
-    from app.models.models import SiigoProductoMapeo
-    mapeo = SiigoProductoMapeo(**data)
-    db.add(mapeo)
-    db.commit()
-    db.refresh(mapeo)
-    return mapeo
-
-
-def update_siigo_mapeo(db: Session, mapeo_id: int, data: dict):
-    from app.models.models import SiigoProductoMapeo
-    mapeo = db.query(SiigoProductoMapeo).filter(SiigoProductoMapeo.id == mapeo_id).first()
-    if not mapeo:
-        return None
-    for k, v in data.items():
-        setattr(mapeo, k, v)
-    db.commit()
-    db.refresh(mapeo)
-    return mapeo
-
-
-def delete_siigo_mapeo(db: Session, mapeo_id: int):
-    from app.models.models import SiigoProductoMapeo
-    mapeo = db.query(SiigoProductoMapeo).filter(SiigoProductoMapeo.id == mapeo_id).first()
-    if not mapeo:
-        return False
-    db.delete(mapeo)
-    db.commit()
-    return True

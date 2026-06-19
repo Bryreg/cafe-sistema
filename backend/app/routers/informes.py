@@ -5,7 +5,6 @@ from app.database import get_db
 from app.core.deps import ensure_tienda_access, require_admin
 from app.models.models import Usuario
 from app.services import informes as svc
-from app.services.siigo import sync_ventas, query_ventas_siigo
 from app.services.filtros import InformeFilter
 from datetime import date
 from typing import Optional
@@ -179,46 +178,6 @@ def baristas(
     ensure_tienda_access(user, tienda_id)
     filtro = _build_filtro(tienda_id, fecha_desde, fecha_hasta, categoria, turno_id, producto_search)
     return svc.reporte_baristas(db, tienda_id, fecha_desde, fecha_hasta, filtro=filtro)
-
-
-@router.post("/siigo/sync")
-async def siigo_sync(
-    tienda_id: int = Query(...),
-    fecha_desde: str = Query(...),
-    fecha_hasta: str = Query(...),
-    db: Session = Depends(get_db),
-    user: Usuario = Depends(require_admin),
-):
-    ensure_tienda_access(user, tienda_id)
-    try:
-        return await sync_ventas(db, tienda_id, fecha_desde, fecha_hasta)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-
-@router.get("/siigo/ventas")
-def siigo_ventas(
-    tienda_id: int = Query(...),
-    fecha_desde: date = Query(...),
-    fecha_hasta: date = Query(...),
-    categoria: Optional[str] = Query(None),
-    turno_id: Optional[int] = Query(None),
-    producto_search: Optional[str] = Query(None),
-    con_descuento: Optional[bool] = Query(None),
-    db: Session = Depends(get_db),
-    user: Usuario = Depends(require_admin),
-):
-    ensure_tienda_access(user, tienda_id)
-    filtro = InformeFilter(
-        tienda_id=tienda_id,
-        fecha_desde=fecha_desde,
-        fecha_hasta=fecha_hasta,
-        categoria=categoria,
-        turno_id=turno_id,
-        producto_search=producto_search,
-        con_descuento=con_descuento,
-    )
-    return query_ventas_siigo(db, filtro)
 
 
 def _extraer_filas_csv(tipo: str, data: dict) -> list[dict]:

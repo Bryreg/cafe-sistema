@@ -16,19 +16,13 @@ def get_dashboard(db: Session, tienda_id: int):
         CajaTurno.estado == EstadoTurnoEnum.abierto
     ).first()
 
-    # Ventas del día desde Siigo (local DB — no depende de turno activo)
-    from app.models.models import SiigoVentaItem, VentaDiaria
-    siigo_hoy = db.query(func.sum(SiigoVentaItem.total_con_descuento)).filter(
-        SiigoVentaItem.tienda_id == tienda_id,
-        SiigoVentaItem.fecha == hoy,
-    ).scalar() or 0.0
-    ventas_dia = siigo_hoy if siigo_hoy > 0 else (turno.total_ventas if turno else 0.0)
-
-    # Efectivo y tarjeta del día — suma de todos los turnos (abiertos + cerrados)
+    # Ventas/efectivo/tarjeta del día — suma de los turnos de hoy (POS nativo
+    # mantiene estos totales en cada venta). No depende de Siigo.
     turnos_hoy = db.query(CajaTurno).filter(
         CajaTurno.tienda_id == tienda_id,
         func.date(CajaTurno.fecha_apertura) == hoy,
     ).all()
+    ventas_dia   = sum(t.total_ventas   or 0 for t in turnos_hoy)
     efectivo_dia = sum(t.total_efectivo or 0 for t in turnos_hoy)
     tarjeta_dia  = sum(t.total_tarjeta  or 0 for t in turnos_hoy)
 

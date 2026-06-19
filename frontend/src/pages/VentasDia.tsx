@@ -100,13 +100,13 @@ export default function VentasDia() {
           <h1 className="text-xl font-bold text-gray-900">Ventas del día</h1>
         </div>
 
-        {/* ── BARISTA: vista de solo lectura — ventas sincronizadas desde Siigo ── */}
+        {/* ── BARISTA: vista de solo lectura — ventas del turno (POS) ── */}
         {!isAdmin && (
           <div className="space-y-4">
             {turno.total_ventas > 0 ? (
               <div className="bg-green-50 border border-green-200 rounded-2xl p-5 text-center">
                 <CheckCircle size={28} className="mx-auto text-green-500 mb-2" />
-                <p className="text-sm font-semibold text-green-800">Ventas sincronizadas desde Siigo</p>
+                <p className="text-sm font-semibold text-green-800">Ventas del turno</p>
                 <p className="text-3xl font-bold text-green-900 mt-1">{fmt(turno.total_ventas)}</p>
                 <div className="flex justify-center gap-4 mt-3 text-xs text-green-700">
                   <span>Efectivo <strong>{fmt(turno.total_efectivo)}</strong></span>
@@ -116,8 +116,8 @@ export default function VentasDia() {
             ) : (
               <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5 text-center">
                 <RefreshCw size={24} className="mx-auto text-blue-400 mb-2" />
-                <p className="text-sm font-semibold text-blue-800">Las ventas se sincronizan automáticamente desde Siigo</p>
-                <p className="text-xs text-blue-600 mt-2">Aún no hay ventas registradas en este turno. El administrador las sincronizará al final del día.</p>
+                <p className="text-sm font-semibold text-blue-800">Las ventas se registran desde el POS</p>
+                <p className="text-xs text-blue-600 mt-2">Aún no hay ventas registradas en este turno.</p>
               </div>
             )}
 
@@ -137,7 +137,6 @@ export default function VentasDia() {
                           Efect: <span className="text-green-600 font-medium">{fmt(v.efectivo_calculado)}</span>
                           {v.tarjetas > 0 && <> · Tarj: {fmt(v.tarjetas)}</>}
                           {v.nota_credito > 0 && <> · NC: {fmt(v.nota_credito)}</>}
-                          {v.nota === 'sync:siigo' && <span className="ml-1 text-blue-400">· Siigo</span>}
                         </p>
                       </div>
                       <span className="text-xs text-gray-400">
@@ -151,12 +150,12 @@ export default function VentasDia() {
           </div>
         )}
 
-        {/* ── ADMIN: formulario manual (fallback si Siigo no está disponible) ── */}
+        {/* ── ADMIN: formulario manual (entrada de emergencia fuera del POS) ── */}
         {isAdmin && (
           <>
             <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-700">
               <AlertTriangle size={14} className="shrink-0" />
-              Modo manual — solo para usar si Siigo no está disponible
+              Registro manual de ventas — entrada de emergencia fuera del POS
             </div>
 
             {/* Resumen acumulado */}
@@ -283,7 +282,6 @@ export default function VentasDia() {
                           Efect: <span className="text-green-600 font-medium">{fmt(v.efectivo_calculado)}</span>
                           {v.tarjetas > 0 && <> · Tarj: {fmt(v.tarjetas)}</>}
                           {v.nota_credito > 0 && <> · NC: {fmt(v.nota_credito)}</>}
-                          {v.nota === 'sync:siigo' && <span className="ml-1 text-blue-400">· Siigo</span>}
                         </p>
                       </div>
                       <span className="text-xs text-gray-400">

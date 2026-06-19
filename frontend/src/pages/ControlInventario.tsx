@@ -47,11 +47,6 @@ interface ProductoVenta {
   total: number
 }
 
-interface VentasSiigo {
-  productos: Record<string, ProductoVenta>
-  total_ventas: number
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const ESTADO_CFG = {
@@ -345,7 +340,7 @@ export default function ControlInventario() {
   const [sugerencia, setSugerencia] = useState<Sugerencia | null>(null)
   const [loadingInv, setLoadingInv] = useState(false)
 
-  const [ventas, setVentas] = useState<VentasSiigo | null>(null)
+  const [ventas, setVentas] = useState<ProductoVenta[] | null>(null)
   const [loadingVentas, setLoadingVentas] = useState(false)
   const [errorVentas, setErrorVentas] = useState<string | null>(null)
   const [periodo, setPeriodo] = useState(14)
@@ -369,23 +364,23 @@ export default function ControlInventario() {
       .finally(() => setLoadingInv(false))
   }, [tiendaId])
 
-  // Siigo ventas
+  // Ventas por producto (POS)
   useEffect(() => {
     setLoadingVentas(true)
     setErrorVentas(null)
     setVentas(null)
-    api.get('/siigo/ventas-por-producto', {
+    api.get('/pos/analytics/productos-top', {
       params: { fecha_desde: isoHace(periodo), fecha_hasta: isoHoy() },
     })
-      .then(r => setVentas(r.data))
-      .catch(e => setErrorVentas(e.response?.data?.detail ?? 'Error consultando Siigo'))
+      .then(r => setVentas((r.data ?? []).map((x: any) => ({
+        nombre: x.nombre_producto, codigo: String(x.producto_id), cantidad: x.unidades, total: x.total,
+      }))))
+      .catch(e => setErrorVentas(e.response?.data?.detail ?? 'Error consultando ventas'))
       .finally(() => setLoadingVentas(false))
   }, [periodo])
 
   const topProductos = ventas
-    ? Object.values(ventas.productos)
-        .sort((a, b) => b.total - a.total)
-        .slice(0, 15)
+    ? [...ventas].sort((a, b) => b.total - a.total).slice(0, 15)
     : []
 
   const maxTotal = topProductos[0]?.total ?? 1
@@ -412,7 +407,7 @@ export default function ControlInventario() {
             Control de Inventario
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Stock actual · consumo 14 días · ventas Siigo
+            Stock actual · consumo 14 días · ventas POS
           </p>
         </div>
         <button
@@ -477,7 +472,7 @@ export default function ControlInventario() {
       {/* Dos columnas */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
 
-        {/* === Lo que más se vende (Siigo) === */}
+        {/* === Lo que más se vende (POS) === */}
         <div>
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-bold text-gray-700 flex items-center gap-2">
@@ -503,7 +498,7 @@ export default function ControlInventario() {
 
           {loadingVentas && (
             <p className="text-sm text-gray-400 animate-pulse py-8 text-center">
-              Consultando Siigo…
+              Consultando ventas…
             </p>
           )}
 
@@ -517,10 +512,10 @@ export default function ControlInventario() {
             <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
               <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
                 <span className="text-xs text-gray-500">
-                  {Object.keys(ventas.productos).length} productos
+                  {ventas.length} productos
                 </span>
                 <span className="text-xs font-semibold text-gray-700">
-                  {fmtCOP(ventas.total_ventas)} en {periodo} días
+                  {fmtCOP(ventas.reduce((s, p) => s + p.total, 0))} en {periodo} días
                 </span>
               </div>
               <div className="divide-y divide-gray-50">

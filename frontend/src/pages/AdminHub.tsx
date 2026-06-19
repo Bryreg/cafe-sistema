@@ -89,7 +89,7 @@ interface Movimiento {
 
 interface TopProducto {
   nombre: string
-  cantidad: number   // unidades Siigo
+  cantidad: number   // unidades vendidas
   total: number      // $ valor
 }
 
@@ -112,7 +112,6 @@ export default function AdminHub() {
   const [actividadOpen, setActividadOpen] = useState(false)
   const [showMas,  setShowMas]  = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [siigoTotales, setSiigoTotales] = useState<{ total: number; efectivo: number; tarjeta: number; otros: number; facturas_count: number } | null>(null)
 
   // Reloj
   useEffect(() => {
@@ -128,20 +127,6 @@ export default function AdminHub() {
     api.get(`/caja/activo/${tiendaId}`).then(r => setTurno(r.data)).catch(() => null)
   }, [tiendaId])
 
-  // Ventas Siigo — carga al iniciar y refresca cada 5 min
-  const fetchSiigoTotales = useCallback(() => {
-    const hoy = today()
-    api.get(`/siigo/totales?fecha_desde=${hoy}&fecha_hasta=${hoy}`)
-      .then(r => setSiigoTotales(r.data))
-      .catch(() => null)
-  }, [])
-
-  useEffect(() => {
-    fetchSiigoTotales()
-    const t = setInterval(fetchSiigoTotales, 5 * 60 * 1000)
-    return () => clearInterval(t)
-  }, [fetchSiigoTotales])
-
   // Movimientos del turno activo
   useEffect(() => {
     if (turno?.id) {
@@ -149,24 +134,26 @@ export default function AdminHub() {
     }
   }, [turno?.id])
 
-  // Top productos Siigo — según período
+  // Top productos del POS — según período
   const fetchTopProductos = useCallback((p: 'hoy' | 'semana' | 'mes') => {
     const desde = p === 'hoy' ? today() : p === 'semana' ? daysAgo(7) : daysAgo(30)
     const hasta = today()
-    api.get(`/siigo/ventas-por-producto?fecha_desde=${desde}&fecha_hasta=${hasta}`)
-      .then(r => setTopProductos((r.data.productos ?? []).slice(0, 5)))
+    api.get(`/pos/analytics/productos-top?fecha_desde=${desde}&fecha_hasta=${hasta}`)
+      .then(r => setTopProductos((r.data ?? []).slice(0, 5).map((x: any) => ({
+        nombre: x.nombre_producto, cantidad: x.unidades, total: x.total,
+      }))))
       .catch(() => setTopProductos([]))
   }, [])
 
   useEffect(() => { fetchTopProductos(periodo) }, [periodo, fetchTopProductos])
 
   // ── Derived ──────────────────────────────────────────────────────────────────
-  // siigoTotales: live refresh every 5 min; dash: immediate fallback from local DB
-  const ventasDia   = siigoTotales?.total    ?? dash?.ventas_dia    ?? 0
+  // Totales del día desde el dashboard (ventas del POS nativo)
+  const ventasDia   = dash?.ventas_dia ?? 0
   const ventasAyer  = dash?.ventas_ayer ?? 0
-  const efectivo    = siigoTotales?.efectivo ?? (dash as any)?.efectivo_dia ?? 0
-  const tarjeta     = siigoTotales?.tarjeta  ?? (dash as any)?.tarjeta_dia  ?? 0
-  const otros       = siigoTotales?.otros ?? 0
+  const efectivo    = (dash as any)?.efectivo_dia ?? 0
+  const tarjeta     = (dash as any)?.tarjeta_dia  ?? 0
+  const otros       = 0
   const delta       = ventasAyer > 0 ? ventasDia - ventasAyer : 0
   const deltaPct    = ventasAyer > 0 ? (delta / ventasAyer) * 100 : 0
   const positive    = delta >= 0
@@ -480,7 +467,7 @@ export default function AdminHub() {
           <div className="bg-white border border-warm-200" style={{ borderRadius: 18, padding: '6px 14px 8px' }}>
             {topProductos.length === 0 ? (
               <p className="text-warm-500" style={{ margin: '12px 0', textAlign: 'center', fontSize: 12 }}>
-                Sin datos de Siigo para este período
+                Sin ventas en este período
               </p>
             ) : topProductos.map((p, i) => {
               const barW = (p.cantidad / maxUnidades) * 100

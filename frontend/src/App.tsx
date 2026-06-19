@@ -113,7 +113,7 @@ function AppRoutes() {
       <Route path="/hub" element={
         <ProtectedRoute role="barista"><Hub /></ProtectedRoute>
       } />
-      {/* /ventas: formulario manual de fallback cuando Siigo no está disponible — solo admin */}
+      {/* /ventas: registro manual de ventas — entrada de emergencia fuera del POS, solo admin */}
       <Route path="/ventas" element={
         <ProtectedRoute role="admin"><VentasDia /></ProtectedRoute>
       } />

@@ -132,12 +132,12 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
         MovimientoCaja.tipo == "egreso"
     ).scalar() or 0.0
 
-    # Cuadre efectivo: contado - base = efectivo ventas → vs Siigo efectivo
+    # Cuadre efectivo: esperado = base + ventas efectivo (POS) + ingresos - egresos
     efectivo_ventas = efectivo_final_real - turno.base_real
     efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
     diferencia_cierre = efectivo_final_real - efectivo_esperado
 
-    # Cuadre datáfono: Bold vs Siigo tarjeta
+    # Cuadre datáfono: total Bold contado vs ventas tarjeta del POS
     diferencia_tarjeta = (datafono_real - turno.total_tarjeta) if datafono_real is not None else None
 
     hay_diff = round(diferencia_cierre, 2) != 0 or (diferencia_tarjeta is not None and round(diferencia_tarjeta, 2) != 0)

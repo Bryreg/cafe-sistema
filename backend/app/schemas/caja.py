@@ -6,6 +6,7 @@ from datetime import datetime
 class AbrirCajaRequest(BaseModel):
     tienda_id: int
     base_real: float
+    tipo_turno: Optional[str] = None
     justificacion_apertura: Optional[str] = None
     barista_ids: Optional[List[int]] = None
 
@@ -69,6 +70,7 @@ class TurnoOut(BaseModel):
     diferencia_tarjeta: Optional[float]
     justificacion_cierre: Optional[str]
     estado: str
+    tipo_turno: Optional[str] = None
     usuario_apertura_id: Optional[int] = None
     tiene_conteo_apertura: bool
     tiene_ventas: bool

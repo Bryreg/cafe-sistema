@@ -5,14 +5,21 @@ import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
 import {
   Users, CheckCircle, Circle, ChevronRight, AlertTriangle,
-  Clock, DollarSign, X, Check, LogOut, Package, BarChart2,
+  Clock, DollarSign, X, Check, LogOut, Package, BarChart2, Sun, Sunset, Moon,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import BaristaBottomNav from '../components/BaristaBottomNav'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 
+type TipoTurno = 'apertura' | 'intermedio' | 'cierre'
 interface Barista { id: number; nombre: string; rol: string; tienda_id: number | null }
+
+const TURNOS: { tipo: TipoTurno; label: string; desc: string; Icon: typeof Sun }[] = [
+  { tipo: 'apertura',    label: 'Apertura',    desc: 'Primer turno del día',   Icon: Sun    },
+  { tipo: 'intermedio',  label: 'Intermedio',  desc: 'Relevo de turno',         Icon: Sunset },
+  { tipo: 'cierre',      label: 'Cierre',      desc: 'Último turno del día',    Icon: Moon   },
+]
 
 export default function GestionTurno() {
   const { tiendaId, resetKiosk, isKiosk } = useAuth()
@@ -21,11 +28,14 @@ export default function GestionTurno() {
 
   const [baristas, setBaristas] = useState<Barista[]>([])
   const [selected, setSelected] = useState<number[]>([])
+  const [tipoTurno, setTipoTurno] = useState<TipoTurno | null>(null)
   const [baseReal, setBaseReal] = useState('')
   const [justificacion, setJustificacion] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [showAbrirForm, setShowAbrirForm] = useState(false)
+
+  // step: null = no form | 'tipo' = elegir tipo | 'baristas' = elegir baristas + confirmar
+  const [step, setStep] = useState<null | 'tipo' | 'baristas'>(null)
 
   useEffect(() => {
     api.get('/auth/usuarios').then(({ data }) => {
@@ -36,18 +46,28 @@ export default function GestionTurno() {
   const toggleBarista = (id: number) =>
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
 
+  const elegirTipo = (tipo: TipoTurno) => {
+    setTipoTurno(tipo)
+    setStep('baristas')
+  }
+
+  const cancelar = () => {
+    setStep(null); setTipoTurno(null)
+    setSelected([]); setBaseReal(''); setJustificacion(''); setError('')
+  }
+
   const abrirTurno = async () => {
-    if (!tiendaId) return
+    if (!tiendaId || !tipoTurno) return
     setSaving(true); setError('')
     try {
       await api.post('/caja/abrir', {
         tienda_id: tiendaId,
+        tipo_turno: tipoTurno,
         base_real: Number(baseReal) || 0,
         justificacion_apertura: justificacion || null,
         barista_ids: selected.length > 0 ? selected : null,
       })
-      setShowAbrirForm(false)
-      setSelected([]); setBaseReal(''); setJustificacion('')
+      cancelar()
       await refresh()
     } catch (e: any) {
       setError(e.response?.data?.detail || 'Error al abrir turno')
@@ -72,13 +92,22 @@ export default function GestionTurno() {
             Gestión de turno
           </p>
           <p className="text-[16px] font-bold" style={{ color: dark.ink }}>
-            {turno ? 'Turno activo' : 'Sin turno activo'}
+            {turno
+              ? `Turno ${turno.tipo_turno ?? 'activo'}`
+              : step === 'tipo' ? 'Seleccionar turno'
+              : step === 'baristas' ? `Turno ${tipoTurno} — baristas`
+              : 'Sin turno activo'}
           </p>
         </div>
-        {isKiosk && (
+        {isKiosk && !step && (
           <button onClick={resetKiosk} className="p-2 rounded-lg opacity-40 hover:opacity-70 transition-opacity"
             style={{ color: dark.inkSubtle }}>
             <LogOut size={16} />
+          </button>
+        )}
+        {step && (
+          <button onClick={cancelar} className="p-2 rounded-lg" style={{ color: dark.inkSubtle }}>
+            <X size={18} />
           </button>
         )}
       </header>
@@ -86,7 +115,7 @@ export default function GestionTurno() {
       <div className="flex-1 px-4 space-y-4">
 
         {/* ── CON TURNO ACTIVO ── */}
-        {turno && (
+        {turno && !step && (
           <>
             {/* Baristas en turno */}
             {turno.baristas.length > 0 && (
@@ -116,7 +145,7 @@ export default function GestionTurno() {
               <div className="flex gap-4 mt-3 pt-3" style={{ borderTop: `1px solid ${dark.border}` }}>
                 {[
                   { l: 'Efectivo', v: fmt(turno.total_efectivo ?? 0) },
-                  { l: 'Tarjeta', v: fmt(turno.total_tarjeta ?? 0) },
+                  { l: 'Tarjeta',  v: fmt(turno.total_tarjeta ?? 0) },
                 ].map(row => (
                   <div key={row.l}>
                     <p className="text-[10px]" style={{ color: dark.inkSubtle }}>{row.l}</p>
@@ -129,34 +158,10 @@ export default function GestionTurno() {
             {/* Flujo de acciones */}
             <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${dark.border}` }}>
               {[
-                {
-                  label: 'Conteo de apertura',
-                  done: turno.tiene_conteo_apertura,
-                  to: '/conteo-apertura',
-                  icon: Package,
-                  required: true,
-                },
-                {
-                  label: 'Cuadre de llegada',
-                  done: !!turno.ultima_entrega_fecha,
-                  to: '/cuadre-llegada',
-                  icon: DollarSign,
-                  required: false,
-                },
-                {
-                  label: 'Conteo de cierre',
-                  done: turno.tiene_conteo_cierre,
-                  to: '/conteo-cierre',
-                  icon: CheckCircle,
-                  required: false,
-                },
-                {
-                  label: 'Entrega / cierre de turno',
-                  done: false,
-                  to: '/entrega',
-                  icon: Clock,
-                  required: false,
-                },
+                { label: 'Conteo de apertura',    done: turno.tiene_conteo_apertura, to: '/conteo-apertura', icon: Package,      note: 'Recomendado antes de vender' },
+                { label: 'Cuadre de llegada',     done: !!turno.ultima_entrega_fecha, to: '/cuadre-llegada', icon: DollarSign,   note: '' },
+                { label: 'Conteo de cierre',      done: turno.tiene_conteo_cierre,   to: '/conteo-cierre',  icon: CheckCircle,  note: '' },
+                { label: 'Entrega / cierre',      done: false,                        to: '/entrega',        icon: Clock,        note: '' },
               ].map((item, i) => (
                 <button
                   key={item.label}
@@ -171,15 +176,14 @@ export default function GestionTurno() {
                     style={{ background: item.done ? dark.greenDim : 'rgba(255,255,255,0.06)' }}>
                     {item.done
                       ? <Check size={14} color="#fff" strokeWidth={2.5} />
-                      : <Circle size={14} style={{ color: dark.inkSubtle }} />
-                    }
+                      : <Circle size={14} style={{ color: dark.inkSubtle }} />}
                   </div>
                   <div className="flex-1">
                     <p className="text-[13px] font-semibold" style={{ color: item.done ? dark.green : dark.ink }}>
                       {item.label}
                     </p>
-                    {item.required && !item.done && (
-                      <p className="text-[11px] mt-0.5" style={{ color: dark.amber }}>Recomendado antes de vender</p>
+                    {item.note && !item.done && (
+                      <p className="text-[11px] mt-0.5" style={{ color: dark.amber }}>{item.note}</p>
                     )}
                   </div>
                   <ChevronRight size={15} style={{ color: dark.inkSubtle }} />
@@ -191,7 +195,7 @@ export default function GestionTurno() {
             <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${dark.border}` }}>
               {[
                 { label: 'Mis ventas hoy', to: '/ventas-hoy', icon: BarChart2 },
-                { label: 'Inventario', to: '/inventario', icon: Package },
+                { label: 'Inventario',     to: '/inventario', icon: Package   },
               ].map((item, i) => (
                 <button key={item.label} onClick={() => navigate(item.to)}
                   className="w-full flex items-center gap-3 px-4 py-3.5"
@@ -205,18 +209,16 @@ export default function GestionTurno() {
           </>
         )}
 
-        {/* ── SIN TURNO ── */}
-        {!turno && !showAbrirForm && (
+        {/* ── SIN TURNO + sin form ── */}
+        {!turno && !step && (
           <div className="space-y-4">
             <div className="rounded-2xl p-8 text-center" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
               <Clock size={32} style={{ color: dark.inkSubtle }} className="mx-auto mb-3" />
               <p className="text-[15px] font-bold mb-1" style={{ color: dark.ink }}>No hay turno activo</p>
-              <p className="text-[12px]" style={{ color: dark.inkSubtle }}>
-                Abre un turno para comenzar a vender
-              </p>
+              <p className="text-[12px]" style={{ color: dark.inkSubtle }}>Abre un turno para comenzar a vender</p>
             </div>
             <button
-              onClick={() => setShowAbrirForm(true)}
+              onClick={() => setStep('tipo')}
               className="w-full py-4 rounded-2xl font-bold text-[15px] text-white"
               style={{ background: dark.greenDim }}>
               Abrir turno
@@ -224,44 +226,80 @@ export default function GestionTurno() {
           </div>
         )}
 
-        {/* ── FORMULARIO ABRIR TURNO ── */}
-        {!turno && showAbrirForm && (
+        {/* ── PASO 1: elegir tipo de turno ── */}
+        {step === 'tipo' && (
+          <div className="space-y-3">
+            <p className="text-[12px]" style={{ color: dark.inkSubtle }}>
+              ¿Qué turno vas a iniciar?
+            </p>
+            {TURNOS.map(({ tipo, label, desc, Icon }) => (
+              <button
+                key={tipo}
+                onClick={() => elegirTipo(tipo)}
+                className="w-full flex items-center gap-4 px-4 py-4 rounded-2xl text-left transition-all active:scale-95"
+                style={{ background: dark.surface, border: `1px solid ${dark.border}` }}
+              >
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                  style={{ background: dark.amberDim }}>
+                  <Icon size={18} style={{ color: dark.amber }} />
+                </div>
+                <div className="flex-1">
+                  <p className="text-[14px] font-bold capitalize" style={{ color: dark.ink }}>{label}</p>
+                  <p className="text-[11px] mt-0.5" style={{ color: dark.inkSubtle }}>{desc}</p>
+                </div>
+                <ChevronRight size={16} style={{ color: dark.inkSubtle }} />
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ── PASO 2: baristas + base ── */}
+        {step === 'baristas' && (
           <div className="space-y-4">
 
-            <div className="flex items-center justify-between">
-              <p className="text-[14px] font-bold" style={{ color: dark.ink }}>Abrir turno</p>
-              <button onClick={() => setShowAbrirForm(false)} style={{ color: dark.inkSubtle }}>
-                <X size={18} />
+            {/* Tipo seleccionado (badge) */}
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 rounded-full text-xs font-bold capitalize"
+                style={{ background: dark.amberDim, color: dark.amber }}>
+                {tipoTurno}
+              </span>
+              <button
+                onClick={() => setStep('tipo')}
+                className="text-[11px]"
+                style={{ color: dark.inkSubtle }}>
+                cambiar
               </button>
             </div>
 
             {/* Selección de baristas */}
             <div className="rounded-2xl p-4 space-y-2" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-              <p className="text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center gap-2" style={{ color: dark.inkSubtle }}>
+              <p className="text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center gap-2"
+                style={{ color: dark.inkSubtle }}>
                 <Users size={12} /> Baristas en este turno
               </p>
-              {baristas.length === 0 && (
+              {baristas.length === 0 ? (
                 <p className="text-[12px]" style={{ color: dark.inkSubtle }}>
                   No hay baristas configurados para esta sede.
                 </p>
+              ) : (
+                baristas.map(b => (
+                  <button
+                    key={b.id}
+                    onClick={() => toggleBarista(b.id)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all"
+                    style={{
+                      background: selected.includes(b.id) ? dark.greenDim + '44' : 'rgba(255,255,255,0.04)',
+                      border: `1px solid ${selected.includes(b.id) ? dark.greenDim : 'transparent'}`,
+                    }}
+                  >
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold"
+                      style={{ background: selected.includes(b.id) ? dark.greenDim : dark.border, color: '#fff' }}>
+                      {selected.includes(b.id) ? <Check size={12} /> : b.nombre[0]}
+                    </div>
+                    <span className="text-[13px] font-semibold" style={{ color: dark.ink }}>{b.nombre}</span>
+                  </button>
+                ))
               )}
-              {baristas.map(b => (
-                <button
-                  key={b.id}
-                  onClick={() => toggleBarista(b.id)}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all"
-                  style={{
-                    background: selected.includes(b.id) ? dark.greenDim + '44' : 'rgba(255,255,255,0.04)',
-                    border: `1px solid ${selected.includes(b.id) ? dark.greenDim : 'transparent'}`,
-                  }}
-                >
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold"
-                    style={{ background: selected.includes(b.id) ? dark.greenDim : dark.border, color: '#fff' }}>
-                    {selected.includes(b.id) ? <Check size={12} /> : b.nombre[0]}
-                  </div>
-                  <span className="text-[13px] font-semibold" style={{ color: dark.ink }}>{b.nombre}</span>
-                </button>
-              ))}
             </div>
 
             {/* Base de caja */}
@@ -283,17 +321,14 @@ export default function GestionTurno() {
               </div>
             </div>
 
-            {/* Justificación (si hay diferencia con la base anterior) */}
-            <div>
-              <textarea
-                value={justificacion}
-                onChange={e => setJustificacion(e.target.value)}
-                placeholder="Justificación (si hay diferencia con el turno anterior)"
-                rows={2}
-                className="w-full rounded-xl px-3 py-2.5 text-sm resize-none outline-none"
-                style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}
-              />
-            </div>
+            <textarea
+              value={justificacion}
+              onChange={e => setJustificacion(e.target.value)}
+              placeholder="Justificación si hay diferencia con el turno anterior"
+              rows={2}
+              className="w-full rounded-xl px-3 py-2.5 text-sm resize-none outline-none"
+              style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}
+            />
 
             {error && (
               <div className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-[12px]"

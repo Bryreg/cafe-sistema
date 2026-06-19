@@ -47,6 +47,12 @@ class TipoConteoEnum(str, enum.Enum):
     cierre = "cierre"
 
 
+class TipoTurnoEnum(str, enum.Enum):
+    apertura = "apertura"
+    intermedio = "intermedio"
+    cierre = "cierre"
+
+
 class EstadoSolicitudEnum(str, enum.Enum):
     pendiente = "pendiente"
     aprobada = "aprobada"
@@ -132,6 +138,7 @@ class CajaTurno(Base):
     diferencia_tarjeta = Column(Numeric(12, 2, asdecimal=False), nullable=True)
     consignaciones_deducidas = Column(Numeric(12, 2, asdecimal=False), default=0.0, nullable=True)
     justificacion_cierre = Column(Text, nullable=True)
+    tipo_turno = Column(SAEnum(TipoTurnoEnum), nullable=True)
     estado = Column(SAEnum(EstadoTurnoEnum), default=EstadoTurnoEnum.abierto, index=True)
     # Flags de flujo obligatorio — solo el backend las activa
     tiene_conteo_apertura = Column(Boolean, default=False)

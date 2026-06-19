@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Layers, ClipboardList, ShoppingCart,
   Banknote, Wrench, ClipboardCheck, Activity,
-  Bell, Inbox, BarChart2, Users, Link2, Tag, BarChart3,
+  Bell, Inbox, BarChart2, Users, Tag, BarChart3,
 } from 'lucide-react'
 
 export const NAV_ADMIN = [
@@ -19,5 +19,4 @@ export const NAV_ADMIN = [
   { to: '/bandeja',            label: 'Bandeja',        icon: Inbox           },
   { to: '/informes',           label: 'Informes',       icon: BarChart2       },
   { to: '/usuarios',           label: 'Usuarios',       icon: Users           },
-  { to: '/siigo-mapeo',        label: 'Mapeo Siigo',    icon: Link2           },
 ]

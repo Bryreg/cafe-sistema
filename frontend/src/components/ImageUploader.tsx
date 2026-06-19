@@ -33,7 +33,7 @@ export default function ImageUploader({ onFileChange, dark = false }: ImageUploa
         Foto de evidencia
       </label>
       <p className={`text-xs mb-2 ${hint}`}>
-        Incluye Siigo y el cuadre físico en la foto
+        Incluye el cuadre físico en la foto
       </p>
 
       {preview ? (

@@ -64,7 +64,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const initKiosk = async (pin: string, tiendaId: number) => {
     const params = new URLSearchParams({ tienda_id: String(tiendaId), kiosk_pin: pin })
     const { data } = await api.post(`/auth/kiosk-init?${params}`)
-    login({ ...data, kiosk: true })
+    login({
+      token: data.access_token,
+      rol: data.rol,
+      nombre: data.nombre,
+      tienda_id: data.tienda_id,
+      user_id: data.user_id,
+      kiosk: true,
+    })
   }
 
   const resetKiosk = () => logout()

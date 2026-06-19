@@ -15,7 +15,6 @@ export default function CuadreLlegada() {
   const navigate = useNavigate()
 
   const [efectivoReal, setEfectivoReal] = useState('')
-  const [ventasSiigo, setVentasSiigo]   = useState('')
   const [ventasBold, setVentasBold]     = useState('')
   const [nota, setNota]                 = useState('')
   const [error, setError]               = useState('')
@@ -40,9 +39,8 @@ export default function CuadreLlegada() {
   const diff     = efectivoReal.trim() !== '' ? ef - esperado : null
 
   const step1Done = ef > 0
-  const step2Done = ventasSiigo.trim() !== ''
-  const step3Done = ventasBold.trim() !== ''
-  const currentStep = !step1Done ? 1 : !step2Done ? 2 : !step3Done ? 3 : 4
+  const step2Done = ventasBold.trim() !== ''   // Verifica Bold
+  const currentStep = !step1Done ? 1 : !step2Done ? 2 : 3
   const canSubmit   = step1Done
 
   // Turno info
@@ -57,8 +55,7 @@ export default function CuadreLlegada() {
       form.append('tipo_turno', tipo_turno ?? 'intermedio')
       const notaFull = [
         nota.trim(),
-        ventasSiigo ? `Siigo: ${ventasSiigo}` : '',
-        ventasBold  ? `Bold: ${ventasBold}`   : '',
+        ventasBold ? `Bold: ${ventasBold}` : '',
       ].filter(Boolean).join(' | ')
       if (notaFull) form.append('nota', notaFull)
       await api.post(`/caja/${turno.id}/cuadre-llegada`, form, {
@@ -118,7 +115,7 @@ export default function CuadreLlegada() {
           </p>
         </div>
         <span className="text-[11px] font-mono font-semibold" style={{ color: dark.inkSubtle }}>
-          {currentStep > 3 ? '3/3' : `${Math.max(0, currentStep - 1)}/3`}
+          {currentStep > 2 ? '2/2' : `${Math.max(0, currentStep - 1)}/2`}
         </span>
       </header>
 
@@ -226,34 +223,11 @@ export default function CuadreLlegada() {
           )}
         </div>
 
-        {/* Paso 2 — Verifica Siigo */}
+        {/* Paso 2 — Verifica Bold */}
         <div className="space-y-2">
-          <StepHeader n={2} title="Verifica Siigo" done={step2Done} active={currentStep === 2} />
+          <StepHeader n={2} title="Verifica Bold" done={step2Done} active={currentStep === 2} />
           <div className="rounded-xl px-4 py-3 flex items-center justify-between gap-3"
             style={{ background: dark.surface, border: `1px solid ${currentStep === 2 ? dark.amberDim : dark.border}` }}>
-            <div>
-              <p className="text-[12px]" style={{ color: dark.inkMuted }}>Ventas efectivo Siigo</p>
-              <p className="text-[10px] mt-0.5" style={{ color: dark.inkSubtle }}>
-                Sistema: {fmt(turno.total_efectivo ?? 0)}
-              </p>
-            </div>
-            <input
-              type="number"
-              inputMode="numeric"
-              value={ventasSiigo}
-              onChange={e => setVentasSiigo(e.target.value)}
-              placeholder="$ ___"
-              className="text-[22px] font-bold font-mono text-right bg-transparent outline-none w-40"
-              style={{ color: dark.amber }}
-            />
-          </div>
-        </div>
-
-        {/* Paso 3 — Verifica Bold */}
-        <div className="space-y-2">
-          <StepHeader n={3} title="Verifica Bold" done={step3Done} active={currentStep === 3} />
-          <div className="rounded-xl px-4 py-3 flex items-center justify-between gap-3"
-            style={{ background: dark.surface, border: `1px solid ${currentStep === 3 ? dark.amberDim : dark.border}` }}>
             <div>
               <p className="text-[12px] font-semibold" style={{ color: dark.ink }}>Ventas tarjeta Bold</p>
               <p className="text-[10px] mt-0.5" style={{ color: dark.inkSubtle }}>

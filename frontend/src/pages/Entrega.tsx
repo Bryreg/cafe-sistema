@@ -37,7 +37,6 @@ export default function Entrega() {
   const fileRef = useRef<HTMLInputElement>(null)
 
   const [efectivoReal, setEfectivoReal]           = useState('')
-  const [ventasEfectivoSiigo, setVentasEfectivoSiigo] = useState('')
   const [ventasTarjetaBold, setVentasTarjetaBold] = useState('')
   const [imagen, setImagen]                       = useState<File | null>(null)
   const [preview, setPreview]                     = useState<string | null>(null)
@@ -51,22 +50,18 @@ export default function Entrega() {
   )
 
   const ef       = Number(efectivoReal) || 0
-  const vs       = Number(ventasEfectivoSiigo) || 0
   const vt       = Number(ventasTarjetaBold) || 0
   const esperado = turno.efectivo_esperado_actual ?? 0
 
-  const difEfectivo = efectivoReal.trim()          !== '' ? ef - esperado           : null
-  const difSiigo    = ventasEfectivoSiigo.trim()   !== '' ? vs - (turno.total_efectivo ?? 0) : null
-  const difTarjeta  = ventasTarjetaBold.trim()     !== '' ? vt - (turno.total_tarjeta ?? 0)  : null
+  const difEfectivo = efectivoReal.trim()      !== '' ? ef - esperado                 : null
+  const difTarjeta  = ventasTarjetaBold.trim() !== '' ? vt - (turno.total_tarjeta ?? 0) : null
 
   const step1Done = ef > 0
-  const step2Done = ventasEfectivoSiigo.trim() !== '' && difSiigo === 0
-  const step3Done = ventasTarjetaBold.trim()   !== ''
-  const step4Done = imagen !== null
-  const currentStep = !step1Done ? 1 : !step2Done ? 2 : !step3Done ? 3 : 4
+  const step2Done = ventasTarjetaBold.trim() !== ''   // Verifica Bold
+  const step3Done = imagen !== null                    // Foto
+  const currentStep = !step1Done ? 1 : !step2Done ? 2 : 3
 
-  const siigoCuadra = difSiigo === 0
-  const canSave = step1Done && ventasEfectivoSiigo.trim() !== '' && step3Done && siigoCuadra
+  const canSave = step1Done && step2Done
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
@@ -81,7 +76,6 @@ export default function Entrega() {
     try {
       const fd = new FormData()
       fd.append('efectivo_real', String(ef))
-      fd.append('ventas_efectivo_siigo', String(vs))
       fd.append('ventas_tarjeta_bold', String(vt))
       if (imagen) fd.append('imagen', imagen)
       await api.post(`/caja/${turno.id}/entrega`, fd)
@@ -115,7 +109,7 @@ export default function Entrega() {
           </p>
         </div>
         <span className="text-[11px] font-mono font-semibold" style={{ color: dark.inkSubtle }}>
-          {Math.min(currentStep - 1, 4)}/4
+          {Math.min(currentStep - 1, 3)}/3
         </span>
       </header>
 
@@ -190,52 +184,11 @@ export default function Entrega() {
           )}
         </div>
 
-        {/* Paso 2 — Verifica Siigo */}
+        {/* Paso 2 — Verifica Bold */}
         <div className="space-y-2">
-          <StepHeader n={2} title="Verifica Siigo" done={step2Done} active={currentStep === 2} />
+          <StepHeader n={2} title="Verifica Bold" done={step2Done} active={currentStep === 2} />
           <div className="rounded-xl px-4 py-3 flex items-center justify-between gap-3"
             style={{ background: dark.surface, border: `1px solid ${currentStep === 2 ? dark.amberDim : dark.border}` }}>
-            <div>
-              <label htmlFor="entrega-siigo" className="text-[12px]" style={{ color: dark.inkMuted }}>Ventas efectivo Siigo</label>
-              <p className="text-[10px] mt-0.5" style={{ color: dark.inkSubtle }}>
-                Sistema: {fmt(turno.total_efectivo ?? 0)}
-              </p>
-            </div>
-            <input
-              id="entrega-siigo"
-              type="number" inputMode="numeric"
-              value={ventasEfectivoSiigo} onChange={e => setVentasEfectivoSiigo(e.target.value)}
-              placeholder="$ ___"
-              className="text-[22px] font-bold font-mono text-right bg-transparent outline-none w-40"
-              style={{ color: dark.amber }}
-            />
-          </div>
-
-          {difSiigo !== null && (
-            <div className="rounded-xl flex items-center justify-between px-4 py-2.5"
-              style={{
-                background: difSiigo === 0 ? 'oklch(22% 0.08 155 / 0.4)' : 'oklch(22% 0.12 25 / 0.4)',
-                border: `1px solid ${difSiigo === 0 ? 'oklch(38% 0.10 155 / 0.6)' : 'oklch(40% 0.16 25 / 0.6)'}`,
-              }}>
-              <span className="text-[11px] flex items-center gap-1.5" style={{ color: dark.inkMuted }}>
-                {difSiigo === 0
-                  ? <Check size={12} color={dark.green} />
-                  : <AlertTriangle size={12} color={dark.danger} />}
-                {difSiigo === 0 ? 'Coincide con el sistema' : 'Debe coincidir exactamente'}
-              </span>
-              <span className="text-[18px] font-bold font-mono"
-                style={{ color: difSiigo === 0 ? dark.green : dark.danger, letterSpacing: '-0.3px' }}>
-                {fmtSigned(difSiigo)}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Paso 3 — Verifica Bold */}
-        <div className="space-y-2">
-          <StepHeader n={3} title="Verifica Bold" done={step3Done} active={currentStep === 3} />
-          <div className="rounded-xl px-4 py-3 flex items-center justify-between gap-3"
-            style={{ background: dark.surface, border: `1px solid ${currentStep === 3 ? dark.amberDim : dark.border}` }}>
             <div>
               <label htmlFor="entrega-bold" className="text-[12px] font-semibold" style={{ color: dark.ink }}>Ventas tarjeta Bold</label>
               <p className="text-[10px] mt-0.5" style={{ color: dark.inkSubtle }}>
@@ -272,9 +225,9 @@ export default function Entrega() {
           )}
         </div>
 
-        {/* Paso 4 — Foto */}
+        {/* Paso 3 — Foto */}
         <div className="space-y-2">
-          <StepHeader n={4} title="Foto del cuadre" done={step4Done} active={currentStep === 4} />
+          <StepHeader n={3} title="Foto del cuadre" done={step3Done} active={currentStep === 3} />
           <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
 
           {preview ? (
@@ -294,7 +247,7 @@ export default function Entrega() {
               className="w-full h-24 rounded-xl flex flex-col items-center justify-center gap-2 transition-colors"
               style={{
                 background: dark.surface,
-                border: `1.5px dashed ${currentStep === 4 ? dark.amberDim : dark.border}`,
+                border: `1.5px dashed ${currentStep === 3 ? dark.amberDim : dark.border}`,
               }}
             >
               <Camera size={20} style={{ color: dark.inkSubtle }} />
@@ -315,11 +268,6 @@ export default function Entrega() {
           borderTop: `1px solid ${dark.border}`,
           paddingBottom: 'env(safe-area-inset-bottom, 16px)',
         }}>
-        {!siigoCuadra && ventasEfectivoSiigo.trim() !== '' && (
-          <p className="text-center text-[11px] mb-2" style={{ color: dark.danger }}>
-            Siigo debe coincidir exactamente con las ventas del sistema
-          </p>
-        )}
         <button
           onClick={canSave ? confirmar : undefined}
           disabled={!canSave || saving}
@@ -335,11 +283,9 @@ export default function Entrega() {
             ? 'Registrando...'
             : !step1Done
               ? <><Lock size={14} /> Cuenta el efectivo primero</>
-              : !siigoCuadra && ventasEfectivoSiigo.trim() !== ''
-                ? <><Lock size={14} /> Siigo no coincide</>
-                : !step3Done
-                  ? <><Lock size={14} /> Ingresa el total Bold</>
-                  : <><Check size={16} strokeWidth={2.5} /> Registrar entrega</>
+              : !step2Done
+                ? <><Lock size={14} /> Ingresa el total Bold</>
+                : <><Check size={16} strokeWidth={2.5} /> Registrar entrega</>
           }
         </button>
       </div>

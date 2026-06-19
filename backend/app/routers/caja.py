@@ -61,7 +61,6 @@ def get_entregas_tienda(tienda_id: int, db: Session = Depends(get_db), user: Usu
 async def registrar_entrega(
     turno_id: int,
     efectivo_real: float = Form(...),
-    ventas_efectivo_siigo: float = Form(...),
     ventas_tarjeta_bold: float = Form(...),
     imagen: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
@@ -69,7 +68,7 @@ async def registrar_entrega(
 ):
     ensure_turno_access(db, user, turno_id)
     imagen_url = await upload_imagen(imagen)
-    return svc.registrar_entrega(db, turno_id, user.id, efectivo_real, ventas_efectivo_siigo, ventas_tarjeta_bold, imagen_url)
+    return svc.registrar_entrega(db, turno_id, user.id, efectivo_real, ventas_tarjeta_bold, imagen_url)
 
 @router.post("/{turno_id}/cuadre-llegada", response_model=EntregaTurnoOut)
 async def cuadre_llegada(

@@ -180,7 +180,7 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
 
 
 def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
-                      efectivo_real: float, ventas_efectivo_siigo: float,
+                      efectivo_real: float,
                       ventas_tarjeta_bold: float, imagen_url: str | None):
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
@@ -190,7 +190,7 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
         raise HTTPException(status_code=404, detail="No hay turno activo")
     if not turno.tiene_conteo_apertura:
         raise HTTPException(status_code=400, detail="Debes completar el conteo de apertura antes de registrar una entrega")
-    if efectivo_real < 0 or ventas_efectivo_siigo < 0 or ventas_tarjeta_bold < 0:
+    if efectivo_real < 0 or ventas_tarjeta_bold < 0:
         raise HTTPException(status_code=400, detail="Los valores numéricos no pueden ser negativos")
 
     ingresos = db.query(func.sum(MovimientoCaja.valor)).filter(
@@ -212,7 +212,7 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
         usuario_id=usuario_id,
         efectivo_real=efectivo_real,
         efectivo_esperado=efectivo_esperado,
-        ventas_efectivo_siigo=ventas_efectivo_siigo,
+        ventas_efectivo_siigo=0.0,  # remanente dormido: el esperado ya sale del POS (turno.total_efectivo)
         ventas_tarjeta_bold=ventas_tarjeta_bold,
         diferencia_efectivo=diferencia_efectivo,
         diferencia_tarjeta=diferencia_tarjeta,

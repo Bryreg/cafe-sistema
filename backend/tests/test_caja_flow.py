@@ -352,7 +352,6 @@ class CajaFlowTests(BackendTestCase):
             f"/api/v1/caja/{turno.id}/entrega",
             data={
                 "efectivo_real": "140000",
-                "ventas_efectivo_siigo": "39000",
                 "ventas_tarjeta_bold": "10000",
             },
         )
@@ -377,7 +376,6 @@ class CajaFlowTests(BackendTestCase):
             f"/api/v1/caja/{turno.id}/entrega",
             data={
                 "efectivo_real": "140000",
-                "ventas_efectivo_siigo": "40000",
                 "ventas_tarjeta_bold": "10000",
             },
         )

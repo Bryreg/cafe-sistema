@@ -39,7 +39,6 @@ class EntregaTurnoOut(BaseModel):
     fecha_hora: datetime
     efectivo_esperado: float
     efectivo_real: float
-    ventas_efectivo_siigo: float
     ventas_tarjeta_bold: float
     diferencia_efectivo: float
     diferencia_tarjeta: float

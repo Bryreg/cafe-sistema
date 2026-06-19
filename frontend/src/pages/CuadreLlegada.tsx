@@ -10,8 +10,8 @@ const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 const fmtSigned = (v: number) => (v === 0 ? '$0' : (v > 0 ? '+' : '') + fmt(Math.abs(v)))
 
 export default function CuadreLlegada() {
-  const { user, tipo_turno, setCuadreLlegadaDone } = useAuth()
-  const { turno, loading } = useTurno()
+  const { user } = useAuth()
+  const { turno, loading, refresh } = useTurno()
   const navigate = useNavigate()
 
   const [efectivoReal, setEfectivoReal] = useState('')
@@ -43,16 +43,12 @@ export default function CuadreLlegada() {
   const currentStep = !step1Done ? 1 : !step2Done ? 2 : 3
   const canSubmit   = step1Done
 
-  // Turno info
-  const esCierre   = tipo_turno === 'cierre'
-  const turnoLabel = esCierre ? 'Cierre' : 'Intermedio'
-
   const guardar = async () => {
     setSaving(true); setError('')
     try {
       const form = new FormData()
       form.append('efectivo_real', String(ef))
-      form.append('tipo_turno', tipo_turno ?? 'intermedio')
+      form.append('tipo_turno', 'intermedio')
       const notaFull = [
         nota.trim(),
         ventasBold ? `Bold: ${ventasBold}` : '',
@@ -61,8 +57,8 @@ export default function CuadreLlegada() {
       await api.post(`/caja/${turno.id}/cuadre-llegada`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
-      setCuadreLlegadaDone(turno.id)
-      navigate('/hub', { replace: true })
+      await refresh()
+      navigate('/gestion-turno', { replace: true })
     } catch (e: any) {
       setError(e.response?.data?.detail || 'Error al registrar cuadre')
     } finally {
@@ -111,11 +107,11 @@ export default function CuadreLlegada() {
             Cuadre de llegada
           </p>
           <p className="text-[14px] font-bold leading-tight" style={{ color: dark.ink }}>
-            Turno {turnoLabel} · {user?.nombre}
+            Cuadre · {user?.nombre}
           </p>
         </div>
         <span className="text-[11px] font-mono font-semibold" style={{ color: dark.inkSubtle }}>
-          {currentStep > 2 ? '2/2' : `${Math.max(0, currentStep - 1)}/2`}
+          {Math.min(currentStep - 1, 2)}/2
         </span>
       </header>
 

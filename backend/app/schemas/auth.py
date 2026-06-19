@@ -30,6 +30,7 @@ class TokenResponse(BaseModel):
     nombre: str
     tienda_id: Optional[int]
     user_id: int
+    kiosk: bool = False
 
 class UsuarioAdmin(BaseModel):
     id: int

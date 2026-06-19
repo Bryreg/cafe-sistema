@@ -1,12 +1,13 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
-import { TurnoProvider, useTurno } from './contexts/TurnoContext'
+import { TurnoProvider } from './contexts/TurnoContext'
 import Layout from './components/Layout'
-import ProtectedRoute from './components/ProtectedRoute'
 
-// Barista flow pages
-import Login from './pages/Login'
-import SeleccionarTurno from './pages/SeleccionarTurno'
+// Device setup
+import KioskSetup from './pages/KioskSetup'
+
+// Barista / kiosco pages
+import GestionTurno from './pages/GestionTurno'
 import CuadreLlegada from './pages/CuadreLlegada'
 import Apertura from './pages/Apertura'
 import ConteoApertura from './pages/ConteoApertura'
@@ -15,8 +16,6 @@ import VentasDia from './pages/VentasDia'
 import ConteoCierre from './pages/ConteoCierre'
 import Cierre from './pages/Cierre'
 import Entrega from './pages/Entrega'
-
-// Barista tool pages
 import VentasHoy from './pages/VentasHoy'
 import Inventario from './pages/Inventario'
 import Mermas from './pages/Mermas'
@@ -32,6 +31,7 @@ import ConteoCompras from './pages/ConteoCompras'
 import POS from './pages/POS'
 
 // Admin pages
+import Login from './pages/Login'
 import Analytics from './pages/Analytics'
 import ControlInventario from './pages/ControlInventario'
 import AdminHub from './pages/AdminHub'
@@ -46,182 +46,95 @@ import AuditoriasAdmin from './pages/AuditoriasAdmin'
 import AuditLog from './pages/AuditLog'
 import Catalogo from './pages/Catalogo'
 
-// ─── Smart redirect basado en estado del turno ───────────────────────────────
-function SmartRedirect() {
-  const { user, tipo_turno, cuadre_llegada_turno_id } = useAuth()
-  const { turno, loading } = useTurno()
+// ─── Guards ───────────────────────────────────────────────────────────────────
 
-  if (!user) return <Navigate to="/login" replace />
-  if (user.rol === 'admin') return <Navigate to="/dashboard" replace />
-
-  // Barista debe elegir tipo de turno primero
-  if (!tipo_turno) return <Navigate to="/seleccionar-turno" replace />
-
-  if (loading) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <p className="text-sm text-gray-400 animate-pulse">Consultando turno...</p>
-    </div>
-  )
-
-  if (tipo_turno === 'apertura') {
-    if (!turno) return <Navigate to="/apertura" replace />
-    // Listo para vender: conteo de apertura ya hecho → aterrizar en POS
-    if (turno.tiene_conteo_apertura) return <Navigate to="/pos" replace />
-    // Apertura iniciada pero conteo pendiente → Hub para completar el flujo
-    return <Navigate to="/hub" replace />
-  }
-
-  // intermedio o cierre: debe haber turno activo y haber hecho cuadre de llegada
-  if (!turno) return <Navigate to="/seleccionar-turno" replace />
-  // Fuente de verdad: backend (ultima_entrega_fecha) o localStorage.
-  // Si recargaron antes de que localStorage se actualizara, el backend manda.
-  const cuadreDone = cuadre_llegada_turno_id === turno.id || turno.ultima_entrega_fecha !== null
-  if (!cuadreDone) return <Navigate to="/cuadre-llegada" replace />
-  // Turno intermedio/cierre listo → aterrizar en POS
-  return <Navigate to="/pos" replace />
+function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth()
+  if (!user) return <Navigate to="/admin-login" replace />
+  if (user.rol !== 'admin') return <Navigate to="/pos" replace />
+  return <>{children}</>
 }
 
-// ─── Rutas internas ──────────────────────────────────────────────────────────
 function AppRoutes() {
-  const { user } = useAuth()
+  const { user, tiendaId } = useAuth()
+
+  // Sin sesión activa (ni kiosco ni usuario) → KioskSetup
+  const hasSession = !!user
+  const isAdmin = user?.rol === 'admin'
 
   return (
     <Routes>
-      {/* Login */}
-      <Route path="/login" element={!user ? <Login /> : <Navigate to="/" replace />} />
+      {/* ── Login admin ── */}
+      <Route path="/admin-login" element={
+        isAdmin ? <Navigate to="/dashboard" replace /> : <Login />
+      } />
 
-      {/* Smart redirect */}
+      {/* ── Landing: POS o setup ── */}
       <Route path="/" element={
-        <ProtectedRoute><SmartRedirect /></ProtectedRoute>
+        isAdmin
+          ? <Navigate to="/dashboard" replace />
+          : hasSession
+            ? <Navigate to="/pos" replace />
+            : <KioskSetup />
       } />
 
-      {/* ── Selección de tipo de turno ── */}
-      <Route path="/seleccionar-turno" element={
-        <ProtectedRoute role="barista"><SeleccionarTurno /></ProtectedRoute>
-      } />
-      <Route path="/cuadre-llegada" element={
-        <ProtectedRoute role="barista"><CuadreLlegada /></ProtectedRoute>
-      } />
+      {/* ── POS (siempre accesible si hay sesión) ── */}
+      <Route path="/pos" element={hasSession ? <POS /> : <KioskSetup />} />
 
-      {/* ── Flujo de turno barista (sin nav lateral) ── */}
-      <Route path="/apertura" element={
-        <ProtectedRoute role="barista"><Apertura /></ProtectedRoute>
-      } />
-      <Route path="/conteo-apertura" element={
-        <ProtectedRoute role="barista"><ConteoApertura /></ProtectedRoute>
-      } />
-      <Route path="/hub" element={
-        <ProtectedRoute role="barista"><Hub /></ProtectedRoute>
-      } />
-      {/* /ventas: registro manual de ventas — entrada de emergencia fuera del POS, solo admin */}
-      <Route path="/ventas" element={
-        <ProtectedRoute role="admin"><VentasDia /></ProtectedRoute>
-      } />
-      <Route path="/conteo-cierre" element={
-        <ProtectedRoute role="barista"><ConteoCierre /></ProtectedRoute>
-      } />
-      <Route path="/cierre" element={
-        <ProtectedRoute role="barista"><Cierre /></ProtectedRoute>
-      } />
-      <Route path="/entrega" element={
-        <ProtectedRoute role="barista"><Entrega /></ProtectedRoute>
-      } />
+      {/* ── Gestión de turno ── */}
+      <Route path="/gestion-turno" element={hasSession ? <GestionTurno /> : <KioskSetup />} />
 
-      {/* ── Herramientas barista (con BaristaLayout interno) ── */}
-      <Route path="/mermas" element={
-        <ProtectedRoute role="barista"><Mermas /></ProtectedRoute>
-      } />
-      <Route path="/pasteleria" element={
-        <ProtectedRoute role="barista"><Pasteleria /></ProtectedRoute>
-      } />
-      <Route path="/pedido" element={
-        <ProtectedRoute role="barista"><SolicitudPedido /></ProtectedRoute>
-      } />
-      <Route path="/sencilla" element={
-        <ProtectedRoute role="barista"><SolicitudSencilla /></ProtectedRoute>
-      } />
-      <Route path="/conteos" element={
-        <ProtectedRoute role="barista"><ConteoFisico /></ProtectedRoute>
-      } />
-      <Route path="/ingresos" element={
-        <ProtectedRoute role="barista"><Ingresos /></ProtectedRoute>
-      } />
-      <Route path="/conteo-compras" element={
-        <ProtectedRoute role="barista"><ConteoCompras /></ProtectedRoute>
-      } />
-      <Route path="/pos" element={
-        <ProtectedRoute role="barista"><POS /></ProtectedRoute>
-      } />
-      <Route path="/ventas-hoy" element={
-        <ProtectedRoute role="barista"><VentasHoy /></ProtectedRoute>
-      } />
-      <Route path="/limpieza" element={
-        <ProtectedRoute>
-          {user?.rol === 'admin'
-            ? <Layout><Limpieza /></Layout>
-            : <Limpieza />
-          }
-        </ProtectedRoute>
-      } />
+      {/* ── Flujo de turno (accesibles con cualquier sesión) ── */}
+      <Route path="/apertura"        element={hasSession ? <Apertura />       : <KioskSetup />} />
+      <Route path="/conteo-apertura" element={hasSession ? <ConteoApertura /> : <KioskSetup />} />
+      <Route path="/cuadre-llegada"  element={hasSession ? <CuadreLlegada />  : <KioskSetup />} />
+      <Route path="/conteo-cierre"   element={hasSession ? <ConteoCierre />   : <KioskSetup />} />
+      <Route path="/cierre"          element={hasSession ? <Cierre />         : <KioskSetup />} />
+      <Route path="/entrega"         element={hasSession ? <Entrega />        : <KioskSetup />} />
+      <Route path="/hub"             element={hasSession ? <Hub />            : <KioskSetup />} />
 
-      {/* ── Rutas compartidas barista + admin ── */}
-      <Route path="/inventario" element={
-        <ProtectedRoute>
-          {user?.rol === 'admin'
-            ? <Layout><Inventario /></Layout>
-            : <Inventario />
-          }
-        </ProtectedRoute>
+      {/* ── Herramientas barista ── */}
+      <Route path="/mermas"         element={hasSession ? <Mermas />         : <KioskSetup />} />
+      <Route path="/pasteleria"     element={hasSession ? <Pasteleria />     : <KioskSetup />} />
+      <Route path="/pedido"         element={hasSession ? <SolicitudPedido />: <KioskSetup />} />
+      <Route path="/sencilla"       element={hasSession ? <SolicitudSencilla /> : <KioskSetup />} />
+      <Route path="/conteos"        element={hasSession ? <ConteoFisico />   : <KioskSetup />} />
+      <Route path="/ingresos"       element={hasSession ? <Ingresos />       : <KioskSetup />} />
+      <Route path="/conteo-compras" element={hasSession ? <ConteoCompras />  : <KioskSetup />} />
+      <Route path="/ventas-hoy"     element={hasSession ? <VentasHoy />      : <KioskSetup />} />
+      <Route path="/limpieza"       element={
+        hasSession
+          ? isAdmin ? <Layout><Limpieza /></Layout> : <Limpieza />
+          : <KioskSetup />
+      } />
+      <Route path="/inventario"     element={
+        hasSession
+          ? isAdmin ? <Layout><Inventario /></Layout> : <Inventario />
+          : <KioskSetup />
       } />
       <Route path="/consignaciones" element={
-        <ProtectedRoute>
-          {user?.rol === 'admin'
-            ? <Layout><ConsignacionesAdmin /></Layout>
-            : <Consignaciones />
-          }
-        </ProtectedRoute>
+        hasSession
+          ? isAdmin ? <Layout><ConsignacionesAdmin /></Layout> : <Consignaciones />
+          : <KioskSetup />
       } />
 
+      {/* /ventas: registro manual de emergencia — solo admin */}
+      <Route path="/ventas" element={<RequireAdmin><VentasDia /></RequireAdmin>} />
+
       {/* ── Admin ── */}
-      <Route path="/dashboard" element={
-        <ProtectedRoute role="admin"><AdminHub /></ProtectedRoute>
-      } />
-      <Route path="/analytics" element={
-        <ProtectedRoute role="admin"><Layout><Analytics /></Layout></ProtectedRoute>
-      } />
-      <Route path="/bandeja" element={
-        <ProtectedRoute role="admin"><Layout><Bandeja /></Layout></ProtectedRoute>
-      } />
-      <Route path="/informes" element={
-        <ProtectedRoute role="admin"><Layout><Informes /></Layout></ProtectedRoute>
-      } />
-      <Route path="/compras" element={
-        <ProtectedRoute role="admin"><Layout><ComprasAdmin /></Layout></ProtectedRoute>
-      } />
-      <Route path="/comunicados" element={
-        <ProtectedRoute role="admin"><Layout><Comunicados /></Layout></ProtectedRoute>
-      } />
-      <Route path="/usuarios" element={
-        <ProtectedRoute role="admin"><Layout><Usuarios /></Layout></ProtectedRoute>
-      } />
-      <Route path="/control-inventario" element={
-        <ProtectedRoute role="admin"><Layout><ControlInventario /></Layout></ProtectedRoute>
-      } />
-      <Route path="/catalogo" element={
-        <ProtectedRoute role="admin"><Layout><Catalogo /></Layout></ProtectedRoute>
-      } />
-      <Route path="/pedidos-admin" element={
-        <ProtectedRoute role="admin"><Layout><PedidosAdmin /></Layout></ProtectedRoute>
-      } />
-      <Route path="/mantenimientos" element={
-        <ProtectedRoute role="admin"><Layout><MantenimientosAdmin /></Layout></ProtectedRoute>
-      } />
-      <Route path="/auditorias" element={
-        <ProtectedRoute role="admin"><Layout><AuditoriasAdmin /></Layout></ProtectedRoute>
-      } />
-      <Route path="/audit-log" element={
-        <ProtectedRoute role="admin"><Layout><AuditLog /></Layout></ProtectedRoute>
-      } />
+      <Route path="/dashboard"        element={<RequireAdmin><AdminHub /></RequireAdmin>} />
+      <Route path="/analytics"        element={<RequireAdmin><Layout><Analytics /></Layout></RequireAdmin>} />
+      <Route path="/bandeja"          element={<RequireAdmin><Layout><Bandeja /></Layout></RequireAdmin>} />
+      <Route path="/informes"         element={<RequireAdmin><Layout><Informes /></Layout></RequireAdmin>} />
+      <Route path="/compras"          element={<RequireAdmin><Layout><ComprasAdmin /></Layout></RequireAdmin>} />
+      <Route path="/comunicados"      element={<RequireAdmin><Layout><Comunicados /></Layout></RequireAdmin>} />
+      <Route path="/usuarios"         element={<RequireAdmin><Layout><Usuarios /></Layout></RequireAdmin>} />
+      <Route path="/control-inventario" element={<RequireAdmin><Layout><ControlInventario /></Layout></RequireAdmin>} />
+      <Route path="/catalogo"         element={<RequireAdmin><Layout><Catalogo /></Layout></RequireAdmin>} />
+      <Route path="/pedidos-admin"    element={<RequireAdmin><Layout><PedidosAdmin /></Layout></RequireAdmin>} />
+      <Route path="/mantenimientos"   element={<RequireAdmin><Layout><MantenimientosAdmin /></Layout></RequireAdmin>} />
+      <Route path="/auditorias"       element={<RequireAdmin><Layout><AuditoriasAdmin /></Layout></RequireAdmin>} />
+      <Route path="/audit-log"        element={<RequireAdmin><Layout><AuditLog /></Layout></RequireAdmin>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

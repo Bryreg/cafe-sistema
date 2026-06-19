@@ -99,7 +99,7 @@ export default function Login() {
       // fallback: usar token original con tienda seleccionada
       login({ ...pendingAuth, tienda_id: sedeId })
     }
-    navigate('/seleccionar-turno', { replace: true })
+    navigate('/pos', { replace: true })
   }
 
   const teclas = ['1','2','3','4','5','6','7','8','9','','0','⌫']

@@ -13,7 +13,13 @@ router = APIRouter(prefix="/caja", tags=["caja"])
 @router.post("/abrir", response_model=TurnoOut)
 def abrir(data: AbrirCajaRequest, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     ensure_tienda_access(user, data.tienda_id)
-    return svc.abrir_caja(db, data.tienda_id, data.base_real, data.justificacion_apertura, user.id)
+    return svc.abrir_caja(db, data.tienda_id, data.base_real, data.justificacion_apertura, user.id, data.barista_ids)
+
+
+@router.get("/activo-pub/{tienda_id}")
+def turno_activo_publico(tienda_id: int, db: Session = Depends(get_db)):
+    """Turno activo sin autenticación — solo lectura para el kiosco."""
+    return svc.get_turno_activo(db, tienda_id)
 
 @router.get("/{turno_id}/flujo", response_model=FlujoCajaOut)
 def get_flujo(turno_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):

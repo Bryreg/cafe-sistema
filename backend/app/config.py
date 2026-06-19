@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "uploads"
     ENV: str = "development"
     CLOUDINARY_URL: str = ""   # cloudinary://api_key:api_secret@cloud_name
+    KIOSK_PIN: str = ""        # PIN para activar modo kiosko; vacío = deshabilitado
 
     @field_validator("SECRET_KEY")
     @classmethod

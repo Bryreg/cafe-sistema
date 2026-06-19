@@ -26,7 +26,8 @@ def get_inventario_tienda(db: Session, tienda_id: int):
 
 def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: str,
                           cantidad: float, motivo: str | None, usuario_id: int,
-                          fecha_vencimiento: datetime | None = None, commit: bool = True):
+                          fecha_vencimiento: datetime | None = None, commit: bool = True,
+                          allow_negative: bool = False):
     if tipo not in {"entrada", "salida", "ajuste"}:
         raise HTTPException(status_code=400, detail="tipo debe ser entrada, salida o ajuste")
     if tipo in {"entrada", "salida"} and cantidad <= 0:
@@ -53,18 +54,26 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
         )
         agregar_lote(db, producto_id, tienda_id, cantidad, usuario_id, fecha_vencimiento)
     elif tipo == "salida":
-        # Atomic decrement with stock sufficiency check
-        rows = db.execute(
-            sa_update(Inventario)
-            .where(
-                Inventario.producto_id == producto_id,
-                Inventario.tienda_id == tienda_id,
-                Inventario.stock_actual >= cantidad,
+        if allow_negative:
+            # POS mode: permitir stock negativo (proveedor llega después)
+            db.execute(
+                sa_update(Inventario)
+                .where(Inventario.producto_id == producto_id, Inventario.tienda_id == tienda_id)
+                .values(stock_actual=Inventario.stock_actual - cantidad)
             )
-            .values(stock_actual=Inventario.stock_actual - cantidad)
-        ).rowcount
-        if rows == 0:
-            raise HTTPException(status_code=400, detail="Stock insuficiente")
+        else:
+            # Modo normal: bloquear si no hay suficiente stock
+            rows = db.execute(
+                sa_update(Inventario)
+                .where(
+                    Inventario.producto_id == producto_id,
+                    Inventario.tienda_id == tienda_id,
+                    Inventario.stock_actual >= cantidad,
+                )
+                .values(stock_actual=Inventario.stock_actual - cantidad)
+            ).rowcount
+            if rows == 0:
+                raise HTTPException(status_code=400, detail="Stock insuficiente")
         consumir_fifo(db, producto_id, tienda_id, cantidad)
     elif tipo == "ajuste":
         # Read current stock to compute FIFO delta, then set atomically

@@ -7,6 +7,7 @@ class AbrirCajaRequest(BaseModel):
     tienda_id: int
     base_real: float
     justificacion_apertura: Optional[str] = None
+    barista_ids: Optional[List[int]] = None
 
 
 class CerrarCajaRequest(BaseModel):
@@ -78,6 +79,7 @@ class TurnoOut(BaseModel):
     ultima_entrega_diferencia_efectivo: Optional[float] = None
     consignaciones_turno: float = 0.0
     consignaciones_deducidas: Optional[float] = None
+    baristas: List[str] = []
     class Config: from_attributes = True
 
 

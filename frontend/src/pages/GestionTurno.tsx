@@ -117,6 +117,40 @@ export default function GestionTurno() {
         {/* ── CON TURNO ACTIVO ── */}
         {turno && !step && (
           <>
+            {/* Gate: estado operativo del turno */}
+            {turno.es_operativo ? (
+              <button
+                onClick={() => navigate('/pos')}
+                className="w-full py-4 rounded-2xl font-bold text-[15px] text-white flex items-center justify-center gap-2"
+                style={{ background: dark.greenDim }}>
+                <Check size={18} strokeWidth={2.5} /> Ir al POS
+              </button>
+            ) : (
+              <div className="rounded-2xl p-4 space-y-2" style={{ background: dark.surface, border: `1px solid ${dark.amberDim}` }}>
+                <p className="text-[12px] font-bold flex items-center gap-2" style={{ color: dark.amber }}>
+                  <AlertTriangle size={13} /> POS bloqueado — completá para vender
+                </p>
+                <button onClick={() => navigate('/cuadre-llegada')}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left"
+                  style={{ background: 'rgba(255,255,255,0.04)' }}>
+                  {turno.tiene_cuadre_llegada
+                    ? <Check size={15} style={{ color: dark.green }} />
+                    : <Circle size={15} style={{ color: dark.amber }} />}
+                  <span className="text-[13px] font-semibold" style={{ color: dark.ink }}>Cuadre de llegada</span>
+                </button>
+                {(turno.tipo_turno === 'apertura' || !turno.tipo_turno) && (
+                  <button onClick={() => navigate('/conteo-apertura')}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left"
+                    style={{ background: 'rgba(255,255,255,0.04)' }}>
+                    {turno.tiene_conteo_apertura
+                      ? <Check size={15} style={{ color: dark.green }} />
+                      : <Circle size={15} style={{ color: dark.amber }} />}
+                    <span className="text-[13px] font-semibold" style={{ color: dark.ink }}>Conteo de apertura</span>
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Baristas en turno */}
             {turno.baristas.length > 0 && (
               <div className="rounded-2xl p-4" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>

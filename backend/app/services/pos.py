@@ -78,10 +78,17 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
     if not items:
         raise HTTPException(status_code=400, detail="El ticket no tiene items")
 
-    # Turno activo
+    # Turno activo + gate duro: el POS solo vende si el turno está OPERATIVO
+    # (cuadre de llegada + conteo de apertura del día hechos). El backend es la
+    # fuente de verdad: un front manipulado no puede vender fuera de turno contado.
     turno = get_turno_activo(db, tienda_id)
     if not turno:
         raise HTTPException(status_code=400, detail="No hay turno abierto")
+    if not getattr(turno, "es_operativo", False):
+        raise HTTPException(
+            status_code=403,
+            detail="El turno no está operativo: completá el cuadre de llegada y el conteo de apertura antes de vender.",
+        )
 
     # Normalizar items y agregar cantidades por producto (evita líneas duplicadas)
     pedidos: dict[int, int] = {}

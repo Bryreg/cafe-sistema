@@ -142,6 +142,7 @@ class CajaTurno(Base):
     estado = Column(SAEnum(EstadoTurnoEnum), default=EstadoTurnoEnum.abierto, index=True)
     # Flags de flujo obligatorio — solo el backend las activa
     tiene_conteo_apertura = Column(Boolean, default=False)
+    tiene_cuadre_llegada = Column(Boolean, default=False)
     tiene_ventas = Column(Boolean, default=False)
     tiene_conteo_cierre = Column(Boolean, default=False)
     # Etapa 6: timestamps operativos para métricas de tiempo

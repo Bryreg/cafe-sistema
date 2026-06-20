@@ -72,6 +72,8 @@ with engine.connect() as _conn:
         "ALTER TABLE caja_turnos ADD COLUMN consignaciones_deducidas FLOAT DEFAULT 0",
         # Turno: tipo de turno (apertura/intermedio/cierre)
         "ALTER TABLE caja_turnos ADD COLUMN tipo_turno VARCHAR(20)",
+        # Gate de operación: cuadre de llegada hecho (habilita el POS junto con el conteo de apertura)
+        "ALTER TABLE caja_turnos ADD COLUMN tiene_cuadre_llegada BOOLEAN DEFAULT 0",
         # POS nativo: precio de venta por producto (tickets/ticket_items los crea create_all)
         "ALTER TABLE productos ADD COLUMN precio_venta NUMERIC(12,2) DEFAULT 0",
         # Concurrency: only one open shift per store at any time

@@ -1,13 +1,49 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import HTTPException
 from app.models.models import CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum, EntregaTurno, Consignacion, EstadoConsignacionEnum, TurnoBarista, Usuario
 from app.services import audit, notificaciones
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _hay_conteo_apertura_reciente(db: Session, tienda_id: int) -> bool:
+    """¿Hubo un conteo de apertura en las últimas 18h en esta tienda?
+
+    Permite que los turnos intermedio/cierre hereden la línea base del día sin
+    repetir el conteo de apertura. La ventana de 18h cubre un día operativo
+    completo (apertura temprano → cierre tarde) y evita el borde de zona horaria
+    de comparar por fecha-calendario. (Fase 1 lo hará exacto vía dia_operativo_id.)
+    """
+    desde = datetime.utcnow() - timedelta(hours=18)
+    return db.query(CajaTurno).filter(
+        CajaTurno.tienda_id == tienda_id,
+        CajaTurno.fecha_apertura >= desde,
+        CajaTurno.tiene_conteo_apertura == True,
+    ).first() is not None
+
+
+def _es_operativo(db: Session, turno) -> bool:
+    """Gate duro: el POS solo se habilita cuando el turno está OPERATIVO.
+
+    Operativo = cuadre de llegada hecho Y conteo de apertura del día hecho.
+      - apertura: requiere su propio conteo de apertura.
+      - intermedio/cierre: heredan la línea base del día (no repiten el conteo).
+      - si el turno ya registró ventas, se considera operativo (no bloquear un
+        turno in-flight al desplegar este cambio).
+    """
+    if turno.tiene_ventas:
+        return True
+    if not turno.tiene_cuadre_llegada:
+        return False
+    if turno.tiene_conteo_apertura:
+        return True
+    if turno.tipo_turno in ("intermedio", "cierre"):
+        return _hay_conteo_apertura_reciente(db, turno.tienda_id)
+    return False
 
 
 def get_turno_activo(db: Session, tienda_id: int):
@@ -40,6 +76,7 @@ def get_turno_activo(db: Session, tienda_id: int):
     turno.consignaciones_turno = consigs_sum
     baristas_db = db.query(TurnoBarista).filter(TurnoBarista.turno_id == turno.id).all()
     turno.baristas = [b.nombre_snapshot for b in baristas_db]
+    turno.es_operativo = _es_operativo(db, turno)
     return turno
 
 
@@ -329,6 +366,7 @@ def registrar_cuadre_llegada(db: Session, turno_id: int, usuario_id: int,
         tipo="recibo",
     )
     db.add(entrega)
+    turno.tiene_cuadre_llegada = True
     audit.registrar(
         db, accion="cuadre_llegada", tabla="entregas_turno",
         registro_id=None, usuario_id=usuario_id, tienda_id=turno.tienda_id,

@@ -10,7 +10,7 @@ from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
                           dashboard, ventas, conteos, mermas, solicitudes,
                           informes, audit, alertas, notificaciones, limpieza,
                           facturas, compras, comunicados, pedidos, mantenimientos,
-                          auditorias, pos)
+                          auditorias, pos, rutinas)
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -446,6 +446,42 @@ def _migrate_proveedores():
 _migrate_proveedores()
 
 
+def _seed_rutinas():
+    """Crea plantillas de rutina por defecto (globales) si no existen. Idempotente por clave."""
+    from app.models.models import RutinaPlantilla, CategoriaRutinaEnum, FrecuenciaRutinaEnum
+    db = SessionLocal()
+    try:
+        defaults = [
+            ("limpieza_general", "Limpieza general", CategoriaRutinaEnum.limpieza, FrecuenciaRutinaEnum.por_turno, 1, False, False),
+            ("revision_banos", "Revisión de baños", CategoriaRutinaEnum.banos, FrecuenciaRutinaEnum.por_turno, 2, False, False),
+            ("surtido_vitrina", "Surtido de vitrina", CategoriaRutinaEnum.vitrina, FrecuenciaRutinaEnum.por_turno, 1, False, False),
+            ("control_temp_nevera", "Control de temperatura (nevera)", CategoriaRutinaEnum.temperatura, FrecuenciaRutinaEnum.por_turno, 1, False, True),
+        ]
+        creadas = 0
+        for clave, nombre, cat, frec, esp, eimg, eval_ in defaults:
+            existe = db.query(RutinaPlantilla).filter(
+                RutinaPlantilla.clave == clave, RutinaPlantilla.tienda_id.is_(None)
+            ).first()
+            if not existe:
+                db.add(RutinaPlantilla(
+                    clave=clave, nombre=nombre, categoria=cat, frecuencia=frec,
+                    esperadas_por_periodo=esp, requiere_evidencia=eimg, requiere_valor=eval_,
+                    tienda_id=None, activa=True,
+                ))
+                creadas += 1
+        db.commit()
+        if creadas:
+            logger.info("_seed_rutinas: %s plantillas de rutina creadas.", creadas)
+    except Exception as e:
+        db.rollback()
+        logger.warning("_seed_rutinas: %s", e)
+    finally:
+        db.close()
+
+
+_seed_rutinas()
+
+
 app = FastAPI(title="Sistema Café", version="1.0.0")
 
 app.add_middleware(
@@ -481,6 +517,7 @@ app.include_router(pedidos.router, prefix="/api/v1")
 app.include_router(mantenimientos.router, prefix="/api/v1")
 app.include_router(auditorias.router, prefix="/api/v1")
 app.include_router(pos.router, prefix="/api/v1")
+app.include_router(rutinas.router, prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────
 _frontend_dist = os.path.abspath(

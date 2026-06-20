@@ -36,12 +36,12 @@ with engine.connect() as _conn:
         logger.warning("Migration skipped (already applied or error): %s", e)
     for _sql in [
         "ALTER TABLE solicitudes_sencilla ADD COLUMN detalle TEXT",
-        "ALTER TABLE caja_turnos ADD COLUMN tiene_conteo_apertura BOOLEAN DEFAULT 0",
-        "ALTER TABLE caja_turnos ADD COLUMN tiene_ventas BOOLEAN DEFAULT 0",
-        "ALTER TABLE caja_turnos ADD COLUMN tiene_conteo_cierre BOOLEAN DEFAULT 0",
+        "ALTER TABLE caja_turnos ADD COLUMN tiene_conteo_apertura BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE caja_turnos ADD COLUMN tiene_ventas BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE caja_turnos ADD COLUMN tiene_conteo_cierre BOOLEAN DEFAULT FALSE",
         "ALTER TABLE caja_turnos ADD COLUMN datafono_real FLOAT",
         "ALTER TABLE caja_turnos ADD COLUMN diferencia_tarjeta FLOAT",
-        "ALTER TABLE pasteleria_diaria ADD COLUMN activo BOOLEAN DEFAULT 1",
+        "ALTER TABLE pasteleria_diaria ADD COLUMN activo BOOLEAN DEFAULT TRUE",
         # Etapa 6: timestamps operativos en turnos
         "ALTER TABLE caja_turnos ADD COLUMN ts_conteo_apertura DATETIME",
         "ALTER TABLE caja_turnos ADD COLUMN ts_primera_venta DATETIME",
@@ -51,7 +51,7 @@ with engine.connect() as _conn:
         # Mermas: tipo, traslado y seguimiento
         "ALTER TABLE mermas ADD COLUMN tipo VARCHAR(20) DEFAULT 'consumo'",
         "ALTER TABLE mermas ADD COLUMN tienda_destino_id INTEGER",
-        "ALTER TABLE mermas ADD COLUMN recibido BOOLEAN DEFAULT 0",
+        "ALTER TABLE mermas ADD COLUMN recibido BOOLEAN DEFAULT FALSE",
         "ALTER TABLE mermas ADD COLUMN fecha_recibido DATETIME",
         "ALTER TABLE movimientos_caja ADD COLUMN imagen_url VARCHAR(300)",
         "ALTER TABLE entregas_turno ADD COLUMN tipo VARCHAR(20) DEFAULT 'entrega' NOT NULL",

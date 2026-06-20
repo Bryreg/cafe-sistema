@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Layers, ClipboardList, ShoppingCart,
   Banknote, Wrench, ClipboardCheck, Activity,
-  Bell, Inbox, BarChart2, Users, Tag, BarChart3,
+  Bell, Inbox, BarChart2, Users, Tag, BarChart3, RotateCcw,
 } from 'lucide-react'
 
 export const NAV_ADMIN = [
@@ -11,6 +11,7 @@ export const NAV_ADMIN = [
   { to: '/catalogo',           label: 'Catálogo',       icon: Tag             },
   { to: '/pedidos-admin',      label: 'Pedidos',        icon: ClipboardList   },
   { to: '/compras',            label: 'Compras',        icon: ShoppingCart    },
+  { to: '/notas-credito',      label: 'Notas crédito',  icon: RotateCcw       },
   { to: '/consignaciones',     label: 'Consignaciones', icon: Banknote        },
   { to: '/mantenimientos',     label: 'Mantenimientos', icon: Wrench          },
   { to: '/auditorias',         label: 'Auditorías',     icon: ClipboardCheck  },

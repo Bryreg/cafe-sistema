@@ -228,6 +228,19 @@ def get_tickets_turno(db: Session, turno_id: int):
     )
 
 
+def get_tickets_recientes(db: Session, tienda_id: int, dias: int = 7, limit: int = 50):
+    """Tickets recientes de la tienda — para revertir (Nota Crédito) desde el panel admin."""
+    desde = datetime.utcnow() - timedelta(days=dias)
+    return (
+        db.query(Ticket)
+        .options(joinedload(Ticket.items))
+        .filter(Ticket.tienda_id == tienda_id, Ticket.fecha >= desde)
+        .order_by(Ticket.fecha.desc())
+        .limit(limit)
+        .all()
+    )
+
+
 def set_precio(db: Session, producto_id: int, precio_venta: float):
     if precio_venta is None or precio_venta < 0:
         raise HTTPException(status_code=400, detail="El precio no puede ser negativo")

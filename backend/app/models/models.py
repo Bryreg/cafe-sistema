@@ -53,6 +53,11 @@ class TipoTurnoEnum(str, enum.Enum):
     cierre = "cierre"
 
 
+class EstadoDiaEnum(str, enum.Enum):
+    abierto = "abierto"
+    cerrado = "cerrado"
+
+
 class EstadoSolicitudEnum(str, enum.Enum):
     pendiente = "pendiente"
     aprobada = "aprobada"
@@ -116,6 +121,31 @@ class Usuario(Base):
     lotes_inventario = relationship("LoteInventario", back_populates="usuario")
 
 
+class DiaOperativo(Base):
+    """Agregado del día operativo: dueño de los turnos de una tienda en una fecha.
+
+    Da continuidad entre turnos (apertura → intermedio → cierre comparten el día)
+    y es la raíz sobre la que cuelgan rollups y reportes diarios. Una fila por
+    (tienda_id, fecha_operativa). La fecha es la del NEGOCIO (hora local), no UTC,
+    para que un cierre pasada la medianoche siga contando en el día correcto.
+    """
+    __tablename__ = "dias_operativos"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="RESTRICT"), nullable=False, index=True)
+    fecha_operativa = Column(Date, nullable=False, index=True)
+    estado = Column(SAEnum(EstadoDiaEnum), default=EstadoDiaEnum.abierto, nullable=False, index=True)
+    abierto_por_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
+    cerrado_por_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=True)
+    fecha_apertura = Column(DateTime, default=datetime.utcnow)
+    fecha_cierre = Column(DateTime, nullable=True)
+    notas = Column(Text, nullable=True)
+    tienda = relationship("Tienda")
+    turnos = relationship("CajaTurno", back_populates="dia")
+    __table_args__ = (
+        UniqueConstraint("tienda_id", "fecha_operativa", name="uq_dia_tienda_fecha"),
+    )
+
+
 class CajaTurno(Base):
     __tablename__ = "caja_turnos"
     id = Column(Integer, primary_key=True)
@@ -139,6 +169,10 @@ class CajaTurno(Base):
     consignaciones_deducidas = Column(Numeric(12, 2, asdecimal=False), default=0.0, nullable=True)
     justificacion_cierre = Column(Text, nullable=True)
     tipo_turno = Column(SAEnum(TipoTurnoEnum), nullable=True)
+    # Fase 1: enlace al día operativo (continuidad entre turnos)
+    dia_operativo_id = Column(Integer, ForeignKey("dias_operativos.id", ondelete="RESTRICT"), nullable=True, index=True)
+    turno_anterior_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="RESTRICT"), nullable=True)
+    secuencia_dia = Column(Integer, nullable=True)
     estado = Column(SAEnum(EstadoTurnoEnum), default=EstadoTurnoEnum.abierto, index=True)
     # Flags de flujo obligatorio — solo el backend las activa
     tiene_conteo_apertura = Column(Boolean, default=False)
@@ -157,6 +191,7 @@ class CajaTurno(Base):
     conteos = relationship("ConteoFisico", back_populates="turno")
     entregas = relationship("EntregaTurno", back_populates="turno")
     baristas_turno = relationship("TurnoBarista", back_populates="turno", cascade="all, delete-orphan")
+    dia = relationship("DiaOperativo", back_populates="turnos")
 
 
 class MovimientoCaja(Base):

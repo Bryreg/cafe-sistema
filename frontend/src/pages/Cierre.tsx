@@ -72,7 +72,7 @@ function PanelCuadre({ label, contado, sistema }: {
 }
 
 export default function Cierre() {
-  const { user } = useAuth()
+  const { user, resetKiosk } = useAuth()
   const { turno, refresh } = useTurno()
   const navigate = useNavigate()
 
@@ -126,7 +126,10 @@ export default function Cierre() {
         justificacion_cierre: justificacion || null,
       })
       await refresh()
-      navigate('/hub')
+      // Cierre completo: se cierra la sesión del dispositivo y se vuelve a la pantalla
+      // de sede + PIN, para confirmar que todo quedó cerrado y guardado (sin punto muerto).
+      resetKiosk()
+      navigate('/', { replace: true })
     } catch (e: any) {
       setError(e.response?.data?.detail || 'Error al cerrar caja')
     } finally {

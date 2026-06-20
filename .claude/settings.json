@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(frontend/.env.production)",
+      "Edit(frontend/.env.production)",
+      "Write(frontend/.env.production)"
+    ]
+  }
+}

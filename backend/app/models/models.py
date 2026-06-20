@@ -863,3 +863,42 @@ class AuditEvent(Base):
     entidad_id = Column(Integer, nullable=True)
     payload = Column(Text, nullable=True)                  # JSON
     fecha = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
+# Fase 3: Novedades (bitácora humana por turno, con arrastre entre turnos)
+# ---------------------------------------------------------------------------
+
+class CategoriaNovedadEnum(str, enum.Enum):
+    incidente = "incidente"
+    equipo = "equipo"
+    personal = "personal"
+    cliente = "cliente"
+    seguridad = "seguridad"
+    otro = "otro"
+
+
+class Novedad(Base):
+    """Evento operativo narrado por una persona (≠ AuditLog de sistema).
+
+    Incidentes, notas para el siguiente turno, etc. Una novedad con
+    requiere_seguimiento y sin resolver se arrastra a los turnos posteriores
+    del mismo día (y más allá) hasta que alguien la resuelve — reemplaza el
+    'le aviso por WhatsApp a la del otro turno'.
+    """
+    __tablename__ = "novedades"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="RESTRICT"), nullable=False, index=True)
+    dia_operativo_id = Column(Integer, ForeignKey("dias_operativos.id", ondelete="SET NULL"), nullable=True, index=True)
+    turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="SET NULL"), nullable=True, index=True)
+    categoria = Column(SAEnum(CategoriaNovedadEnum), nullable=False, default=CategoriaNovedadEnum.otro)
+    nivel = Column(String(20), default="info")             # info | importante | urgente
+    titulo = Column(String(150), nullable=False)
+    descripcion = Column(Text, nullable=True)
+    requiere_seguimiento = Column(Boolean, default=False, index=True)
+    resuelta = Column(Boolean, default=False, index=True)
+    resuelta_por_id = Column(Integer, ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
+    fecha_resuelta = Column(DateTime, nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
+    imagen_url = Column(String(300), nullable=True)
+    fecha = Column(DateTime, default=datetime.utcnow, index=True)

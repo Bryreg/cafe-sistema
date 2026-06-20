@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { TurnoProvider, useTurno } from './contexts/TurnoContext'
 import Layout from './components/Layout'
+import OperativeBanner from './components/OperativeBanner'
 
 // Device setup
 import KioskSetup from './pages/KioskSetup'
@@ -92,6 +93,8 @@ function AppRoutes() {
   const isAdmin = user?.rol === 'admin'
 
   return (
+    <>
+    <OperativeBanner />
     <Routes>
       {/* ── Login admin ── */}
       <Route path="/admin-login" element={
@@ -161,6 +164,7 @@ function AppRoutes() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   )
 }
 

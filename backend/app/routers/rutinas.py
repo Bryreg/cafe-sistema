@@ -1,0 +1,66 @@
+"""Router del Motor de Rutinas — pendientes, registro de eventos, cumplimiento."""
+from typing import Optional
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Form, UploadFile, File, Query
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.core.deps import get_current_user, require_admin, ensure_tienda_access
+from app.models.models import Usuario
+from app.services import rutinas as svc
+from app.core.storage import upload_imagen
+
+router = APIRouter(prefix="/rutinas", tags=["rutinas"])
+
+
+class PlantillaCreate(BaseModel):
+    clave: str
+    nombre: str
+    categoria: str = "otro"
+    frecuencia: str = "por_turno"
+    esperadas_por_periodo: int = 1
+    requiere_evidencia: bool = False
+    requiere_valor: bool = False
+    tienda_id: Optional[int] = None
+
+
+@router.get("/pendientes")
+def pendientes(tienda_id: int, db: Session = Depends(get_db),
+               user: Usuario = Depends(get_current_user)):
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_pendientes(db, tienda_id)
+
+
+@router.post("/eventos", status_code=201)
+async def registrar_evento(
+    tienda_id: int = Form(...),
+    plantilla_id: int = Form(...),
+    valor: Optional[float] = Form(None),
+    nota: Optional[str] = Form(None),
+    imagen: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    ensure_tienda_access(user, tienda_id)
+    imagen_url = await upload_imagen(imagen)
+    ev = svc.registrar_evento(db, tienda_id, plantilla_id, user.id, valor, nota, imagen_url)
+    return {"id": ev.id, "plantilla_id": ev.plantilla_id, "fecha": ev.fecha.isoformat()}
+
+
+@router.get("/cumplimiento")
+def cumplimiento(tienda_id: int, dia_operativo_id: Optional[int] = Query(None),
+                 db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_cumplimiento(db, tienda_id, dia_operativo_id)
+
+
+@router.get("/plantillas")
+def plantillas(tienda_id: Optional[int] = Query(None), db: Session = Depends(get_db),
+               user: Usuario = Depends(get_current_user)):
+    return svc.listar_plantillas(db, tienda_id)
+
+
+@router.post("/plantillas", status_code=201)
+def crear_plantilla(data: PlantillaCreate, db: Session = Depends(get_db),
+                    user: Usuario = Depends(require_admin)):
+    p = svc.crear_plantilla(db, data.dict())
+    return {"id": p.id, "clave": p.clave, "nombre": p.nombre}

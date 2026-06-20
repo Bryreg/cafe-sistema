@@ -783,3 +783,83 @@ class TurnoBarista(Base):
     __table_args__ = (UniqueConstraint("turno_id", "usuario_id", name="uq_turno_barista"),)
     turno = relationship("CajaTurno", back_populates="baristas_turno")
     usuario = relationship("Usuario")
+
+
+# ---------------------------------------------------------------------------
+# Fase 2: Motor de Rutinas (recurrentes como EVENTOS) + bitácora operativa
+# ---------------------------------------------------------------------------
+
+class FrecuenciaRutinaEnum(str, enum.Enum):
+    por_turno = "por_turno"
+    diaria = "diaria"
+    semanal = "semanal"
+
+
+class CategoriaRutinaEnum(str, enum.Enum):
+    limpieza = "limpieza"
+    surtido = "surtido"
+    banos = "banos"
+    vitrina = "vitrina"
+    temperatura = "temperatura"
+    otro = "otro"
+
+
+class RutinaPlantilla(Base):
+    """La REGLA: define qué rutina recurrente existe y su cadencia esperada.
+    No es el evento — es la expectativa contra la que se mide el cumplimiento."""
+    __tablename__ = "rutina_plantillas"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="CASCADE"), nullable=True, index=True)  # null = todas las sedes
+    clave = Column(String(60), nullable=False)
+    nombre = Column(String(150), nullable=False)
+    categoria = Column(SAEnum(CategoriaRutinaEnum), nullable=False, default=CategoriaRutinaEnum.otro)
+    frecuencia = Column(SAEnum(FrecuenciaRutinaEnum), nullable=False, default=FrecuenciaRutinaEnum.por_turno)
+    esperadas_por_periodo = Column(Integer, default=1)      # cuántas veces se espera por turno/día/semana
+    requiere_evidencia = Column(Boolean, default=False)     # foto obligatoria
+    requiere_valor = Column(Boolean, default=False)         # captura un número (ej. temperatura)
+    activa = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class RutinaEvento(Base):
+    """El HECHO: la rutina se ejecutó. Una fila por ejecución — fecha, hora,
+    usuario, turno. La EXISTENCIA de la fila ES el cumplimiento (no hay booleano)."""
+    __tablename__ = "rutina_eventos"
+    id = Column(Integer, primary_key=True)
+    plantilla_id = Column(Integer, ForeignKey("rutina_plantillas.id", ondelete="RESTRICT"), nullable=False, index=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="RESTRICT"), nullable=False, index=True)
+    dia_operativo_id = Column(Integer, ForeignKey("dias_operativos.id", ondelete="SET NULL"), nullable=True, index=True)
+    turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="RESTRICT"), nullable=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
+    valor = Column(Float, nullable=True)                   # temperatura/cantidad si aplica
+    nota = Column(String(300), nullable=True)
+    imagen_url = Column(String(300), nullable=True)
+    fecha = Column(DateTime, default=datetime.utcnow, index=True)
+    plantilla = relationship("RutinaPlantilla")
+
+
+class CategoriaEventoEnum(str, enum.Enum):
+    turno = "turno"
+    inventario = "inventario"
+    ventas = "ventas"
+    caja = "caja"
+    seguridad = "seguridad"
+    rutina = "rutina"
+    sistema = "sistema"
+
+
+class AuditEvent(Base):
+    """Bitácora operativa estructurada — un evento por acción, consultable para
+    dashboards y alertas en tiempo real. Distinta del AuditLog forense (diffs)."""
+    __tablename__ = "audit_events"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="SET NULL"), nullable=True, index=True)
+    dia_operativo_id = Column(Integer, ForeignKey("dias_operativos.id", ondelete="SET NULL"), nullable=True, index=True)
+    turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="SET NULL"), nullable=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True, index=True)
+    categoria = Column(SAEnum(CategoriaEventoEnum), nullable=False, index=True)
+    accion = Column(String(80), nullable=False)            # 'venta.crear', 'turno.abrir', 'temp.fuera_rango'
+    entidad = Column(String(50), nullable=True)
+    entidad_id = Column(Integer, nullable=True)
+    payload = Column(Text, nullable=True)                  # JSON
+    fecha = Column(DateTime, default=datetime.utcnow, index=True)

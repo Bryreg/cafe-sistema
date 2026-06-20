@@ -53,9 +53,25 @@ def listar_tiendas(db: Session = Depends(get_db)):
 
 
 @router.get("/usuarios", response_model=List[UsuarioPublic])
-def listar_usuarios(db: Session = Depends(get_db)):
-    """Lista pública de usuarios activos para pantalla de login por PIN."""
+def listar_usuarios(db: Session = Depends(get_db), _: Usuario = Depends(require_admin)):
+    """Lista de usuarios activos — SOLO admin (antes era pública: filtraba el roster + user_id)."""
     return db.query(Usuario).filter(Usuario.activo == True).all()
+
+
+@router.get("/baristas", response_model=List[UsuarioPublic])
+def listar_baristas(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    """Baristas activas de la sede del usuario actual, para elegir quiénes entran al turno.
+
+    Reemplaza el uso público de /auth/usuarios. Filtra por la sede del token (kiosko) y
+    EXCLUYE el usuario kiosko/dispositivo (que no es una barista real)."""
+    if not user.tienda_id:
+        return []
+    return db.query(Usuario).filter(
+        Usuario.activo == True,
+        Usuario.rol == RolEnum.barista,
+        Usuario.tienda_id == user.tienda_id,
+        ~Usuario.email.like("kiosk@%"),
+    ).order_by(Usuario.nombre).all()
 
 
 @router.post("/login", response_model=TokenResponse)

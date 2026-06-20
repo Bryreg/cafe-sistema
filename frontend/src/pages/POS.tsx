@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, ShoppingBag, Printer, ChevronUp } from 'lucide-react'
+import { ArrowLeft, ShoppingBag, Printer, ChevronUp, X } from 'lucide-react'
+import { dark } from '../constants/darkTheme'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
 import CheckoutModal from '../components/CheckoutModal'
@@ -9,7 +10,6 @@ import ProductGrid, { Producto } from '../components/ProductGrid'
 import Cart, { CartItem } from '../components/Cart'
 import { Toast, Sheet, Pill } from '../components/ui'
 import DockBar from '../components/DockBar'
-import SidePanel from '../components/SidePanel'
 import Ingresos from './Ingresos'
 import Mermas from './Mermas'
 import Inventario from './Inventario'
@@ -36,6 +36,7 @@ interface TicketApi {
     cantidad: number
     precio_unitario: number
     subtotal: number
+    descuento?: number
   }>
 }
 
@@ -49,7 +50,7 @@ function toTicketData(t: TicketApi): TicketData {
     efectivo_recibido: t.efectivo_recibido ?? undefined,
     monto_efectivo: t.monto_efectivo ?? undefined,
     monto_tarjeta: t.monto_tarjeta ?? undefined,
-    items: t.items,
+    items: t.items.map(i => ({ ...i, descuento: i.descuento ?? 0 })),
   }
 }
 
@@ -238,53 +239,94 @@ export default function POS() {
         </button>
       </header>
 
-      {/* ── Cuerpo: 2 paneles en lg ── */}
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 pt-4 pb-nav lg:pb-6 lg:grid lg:grid-cols-[1fr_380px] lg:gap-6 lg:items-start">
-        {/* Panel izquierdo: grilla */}
-        <div className="flex flex-col gap-3">
-          {loadError && (
-            <Toast tone="danger">{loadError}</Toast>
-          )}
-          {reprintMsg && (
-            <Toast tone="warm" duration={3500} onDismiss={() => setReprintMsg('')}>
-              {reprintMsg}
-            </Toast>
-          )}
-          {cancelToast && (
-            <Toast tone="warm" duration={3000} onDismiss={() => setCancelToast(false)}>
-              Cobro cancelado — tu cuenta sigue acá, podés reintentar.
-            </Toast>
-          )}
+      {/* ── Cuerpo: POS + panel inline (se reparten el ancho sin solaparse) ── */}
+      <div className="flex-1 flex min-h-0 overflow-hidden">
 
-          <ProductGrid
-            productos={productos}
-            cart={cart}
-            onAdd={addToCart}
-            search={search}
-            onSearch={setSearch}
-            catFiltro={catFiltro}
-            onCatFiltro={setCatFiltro}
-            soloFavoritos={soloFavoritos}
-            onToggleFavoritos={() => setSoloFavoritos(v => !v)}
-            loading={loading}
-          />
+        {/* Columna POS scrollable */}
+        <div className="flex-1 overflow-y-auto min-w-0">
+          <main className="w-full max-w-7xl mx-auto px-4 pt-4 pb-nav lg:pb-[76px] lg:grid lg:grid-cols-[1fr_380px] lg:gap-6 lg:items-start">
+            {/* Panel izquierdo: grilla */}
+            <div className="flex flex-col gap-3">
+              {loadError && (
+                <Toast tone="danger">{loadError}</Toast>
+              )}
+              {reprintMsg && (
+                <Toast tone="warm" duration={3500} onDismiss={() => setReprintMsg('')}>
+                  {reprintMsg}
+                </Toast>
+              )}
+              {cancelToast && (
+                <Toast tone="warm" duration={3000} onDismiss={() => setCancelToast(false)}>
+                  Cobro cancelado — tu cuenta sigue acá, podés reintentar.
+                </Toast>
+              )}
+
+              <ProductGrid
+                productos={productos}
+                cart={cart}
+                onAdd={addToCart}
+                search={search}
+                onSearch={setSearch}
+                catFiltro={catFiltro}
+                onCatFiltro={setCatFiltro}
+                soloFavoritos={soloFavoritos}
+                onToggleFavoritos={() => setSoloFavoritos(v => !v)}
+                loading={loading}
+              />
+            </div>
+
+            {/* Panel derecho: cuenta — se oculta cuando el tool-panel está abierto */}
+            <aside className={`${activePanel ? 'hidden' : 'hidden lg:block'} lg:sticky lg:top-[88px]`}>
+              <div className="bg-white rounded-2xl border border-warm-200 p-4 flex flex-col max-h-[calc(100vh-170px)]">
+                <Cart
+                  items={cart}
+                  onInc={incItem}
+                  onDec={decItem}
+                  onRemove={removeItem}
+                  onDescuento={setItemDescuento}
+                  onClear={() => setCart([])}
+                  onCobrar={abrirCobro}
+                />
+              </div>
+            </aside>
+          </main>
         </div>
 
-        {/* Panel derecho: cuenta SIEMPRE visible (sticky) — solo lg+ */}
-        <aside className="hidden lg:block lg:sticky lg:top-[88px]">
-          <div className="bg-white rounded-2xl border border-warm-200 p-4 flex flex-col max-h-[calc(100vh-110px)]">
-            <Cart
-              items={cart}
-              onInc={incItem}
-              onDec={decItem}
-              onRemove={removeItem}
-              onDescuento={setItemDescuento}
-              onClear={() => setCart([])}
-              onCobrar={abrirCobro}
-            />
+        {/* Panel de herramienta: inline en sm+ (ocupa su propia columna),
+            overlay fixed en mobile (cubre pantalla sin backdrop) */}
+        {activePanel && PANELS[activePanel] && (
+          <div
+            className="fixed sm:relative sm:flex-shrink-0 inset-0 sm:inset-auto sm:w-[420px] z-40 sm:z-auto flex flex-col border-l"
+            style={{
+              background: dark.bg,
+              borderColor: dark.border,
+              boxShadow: '-4px 0 20px rgba(0,0,0,0.06)',
+            }}
+          >
+            <div
+              className="flex justify-end p-2 flex-shrink-0 border-b"
+              style={{ borderColor: dark.border }}
+            >
+              <button
+                onClick={() => setActivePanel(null)}
+                className="w-8 h-8 flex items-center justify-center rounded-full"
+                style={{
+                  background: dark.surface,
+                  border: `1px solid ${dark.border}`,
+                  color: dark.ink,
+                }}
+                aria-label="Cerrar panel"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto pb-[60px]">
+              {PANELS[activePanel]}
+            </div>
           </div>
-        </aside>
-      </main>
+        )}
+
+      </div>
 
       {/* ── Mobile (<lg): barra de carrito sobre la bottom-nav ── */}
       {cart.length > 0 && (
@@ -362,13 +404,6 @@ export default function POS() {
 
       {/* ── Dock: herramientas de alta frecuencia, siempre visible ── */}
       <DockBar active={activePanel} onSelect={setActivePanel} />
-
-      {/* ── Panel lateral: se abre SIN backdrop para que el POS siga activo ── */}
-      {activePanel && PANELS[activePanel] && (
-        <SidePanel onClose={() => setActivePanel(null)}>
-          {PANELS[activePanel]}
-        </SidePanel>
-      )}
     </div>
   )
 }

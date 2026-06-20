@@ -39,7 +39,7 @@ export default function CuadreLlegada() {
   const diff     = efectivoReal.trim() !== '' ? ef - esperado : null
 
   const step1Done = ef > 0
-  const step2Done = ventasBold.trim() !== ''   // Verifica Bold
+  const step2Done = (turno.total_tarjeta ?? 0) === 0 || ventasBold.trim() !== ''   // sin tarjeta no aplica
   const currentStep = !step1Done ? 1 : !step2Done ? 2 : 3
   const canSubmit   = step1Done
 
@@ -118,34 +118,15 @@ export default function CuadreLlegada() {
       {/* Body */}
       <div className="flex-1 overflow-auto px-4 pb-28 space-y-3 pt-1 w-full max-w-3xl mx-auto">
 
-        {/* Ventas del día */}
-        <div className="rounded-2xl p-4"
-          style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-          <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
-            Ventas del día
-          </p>
-          <p className="text-[22px] font-bold font-mono leading-none mb-3"
-            style={{ color: dark.ink, letterSpacing: '-1px' }}>
-            {fmt(turno.total_ventas ?? 0)}
-          </p>
-          <div className="grid grid-cols-2 gap-2 pt-3" style={{ borderTop: `1px solid ${dark.border}` }}>
-            {[
-              { l: 'Efectivo',  v: fmt(turno.total_efectivo ?? 0) },
-              { l: 'Tarjeta',   v: fmt(turno.total_tarjeta ?? 0) },
-            ].map(row => (
-              <div key={row.l} className="flex justify-between items-baseline gap-2">
-                <span className="text-[11px]" style={{ color: dark.inkSubtle }}>{row.l}</span>
-                <span className="text-[12px] font-semibold font-mono" style={{ color: dark.ink }}>{row.v}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Hero — efectivo esperado */}
+        {/* Efectivo de inicio del turno — NO incluye ventas: al llegar aún no se vendió.
+            Es el efectivo de días anteriores pendiente de consignar (la base con la que se arranca). */}
         <div className="rounded-2xl p-4"
           style={{ background: 'oklch(16% 0.015 55)', border: `1px solid ${dark.border}` }}>
-          <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
-            Lo que debe haber en caja
+          <p className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: dark.inkSubtle }}>
+            Efectivo de inicio del turno
+          </p>
+          <p className="text-[10px] mb-2" style={{ color: dark.inkSubtle }}>
+            Efectivo de días anteriores, pendiente de consignar
           </p>
           <p className="text-[26px] font-bold font-mono leading-none mb-3"
             style={{ color: dark.ink, letterSpacing: '-1px' }}>
@@ -153,11 +134,11 @@ export default function CuadreLlegada() {
           </p>
           <div className="grid grid-cols-2 gap-2 pt-3" style={{ borderTop: `1px solid ${dark.border}` }}>
             {[
-              { l: 'Base apertura',  v: fmt(turno.base_real ?? 0) },
-              { l: '+ Ventas ef.',   v: fmt(turno.total_efectivo ?? 0) },
-              { l: '+ Ing. mov.',    v: fmt(turno.ingresos_movimientos ?? 0) },
-              { l: '− Egr. mov.',    v: fmt(turno.egresos_movimientos ?? 0) },
-            ].map(row => (
+              { l: 'Efectivo inicial',  v: fmt(turno.base_real ?? 0),               show: true },
+              { l: '+ Ventas efectivo', v: fmt(turno.total_efectivo ?? 0),          show: (turno.total_efectivo ?? 0) !== 0 },
+              { l: '+ Ingresos',        v: fmt(turno.ingresos_movimientos ?? 0),    show: (turno.ingresos_movimientos ?? 0) !== 0 },
+              { l: '− Egresos',         v: fmt(turno.egresos_movimientos ?? 0),     show: (turno.egresos_movimientos ?? 0) !== 0 },
+            ].filter(r => r.show).map(row => (
               <div key={row.l} className="flex justify-between items-baseline gap-2">
                 <span className="text-[11px]" style={{ color: dark.inkSubtle }}>{row.l}</span>
                 <span className="text-[12px] font-semibold font-mono" style={{ color: dark.ink }}>{row.v}</span>
@@ -219,7 +200,8 @@ export default function CuadreLlegada() {
           )}
         </div>
 
-        {/* Paso 2 — Verifica Bold */}
+        {/* Paso 2 — Verifica Bold (solo si hubo ventas con tarjeta) */}
+        {(turno.total_tarjeta ?? 0) > 0 && (
         <div className="space-y-2">
           <StepHeader n={2} title="Verifica Bold" done={step2Done} active={currentStep === 2} />
           <div className="rounded-xl px-4 py-3 flex items-center justify-between gap-3"
@@ -244,6 +226,7 @@ export default function CuadreLlegada() {
             Total mostrado en el datáfono
           </p>
         </div>
+        )}
 
         {/* Notas */}
         <div>

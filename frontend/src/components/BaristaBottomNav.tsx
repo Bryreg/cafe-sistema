@@ -43,10 +43,12 @@ export default function BaristaBottomNav({ alertaBadge }: Props) {
     <>
       {/* ── Barra de navegación ── */}
       <nav
-        className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-warm-200"
+        className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-warm-200
+                   lg:bottom-5 lg:left-1/2 lg:right-auto lg:-translate-x-1/2 lg:w-[440px]
+                   lg:rounded-2xl lg:border lg:shadow-xl"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
-        <div className="flex max-w-lg mx-auto">
+        <div className="flex max-w-lg mx-auto lg:rounded-2xl lg:overflow-hidden">
           {tabs.map(tab => {
             const isActive = tab.to ? pathname === tab.to : tab.id === 'mas' && showMas
             const Icon = tab.icon

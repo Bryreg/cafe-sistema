@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, date
 from fastapi import HTTPException
 from app.models.models import (CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum,
                                EntregaTurno, Consignacion, EstadoConsignacionEnum, TurnoBarista,
-                               Usuario, DiaOperativo, EstadoDiaEnum)
+                               Usuario, DiaOperativo, EstadoDiaEnum, TipoTurnoEnum)
 
 # Colombia (UTC-5). Fase posterior: configurable por sede (ConfiguracionSede.timezone).
 TZ_OFFSET_HORAS = -5
@@ -116,6 +116,8 @@ def get_turno_activo(db: Session, tienda_id: int):
 def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str | None, usuario_id: int, barista_ids: list[int] | None = None, tipo_turno: str | None = None):
     if base_real < 0:
         raise HTTPException(status_code=400, detail="base_real no puede ser negativa")
+    if tipo_turno is not None and tipo_turno not in (e.value for e in TipoTurnoEnum):
+        raise HTTPException(status_code=400, detail="tipo_turno inválido")
     if get_turno_activo(db, tienda_id):
         raise HTTPException(status_code=400, detail="Ya existe un turno abierto para esta tienda")
 
@@ -245,6 +247,14 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
     turno.diferencia_tarjeta = diferencia_tarjeta
     turno.justificacion_cierre = justificacion
     turno.estado = EstadoTurnoEnum.cerrado
+
+    # Cerrar el día operativo cuando se cierra un turno de tipo 'cierre' (último del día)
+    if turno.tipo_turno == TipoTurnoEnum.cierre and turno.dia_operativo_id:
+        dia = db.query(DiaOperativo).filter(DiaOperativo.id == turno.dia_operativo_id).first()
+        if dia and dia.estado != EstadoDiaEnum.cerrado:
+            dia.estado = EstadoDiaEnum.cerrado
+            dia.cerrado_por_id = usuario_id
+            dia.fecha_cierre = datetime.utcnow()
 
     _tick_checklist(db, turno.tienda_id, cierre_realizado=True)
     audit.registrar(

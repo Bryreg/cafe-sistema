@@ -266,7 +266,7 @@ def _base_tickets_query(db: Session, fecha_desde: date | None, fecha_hasta: date
     desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
     q = (
         db.query(Ticket)
-        .filter(Ticket.estado != "anulado")
+        .filter(Ticket.estado.notin_(("anulado", "reversado")))
         .filter(Ticket.fecha >= desde, Ticket.fecha <= hasta)
     )
     if tienda_id is not None:
@@ -278,7 +278,7 @@ def get_analytics_resumen(db: Session, fecha_desde: date | None = None,
                           fecha_hasta: date | None = None, tienda_id: int | None = None):
     """KPIs del período: ventas, tickets, ticket promedio, efectivo/tarjeta, items."""
     desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
-    filtros = [Ticket.estado != "anulado", Ticket.fecha >= desde, Ticket.fecha <= hasta]
+    filtros = [Ticket.estado.notin_(("anulado", "reversado")), Ticket.fecha >= desde, Ticket.fecha <= hasta]
     if tienda_id is not None:
         filtros.append(Ticket.tienda_id == tienda_id)
 
@@ -319,7 +319,7 @@ def get_analytics_productos_top(db: Session, fecha_desde: date | None = None,
                                 fecha_hasta: date | None = None, tienda_id: int | None = None):
     """Por producto: unidades vendidas y $ ingresado, ordenado desc por $."""
     desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
-    filtros = [Ticket.estado != "anulado", Ticket.fecha >= desde, Ticket.fecha <= hasta]
+    filtros = [Ticket.estado.notin_(("anulado", "reversado")), Ticket.fecha >= desde, Ticket.fecha <= hasta]
     if tienda_id is not None:
         filtros.append(Ticket.tienda_id == tienda_id)
 
@@ -375,7 +375,7 @@ def get_analytics_por_barista(db: Session, fecha_desde: date | None = None,
                               fecha_hasta: date | None = None, tienda_id: int | None = None):
     """Por usuario: total, n_tickets, ticket_promedio (JOIN usuarios para el nombre)."""
     desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
-    filtros = [Ticket.estado != "anulado", Ticket.fecha >= desde, Ticket.fecha <= hasta]
+    filtros = [Ticket.estado.notin_(("anulado", "reversado")), Ticket.fecha >= desde, Ticket.fecha <= hasta]
     if tienda_id is not None:
         filtros.append(Ticket.tienda_id == tienda_id)
 
@@ -410,7 +410,7 @@ def get_analytics_metodo_pago(db: Session, fecha_desde: date | None = None,
                               fecha_hasta: date | None = None, tienda_id: int | None = None):
     """Split por método de pago (efectivo/tarjeta/mixto): count y suma de montos."""
     desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
-    filtros = [Ticket.estado != "anulado", Ticket.fecha >= desde, Ticket.fecha <= hasta]
+    filtros = [Ticket.estado.notin_(("anulado", "reversado")), Ticket.fecha >= desde, Ticket.fecha <= hasta]
     if tienda_id is not None:
         filtros.append(Ticket.tienda_id == tienda_id)
 

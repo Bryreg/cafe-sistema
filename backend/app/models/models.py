@@ -902,3 +902,79 @@ class Novedad(Base):
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
     imagen_url = Column(String(300), nullable=True)
     fecha = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
+# Fase 4: Control de temperaturas (cadena de frío) + Recepción de mercancía
+# ---------------------------------------------------------------------------
+
+class TipoEquipoEnum(str, enum.Enum):
+    refrigerador = "refrigerador"
+    congelador = "congelador"
+    nevera_vitrina = "nevera_vitrina"
+    ambiente = "ambiente"
+
+
+class EquipoFrio(Base):
+    """Equipo de frío con su rango seguro. El reading se mide contra estos umbrales."""
+    __tablename__ = "equipos_frio"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="CASCADE"), nullable=False, index=True)
+    nombre = Column(String(100), nullable=False)
+    tipo = Column(SAEnum(TipoEquipoEnum), nullable=False, default=TipoEquipoEnum.refrigerador)
+    temp_min = Column(Float, nullable=False, default=0.0)
+    temp_max = Column(Float, nullable=False, default=8.0)
+    activo = Column(Boolean, default=True)
+
+
+class LecturaTemperatura(Base):
+    """Lectura puntual de temperatura. fuera_de_rango se computa al guardar."""
+    __tablename__ = "temperaturas_lecturas"
+    id = Column(Integer, primary_key=True)
+    equipo_id = Column(Integer, ForeignKey("equipos_frio.id", ondelete="RESTRICT"), nullable=False, index=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="RESTRICT"), nullable=False, index=True)
+    dia_operativo_id = Column(Integer, ForeignKey("dias_operativos.id", ondelete="SET NULL"), nullable=True, index=True)
+    turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="SET NULL"), nullable=True, index=True)
+    valor = Column(Float, nullable=False)
+    fuera_de_rango = Column(Boolean, default=False, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
+    observacion = Column(String(200), nullable=True)
+    fecha = Column(DateTime, default=datetime.utcnow, index=True)
+    equipo = relationship("EquipoFrio")
+
+
+class EstadoRecepcionEnum(str, enum.Enum):
+    borrador = "borrador"
+    confirmada = "confirmada"
+
+
+class Recepcion(Base):
+    """Recepción de mercancía. Al confirmar, escribe inventario (entrada + lote) y
+    SANA el stock negativo: si estaba en -4 y se reciben 20, queda en 16."""
+    __tablename__ = "recepciones"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="RESTRICT"), nullable=False, index=True)
+    dia_operativo_id = Column(Integer, ForeignKey("dias_operativos.id", ondelete="SET NULL"), nullable=True, index=True)
+    turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="SET NULL"), nullable=True, index=True)
+    proveedor = Column(String(150), nullable=True)
+    factura_id = Column(Integer, ForeignKey("facturas_compra.id", ondelete="SET NULL"), nullable=True)
+    estado = Column(SAEnum(EstadoRecepcionEnum), default=EstadoRecepcionEnum.borrador, nullable=False, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
+    nota = Column(String(300), nullable=True)
+    imagen_url = Column(String(300), nullable=True)
+    fecha = Column(DateTime, default=datetime.utcnow, index=True)
+    items = relationship("RecepcionItem", back_populates="recepcion", cascade="all, delete-orphan")
+
+
+class RecepcionItem(Base):
+    __tablename__ = "recepcion_items"
+    id = Column(Integer, primary_key=True)
+    recepcion_id = Column(Integer, ForeignKey("recepciones.id", ondelete="CASCADE"), nullable=False, index=True)
+    producto_id = Column(Integer, ForeignKey("productos.id", ondelete="RESTRICT"), nullable=False)
+    cantidad_recibida = Column(Float, nullable=False)
+    cantidad_factura = Column(Float, nullable=True)        # lo que dice la factura → diferencia
+    numero_lote = Column(String(100), nullable=True)
+    fecha_vencimiento = Column(DateTime, nullable=True)
+    precio_unitario = Column(Numeric(12, 2, asdecimal=False), nullable=True)
+    recepcion = relationship("Recepcion", back_populates="items")
+    producto = relationship("Producto")

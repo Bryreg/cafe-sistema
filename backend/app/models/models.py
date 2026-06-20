@@ -978,3 +978,33 @@ class RecepcionItem(Base):
     precio_unitario = Column(Numeric(12, 2, asdecimal=False), nullable=True)
     recepcion = relationship("Recepcion", back_populates="items")
     producto = relationship("Producto")
+
+
+# ---------------------------------------------------------------------------
+# Fase 5: Nota Crédito (reversión de venta) — acción del admin
+# ---------------------------------------------------------------------------
+
+class NotaCredito(Base):
+    """Reversión contable de una venta. Conecta contabilidad con inventario:
+    devuelve la plata siempre; el inventario solo recupera lo que NO se usó."""
+    __tablename__ = "notas_credito"
+    id = Column(Integer, primary_key=True)
+    ticket_id = Column(Integer, ForeignKey("tickets.id", ondelete="RESTRICT"), nullable=False, index=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="RESTRICT"), nullable=False, index=True)
+    dia_operativo_id = Column(Integer, ForeignKey("dias_operativos.id", ondelete="SET NULL"), nullable=True, index=True)
+    turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="SET NULL"), nullable=True, index=True)
+    usuario_admin_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
+    motivo = Column(Text, nullable=False)
+    valor_revertido = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    fecha = Column(DateTime, default=datetime.utcnow, index=True)
+    items = relationship("NotaCreditoItem", back_populates="nota", cascade="all, delete-orphan")
+
+
+class NotaCreditoItem(Base):
+    __tablename__ = "notas_credito_items"
+    id = Column(Integer, primary_key=True)
+    nota_credito_id = Column(Integer, ForeignKey("notas_credito.id", ondelete="CASCADE"), nullable=False, index=True)
+    producto_id = Column(Integer, ForeignKey("productos.id", ondelete="RESTRICT"), nullable=False)
+    cantidad = Column(Float, nullable=False)
+    producto_usado = Column(Boolean, nullable=False)   # True = consumido (no vuelve) | False = vuelve al stock
+    nota = relationship("NotaCredito", back_populates="items")

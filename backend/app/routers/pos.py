@@ -1,5 +1,6 @@
 from typing import List, Optional
 from datetime import date
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -11,6 +12,17 @@ from app.schemas.pos import (
     VentaPorHoraOut, VentaPorBaristaOut, MetodoPagoOut,
 )
 from app.services import pos as svc
+from app.services import notas_credito as nc_svc
+
+
+class NotaCreditoItemIn(BaseModel):
+    producto_id: int
+    producto_usado: bool
+
+
+class RevertirRequest(BaseModel):
+    motivo: str
+    items: List[NotaCreditoItemIn] = []
 
 router = APIRouter(prefix="/pos", tags=["pos"])
 
@@ -78,6 +90,21 @@ def anular_ticket(ticket_id: int, data: TicketAnularRequest = TicketAnularReques
                   user: Usuario = Depends(require_admin)):
     ticket = svc.anular_ticket(db, ticket_id, usuario_id=user.id, motivo=data.motivo)
     return ticket
+
+
+@router.post("/ticket/{ticket_id}/revertir", status_code=201)
+def revertir_ticket(ticket_id: int, data: RevertirRequest,
+                    db: Session = Depends(get_db),
+                    user: Usuario = Depends(require_admin)):
+    """Nota Crédito: revierte la venta. Por producto, producto_usado decide si el
+    inventario lo recupera (False = vuelve al conteo) o no (True = se consumió)."""
+    items_usado = {i.producto_id: i.producto_usado for i in data.items}
+    nota = nc_svc.revertir_venta(db, ticket_id, user.id, data.motivo, items_usado)
+    return {
+        "id": nota.id, "ticket_id": nota.ticket_id,
+        "valor_revertido": nota.valor_revertido,
+        "fecha": nota.fecha.isoformat() if nota.fecha else None,
+    }
 
 
 # ---------------------------------------------------------------------------

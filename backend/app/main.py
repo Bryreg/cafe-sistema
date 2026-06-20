@@ -486,6 +486,35 @@ def _seed_rutinas():
 _seed_rutinas()
 
 
+def _seed_equipos():
+    """Equipos de frío por defecto por sede, si no existen. Idempotente por (tienda, nombre)."""
+    from app.models.models import Tienda, EquipoFrio, TipoEquipoEnum
+    db = SessionLocal()
+    try:
+        defaults = [
+            ("Nevera barra", TipoEquipoEnum.refrigerador, 0.0, 8.0),
+            ("Congelador", TipoEquipoEnum.congelador, -18.0, -8.0),
+            ("Vitrina pastelería", TipoEquipoEnum.nevera_vitrina, 2.0, 8.0),
+        ]
+        for tienda in db.query(Tienda).filter(Tienda.activa == True).all():
+            for nombre, tipo, tmin, tmax in defaults:
+                existe = db.query(EquipoFrio).filter(
+                    EquipoFrio.tienda_id == tienda.id, EquipoFrio.nombre == nombre
+                ).first()
+                if not existe:
+                    db.add(EquipoFrio(tienda_id=tienda.id, nombre=nombre, tipo=tipo,
+                                      temp_min=tmin, temp_max=tmax, activo=True))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("_seed_equipos: %s", e)
+    finally:
+        db.close()
+
+
+_seed_equipos()
+
+
 app = FastAPI(title="Sistema Café", version="1.0.0")
 
 app.add_middleware(

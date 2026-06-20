@@ -138,7 +138,7 @@ export default function GestionTurno() {
                     : <Circle size={15} style={{ color: dark.amber }} />}
                   <span className="text-[13px] font-semibold" style={{ color: dark.ink }}>Cuadre de llegada</span>
                 </button>
-                {(turno.tipo_turno === 'apertura' || !turno.tipo_turno) && (
+                {!turno.tiene_conteo_apertura && !turno.dia_tiene_conteo_apertura && (
                   <button onClick={() => navigate('/conteo-apertura')}
                     className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left"
                     style={{ background: 'rgba(255,255,255,0.04)' }}>
@@ -193,7 +193,7 @@ export default function GestionTurno() {
             <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${dark.border}` }}>
               {[
                 { label: 'Conteo de apertura',    done: turno.tiene_conteo_apertura, to: '/conteo-apertura', icon: Package,      note: 'Recomendado antes de vender' },
-                { label: 'Cuadre de llegada',     done: !!turno.ultima_entrega_fecha, to: '/cuadre-llegada', icon: DollarSign,   note: '' },
+                { label: 'Cuadre de llegada',     done: turno.tiene_cuadre_llegada, to: '/cuadre-llegada', icon: DollarSign,   note: '' },
                 { label: 'Conteo de cierre',      done: turno.tiene_conteo_cierre,   to: '/conteo-cierre',  icon: CheckCircle,  note: '' },
                 { label: 'Entrega / cierre',      done: false,                        to: '/entrega',        icon: Clock,        note: '' },
               ].map((item, i) => (

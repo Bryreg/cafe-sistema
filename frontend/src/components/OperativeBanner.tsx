@@ -43,7 +43,7 @@ export default function OperativeBanner() {
     api.get(`/novedades/pendientes?tienda_id=${tiendaId}`).then(r => setNovedades(r.data)).catch(() => {})
   }, [tiendaId])
 
-  useEffect(() => { if (open) cargar() }, [open, cargar])
+  useEffect(() => { cargar() }, [cargar, open])
 
   // No mostrar para admin ni sin sesión.
   if (!user || user.rol === 'admin') return null

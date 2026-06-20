@@ -77,6 +77,7 @@ class TurnoOut(BaseModel):
     tiene_ventas: bool
     tiene_conteo_cierre: bool
     es_operativo: bool = False
+    dia_tiene_conteo_apertura: bool = False
     ts_conteo_apertura: Optional[datetime] = None
     ts_conteo_cierre: Optional[datetime] = None
     ultima_entrega_fecha: Optional[datetime] = None

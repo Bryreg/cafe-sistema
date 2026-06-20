@@ -46,6 +46,7 @@ def crear_ticket(data: TicketCreate, db: Session = Depends(get_db),
         efectivo_recibido=data.efectivo_recibido,
         monto_efectivo=data.monto_efectivo,
         monto_tarjeta=data.monto_tarjeta,
+        descuento=data.descuento or 0.0,
     )
     return ticket
 

@@ -108,6 +108,7 @@ def get_turno_activo(db: Session, tienda_id: int):
     turno.consignaciones_turno = consigs_sum
     baristas_db = db.query(TurnoBarista).filter(TurnoBarista.turno_id == turno.id).all()
     turno.baristas = [b.nombre_snapshot for b in baristas_db]
+    turno.dia_tiene_conteo_apertura = _hay_conteo_apertura_en_dia(db, turno)
     turno.es_operativo = _es_operativo(db, turno)
     return turno
 
@@ -188,10 +189,9 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
                        "barista_ids": barista_ids or []},
     )
     db.commit()
-    db.refresh(turno)
-    turno.baristas = [u.nombre for u in (usuarios if barista_ids else [])]
     logger.info(f"Turno {turno.id} abierto en tienda {tienda_id} por usuario {usuario_id}")
-    return turno
+    # Devolver el turno COMPLETAMENTE enriquecido (es_operativo, totales, baristas, etc.)
+    return get_turno_activo(db, tienda_id)
 
 
 def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import BaristaBottomNav from '../components/BaristaBottomNav'
+import ContadorEfectivo from '../components/ContadorEfectivo'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 
@@ -334,32 +335,23 @@ export default function GestionTurno() {
               )}
             </div>
 
-            {/* Contá el efectivo de inicio (= cuadre de llegada, unificado en un solo paso) */}
-            <div className="rounded-2xl p-4" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-              <p className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: dark.inkSubtle }}>
-                Contá el efectivo de inicio
-              </p>
-              {esperadoInicio !== null && (
-                <p className="text-[11px] mb-2" style={{ color: dark.inkSubtle }}>
-                  Deberías tener{' '}
-                  <span className="font-mono font-semibold" style={{ color: dark.ink }}>{fmt(esperadoInicio)}</span>
-                  {' '}— lo que dejó el cierre anterior, pendiente de consignar
+            {/* Contá el efectivo de inicio por denominaciones (= cuadre de llegada unificado) */}
+            <div className="space-y-2">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.inkSubtle }}>
+                  Contá el efectivo de inicio
                 </p>
-              )}
-              <div className="flex items-center gap-2">
-                <span className="text-[20px] font-bold" style={{ color: dark.inkMuted }}>$</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  value={baseReal}
-                  onChange={e => setBaseReal(e.target.value)}
-                  placeholder="0"
-                  className="flex-1 text-[28px] font-bold font-mono bg-transparent outline-none"
-                  style={{ color: dark.ink }}
-                />
+                {esperadoInicio !== null && (
+                  <p className="text-[11px] mt-0.5" style={{ color: dark.inkSubtle }}>
+                    Deberías tener{' '}
+                    <span className="font-mono font-semibold" style={{ color: dark.ink }}>{fmt(esperadoInicio)}</span>
+                    {' '}— lo que dejó el cierre anterior, pendiente de consignar
+                  </p>
+                )}
               </div>
-              {esperadoInicio !== null && baseReal.trim() !== '' && (Number(baseReal) - esperadoInicio) !== 0 && (
-                <p className="text-[12px] mt-2 font-semibold" style={{ color: dark.amber }}>
+              <ContadorEfectivo onTotal={t => setBaseReal(String(t))} />
+              {esperadoInicio !== null && Number(baseReal) > 0 && (Number(baseReal) - esperadoInicio) !== 0 && (
+                <p className="text-[12px] font-semibold pl-1" style={{ color: dark.amber }}>
                   Diferencia: {(Number(baseReal) - esperadoInicio) > 0 ? '+' : ''}{fmt(Number(baseReal) - esperadoInicio)} — registrá el motivo abajo
                 </p>
               )}

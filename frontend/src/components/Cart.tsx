@@ -8,6 +8,7 @@ export interface CartItem {
   nombre: string
   cantidad: number
   precio_venta: number
+  descuento?: number
 }
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
   onInc: (producto_id: number) => void
   onDec: (producto_id: number) => void
   onRemove: (producto_id: number) => void
+  onDescuento: (producto_id: number, valor: number) => void
   onClear: () => void
   onCobrar: () => void
   /** Oculta el header "Cuenta · N ítems" cuando el contenedor ya lo muestra (hoja mobile). */
@@ -37,11 +39,12 @@ export default function Cart({
   onInc,
   onDec,
   onRemove,
+  onDescuento,
   onClear,
   onCobrar,
   hideHeader = false,
 }: Props) {
-  const total = items.reduce((s, i) => s + i.precio_venta * i.cantidad, 0)
+  const total = items.reduce((s, i) => s + (i.precio_venta * i.cantidad - (i.descuento || 0)), 0)
   const count = items.reduce((s, i) => s + i.cantidad, 0)
   const vacio = items.length === 0
 
@@ -78,29 +81,46 @@ export default function Cart({
         ) : (
           <div className="divide-y divide-warm-100">
             {items.map(item => (
-              <div key={item.producto_id} className="flex items-center gap-3 py-3">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-bark-800 truncate">{item.nombre}</p>
-                  <p className="text-xs text-warm-400 tabular-nums">
-                    {fmtCO(item.precio_venta)} c/u ·{' '}
-                    <span className="font-bold text-warm-600">
-                      {fmtCO(item.precio_venta * item.cantidad)}
-                    </span>
-                  </p>
+              <div key={item.producto_id} className="py-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-bark-800 truncate">{item.nombre}</p>
+                    <p className="text-xs text-warm-400 tabular-nums">
+                      {fmtCO(item.precio_venta)} c/u ·{' '}
+                      <span className="font-bold text-warm-600">
+                        {fmtCO(item.precio_venta * item.cantidad - (item.descuento || 0))}
+                      </span>
+                      {(item.descuento || 0) > 0 && (
+                        <span className="text-clay-600"> (−{fmtCO(item.descuento || 0)})</span>
+                      )}
+                    </p>
+                  </div>
+                  <Stepper
+                    value={item.cantidad}
+                    min={1}
+                    onDec={() => onDec(item.producto_id)}
+                    onInc={() => onInc(item.producto_id)}
+                  />
+                  <button
+                    onClick={() => onRemove(item.producto_id)}
+                    aria-label="Quitar"
+                    className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center text-danger-400 hover:text-danger-600 hover:bg-danger-50 transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
-                <Stepper
-                  value={item.cantidad}
-                  min={1}
-                  onDec={() => onDec(item.producto_id)}
-                  onInc={() => onInc(item.producto_id)}
-                />
-                <button
-                  onClick={() => onRemove(item.producto_id)}
-                  aria-label="Quitar"
-                  className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center text-danger-400 hover:text-danger-600 hover:bg-danger-50 transition-colors"
-                >
-                  <Trash2 size={13} />
-                </button>
+                {/* Descuento por producto (casilla libre) */}
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span className="text-[11px] text-warm-400">Descuento $</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    value={item.descuento ? String(item.descuento) : ''}
+                    onChange={e => onDescuento(item.producto_id, Number(e.target.value) || 0)}
+                    placeholder="0"
+                    className="w-24 text-right text-xs font-bold font-mono tabular-nums bg-warm-50 border border-warm-200 rounded-md px-2 py-1 outline-none focus:border-clay-400"
+                  />
+                </div>
               </div>
             ))}
           </div>

@@ -27,6 +27,7 @@ interface CartItem {
   nombre: string
   cantidad: number
   precio_venta: number
+  descuento?: number
 }
 
 interface Props {
@@ -40,13 +41,12 @@ const fmtCO = (v: number) => `$${v.toLocaleString('es-CO')}`
 
 type Metodo = 'efectivo' | 'tarjeta' | 'mixto'
 
-export default function CheckoutModal({ items, totalEstimado: subtotal, onClose, onSuccess }: Props) {
+export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess }: Props) {
   const { user } = useAuth()
   const [metodo, setMetodo] = useState<Metodo>('efectivo')
   const [recibido, setRecibido] = useState('')
   const [montoEfectivo, setMontoEfectivo] = useState('')
   const [montoTarjeta, setMontoTarjeta] = useState('')
-  const [descuento, setDescuento] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [ticket, setTicket] = useState<TicketData | null>(null)
@@ -59,9 +59,6 @@ export default function CheckoutModal({ items, totalEstimado: subtotal, onClose,
   }, [metodo])
 
   const numRecibido = Number(recibido) || 0
-  // Descuento libre: lo escribe el barista. El total a pagar baja en ese monto.
-  const desc = Math.max(0, Math.min(Number(descuento) || 0, subtotal))
-  const totalEstimado = subtotal - desc
   const cambio = metodo === 'efectivo' ? numRecibido - totalEstimado : 0
 
   const canConfirm = (() => {
@@ -80,9 +77,8 @@ export default function CheckoutModal({ items, totalEstimado: subtotal, onClose,
     try {
       const body: Record<string, unknown> = {
         tienda_id: user?.tienda_id,
-        items: items.map(i => ({ producto_id: i.producto_id, cantidad: i.cantidad })),
+        items: items.map(i => ({ producto_id: i.producto_id, cantidad: i.cantidad, descuento: i.descuento || 0 })),
         metodo_pago: metodo,
-        descuento: desc,
       }
       if (metodo === 'efectivo') body.efectivo_recibido = numRecibido
       if (metodo === 'mixto') {
@@ -136,32 +132,10 @@ export default function CheckoutModal({ items, totalEstimado: subtotal, onClose,
         {!confirmed && (
           <div className="space-y-4 pb-4">
 
-            {/* Total + descuento libre */}
-            <div className="bg-warm-50 rounded-2xl p-4 border border-warm-200 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <SectionLabel>Descuento</SectionLabel>
-                <div className="flex items-center gap-1">
-                  <span className="text-warm-400 font-bold">$</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    value={descuento}
-                    onChange={e => setDescuento(e.target.value)}
-                    placeholder="0"
-                    className="w-28 text-right text-lg font-bold font-mono tabular-nums bg-white border border-warm-200 rounded-lg px-2 py-1.5 outline-none focus:border-clay-400"
-                  />
-                </div>
-              </div>
-              {desc > 0 && (
-                <div className="flex items-center justify-between text-sm text-warm-500">
-                  <span>Subtotal</span>
-                  <span className="font-mono tabular-nums line-through">{fmtCO(subtotal)}</span>
-                </div>
-              )}
-              <div className="text-center pt-2 border-t border-warm-200">
-                <SectionLabel className="mb-1">Total a cobrar</SectionLabel>
-                <p className="text-4xl font-bold font-mono tabular-nums text-bark-900">{fmtCO(totalEstimado)}</p>
-              </div>
+            {/* Total a cobrar (ya con descuentos por producto aplicados) */}
+            <div className="bg-warm-50 rounded-2xl p-4 text-center border border-warm-200">
+              <SectionLabel className="mb-1">Total a cobrar</SectionLabel>
+              <p className="text-4xl font-bold font-mono tabular-nums text-bark-900">{fmtCO(totalEstimado)}</p>
             </div>
 
             {/* Método de pago */}

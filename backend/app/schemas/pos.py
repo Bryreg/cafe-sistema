@@ -6,13 +6,13 @@ from datetime import datetime
 class TicketItemRequest(BaseModel):
     producto_id: int
     cantidad: int
+    descuento: Optional[float] = 0  # descuento libre por producto (linea)
 
 
 class TicketCreate(BaseModel):
     tienda_id: int
     items: List[TicketItemRequest]
     metodo_pago: str  # 'efectivo' | 'tarjeta' | 'mixto'
-    descuento: Optional[float] = 0  # descuento libre por ticket
     efectivo_recibido: Optional[float] = None
     # Solo se usan cuando metodo_pago == 'mixto'
     monto_efectivo: Optional[float] = None
@@ -40,6 +40,7 @@ class TicketItemOut(BaseModel):
     cantidad: int
     precio_unitario: float
     subtotal: float
+    descuento: float = 0
 
     class Config:
         from_attributes = True

@@ -66,6 +66,13 @@ def tickets_turno(turno_id: int, db: Session = Depends(get_db),
     return svc.get_tickets_turno(db, turno_id)
 
 
+@router.get("/tickets/recientes", response_model=List[TicketOut])
+def tickets_recientes(tienda_id: int, dias: int = 7, db: Session = Depends(get_db),
+                      user: Usuario = Depends(require_admin)):
+    """Tickets recientes de la tienda para revertir (Nota Crédito). Solo admin."""
+    return svc.get_tickets_recientes(db, tienda_id, dias)
+
+
 @router.patch("/productos/{producto_id}/precio", response_model=ProductoPOSOut)
 def set_precio(producto_id: int, data: PrecioUpdate, db: Session = Depends(get_db),
                user: Usuario = Depends(require_admin)):

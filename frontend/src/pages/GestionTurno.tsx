@@ -30,6 +30,7 @@ export default function GestionTurno() {
   const [selected, setSelected] = useState<number[]>([])
   const [tipoTurno, setTipoTurno] = useState<TipoTurno | null>(null)
   const [baseReal, setBaseReal] = useState('')
+  const [esperadoInicio, setEsperadoInicio] = useState<number | null>(null)
   const [justificacion, setJustificacion] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -42,6 +43,11 @@ export default function GestionTurno() {
     api.get('/auth/baristas').then(({ data }) => {
       setBaristas(data)
     }).catch(() => {})
+    if (tiendaId) {
+      api.get(`/caja/efectivo-inicio/${tiendaId}`)
+        .then(r => setEsperadoInicio(r.data.esperado))
+        .catch(() => {})
+    }
   }, [tiendaId])
 
   const toggleBarista = (id: number) =>
@@ -131,14 +137,6 @@ export default function GestionTurno() {
                 <p className="text-[12px] font-bold flex items-center gap-2" style={{ color: dark.amber }}>
                   <AlertTriangle size={13} /> POS bloqueado — completá para vender
                 </p>
-                <button onClick={() => navigate('/cuadre-llegada')}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left"
-                  style={{ background: 'rgba(255,255,255,0.04)' }}>
-                  {turno.tiene_cuadre_llegada
-                    ? <Check size={15} style={{ color: dark.green }} />
-                    : <Circle size={15} style={{ color: dark.amber }} />}
-                  <span className="text-[13px] font-semibold" style={{ color: dark.ink }}>Cuadre de llegada</span>
-                </button>
                 {!turno.tiene_conteo_apertura && !turno.dia_tiene_conteo_apertura && (
                   <button onClick={() => navigate('/conteo-apertura')}
                     className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left"
@@ -194,7 +192,6 @@ export default function GestionTurno() {
             <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${dark.border}` }}>
               {[
                 { label: 'Conteo de apertura',    done: turno.tiene_conteo_apertura, to: '/conteo-apertura', icon: Package,      note: 'Recomendado antes de vender' },
-                { label: 'Cuadre de llegada',     done: turno.tiene_cuadre_llegada, to: '/cuadre-llegada', icon: DollarSign,   note: '' },
                 { label: 'Conteo de cierre',      done: turno.tiene_conteo_cierre,   to: '/conteo-cierre',  icon: CheckCircle,  note: '' },
                 { label: 'Entrega / cierre',      done: false,                        to: '/entrega',        icon: Clock,        note: '' },
               ].map((item, i) => (
@@ -337,11 +334,18 @@ export default function GestionTurno() {
               )}
             </div>
 
-            {/* Base de caja */}
+            {/* Contá el efectivo de inicio (= cuadre de llegada, unificado en un solo paso) */}
             <div className="rounded-2xl p-4" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-              <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
-                Base de caja
+              <p className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: dark.inkSubtle }}>
+                Contá el efectivo de inicio
               </p>
+              {esperadoInicio !== null && (
+                <p className="text-[11px] mb-2" style={{ color: dark.inkSubtle }}>
+                  Deberías tener{' '}
+                  <span className="font-mono font-semibold" style={{ color: dark.ink }}>{fmt(esperadoInicio)}</span>
+                  {' '}— lo que dejó el cierre anterior, pendiente de consignar
+                </p>
+              )}
               <div className="flex items-center gap-2">
                 <span className="text-[20px] font-bold" style={{ color: dark.inkMuted }}>$</span>
                 <input
@@ -354,12 +358,17 @@ export default function GestionTurno() {
                   style={{ color: dark.ink }}
                 />
               </div>
+              {esperadoInicio !== null && baseReal.trim() !== '' && (Number(baseReal) - esperadoInicio) !== 0 && (
+                <p className="text-[12px] mt-2 font-semibold" style={{ color: dark.amber }}>
+                  Diferencia: {(Number(baseReal) - esperadoInicio) > 0 ? '+' : ''}{fmt(Number(baseReal) - esperadoInicio)} — registrá el motivo abajo
+                </p>
+              )}
             </div>
 
             <textarea
               value={justificacion}
               onChange={e => setJustificacion(e.target.value)}
-              placeholder="Justificación si hay diferencia con el turno anterior"
+              placeholder="Motivo si el efectivo contado difiere del esperado"
               rows={2}
               className="w-full rounded-xl px-3 py-2.5 text-sm resize-none outline-none"
               style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}

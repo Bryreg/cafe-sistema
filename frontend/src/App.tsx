@@ -1,8 +1,9 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { TurnoProvider, useTurno } from './contexts/TurnoContext'
 import Layout from './components/Layout'
 import OperativeBanner from './components/OperativeBanner'
+import Drawer from './components/Drawer'
 
 // Device setup
 import KioskSetup from './pages/KioskSetup'
@@ -85,16 +86,22 @@ function RequireOperativo({ children }: { children: React.ReactNode }) {
 }
 
 function AppRoutes() {
-  const { user, tiendaId } = useAuth()
+  const { user } = useAuth()
+  const location = useLocation()
 
   // Sin sesión activa (ni kiosco ni usuario) → KioskSetup
   const hasSession = !!user
   const isAdmin = user?.rol === 'admin'
 
+  // Route-as-overlay: si la navegación trae `background`, el <Routes> base pinta
+  // esa pantalla (el POS, con su carrito) y la herramienta se abre en un cajón
+  // encima (ver Drawer + OperativeBanner.goDrawer). Sin background → ruta normal.
+  const background = (location.state as { background?: typeof location })?.background
+
   return (
     <>
     <OperativeBanner />
-    <Routes>
+    <Routes location={background || location}>
       {/* ── Login admin ── */}
       <Route path="/admin-login" element={
         isAdmin ? <Navigate to="/dashboard" replace /> : <Login />
@@ -162,6 +169,21 @@ function AppRoutes() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+
+    {/* ── Cajones sobre el POS (route-as-overlay) ──
+        Herramientas de alta frecuencia: se abren encima de la pantalla de
+        fondo sin desmontarla. Solo se montan si la navegación trae background
+        (lo setea OperativeBanner.goDrawer); el deep-link directo cae en la
+        ruta full-page de arriba. */}
+    {background && hasSession && (
+      <Routes>
+        <Route path="/ingresos"   element={<Drawer><Ingresos /></Drawer>} />
+        <Route path="/mermas"     element={<Drawer><Mermas /></Drawer>} />
+        <Route path="/inventario" element={<Drawer><Inventario /></Drawer>} />
+        <Route path="/pedido"     element={<Drawer><SolicitudPedido /></Drawer>} />
+        <Route path="/sencilla"   element={<Drawer><SolicitudSencilla /></Drawer>} />
+      </Routes>
+    )}
     </>
   )
 }

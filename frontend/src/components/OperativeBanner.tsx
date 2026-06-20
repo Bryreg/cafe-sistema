@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
@@ -32,6 +32,7 @@ export default function OperativeBanner() {
   const { user, tiendaId, isKiosk, resetKiosk } = useAuth()
   const { turno, refresh } = useTurno()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const [open, setOpen] = useState(false)
   const [modal, setModal] = useState<null | 'rutinas' | 'novedad' | 'recepcion' | 'temperatura' | 'caja'>(null)
@@ -54,6 +55,9 @@ export default function OperativeBanner() {
   const dotColor = turno?.es_operativo ? dark.green : turno ? dark.amber : dark.inkSubtle
 
   const go = (to: string) => { setOpen(false); navigate(to) }
+  // Abre la herramienta como cajón SOBRE la pantalla actual (POS): pasa la
+  // ubicación actual como `background` para que el POS no se desmonte.
+  const goDrawer = (to: string) => { setOpen(false); navigate(to, { state: { background: location } }) }
 
   return (
     <>
@@ -185,7 +189,7 @@ export default function OperativeBanner() {
                   <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Novedad</p>
                   <p className="text-[11px]" style={{ color: dark.inkSubtle }}>registrar</p>
                 </button>
-                <button onClick={() => go('/ingresos')}
+                <button onClick={() => goDrawer('/ingresos')}
                   className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
                   <Truck size={18} style={{ color: dark.amber }} />
                   <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Recibir</p>
@@ -202,7 +206,7 @@ export default function OperativeBanner() {
               {/* Accesos rápidos */}
               <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${dark.border}` }}>
                 {QUICK.map((q, i) => (
-                  <button key={q.to} onClick={() => go(q.to)}
+                  <button key={q.to} onClick={() => goDrawer(q.to)}
                     className="w-full flex items-center gap-3 px-4 py-3"
                     style={{ background: dark.surface, borderTop: i > 0 ? `1px solid ${dark.border}` : undefined }}>
                     <q.icon size={16} style={{ color: dark.inkMuted }} />

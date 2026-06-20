@@ -12,7 +12,6 @@ import {
   ClipboardList, ReceiptText, LayoutGrid, ChevronDown, ChevronUp,
   ClipboardCheck, Check,
 } from 'lucide-react'
-import BaristaBottomNav from '../components/BaristaBottomNav'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function parseUTC(s: string): Date {
@@ -866,9 +865,6 @@ export default function Hub() {
           </div>
         </div>
       )}
-
-      {/* ── Navegación inferior ──────────────────────────────────────────── */}
-      <BaristaBottomNav alertaBadge={alertas.length > 0 ? alertas.length : undefined} />
 
     </div>
   )

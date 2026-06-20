@@ -2,7 +2,6 @@ import { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { ArrowLeft, Coffee } from 'lucide-react'
-import BaristaBottomNav from './BaristaBottomNav'
 
 interface Props {
   children: ReactNode
@@ -17,7 +16,6 @@ export default function BaristaLayout({
   children,
   title,
   backTo = '/hub',
-  alertaBadge,
   rightAction,
 }: Props) {
   const { user } = useAuth()
@@ -55,9 +53,6 @@ export default function BaristaLayout({
       <main className="flex-1 p-4 max-w-lg mx-auto w-full pb-nav">
         {children}
       </main>
-
-      {/* ── Navegación inferior ── */}
-      <BaristaBottomNav alertaBadge={alertaBadge} />
     </div>
   )
 }

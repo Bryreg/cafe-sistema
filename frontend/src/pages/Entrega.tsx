@@ -4,6 +4,7 @@ import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
 import { AlertTriangle, Camera, Check, ChevronLeft, Lock, X } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
+import ContadorEfectivo from '../components/ContadorEfectivo'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 const fmtSigned = (v: number) => (v === 0 ? '$0' : (v > 0 ? '+' : '') + fmt(Math.abs(v)))
@@ -151,18 +152,7 @@ export default function Entrega() {
         {/* Paso 1 — Cuenta el efectivo */}
         <div className="space-y-2">
           <StepHeader n={1} title="Cuenta el efectivo" done={step1Done} active={currentStep === 1} />
-          <div className="rounded-xl px-4 py-3 flex items-center justify-between gap-3"
-            style={{ background: dark.surface, border: `1px solid ${currentStep === 1 ? dark.amberDim : dark.border}` }}>
-            <label htmlFor="entrega-efectivo" className="text-[12px]" style={{ color: dark.inkMuted }}>Efectivo real en caja</label>
-            <input
-              id="entrega-efectivo"
-              type="number" inputMode="numeric"
-              value={efectivoReal} onChange={e => setEfectivoReal(e.target.value)}
-              placeholder="0"
-              className="text-[22px] font-bold font-mono text-right bg-transparent outline-none w-40"
-              style={{ color: dark.ink }}
-            />
-          </div>
+          <ContadorEfectivo onTotal={t => setEfectivoReal(String(t))} />
 
           {difEfectivo !== null && (
             <div className="rounded-xl flex items-center justify-between px-4 py-2.5"

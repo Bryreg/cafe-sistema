@@ -41,28 +41,88 @@ function cleanParams(params: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null))
 }
 
-// ─── Ventas (redirect to Analytics) ─────────────────────────────────────────
+// ─── Ventas (HISTORIAL real de tickets, consultable por período) ─────────────
+interface TicketHist {
+  id: number; fecha: string; total: number; metodo_pago: string; estado: string
+  items: { nombre_producto: string }[]
+}
+
 function TabVentas() {
-  const navigate = useNavigate()
+  const { filtro } = useFiltro()
+  const [tickets, setTickets] = useState<TicketHist[] | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const cargar = async () => {
+    setLoading(true)
+    try {
+      const { data } = await api.get('/pos/tickets/historial', {
+        params: cleanParams({ tienda_id: filtro.tiendaId, fecha_desde: filtro.desde, fecha_hasta: filtro.hasta }),
+      })
+      setTickets(data)
+    } finally { setLoading(false) }
+  }
+  useEffect(() => { cargar() }, [filtro]) // eslint-disable-line
+
+  const lista = tickets ?? []
+  const neto = lista.filter(t => t.estado === 'completado').reduce((a, t) => a + t.total, 0)
+
+  const exportar = () => {
+    if (!tickets) return
+    exportarExcel(`ventas_${filtro.desde}_${filtro.hasta}`,
+      ['Ticket', 'Fecha', 'Total', 'Método', 'Productos', 'Estado'],
+      tickets.map(t => [t.id, t.fecha, t.total, t.metodo_pago, t.items.map(i => i.nombre_producto).join(' · '), t.estado]))
+  }
+
+  const fechaCorta = (iso: string) =>
+    new Date(iso.endsWith('Z') ? iso : iso + 'Z').toLocaleString('es-CO',
+      { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 
   return (
-    <div className="flex flex-col items-center justify-center py-16 px-4 text-center space-y-5">
-      <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-center">
-        <TrendingUp size={28} className="text-amber-600" />
+    <div className="space-y-4">
+      <div className="flex gap-3 flex-wrap items-center justify-between">
+        <p className="text-sm text-gray-600"><strong>{lista.length}</strong> ventas · neto <strong>{fmt(neto)}</strong></p>
+        {lista.length > 0 && <BtnExcel onClick={exportar} />}
       </div>
-      <div className="space-y-1.5">
-        <p className="text-base font-semibold text-gray-800">Las ventas ahora están en Analítica</p>
-        <p className="text-sm text-gray-500 max-w-sm">
-          Los datos de ventas del POS —tickets, métodos de pago, productos, tendencias— se consultan en tiempo real desde la pantalla de Analítica.
-        </p>
-      </div>
-      <button
-        onClick={() => navigate('/analytics')}
-        className="flex items-center gap-2 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg text-sm transition-colors"
-      >
-        <TrendingUp size={15} />
-        Ir a Analítica
-      </button>
+      {loading ? (
+        <p className="text-gray-500 text-sm">Cargando...</p>
+      ) : (
+        <div className="rounded-xl border border-gray-200 overflow-hidden bg-white overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
+              <tr>
+                <th className="text-left px-3 py-2.5">Ticket</th>
+                <th className="text-left px-3 py-2.5">Fecha</th>
+                <th className="text-right px-3 py-2.5">Total</th>
+                <th className="text-left px-3 py-2.5">Método</th>
+                <th className="text-left px-3 py-2.5">Productos</th>
+                <th className="text-left px-3 py-2.5">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lista.map(t => (
+                <tr key={t.id} className="border-t border-gray-100">
+                  <td className="px-3 py-2.5 font-mono font-semibold text-gray-700">#{t.id}</td>
+                  <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{fechaCorta(t.fecha)}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-semibold text-gray-800">{fmt(t.total)}</td>
+                  <td className="px-3 py-2.5 capitalize text-gray-600">{t.metodo_pago}</td>
+                  <td className="px-3 py-2.5 text-gray-500 max-w-xs truncate">{t.items.map(i => i.nombre_producto).join(', ')}</td>
+                  <td className="px-3 py-2.5">
+                    <span className={
+                      t.estado === 'reversado' ? 'text-red-600 font-semibold'
+                        : t.estado === 'anulado' ? 'text-gray-400'
+                        : 'text-green-700'}>
+                      {t.estado}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {lista.length === 0 && (
+                <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-400">Sin ventas en el período.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

@@ -116,7 +116,7 @@ export default function CuadreLlegada() {
       </header>
 
       {/* Body */}
-      <div className="flex-1 overflow-auto px-4 pb-28 space-y-4 pt-1">
+      <div className="flex-1 overflow-auto px-4 pb-28 space-y-3 pt-1 w-full max-w-3xl mx-auto">
 
         {/* Ventas del día */}
         <div className="rounded-2xl p-4"
@@ -124,7 +124,7 @@ export default function CuadreLlegada() {
           <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
             Ventas del día
           </p>
-          <p className="text-[28px] font-bold font-mono leading-none mb-3"
+          <p className="text-[22px] font-bold font-mono leading-none mb-3"
             style={{ color: dark.ink, letterSpacing: '-1px' }}>
             {fmt(turno.total_ventas ?? 0)}
           </p>
@@ -147,8 +147,8 @@ export default function CuadreLlegada() {
           <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
             Lo que debe haber en caja
           </p>
-          <p className="text-[36px] font-bold font-mono leading-none mb-3"
-            style={{ color: dark.ink, letterSpacing: '-1.5px' }}>
+          <p className="text-[26px] font-bold font-mono leading-none mb-3"
+            style={{ color: dark.ink, letterSpacing: '-1px' }}>
             {fmt(esperado)}
           </p>
           <div className="grid grid-cols-2 gap-2 pt-3" style={{ borderTop: `1px solid ${dark.border}` }}>

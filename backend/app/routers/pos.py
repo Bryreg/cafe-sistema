@@ -73,6 +73,14 @@ def tickets_recientes(tienda_id: int, dias: int = 7, db: Session = Depends(get_d
     return svc.get_tickets_recientes(db, tienda_id, dias)
 
 
+@router.get("/tickets/historial", response_model=List[TicketOut])
+def tickets_historial(tienda_id: int, fecha_desde: Optional[date] = Query(None),
+                      fecha_hasta: Optional[date] = Query(None),
+                      db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    """Historial de ventas (tickets individuales) en un rango. Solo admin."""
+    return svc.get_tickets_historial(db, tienda_id, fecha_desde, fecha_hasta)
+
+
 @router.patch("/productos/{producto_id}/precio", response_model=ProductoPOSOut)
 def set_precio(producto_id: int, data: PrecioUpdate, db: Session = Depends(get_db),
                user: Usuario = Depends(require_admin)):

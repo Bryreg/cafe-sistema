@@ -163,7 +163,7 @@ export default function OperativeBanner() {
                   <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Novedad</p>
                   <p className="text-[11px]" style={{ color: dark.inkSubtle }}>registrar</p>
                 </button>
-                <button onClick={() => setModal('recepcion')}
+                <button onClick={() => go('/ingresos')}
                   className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
                   <Truck size={18} style={{ color: dark.amber }} />
                   <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Recibir</p>

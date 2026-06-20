@@ -9,7 +9,6 @@ import KioskSetup from './pages/KioskSetup'
 
 // Barista / kiosco pages
 import GestionTurno from './pages/GestionTurno'
-import CuadreLlegada from './pages/CuadreLlegada'
 import Apertura from './pages/Apertura'
 import ConteoApertura from './pages/ConteoApertura'
 import Hub from './pages/Hub'
@@ -114,7 +113,6 @@ function AppRoutes() {
       {/* ── Flujo de turno (accesibles con cualquier sesión) ── */}
       <Route path="/apertura"        element={hasSession ? <Apertura />       : <KioskSetup />} />
       <Route path="/conteo-apertura" element={hasSession ? <ConteoApertura /> : <KioskSetup />} />
-      <Route path="/cuadre-llegada"  element={hasSession ? <CuadreLlegada />  : <KioskSetup />} />
       <Route path="/conteo-cierre"   element={hasSession ? <ConteoCierre />   : <KioskSetup />} />
       <Route path="/cierre"          element={hasSession ? <Cierre />         : <KioskSetup />} />
       <Route path="/entrega"         element={hasSession ? <Entrega />        : <KioskSetup />} />

@@ -8,7 +8,6 @@ import {
   Clock, DollarSign, X, Check, LogOut, Package, BarChart2, Sun, Sunset, Moon,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
-import BaristaBottomNav from '../components/BaristaBottomNav'
 import ContadorEfectivo from '../components/ContadorEfectivo'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
@@ -385,7 +384,6 @@ export default function GestionTurno() {
         )}
       </div>
 
-      <BaristaBottomNav />
     </div>
   )
 }

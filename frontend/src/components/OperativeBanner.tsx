@@ -6,8 +6,10 @@ import api from '../api/client'
 import {
   Menu, X, Check, Circle, AlertTriangle, ClipboardList, Megaphone,
   Trash2, Package, ShoppingCart, Coins, Truck, Thermometer, ArrowRightLeft, Lock, LogOut,
+  Calculator, CalendarClock, Banknote,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
+import MovimientoCajaModal from './MovimientoCajaModal'
 
 const fmt = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`
 
@@ -32,7 +34,7 @@ export default function OperativeBanner() {
   const navigate = useNavigate()
 
   const [open, setOpen] = useState(false)
-  const [modal, setModal] = useState<null | 'rutinas' | 'novedad' | 'recepcion' | 'temperatura'>(null)
+  const [modal, setModal] = useState<null | 'rutinas' | 'novedad' | 'recepcion' | 'temperatura' | 'caja'>(null)
   const [pendientes, setPendientes] = useState<Pendiente[]>([])
   const [novedades, setNovedades] = useState<Novedad[]>([])
 
@@ -63,6 +65,7 @@ export default function OperativeBanner() {
         aria-label="Panel del turno"
       >
         <Menu size={16} style={{ color: dark.ink }} />
+        <span className="text-[12px] font-bold" style={{ color: dark.ink }}>Menú</span>
         <span className="w-2 h-2 rounded-full" style={{ background: dotColor }} />
         {totalPend > 0 && (
           <span className="text-[10px] font-bold px-1.5 rounded-full" style={{ background: dark.amberDim, color: '#fff' }}>
@@ -127,6 +130,25 @@ export default function OperativeBanner() {
                   Abrir turno
                 </button>
               )}
+
+              {/* Navegación principal (reemplaza el bottom nav) */}
+              <div className="grid grid-cols-3 gap-2">
+                <button onClick={() => go('/pos')} disabled={!turno?.es_operativo}
+                  className="rounded-xl py-2.5 flex flex-col items-center gap-1 disabled:opacity-40"
+                  style={{ background: dark.greenDim, color: '#fff' }}>
+                  <Calculator size={16} /><span className="text-[11px] font-bold">POS</span>
+                </button>
+                <button onClick={() => go('/gestion-turno')}
+                  className="rounded-xl py-2.5 flex flex-col items-center gap-1"
+                  style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}>
+                  <CalendarClock size={16} style={{ color: dark.amber }} /><span className="text-[11px] font-bold">Turno</span>
+                </button>
+                <button onClick={() => turno && setModal('caja')} disabled={!turno}
+                  className="rounded-xl py-2.5 flex flex-col items-center gap-1 disabled:opacity-40"
+                  style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}>
+                  <Banknote size={16} style={{ color: dark.amber }} /><span className="text-[11px] font-bold">Caja</span>
+                </button>
+              </div>
 
               {/* Novedades pendientes (continuidad / handoff) */}
               {novedades.length > 0 && (
@@ -227,6 +249,9 @@ export default function OperativeBanner() {
       )}
       {modal === 'temperatura' && (
         <TemperaturaModal tiendaId={tiendaId} onClose={() => setModal(null)} onDone={() => {}} />
+      )}
+      {modal === 'caja' && turno && (
+        <MovimientoCajaModal turnoId={turno.id} onClose={() => setModal(null)} />
       )}
     </>
   )

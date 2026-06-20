@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, ShoppingBag, Printer, ChevronUp } from 'lucide-react'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
-import BaristaBottomNav from '../components/BaristaBottomNav'
 import CheckoutModal from '../components/CheckoutModal'
 import TicketRecibo, { TicketData } from '../components/TicketRecibo'
 import ProductGrid, { Producto } from '../components/ProductGrid'
@@ -62,7 +61,6 @@ function GuardShell({ children }: { children: React.ReactNode }) {
         <span className="flex-1 text-sm font-bold text-warm-700">POS</span>
       </header>
       <main className="flex-1 p-4 max-w-lg mx-auto w-full pb-nav">{children}</main>
-      <BaristaBottomNav />
     </div>
   )
 }
@@ -313,7 +311,6 @@ export default function POS() {
         </div>
       </Sheet>
 
-      <BaristaBottomNav />
 
       {/* ── Modal de cobro ── */}
       {showCheckout && (

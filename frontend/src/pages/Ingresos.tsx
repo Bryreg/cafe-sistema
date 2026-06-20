@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import BaristaBottomNav from '../components/BaristaBottomNav'
 import {
   ArrowLeft, ChevronDown, ChevronRight, Search, Plus, X,
   Check, Trash2, Croissant, Box, Upload,
@@ -509,8 +508,6 @@ export default function Ingresos() {
           </button>
         </div>
       </div>
-
-      <BaristaBottomNav />
     </div>
   )
 }

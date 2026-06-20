@@ -151,6 +151,9 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
         tipo_turno=tipo_turno,
         estado=EstadoTurnoEnum.abierto,
         tiene_conteo_apertura=False,
+        # Flujo unificado: contar el efectivo de inicio AL ABRIR es el cuadre de llegada.
+        # La base_real es el conteo; la diferencia vs base_sistema queda en diferencia_apertura.
+        tiene_cuadre_llegada=True,
         tiene_ventas=False,
         tiene_conteo_cierre=False,
         consignaciones_deducidas=consigs_deducidas,
@@ -434,6 +437,30 @@ def get_movimientos(db: Session, turno_id: int):
     return db.query(MovimientoCaja).filter(
         MovimientoCaja.caja_turno_id == turno_id
     ).order_by(MovimientoCaja.fecha.desc()).all()
+
+
+def get_efectivo_inicio_esperado(db: Session, tienda_id: int):
+    """Efectivo de inicio esperado = lo que quedó en caja al último cierre, menos lo consignado.
+
+    Es la 'bolsa' de efectivo que corre entre días (pendiente de consignar). Coincide con el
+    base_sistema que calcula abrir_caja. Sirve para que el barista cuente el efectivo de inicio
+    contra esta expectativa al abrir el turno (cuadre unificado)."""
+    ultimo = db.query(CajaTurno).filter(
+        CajaTurno.tienda_id == tienda_id,
+        CajaTurno.estado == EstadoTurnoEnum.cerrado,
+    ).order_by(CajaTurno.fecha_cierre.desc()).first()
+    if not ultimo:
+        return {"esperado": 0.0, "hay_cierre_previo": False, "fecha_ultimo_cierre": None}
+    consigs = db.query(func.sum(Consignacion.valor)).filter(
+        Consignacion.caja_turno_id == ultimo.id,
+        Consignacion.estado == EstadoConsignacionEnum.realizada,
+    ).scalar() or 0.0
+    esperado = (ultimo.efectivo_final_real or 0.0) - consigs
+    return {
+        "esperado": round(esperado, 2),
+        "hay_cierre_previo": True,
+        "fecha_ultimo_cierre": ultimo.fecha_cierre.isoformat() if ultimo.fecha_cierre else None,
+    }
 
 
 def get_dia_operativo_actual(db: Session, tienda_id: int):

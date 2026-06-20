@@ -38,8 +38,9 @@ export default function GestionTurno() {
   const [step, setStep] = useState<null | 'tipo' | 'baristas'>(null)
 
   useEffect(() => {
-    api.get('/auth/usuarios').then(({ data }) => {
-      setBaristas(data.filter((u: Barista) => u.rol === 'barista' && u.tienda_id === tiendaId))
+    // /auth/baristas filtra por la sede del token y excluye el usuario kiosko
+    api.get('/auth/baristas').then(({ data }) => {
+      setBaristas(data)
     }).catch(() => {})
   }, [tiendaId])
 

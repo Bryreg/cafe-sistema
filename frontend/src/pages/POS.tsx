@@ -8,6 +8,14 @@ import TicketRecibo, { TicketData } from '../components/TicketRecibo'
 import ProductGrid, { Producto } from '../components/ProductGrid'
 import Cart, { CartItem } from '../components/Cart'
 import { Toast, Sheet, Pill } from '../components/ui'
+import DockBar from '../components/DockBar'
+import SidePanel from '../components/SidePanel'
+import Ingresos from './Ingresos'
+import Mermas from './Mermas'
+import Inventario from './Inventario'
+import SolicitudPedido from './SolicitudPedido'
+import SolicitudSencilla from './SolicitudSencilla'
+import Consignaciones from './Consignaciones'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -84,6 +92,16 @@ export default function POS() {
   const [cartSheet, setCartSheet] = useState(false)
   const [reprintTicket, setReprintTicket] = useState<TicketData | null>(null)
   const [reprintMsg, setReprintMsg] = useState('')
+  const [activePanel, setActivePanel] = useState<string | null>(null)
+
+  const PANELS: Record<string, React.ReactNode> = {
+    ingresos:       <Ingresos />,
+    mermas:         <Mermas />,
+    inventario:     <Inventario />,
+    pedido:         <SolicitudPedido />,
+    sencilla:       <SolicitudSencilla />,
+    consignaciones: <Consignaciones />,
+  }
 
   const turnoListo = !!turno && turno.tiene_conteo_apertura
 
@@ -341,6 +359,16 @@ export default function POS() {
 
       {/* ── Ticket oculto para reimpresión (window.print) ── */}
       {reprintTicket && <TicketRecibo ticket={reprintTicket} />}
+
+      {/* ── Dock: herramientas de alta frecuencia, siempre visible ── */}
+      <DockBar active={activePanel} onSelect={setActivePanel} />
+
+      {/* ── Panel lateral: se abre SIN backdrop para que el POS siga activo ── */}
+      {activePanel && PANELS[activePanel] && (
+        <SidePanel onClose={() => setActivePanel(null)}>
+          {PANELS[activePanel]}
+        </SidePanel>
+      )}
     </div>
   )
 }

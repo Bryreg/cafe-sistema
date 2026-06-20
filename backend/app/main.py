@@ -83,6 +83,9 @@ with engine.connect() as _conn:
         "ALTER TABLE caja_turnos ADD COLUMN secuencia_dia INTEGER",
         # POS nativo: precio de venta por producto (tickets/ticket_items los crea create_all)
         "ALTER TABLE productos ADD COLUMN precio_venta NUMERIC(12,2) DEFAULT 0",
+        # Saneo: alinear precio_venta a NOT NULL (el modelo lo declara así). SQLite ignora ALTER COLUMN.
+        "UPDATE productos SET precio_venta = 0 WHERE precio_venta IS NULL",
+        "ALTER TABLE productos ALTER COLUMN precio_venta SET NOT NULL",
         # Concurrency: only one open shift per store at any time
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_one_turno_abierto ON caja_turnos (tienda_id) WHERE estado = 'abierto'",
         # Concurrency: only one conteo of each type (apertura/cierre) per shift

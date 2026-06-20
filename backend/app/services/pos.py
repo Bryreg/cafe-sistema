@@ -68,8 +68,7 @@ def get_productos_pos(db: Session, categoria: str | None = None):
 def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
                  metodo_pago: str, efectivo_recibido: float | None = None,
                  monto_efectivo: float | None = None,
-                 monto_tarjeta: float | None = None,
-                 descuento: float = 0.0):
+                 monto_tarjeta: float | None = None):
     """Crea una venta itemizada. Atómico: si algo falla, no se persiste nada.
 
     `items`: lista de dicts/objetos con `producto_id` y `cantidad`.
@@ -91,14 +90,19 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
             detail="El turno no está operativo: completá el cuadre de llegada y el conteo de apertura antes de vender.",
         )
 
-    # Normalizar items y agregar cantidades por producto (evita líneas duplicadas)
+    # Normalizar items: cantidad y descuento por producto (evita líneas duplicadas)
     pedidos: dict[int, int] = {}
+    descuentos: dict[int, float] = {}
     for it in items:
         producto_id = it["producto_id"] if isinstance(it, dict) else it.producto_id
         cantidad = it["cantidad"] if isinstance(it, dict) else it.cantidad
+        d = (it.get("descuento") if isinstance(it, dict) else getattr(it, "descuento", 0)) or 0
         if cantidad is None or cantidad <= 0:
             raise HTTPException(status_code=400, detail="La cantidad debe ser mayor a 0")
+        if d < 0:
+            raise HTTPException(status_code=400, detail="El descuento no puede ser negativo")
         pedidos[producto_id] = pedidos.get(producto_id, 0) + int(cantidad)
+        descuentos[producto_id] = descuentos.get(producto_id, 0.0) + float(d)
 
     # Calcular precios EN EL SERVIDOR
     productos = {
@@ -106,6 +110,7 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
     }
     lineas = []
     total = 0.0
+    descuento_total = 0.0
     for producto_id, cantidad in pedidos.items():
         prod = productos.get(producto_id)
         if not prod:
@@ -113,16 +118,15 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
         precio = prod.precio_venta or 0.0
         if precio <= 0:
             raise HTTPException(status_code=400, detail=f"El producto '{prod.nombre}' no tiene precio de venta")
-        subtotal = round(precio * cantidad, 2)
+        bruto = round(precio * cantidad, 2)
+        # Descuento POR PRODUCTO (línea): nunca puede superar el bruto de esa línea
+        desc_linea = round(min(descuentos.get(producto_id, 0.0), bruto), 2)
+        subtotal = round(bruto - desc_linea, 2)
         total += subtotal
-        lineas.append((prod, cantidad, precio, subtotal))
-    subtotal = round(total, 2)
-    descuento = round(descuento or 0.0, 2)
-    if descuento < 0:
-        raise HTTPException(status_code=400, detail="El descuento no puede ser negativo")
-    if descuento > subtotal:
-        raise HTTPException(status_code=400, detail="El descuento no puede superar el subtotal de la venta")
-    total = round(subtotal - descuento, 2)
+        descuento_total += desc_linea
+        lineas.append((prod, cantidad, precio, subtotal, desc_linea))
+    total = round(total, 2)
+    descuento = round(descuento_total, 2)
 
     # Resolver montos por método de pago (sobre el total YA con descuento)
     cambio = None
@@ -164,7 +168,7 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
     db.add(ticket)
     db.flush()  # obtener ticket.id
 
-    for prod, cantidad, precio, subtotal in lineas:
+    for prod, cantidad, precio, subtotal, desc_linea in lineas:
         db.add(TicketItem(
             ticket_id=ticket.id,
             producto_id=prod.id,
@@ -172,11 +176,12 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
             cantidad=cantidad,
             precio_unitario=precio,
             subtotal=subtotal,
+            descuento=desc_linea,
         ))
 
     # Inventario: descuento atómico. Stock negativo permitido (allow_negative=True).
     # Si el producto no tiene registro en inventario, se omite sin bloquear la venta.
-    for prod, cantidad, _, _ in lineas:
+    for prod, cantidad, _, _, _ in lineas:
         if prod.controla_stock:
             try:
                 inv_svc.registrar_movimiento(
@@ -206,7 +211,7 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
             "total": total, "metodo_pago": metodo_pago,
             "monto_efectivo": monto_efectivo_final, "monto_tarjeta": monto_tarjeta_final,
             "items": [{"producto_id": p.id, "cantidad": c, "subtotal": s}
-                      for p, c, _, s in lineas],
+                      for p, c, _, s, _ in lineas],
         },
     )
 

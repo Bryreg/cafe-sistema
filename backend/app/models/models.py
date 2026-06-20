@@ -764,7 +764,8 @@ class TicketItem(Base):
     nombre_producto = Column(String(150), nullable=False)
     cantidad = Column(Integer, nullable=False)
     precio_unitario = Column(Numeric(12, 2, asdecimal=False), nullable=False)
-    subtotal = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    subtotal = Column(Numeric(12, 2, asdecimal=False), nullable=False)   # neto (con descuento de linea)
+    descuento = Column(Numeric(12, 2, asdecimal=False), default=0)       # descuento de esta linea
     ticket = relationship("Ticket", back_populates="items")
     producto = relationship("Producto", foreign_keys=[producto_id])
 

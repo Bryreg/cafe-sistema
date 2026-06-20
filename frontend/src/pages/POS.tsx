@@ -98,7 +98,7 @@ export default function POS() {
   }, [turnoListo])
 
   const total = useMemo(
-    () => cart.reduce((s, i) => s + i.precio_venta * i.cantidad, 0),
+    () => cart.reduce((s, i) => s + (i.precio_venta * i.cantidad - (i.descuento || 0)), 0),
     [cart],
   )
   const cartCount = useMemo(() => cart.reduce((s, i) => s + i.cantidad, 0), [cart])
@@ -134,6 +134,14 @@ export default function POS() {
 
   const removeItem = (producto_id: number) =>
     setCart(prev => prev.filter(i => i.producto_id !== producto_id))
+
+  // Descuento libre por producto (clamp al bruto de la línea)
+  const setItemDescuento = (producto_id: number, valor: number) =>
+    setCart(prev => prev.map(i => {
+      if (i.producto_id !== producto_id) return i
+      const max = i.precio_venta * i.cantidad
+      return { ...i, descuento: Math.max(0, Math.min(valor, max)) }
+    }))
 
   // ── Reimprimir último ticket ─────────────────────────────────────────────────
 
@@ -252,6 +260,7 @@ export default function POS() {
               onInc={incItem}
               onDec={decItem}
               onRemove={removeItem}
+              onDescuento={setItemDescuento}
               onClear={() => setCart([])}
               onCobrar={abrirCobro}
             />
@@ -304,6 +313,7 @@ export default function POS() {
             onInc={incItem}
             onDec={decItem}
             onRemove={removeItem}
+            onDescuento={setItemDescuento}
             onClear={() => setCart([])}
             onCobrar={abrirCobro}
             hideHeader

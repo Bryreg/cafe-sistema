@@ -75,7 +75,7 @@ export default function VentasDia() {
   if (!turno) return (
     <BaristaLayout title="Ventas del día">
       <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 text-sm text-amber-700 text-center mt-8">
-        No hay turno abierto. <button onClick={() => navigate('/apertura')} className="font-bold underline">Abrir caja →</button>
+        No hay turno abierto. <button onClick={() => navigate('/gestion-turno')} className="font-bold underline">Abrir caja →</button>
       </div>
     </BaristaLayout>
   )

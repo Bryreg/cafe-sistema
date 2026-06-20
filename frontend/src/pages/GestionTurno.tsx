@@ -87,7 +87,7 @@ export default function GestionTurno() {
     <div className="min-h-screen flex flex-col pb-24" style={{ background: dark.bg }}>
 
       {/* Header */}
-      <header className="px-4 pt-4 pb-3 flex items-center gap-2" style={{ background: dark.bg }}>
+      <header className="px-4 pt-4 pb-3 flex items-center gap-2 w-full max-w-4xl mx-auto" style={{ background: dark.bg }}>
         <div className="flex-1">
           <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.amber }}>
             Gestión de turno
@@ -113,7 +113,7 @@ export default function GestionTurno() {
         )}
       </header>
 
-      <div className="flex-1 px-4 space-y-4">
+      <div className="flex-1 px-4 space-y-4 w-full max-w-4xl mx-auto pb-8">
 
         {/* ── CON TURNO ACTIVO ── */}
         {turno && !step && (

@@ -12,6 +12,7 @@ class TicketCreate(BaseModel):
     tienda_id: int
     items: List[TicketItemRequest]
     metodo_pago: str  # 'efectivo' | 'tarjeta' | 'mixto'
+    descuento: Optional[float] = 0  # descuento libre por ticket
     efectivo_recibido: Optional[float] = None
     # Solo se usan cuando metodo_pago == 'mixto'
     monto_efectivo: Optional[float] = None
@@ -51,6 +52,7 @@ class TicketOut(BaseModel):
     usuario_id: int
     fecha: datetime
     total: float
+    descuento: float = 0
     metodo_pago: str
     monto_efectivo: float
     monto_tarjeta: float

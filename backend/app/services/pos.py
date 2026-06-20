@@ -68,7 +68,8 @@ def get_productos_pos(db: Session, categoria: str | None = None):
 def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
                  metodo_pago: str, efectivo_recibido: float | None = None,
                  monto_efectivo: float | None = None,
-                 monto_tarjeta: float | None = None):
+                 monto_tarjeta: float | None = None,
+                 descuento: float = 0.0):
     """Crea una venta itemizada. Atómico: si algo falla, no se persiste nada.
 
     `items`: lista de dicts/objetos con `producto_id` y `cantidad`.
@@ -115,9 +116,15 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
         subtotal = round(precio * cantidad, 2)
         total += subtotal
         lineas.append((prod, cantidad, precio, subtotal))
-    total = round(total, 2)
+    subtotal = round(total, 2)
+    descuento = round(descuento or 0.0, 2)
+    if descuento < 0:
+        raise HTTPException(status_code=400, detail="El descuento no puede ser negativo")
+    if descuento > subtotal:
+        raise HTTPException(status_code=400, detail="El descuento no puede superar el subtotal de la venta")
+    total = round(subtotal - descuento, 2)
 
-    # Resolver montos por método de pago
+    # Resolver montos por método de pago (sobre el total YA con descuento)
     cambio = None
     if metodo_pago == "efectivo":
         monto_efectivo_final = total
@@ -146,6 +153,7 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
         caja_turno_id=turno.id,
         usuario_id=usuario_id,
         total=total,
+        descuento=descuento,
         metodo_pago=metodo_pago,
         monto_efectivo=monto_efectivo_final,
         monto_tarjeta=monto_tarjeta_final,

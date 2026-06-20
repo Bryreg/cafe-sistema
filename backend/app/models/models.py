@@ -741,7 +741,8 @@ class Ticket(Base):
     caja_turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="RESTRICT"), nullable=False, index=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
     fecha = Column(DateTime, default=datetime.utcnow, index=True)
-    total = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    total = Column(Numeric(12, 2, asdecimal=False), nullable=False)   # total final (con descuento aplicado)
+    descuento = Column(Numeric(12, 2, asdecimal=False), default=0)    # descuento libre por ticket
     metodo_pago = Column(String(20), nullable=False)        # 'efectivo' | 'tarjeta' | 'mixto'
     monto_efectivo = Column(Numeric(12, 2, asdecimal=False), default=0)
     monto_tarjeta = Column(Numeric(12, 2, asdecimal=False), default=0)

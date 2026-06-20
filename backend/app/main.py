@@ -86,6 +86,8 @@ with engine.connect() as _conn:
         # Saneo: alinear precio_venta a NOT NULL (el modelo lo declara así). SQLite ignora ALTER COLUMN.
         "UPDATE productos SET precio_venta = 0 WHERE precio_venta IS NULL",
         "ALTER TABLE productos ALTER COLUMN precio_venta SET NOT NULL",
+        # POS: descuento libre por ticket
+        "ALTER TABLE tickets ADD COLUMN descuento NUMERIC(12,2) DEFAULT 0",
         # Concurrency: only one open shift per store at any time
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_one_turno_abierto ON caja_turnos (tienda_id) WHERE estado = 'abierto'",
         # Concurrency: only one conteo of each type (apertura/cierre) per shift

@@ -140,7 +140,7 @@ export default function Hub() {
 
   // ── Pasos del turno ──────────────────────────────────────────────────────
   const pasos: Paso[] = turno ? [
-    { label: 'Apertura',        done: true,                          doneAt: fmtTime(parseUTC(turno.fecha_apertura)),                                                              accion: () => navigate('/apertura')       },
+    { label: 'Apertura',        done: true,                          doneAt: fmtTime(parseUTC(turno.fecha_apertura)),                                                              accion: () => navigate('/gestion-turno')  },
     { label: 'Conteo apertura', done: !!turno.tiene_conteo_apertura, doneAt: turno.ts_conteo_apertura ? fmtTime(parseUTC(turno.ts_conteo_apertura)) : null,  accion: () => navigate('/conteo-apertura') },
     { label: 'Conteo cierre',   done: !!turno.tiene_conteo_cierre,   doneAt: turno.ts_conteo_cierre ? fmtTime(parseUTC(turno.ts_conteo_cierre)) : null,      accion: () => navigate('/conteo-cierre')  },
     { label: 'Cierre',          done: turno.estado === 'cerrado',    doneAt: null,                                                                                                accion: () => navigate('/cierre')         },
@@ -420,7 +420,7 @@ export default function Hub() {
         ) : !turno ? (
           /* ── Sin turno: CTA abrir ── */
           <button
-            onClick={() => navigate('/apertura')}
+            onClick={() => navigate('/gestion-turno')}
             style={{
               width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
               padding: '18px 0', borderRadius: 22, border: 'none', cursor: 'pointer',

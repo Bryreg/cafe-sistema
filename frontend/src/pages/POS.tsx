@@ -176,7 +176,7 @@ export default function POS() {
       <GuardShell>
         <div className="bg-warm-100 border border-warm-200 rounded-2xl p-5 text-sm text-bark-700 text-center mt-8">
           No hay turno abierto.{' '}
-          <button onClick={() => navigate('/apertura')} className="font-bold text-clay-600 underline">
+          <button onClick={() => navigate('/gestion-turno')} className="font-bold text-clay-600 underline">
             Abrir caja →
           </button>
         </div>

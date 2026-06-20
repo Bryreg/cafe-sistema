@@ -1,0 +1,228 @@
+================================================================================
+CAFE-SISTEMA: PROJECT SUMMARY & VISION
+================================================================================
+
+PROYECTO
+--------
+Sistema de gestión integral para cafetería con:
+- POS (punto de venta) para registrar ventas
+- Gestión de turnos por baristas (responsabilidad colectiva)
+- Control de inventario con FIFO y stock negativo permitido
+- Cuadratura de caja diaria
+- Dashboard admin para reportes y auditoría
+
+STACK TÉCNICO
+-------------
+Backend:  FastAPI 0.115, SQLAlchemy 2.0, SQLite (dev) / PostgreSQL (prod)
+Frontend: React 18.3, TypeScript 5.4, Vite 5.2, TailwindCSS 3.4, React Router 6.23
+Deploy:   Render (backend, rama develop), Cloudflare Pages (frontend, rama main)
+
+================================================================================
+ARQUITECTURA ACTUAL (RECIÉN IMPLEMENTADA)
+================================================================================
+
+1. KIOSK MODE (Dispositivo dedicado en el café)
+   ✓ Landing page: KioskSetup (sin autenticación)
+   ✓ PIN del sistema → genera JWT de 10 años (user "kiosk@tiendaX.device")
+   ✓ Stored en localStorage, se persiste en reloads
+   ✓ Endpoint público: GET /caja/activo-pub/{tienda_id} para polling
+   ✓ 401 interceptor: limpia kiosk flag y redirige a / (no /login)
+
+2. MULTI-BARISTA SHIFTS (Responsabilidad compartida)
+   ✓ Nuevo modelo: TurnoBarista (junction table turno ↔ baristas)
+   ✓ Flujo 2 pasos:
+     - Paso 1: Elegir tipo_turno (apertura / intermedio / cierre)
+     - Paso 2: Seleccionar baristas + base de caja
+   ✓ Todas las baristas en turno comparten responsabilidad
+   ✓ TurnoContext devuelve lista de baristas (nombre snapshot)
+
+3. NEGATIVE STOCK ALLOWED
+   ✓ Parámetro allow_negative=True en registrar_movimiento
+   ✓ POS vende aunque stock sea 0 (queda negativo)
+   ✓ FIFO consume lo que existe, el resto queda en negativo
+   ✓ Cuando proveedor entrega, la entrada normaliza el negativo
+
+4. REAL-TIME SYNC
+   ✓ TurnoContext polling cada 8s (bajo, constante)
+   ✓ Kiosk usa endpoint público (sin JWT)
+   ✓ Usuario autenticado usa endpoint protegido
+   ✓ Cambios visibles casi instantáneamente en PC y móvil
+
+5. LAYOUT & NAVIGATION
+   ✓ POS es la landing page (ruta /)
+   ✓ Tab "Turno" (GestionTurno) al lado del POS
+   ✓ Admin: link "Admin →" en KioskSetup → /admin-login
+   ✓ Login admin: selecciona usuario + PIN
+   ✓ Desktop-first pero responsive en móvil
+
+================================================================================
+ESTADO ACTUAL (COMMITS COMPLETADOS)
+================================================================================
+
+✓ feat: kiosk mode, multi-barista shifts, negative stock, real-time sync
+✓ fix(auth): map access_token to token field in initKiosk
+✓ fix(auth): redirect to / on 401, clear kiosk key, add admin link to KioskSetup
+✓ feat(turno): add tipo_turno field and 2-step shift opening flow (tipo → baristas)
+
+Todo pusheado a:
+- main (Cloudflare Pages frontend)
+- develop (Render backend)
+
+Deployments en progreso/completados.
+
+================================================================================
+FLUJO DE USUARIO (BARISTA/KIOSK)
+================================================================================
+
+1. Abre navegador del café → KioskSetup
+2. Ingresa PIN (2026 actualmente) + Sede ID (2) → "Activar dispositivo"
+3. Redirige a POS (landing page)
+4. Tabs: POS activo, "Turno" a un lado
+5. Click "Turno" → GestionTurno
+6. Si no hay turno: "Abrir turno"
+   a) Elige tipo: Apertura / Intermedio / Cierre
+   b) Selecciona baristas que estarán en turno
+   c) Ingresa base de caja ($)
+   d) Confirma → turno abierto
+7. Con turno activo:
+   - Ve baristas en turno (pills)
+   - Ve ventas del día (total, efectivo, tarjeta)
+   - Accede a flujo: Conteo apertura → Cuadre llegada → Conteo cierre → Entrega
+
+================================================================================
+FLUJO DE USUARIO (ADMIN)
+================================================================================
+
+1. Abre navegador en PC (o en café)
+2. Navbar KioskSetup: link "Admin →"
+3. Ruta /admin-login
+4. Selecciona usuario (tipo admin)
+5. Ingresa PIN
+6. Redirige a /dashboard (AdminHub)
+7. Ve reportes, usuarios, inventario, auditoría, etc.
+
+================================================================================
+LO QUE FALTA / PRÓXIMAS FASES
+================================================================================
+
+CRÍTICO (Para MVP funcional):
+- [ ] Verificar admin login funciona end-to-end
+- [ ] Testear flujo completo: Activación kiosk → Abrir turno → POS → Cuadre
+- [ ] Revisar que 401 redirige correctamente (ya está mezclado con auth fix)
+- [ ] Base de datos: tienda_id=1 debe estar activa en prod (o solo tienda_id=2)
+
+IMPORTANTE (Post-MVP):
+- [ ] Conteo de apertura: flow y persistencia
+- [ ] Cuadre de llegada: reconciliación efectivo vs sistema
+- [ ] Conteo de cierre: cierre de turno
+- [ ] Entrega: registro de dinero entregado + diferencia
+- [ ] POS completo: añadir productos, categorías, descuentos
+- [ ] Reportes admin: ventas diarias, mermas, consistencia
+
+OPTIMIZACIÓN:
+- [ ] Offline-first para kiosk (fallback local si no hay red)
+- [ ] Compresión de payloads (polls cada 8s = mucho tráfico)
+- [ ] Auditoría: registrar quién hace qué (usuario_id, timestamp, operación)
+
+================================================================================
+CONFIGURACIÓN RENDER (ENV VARS)
+================================================================================
+
+CRÍTICA:
+- KIOSK_PIN = 2026 (o el PIN que quieras) — sin esto, /auth/kiosk-init falla
+- DATABASE_URL = tu PostgreSQL en prod
+- JWT_SECRET = algo long y random
+
+VERIFICAR:
+- Rama desplegada: develop (backend), main (frontend)
+- Auto-deploy: ON para ambas ramas
+- Logs: revisar que no haya errores en create_all de TurnoBarista
+
+================================================================================
+DECISIONES ARQUITECTÓNICAS CLAVE
+================================================================================
+
+1. Turno como unidad de responsabilidad (no barista individual)
+   → Refleja realidad: baristas comparten caja durante turno
+   → Simplifica auditoría: "quién fue responsable" = "todo el turno"
+
+2. Kiosk user es un usuario real en DB (no special case)
+   → Mismo JWT flow que barista autenticada
+   → Simplifica permisos: kiosk_user.rol = "barista"
+   → 10-year JWT: no re-login en kiosco (vs yearly tokens en admin)
+
+3. Negative stock permitido (post-entry)
+   → Realidad del café: venden primero, compran después
+   → FIFO consume real, negativo es deuda de entrada
+   → Simple: no hay "hold" ni "reservation", solo movimientos
+
+4. Real-time = 8s polling (no WebSocket)
+   → Kiosco + PC comparten mismo endpoint público
+   → Escala sin infrastructure compleja
+   → Trade-off: 8s de latencia aceptable para POS
+
+5. Desktop-first, mobile-compatible
+   → POS + Turno tabs usan same width (no sidebar, responsive)
+   → Barista puede atender en PC y consultar en phone
+   → Admin full desktop (complex dashboards)
+
+================================================================================
+PRÓXIMO CHECKPOINT
+================================================================================
+
+Después del deploy, validar:
+
+1. ¿Kiosk setup funciona?
+   - Ingresar PIN + Sede ID
+   - ¿Llega al POS sin error?
+   - ¿Token se guarda en localStorage?
+
+2. ¿Abrir turno funciona?
+   - ¿Muestra los 3 tipos de turno?
+   - ¿Carga baristas de la tienda?
+   - ¿Crea turno en DB con tipo_turno?
+   - ¿Muestra turno activo en GestionTurno?
+
+3. ¿Admin login funciona?
+   - Link "Admin →" visible en KioskSetup
+   - /admin-login muestra usuarios
+   - Login con PIN redirige a /dashboard
+
+4. ¿POS funciona?
+   - Ve turno activo (se actualiza cada 8s)
+   - Vende sin error (incluso stock negativo)
+
+================================================================================
+MONITOREO / LOGS
+================================================================================
+
+Render backend:
+  - Logs en Render dashboard
+  - Buscar errores en:
+    * POST /auth/kiosk-init (401?)
+    * POST /caja/abrir (tipo_turno null? baristas no creados?)
+    * GET /caja/activo-pub/{tienda_id} (turno.baristas vacío?)
+
+Cloudflare Pages:
+  - Console del navegador (F12)
+  - Network tab: ver requests a /api/v1/...
+  - localStorage: verificar token, kiosk flag
+
+Database:
+  - turno_baristas: ¿se están creando registros?
+  - caja_turnos: ¿tipo_turno tiene valor?
+
+================================================================================
+NOTA GENERAL
+================================================================================
+
+Este proyecto es un SISTEMA REAL para un café. Cada feature tiene que:
+- Funcionar sin errores (no "TODO: fix later")
+- Ser auditable (quién, cuándo, qué)
+- Ser intuitivo (baristas sin capacitación compleja)
+- Ser rápido (polling 8s, sin lag en POS)
+
+Estamos en la etapa de MVP with kiosk mode. El siguiente paso es validar
+que cada flujo funciona end-to-end antes de meter más features.
+
+================================================================================

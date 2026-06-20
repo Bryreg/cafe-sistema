@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { Lock, Wifi, AlertTriangle } from 'lucide-react'
+import { dark } from '../constants/darkTheme'
 
 export default function KioskSetup() {
   const { initKiosk } = useAuth()
@@ -24,7 +25,7 @@ export default function KioskSetup() {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6"
-      style={{ background: 'oklch(10% 0.005 60)' }}>
+      style={{ background: dark.bg }}>
       <div className="w-full max-w-sm space-y-6">
 
         {/* Logo / branding */}
@@ -32,30 +33,30 @@ export default function KioskSetup() {
           <div className="w-16 h-16 rounded-2xl bg-amber-600 flex items-center justify-center mx-auto mb-4">
             <Wifi size={28} className="text-white" />
           </div>
-          <h1 className="text-xl font-bold text-white">Activar dispositivo</h1>
-          <p className="text-sm mt-1" style={{ color: 'oklch(55% 0.01 60)' }}>
+          <h1 className="text-xl font-bold" style={{ color: dark.ink }}>Activar dispositivo</h1>
+          <p className="text-sm mt-1" style={{ color: dark.inkMuted }}>
             Ingresa el PIN del sistema para iniciar el modo kiosco
           </p>
         </div>
 
         <div className="rounded-2xl p-5 space-y-4"
-          style={{ background: 'oklch(15% 0.005 60)', border: '1px solid oklch(22% 0.01 60)' }}>
+          style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
 
           <div>
-            <label className="text-xs font-bold uppercase tracking-widest text-amber-400 block mb-2">
+            <label className="text-xs font-bold uppercase tracking-widest block mb-2" style={{ color: dark.amber }}>
               Sede (ID)
             </label>
             <input
               type="number"
               value={tiendaId}
               onChange={e => setTiendaId(e.target.value)}
-              className="w-full rounded-xl px-4 py-3 text-sm font-mono bg-transparent border outline-none text-white"
-              style={{ borderColor: 'oklch(28% 0.01 60)' }}
+              className="w-full rounded-xl px-4 py-3 text-sm font-mono bg-transparent border outline-none"
+              style={{ borderColor: dark.border, color: dark.ink }}
             />
           </div>
 
           <div>
-            <label className="text-xs font-bold uppercase tracking-widest text-amber-400 block mb-2">
+            <label className="text-xs font-bold uppercase tracking-widest block mb-2" style={{ color: dark.amber }}>
               PIN de sistema
             </label>
             <input
@@ -64,14 +65,14 @@ export default function KioskSetup() {
               onChange={e => setPin(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && activar()}
               placeholder="••••••••"
-              className="w-full rounded-xl px-4 py-3 text-sm bg-transparent border outline-none text-white"
-              style={{ borderColor: 'oklch(28% 0.01 60)' }}
+              className="w-full rounded-xl px-4 py-3 text-sm bg-transparent border outline-none"
+              style={{ borderColor: dark.border, color: dark.ink }}
             />
           </div>
 
           {error && (
             <div className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs"
-              style={{ background: 'oklch(20% 0.08 25)', border: '1px solid oklch(40% 0.16 25)', color: 'oklch(72% 0.20 25)' }}>
+              style={{ background: dark.dangerTint, border: `1px solid ${dark.dangerDim}`, color: dark.danger }}>
               <AlertTriangle size={12} /> {error}
             </div>
           )}
@@ -88,15 +89,15 @@ export default function KioskSetup() {
         </div>
 
         <div className="flex items-center justify-between">
-          <p className="text-xs" style={{ color: 'oklch(40% 0.01 60)' }}>
+          <p className="text-xs" style={{ color: dark.inkSubtle }}>
             El admin configura el KIOSK_PIN en el servidor
           </p>
           <Link
             to="/admin-login"
             className="text-xs font-semibold transition-colors"
-            style={{ color: 'oklch(52% 0.01 60)' }}
-            onMouseOver={e => (e.currentTarget.style.color = 'oklch(72% 0.01 60)')}
-            onMouseOut={e => (e.currentTarget.style.color = 'oklch(52% 0.01 60)')}
+            style={{ color: dark.inkMuted }}
+            onMouseOver={e => (e.currentTarget.style.color = dark.ink)}
+            onMouseOut={e => (e.currentTarget.style.color = dark.inkMuted)}
           >
             Admin →
           </Link>

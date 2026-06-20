@@ -74,7 +74,7 @@ export default function ContadorEfectivo({ onTotal }: { onTotal: (total: number)
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold uppercase tracking-wide" style={{ color: dark.green }}>Billetes</span>
           {totalBilletes > 0 && (
-            <span className="text-xs font-bold px-2 py-0.5 rounded-full font-mono" style={{ background: 'oklch(22% 0.05 155)', color: dark.green }}>
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full font-mono" style={{ background: dark.greenTint, color: dark.green }}>
               {fmt(totalBilletes)}
             </span>
           )}
@@ -99,7 +99,7 @@ export default function ContadorEfectivo({ onTotal }: { onTotal: (total: number)
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold uppercase tracking-wide" style={{ color: dark.amber }}>Monedas</span>
           {totalMonedas > 0 && (
-            <span className="text-xs font-bold px-2 py-0.5 rounded-full font-mono" style={{ background: 'oklch(22% 0.05 70)', color: dark.amber }}>
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full font-mono" style={{ background: dark.amberTint, color: dark.amber }}>
               {fmt(totalMonedas)}
             </span>
           )}
@@ -120,7 +120,7 @@ export default function ContadorEfectivo({ onTotal }: { onTotal: (total: number)
       {/* Total */}
       <div className="px-4 py-4" style={{
         borderTop: `2px solid ${hayAlgo ? dark.amberDim : dark.border}`,
-        background: hayAlgo ? 'oklch(16% 0.04 65)' : dark.surface,
+        background: hayAlgo ? dark.amberTint : dark.surface,
       }}>
         <div className="flex items-center justify-between">
           <span className="text-sm font-semibold" style={{ color: dark.inkMuted }}>Total contado</span>

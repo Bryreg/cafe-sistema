@@ -33,8 +33,8 @@ function PanelCuadre({ label, contado, sistema }: {
   const cuadra = diff === 0
   return (
     <div className="rounded-2xl p-4 space-y-2" style={{
-      background: cuadra ? 'oklch(18% 0.06 155)' : 'oklch(18% 0.07 25)',
-      border: `1.5px solid ${cuadra ? 'oklch(32% 0.10 155)' : 'oklch(38% 0.14 25)'}`,
+      background: cuadra ? dark.greenTint : dark.dangerTint,
+      border: `1.5px solid ${cuadra ? dark.greenDim : dark.dangerDim}`,
     }}>
       <p className="text-[10px] font-bold uppercase tracking-widest" style={{
         color: cuadra ? dark.green : dark.danger,
@@ -145,7 +145,7 @@ export default function Cierre() {
         <button
           onClick={() => navigate('/hub')}
           className="w-7 h-7 rounded-lg flex items-center justify-center"
-          style={{ background: 'rgba(255,255,255,0.06)', color: dark.inkMuted }}
+          style={{ background: dark.surfaceAlt, color: dark.inkMuted }}
           aria-label="Volver"
         >
           <ChevronLeft size={16} />
@@ -200,7 +200,7 @@ export default function Cierre() {
 
         {error && (
           <div className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-[12px]"
-            style={{ background: 'oklch(20% 0.08 25)', border: `1px solid ${dark.dangerDim}`, color: dark.danger }}>
+            style={{ background: dark.dangerTint, border: `1px solid ${dark.dangerDim}`, color: dark.danger }}>
             <AlertTriangle size={13} /> {error}
           </div>
         )}
@@ -219,13 +219,13 @@ export default function Cierre() {
             <button
               onClick={() => setShowBilletes(!showBilletes)}
               className="w-full flex items-center justify-between px-4 py-2.5 transition-colors"
-              style={{ background: 'oklch(20% 0.06 155 / 0.5)' }}
+              style={{ background: 'oklch(94% 0.04 155 / 0.6)' }}
             >
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: dark.green }}>Billetes</span>
                 {totalBilletes > 0 && (
                   <span className="text-[11px] font-bold font-mono px-2 py-0.5 rounded-full"
-                    style={{ background: 'oklch(26% 0.07 155)', color: dark.green }}>
+                    style={{ background: dark.greenTint, color: dark.green }}>
                     {fmt(totalBilletes)}
                   </span>
                 )}
@@ -246,13 +246,13 @@ export default function Cierre() {
             <button
               onClick={() => setShowMonedas(!showMonedas)}
               className="w-full flex items-center justify-between px-4 py-2.5 transition-colors"
-              style={{ background: 'oklch(20% 0.05 70 / 0.4)' }}
+              style={{ background: 'oklch(95% 0.045 70 / 0.6)' }}
             >
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: dark.amber }}>Monedas</span>
                 {totalMonedas > 0 && (
                   <span className="text-[11px] font-bold font-mono px-2 py-0.5 rounded-full"
-                    style={{ background: 'oklch(26% 0.07 65)', color: dark.amber }}>
+                    style={{ background: dark.amberTint, color: dark.amber }}>
                     {fmt(totalMonedas)}
                   </span>
                 )}
@@ -326,8 +326,8 @@ export default function Cierre() {
 
         {/* Monto a consignar */}
         <div className="rounded-2xl p-4" style={{
-          background: 'oklch(16% 0.09 75)',
-          border: '2px solid oklch(48% 0.20 75)',
+          background: 'oklch(96% 0.07 78)',
+          border: `2px solid ${dark.amber}`,
         }}>
           <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{ color: dark.amber }}>
             Monto a consignar al banco
@@ -350,7 +350,7 @@ export default function Cierre() {
               </div>
             )}
           </div>
-          <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: '1.5px solid oklch(38% 0.18 75)' }}>
+          <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: `1.5px solid ${dark.amberDim}` }}>
             <span className="text-sm font-bold" style={{ color: dark.amber }}>Total a consignar</span>
             <span className="text-2xl font-bold font-mono" style={{ color: dark.amber, letterSpacing: '-0.5px' }}>
               {fmt(Math.max(0, turno.total_efectivo + turno.ingresos_movimientos - turno.egresos_movimientos))}
@@ -410,8 +410,8 @@ export default function Cierre() {
           disabled={!canSubmit || loading}
           className="w-full py-4 rounded-2xl text-[15px] font-bold flex items-center justify-center gap-2 transition-all"
           style={{
-            background: canSubmit ? dark.greenDim : 'oklch(20% 0.04 155)',
-            color: '#fff',
+            background: canSubmit ? dark.green : dark.surfaceAlt,
+            color: canSubmit ? '#fff' : dark.inkSubtle,
             opacity: !canSubmit || loading ? 0.55 : 1,
             cursor: !canSubmit ? 'not-allowed' : 'pointer',
           }}
@@ -437,7 +437,7 @@ export default function Cierre() {
           >
             <div className="text-center">
               <div className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3"
-                style={{ background: 'oklch(20% 0.06 155)' }}>
+                style={{ background: dark.greenTint }}>
                 <Lock size={20} style={{ color: dark.green }} />
               </div>
               <p className="text-base font-bold" style={{ color: dark.ink }}>¿Cerrar turno?</p>
@@ -460,7 +460,7 @@ export default function Cierre() {
               <button
                 onClick={() => { setShowConfirmModal(false); cerrar() }}
                 className="flex-1 py-3 rounded-xl text-sm font-bold transition-colors"
-                style={{ background: dark.greenDim, color: '#fff' }}
+                style={{ background: dark.green, color: '#fff' }}
               >
                 Sí, cerrar turno
               </button>

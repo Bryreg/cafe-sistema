@@ -19,16 +19,18 @@ export default function FilaDenom({
   valor, label, isBillete, cantidad, onChange, accentColor = 'amber',
 }: Props) {
   const subtotal = valor * cantidad
-  const accent = accentColor === 'green' ? dark.greenDim : dark.amberDim
+  // Acento fuerte: sirve como borde de foco y como fondo del botón "+" con
+  // texto claro (dark.bg) encima. En modo día el acento debe ser saturado.
+  const accent = accentColor === 'green' ? dark.green : dark.amber
 
   return (
     <div className="flex items-center gap-3 px-4 py-2.5 transition-colors" style={{
       background: cantidad > 0
-        ? (isBillete ? 'oklch(18% 0.05 155 / 0.6)' : 'oklch(18% 0.05 70 / 0.6)')
+        ? (isBillete ? 'oklch(94% 0.04 155 / 0.6)' : 'oklch(95% 0.045 70 / 0.6)')
         : 'transparent',
     }}>
       <div className="w-16 shrink-0 text-center py-1 rounded-lg text-[11px] font-bold" style={{
-        background: isBillete ? 'oklch(26% 0.07 155)' : 'oklch(26% 0.07 65)',
+        background: isBillete ? dark.greenTint : dark.amberTint,
         color: isBillete ? dark.green : dark.amber,
       }}>
         {label}

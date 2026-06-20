@@ -129,7 +129,7 @@ export default function GestionTurno() {
               <button
                 onClick={() => navigate('/pos')}
                 className="w-full py-4 rounded-2xl font-bold text-[15px] text-white flex items-center justify-center gap-2"
-                style={{ background: dark.greenDim }}>
+                style={{ background: dark.green }}>
                 <Check size={18} strokeWidth={2.5} /> Ir al POS
               </button>
             ) : (
@@ -140,7 +140,7 @@ export default function GestionTurno() {
                 {!turno.tiene_conteo_apertura && !turno.dia_tiene_conteo_apertura && (
                   <button onClick={() => navigate('/conteo-apertura')}
                     className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left"
-                    style={{ background: 'rgba(255,255,255,0.04)' }}>
+                    style={{ background: dark.surfaceAlt }}>
                     {turno.tiene_conteo_apertura
                       ? <Check size={15} style={{ color: dark.green }} />
                       : <Circle size={15} style={{ color: dark.amber }} />}
@@ -159,7 +159,7 @@ export default function GestionTurno() {
                 <div className="flex flex-wrap gap-2">
                   {turno.baristas.map(b => (
                     <span key={b} className="px-3 py-1 rounded-full text-xs font-semibold"
-                      style={{ background: dark.amberDim, color: dark.amber }}>
+                      style={{ background: dark.amberTint, color: dark.amber }}>
                       {b}
                     </span>
                   ))}
@@ -200,12 +200,12 @@ export default function GestionTurno() {
                   onClick={() => navigate(item.to)}
                   className="w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors"
                   style={{
-                    background: item.done ? 'oklch(18% 0.03 155 / 0.3)' : dark.surface,
+                    background: item.done ? 'oklch(94% 0.03 155 / 0.5)' : dark.surface,
                     borderTop: i > 0 ? `1px solid ${dark.border}` : undefined,
                   }}
                 >
                   <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
-                    style={{ background: item.done ? dark.greenDim : 'rgba(255,255,255,0.06)' }}>
+                    style={{ background: item.done ? dark.green : dark.surfaceAlt }}>
                     {item.done
                       ? <Check size={14} color="#fff" strokeWidth={2.5} />
                       : <Circle size={14} style={{ color: dark.inkSubtle }} />}
@@ -252,7 +252,7 @@ export default function GestionTurno() {
             <button
               onClick={() => setStep('tipo')}
               className="w-full py-4 rounded-2xl font-bold text-[15px] text-white"
-              style={{ background: dark.greenDim }}>
+              style={{ background: dark.green }}>
               Abrir turno
             </button>
           </div>
@@ -272,7 +272,7 @@ export default function GestionTurno() {
                 style={{ background: dark.surface, border: `1px solid ${dark.border}` }}
               >
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                  style={{ background: dark.amberDim }}>
+                  style={{ background: dark.amberTint }}>
                   <Icon size={18} style={{ color: dark.amber }} />
                 </div>
                 <div className="flex-1">
@@ -367,7 +367,7 @@ export default function GestionTurno() {
 
             {error && (
               <div className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-[12px]"
-                style={{ background: 'oklch(20% 0.08 25)', border: `1px solid ${dark.dangerDim}`, color: dark.danger }}>
+                style={{ background: dark.dangerTint, border: `1px solid ${dark.dangerDim}`, color: dark.danger }}>
                 <AlertTriangle size={13} /> {error}
               </div>
             )}
@@ -376,7 +376,7 @@ export default function GestionTurno() {
               onClick={abrirTurno}
               disabled={saving}
               className="w-full py-4 rounded-2xl font-bold text-[15px] text-white disabled:opacity-50 flex items-center justify-center gap-2"
-              style={{ background: dark.greenDim }}>
+              style={{ background: dark.green }}>
               <Check size={18} strokeWidth={2.5} />
               {saving ? 'Abriendo...' : 'Confirmar apertura'}
             </button>

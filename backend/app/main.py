@@ -73,7 +73,8 @@ with engine.connect() as _conn:
         # Turno: tipo de turno (apertura/intermedio/cierre)
         "ALTER TABLE caja_turnos ADD COLUMN tipo_turno VARCHAR(20)",
         # Gate de operación: cuadre de llegada hecho (habilita el POS junto con el conteo de apertura)
-        "ALTER TABLE caja_turnos ADD COLUMN tiene_cuadre_llegada BOOLEAN DEFAULT 0",
+        # IMPORTANTE: DEFAULT FALSE (no 0) — Postgres rechaza '0' como default de BOOLEAN.
+        "ALTER TABLE caja_turnos ADD COLUMN tiene_cuadre_llegada BOOLEAN DEFAULT FALSE",
         # Fase 1: enlace al día operativo. SIN REFERENCES porque dias_operativos la crea
         # create_all() DESPUÉS de este loop; en Postgres un REFERENCES a tabla inexistente
         # abortaría el ALTER y la columna no se crearía. El FK real lo define el modelo.

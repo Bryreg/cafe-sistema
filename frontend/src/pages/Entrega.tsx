@@ -14,7 +14,7 @@ function StepHeader({ n, title, done, active }: { n: number; title: string; done
     <div className="flex items-center gap-2.5 mb-2.5">
       <div className="w-[22px] h-[22px] rounded-full flex items-center justify-center shrink-0 text-[11px] font-bold"
         style={{
-          background: done ? dark.greenDim : active ? dark.amberDim : 'rgba(255,255,255,0.06)',
+          background: done ? dark.green : active ? dark.amber : dark.surfaceAlt,
           color: done || active ? '#fff' : dark.inkSubtle,
         }}>
         {done ? <Check size={12} strokeWidth={2.5} /> : n}
@@ -97,7 +97,7 @@ export default function Entrega() {
         <button
           onClick={() => navigate('/hub')}
           className="w-7 h-7 rounded-lg flex items-center justify-center"
-          style={{ background: 'rgba(255,255,255,0.06)', color: dark.inkMuted }}
+          style={{ background: dark.surfaceAlt, color: dark.inkMuted }}
         >
           <ChevronLeft size={16} />
         </button>
@@ -119,7 +119,7 @@ export default function Entrega() {
 
         {/* Hero */}
         <div className="rounded-2xl p-4"
-          style={{ background: 'oklch(16% 0.015 55)', border: `1px solid ${dark.border}` }}>
+          style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
           <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
             Efectivo esperado en caja
           </p>
@@ -144,7 +144,7 @@ export default function Entrega() {
 
         {error && (
           <div className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-[12px]"
-            style={{ background: 'oklch(20% 0.08 25)', border: `1px solid ${dark.dangerDim}`, color: dark.danger }}>
+            style={{ background: dark.dangerTint, border: `1px solid ${dark.dangerDim}`, color: dark.danger }}>
             <AlertTriangle size={13} /> {error}
           </div>
         )}
@@ -157,8 +157,8 @@ export default function Entrega() {
           {difEfectivo !== null && (
             <div className="rounded-xl flex items-center justify-between px-4 py-2.5"
               style={{
-                background: difEfectivo === 0 ? 'oklch(22% 0.08 155 / 0.4)' : 'oklch(22% 0.12 25 / 0.4)',
-                border: `1px solid ${difEfectivo === 0 ? 'oklch(38% 0.10 155 / 0.6)' : 'oklch(40% 0.16 25 / 0.6)'}`,
+                background: difEfectivo === 0 ? 'oklch(94% 0.05 155 / 0.5)' : 'oklch(95% 0.06 25 / 0.5)',
+                border: `1px solid ${difEfectivo === 0 ? 'oklch(70% 0.10 155 / 0.7)' : 'oklch(72% 0.14 25 / 0.7)'}`,
               }}>
               <span className="text-[11px] flex items-center gap-1.5" style={{ color: dark.inkMuted }}>
                 {difEfectivo === 0
@@ -198,8 +198,8 @@ export default function Entrega() {
           {difTarjeta !== null && (
             <div className="rounded-xl flex items-center justify-between px-4 py-2.5"
               style={{
-                background: difTarjeta === 0 ? 'oklch(22% 0.08 155 / 0.4)' : 'oklch(22% 0.12 25 / 0.4)',
-                border: `1px solid ${difTarjeta === 0 ? 'oklch(38% 0.10 155 / 0.6)' : 'oklch(40% 0.16 25 / 0.6)'}`,
+                background: difTarjeta === 0 ? 'oklch(94% 0.05 155 / 0.5)' : 'oklch(95% 0.06 25 / 0.5)',
+                border: `1px solid ${difTarjeta === 0 ? 'oklch(70% 0.10 155 / 0.7)' : 'oklch(72% 0.14 25 / 0.7)'}`,
               }}>
               <span className="text-[11px] flex items-center gap-1.5" style={{ color: dark.inkMuted }}>
                 {difTarjeta === 0
@@ -263,8 +263,8 @@ export default function Entrega() {
           disabled={!canSave || saving}
           className="w-full py-4 rounded-2xl text-[15px] font-bold flex items-center justify-center gap-2 transition-all"
           style={{
-            background: canSave ? dark.greenDim : 'oklch(20% 0.04 155)',
-            color: '#fff',
+            background: canSave ? dark.green : dark.surfaceAlt,
+            color: canSave ? '#fff' : dark.inkSubtle,
             opacity: !canSave || saving ? 0.55 : 1,
             cursor: !canSave ? 'not-allowed' : 'pointer',
           }}

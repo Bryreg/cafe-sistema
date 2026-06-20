@@ -1,15 +1,31 @@
+// Tema DÍA del kiosko (modo claro).
+//
+// Nota: el export sigue llamándose `dark` por compatibilidad con los imports
+// existentes en las pantallas operativas (GestionTurno, Cierre, Entrega,
+// ContadorEfectivo, ConteoInventario, FilaDenom, OperativeBanner). Los VALORES
+// son de modo día: superficies claras, texto oscuro y acentos saturados que
+// resaltan sobre fondo claro. Renombrar el token es deuda aparte.
+//
+// Reglas de contraste (día):
+//  - Acentos (amber/green/danger): oscuros y saturados → legibles sobre claro.
+//  - *Dim: versión suave del acento (bordes, subtexto).
+//  - *Tint: fondo de acento muy claro (badges, paneles destacados).
 export const dark = {
-  bg:         'oklch(10% 0.005 60)',
-  surface:    'oklch(14% 0.008 60)',
-  surfaceAlt: 'oklch(17% 0.008 60)',
-  border:     'oklch(22% 0.01 60)',
-  ink:        'oklch(94% 0.005 60)',
-  inkMuted:   'oklch(60% 0.01 60)',
-  inkSubtle:  'oklch(40% 0.01 60)',
-  amber:      'oklch(82% 0.13 75)',
-  amberDim:   'oklch(68% 0.14 65)',
-  green:      'oklch(78% 0.13 155)',
-  greenDim:   'oklch(48% 0.12 155)',
-  danger:     'oklch(75% 0.16 25)',
-  dangerDim:  'oklch(45% 0.16 25)',
+  bg:         'oklch(98% 0.006 75)',    // fondo de pantalla (igual al body)
+  surface:    'oklch(99.5% 0.003 75)',  // tarjetas / superficies
+  surfaceAlt: 'oklch(96.5% 0.008 75)',  // cabeceras de sección / filas alternas
+  border:     'oklch(90% 0.012 75)',    // bordes suaves
+  ink:        'oklch(25% 0.01 60)',     // texto principal (oscuro)
+  inkMuted:   'oklch(45% 0.012 60)',    // texto secundario
+  inkSubtle:  'oklch(62% 0.012 60)',    // texto terciario / placeholders
+  amber:      'oklch(56% 0.14 65)',     // acento ámbar (texto/icono)
+  amberDim:   'oklch(72% 0.11 68)',     // ámbar suave (bordes/subtexto)
+  green:      'oklch(50% 0.13 155)',    // acento verde
+  greenDim:   'oklch(68% 0.12 155)',    // verde suave
+  danger:     'oklch(54% 0.18 25)',     // acento rojo
+  dangerDim:  'oklch(70% 0.15 25)',     // rojo suave
+  // Fondos de acento (tints claros) para badges y paneles destacados
+  greenTint:  'oklch(94% 0.04 155)',
+  amberTint:  'oklch(95% 0.045 70)',
+  dangerTint: 'oklch(95% 0.04 25)',
 }

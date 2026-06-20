@@ -132,14 +132,14 @@ export default function ConteoInventario({ tipo }: Props) {
           <div className="flex gap-2">
             {totalOk > 0 && (
               <span className="px-3 py-1 rounded-full text-xs font-bold" style={{
-                background: 'oklch(18% 0.05 155)', color: dark.green,
+                background: dark.greenTint, color: dark.green,
               }}>
                 ✓ {totalOk} correctos
               </span>
             )}
             {totalDifs > 0 && (
               <span className="px-3 py-1 rounded-full text-xs font-bold" style={{
-                background: 'oklch(18% 0.05 25)', color: dark.danger,
+                background: dark.dangerTint, color: dark.danger,
               }}>
                 ⚠ {totalDifs} diferencia{totalDifs > 1 ? 's' : ''}
               </span>
@@ -149,7 +149,7 @@ export default function ConteoInventario({ tipo }: Props) {
 
         {error && (
           <div className="flex items-center gap-2 text-sm px-4 py-3 rounded-xl"
-            style={{ background: 'oklch(18% 0.05 25)', color: dark.danger, border: `1px solid ${dark.dangerDim}` }}>
+            style={{ background: dark.dangerTint, color: dark.danger, border: `1px solid ${dark.dangerDim}` }}>
             <AlertTriangle size={14} /> {error}
           </div>
         )}
@@ -159,7 +159,7 @@ export default function ConteoInventario({ tipo }: Props) {
           onClick={todoOk}
           className="w-full py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
           style={{
-            background: 'oklch(18% 0.05 155)',
+            background: dark.greenTint,
             color: dark.green,
             border: `2px dashed ${dark.greenDim}`,
           }}
@@ -183,8 +183,8 @@ export default function ConteoInventario({ tipo }: Props) {
               const filled = val !== undefined
 
               let rowBg = 'transparent'
-              if (filled && diff === 0) rowBg = 'oklch(16% 0.04 155 / 0.5)'
-              if (filled && diff !== 0) rowBg = 'oklch(16% 0.04 25 / 0.5)'
+              if (filled && diff === 0) rowBg = 'oklch(94% 0.04 155 / 0.5)'
+              if (filled && diff !== 0) rowBg = 'oklch(95% 0.04 25 / 0.5)'
 
               return (
                 <div key={item.producto_id} className="px-4 py-3.5 transition-colors"
@@ -254,7 +254,7 @@ export default function ConteoInventario({ tipo }: Props) {
 
         {totalDifs > 0 && (
           <div className="px-4 py-3 rounded-xl text-sm" style={{
-            background: 'oklch(16% 0.04 65)',
+            background: dark.amberTint,
             border: `1px solid ${dark.amberDim}`,
             color: dark.amber,
           }}>

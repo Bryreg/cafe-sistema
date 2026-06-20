@@ -152,7 +152,7 @@ export default function OperativeBanner() {
 
               {/* Novedades pendientes (continuidad / handoff) */}
               {novedades.length > 0 && (
-                <div className="rounded-2xl p-3" style={{ background: 'oklch(20% 0.06 55)', border: `1px solid ${dark.amberDim}` }}>
+                <div className="rounded-2xl p-3" style={{ background: dark.amberTint, border: `1px solid ${dark.amberDim}` }}>
                   <p className="text-[11px] font-bold mb-2 flex items-center gap-1.5" style={{ color: dark.amber }}>
                     <AlertTriangle size={12} /> Novedades sin resolver ({novedades.length})
                   </p>

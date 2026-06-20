@@ -241,6 +241,20 @@ def get_tickets_recientes(db: Session, tienda_id: int, dias: int = 7, limit: int
     )
 
 
+def get_tickets_historial(db: Session, tienda_id: int, fecha_desde: date | None = None,
+                          fecha_hasta: date | None = None, limit: int = 1000):
+    """Historial de ventas (tickets individuales) en un rango — para consultar en Informes."""
+    desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
+    return (
+        db.query(Ticket)
+        .options(joinedload(Ticket.items))
+        .filter(Ticket.tienda_id == tienda_id, Ticket.fecha >= desde, Ticket.fecha <= hasta)
+        .order_by(Ticket.fecha.desc())
+        .limit(limit)
+        .all()
+    )
+
+
 def set_precio(db: Session, producto_id: int, precio_venta: float):
     if precio_venta is None or precio_venta < 0:
         raise HTTPException(status_code=400, detail="El precio no puede ser negativo")

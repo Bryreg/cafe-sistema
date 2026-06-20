@@ -60,16 +60,14 @@ def listar_usuarios(db: Session = Depends(get_db), _: Usuario = Depends(require_
 
 @router.get("/baristas", response_model=List[UsuarioPublic])
 def listar_baristas(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
-    """Baristas activas de la sede del usuario actual, para elegir quiénes entran al turno.
+    """Baristas activas para elegir quiénes entran al turno.
 
-    Reemplaza el uso público de /auth/usuarios. Filtra por la sede del token (kiosko) y
-    EXCLUYE el usuario kiosko/dispositivo (que no es una barista real)."""
-    if not user.tienda_id:
-        return []
+    Las baristas ROTAN entre sedes, así que se listan TODAS las activas (no se filtra por
+    la sede del kiosko). Excluye el usuario kiosko/dispositivo (que no es una barista real).
+    Reemplaza el uso público de /auth/usuarios."""
     return db.query(Usuario).filter(
         Usuario.activo == True,
         Usuario.rol == RolEnum.barista,
-        Usuario.tienda_id == user.tienda_id,
         ~Usuario.email.like("kiosk@%"),
     ).order_by(Usuario.nombre).all()
 

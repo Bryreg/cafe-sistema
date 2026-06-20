@@ -21,6 +21,12 @@ def turno_activo_publico(tienda_id: int, db: Session = Depends(get_db)):
     """Turno activo sin autenticación — solo lectura para el kiosco."""
     return svc.get_turno_activo(db, tienda_id)
 
+
+@router.get("/dia-operativo/{tienda_id}/actual")
+def dia_operativo_actual(tienda_id: int, db: Session = Depends(get_db)):
+    """Contexto del día operativo actual (continuidad) — lectura pública para el kiosco."""
+    return svc.get_dia_operativo_actual(db, tienda_id)
+
 @router.get("/{turno_id}/flujo", response_model=FlujoCajaOut)
 def get_flujo(turno_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     ensure_turno_access(db, user, turno_id)

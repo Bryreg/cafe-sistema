@@ -1,26 +1,58 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from fastapi import HTTPException
-from app.models.models import CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum, EntregaTurno, Consignacion, EstadoConsignacionEnum, TurnoBarista, Usuario
+from app.models.models import (CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum,
+                               EntregaTurno, Consignacion, EstadoConsignacionEnum, TurnoBarista,
+                               Usuario, DiaOperativo, EstadoDiaEnum)
+
+# Colombia (UTC-5). Fase posterior: configurable por sede (ConfiguracionSede.timezone).
+TZ_OFFSET_HORAS = -5
+
+
+def _fecha_operativa() -> date:
+    """Fecha del día-negocio en hora local, no UTC. Evita que un cierre pasada la
+    medianoche caiga en el día equivocado (el bug que la fecha-calendario UTC produce)."""
+    return (datetime.utcnow() + timedelta(hours=TZ_OFFSET_HORAS)).date()
+
+
+def get_or_create_dia(db: Session, tienda_id: int, usuario_id: int) -> "DiaOperativo":
+    """Día operativo de hoy para la tienda; lo crea si no existe (lazy, al abrir el 1er turno)."""
+    fecha = _fecha_operativa()
+    dia = db.query(DiaOperativo).filter(
+        DiaOperativo.tienda_id == tienda_id,
+        DiaOperativo.fecha_operativa == fecha,
+    ).first()
+    if not dia:
+        dia = DiaOperativo(
+            tienda_id=tienda_id, fecha_operativa=fecha,
+            estado=EstadoDiaEnum.abierto, abierto_por_id=usuario_id,
+        )
+        db.add(dia)
+        db.flush()
+    return dia
 from app.services import audit, notificaciones
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-def _hay_conteo_apertura_reciente(db: Session, tienda_id: int) -> bool:
-    """¿Hubo un conteo de apertura en las últimas 18h en esta tienda?
+def _hay_conteo_apertura_en_dia(db: Session, turno) -> bool:
+    """¿Ya hubo un conteo de apertura en el día operativo de este turno?
 
-    Permite que los turnos intermedio/cierre hereden la línea base del día sin
-    repetir el conteo de apertura. La ventana de 18h cubre un día operativo
-    completo (apertura temprano → cierre tarde) y evita el borde de zona horaria
-    de comparar por fecha-calendario. (Fase 1 lo hará exacto vía dia_operativo_id.)
+    Permite que intermedio/cierre hereden la línea base del día sin repetir el
+    conteo. Si el turno tiene día operativo (Fase 1) se consulta exacto por
+    dia_operativo_id; si no (turno legacy), se usa una ventana de 18h como fallback.
     """
+    if turno.dia_operativo_id:
+        return db.query(CajaTurno).filter(
+            CajaTurno.dia_operativo_id == turno.dia_operativo_id,
+            CajaTurno.tiene_conteo_apertura == True,
+        ).first() is not None
     desde = datetime.utcnow() - timedelta(hours=18)
     return db.query(CajaTurno).filter(
-        CajaTurno.tienda_id == tienda_id,
+        CajaTurno.tienda_id == turno.tienda_id,
         CajaTurno.fecha_apertura >= desde,
         CajaTurno.tiene_conteo_apertura == True,
     ).first() is not None
@@ -42,7 +74,7 @@ def _es_operativo(db: Session, turno) -> bool:
     if turno.tiene_conteo_apertura:
         return True
     if turno.tipo_turno in ("intermedio", "cierre"):
-        return _hay_conteo_apertura_reciente(db, turno.tienda_id)
+        return _hay_conteo_apertura_en_dia(db, turno)
     return False
 
 
@@ -135,6 +167,16 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
         usuarios = db.query(Usuario).filter(Usuario.id.in_(barista_ids), Usuario.activo == True).all()
         for u in usuarios:
             db.add(TurnoBarista(turno_id=turno.id, usuario_id=u.id, nombre_snapshot=u.nombre))
+
+    # Fase 1: enlazar el turno al día operativo (continuidad entre turnos)
+    dia = get_or_create_dia(db, tienda_id, usuario_id)
+    turno.dia_operativo_id = dia.id
+    anteriores = db.query(CajaTurno).filter(
+        CajaTurno.dia_operativo_id == dia.id,
+        CajaTurno.id != turno.id,
+    ).order_by(CajaTurno.fecha_apertura.desc()).all()
+    turno.secuencia_dia = len(anteriores) + 1
+    turno.turno_anterior_id = anteriores[0].id if anteriores else None
 
     _tick_checklist(db, tienda_id, apertura_realizada=True)
     audit.registrar(
@@ -382,6 +424,50 @@ def get_movimientos(db: Session, turno_id: int):
     return db.query(MovimientoCaja).filter(
         MovimientoCaja.caja_turno_id == turno_id
     ).order_by(MovimientoCaja.fecha.desc()).all()
+
+
+def get_dia_operativo_actual(db: Session, tienda_id: int):
+    """Contexto del día operativo de hoy: resumen + turnos, para continuidad.
+
+    Devuelve None si aún no se abrió ningún turno hoy. Lectura para el kiosko/admin.
+    """
+    fecha = _fecha_operativa()
+    dia = db.query(DiaOperativo).filter(
+        DiaOperativo.tienda_id == tienda_id,
+        DiaOperativo.fecha_operativa == fecha,
+    ).first()
+    if not dia:
+        return None
+    turnos = db.query(CajaTurno).filter(
+        CajaTurno.dia_operativo_id == dia.id
+    ).order_by(CajaTurno.secuencia_dia).all()
+
+    def _val(v):
+        return v.value if hasattr(v, "value") else v
+
+    return {
+        "id": dia.id,
+        "tienda_id": dia.tienda_id,
+        "fecha_operativa": dia.fecha_operativa.isoformat(),
+        "estado": _val(dia.estado),
+        "total_ventas": round(sum(t.total_ventas or 0.0 for t in turnos), 2),
+        "total_efectivo": round(sum(t.total_efectivo or 0.0 for t in turnos), 2),
+        "total_tarjeta": round(sum(t.total_tarjeta or 0.0 for t in turnos), 2),
+        "n_turnos": len(turnos),
+        "turnos": [
+            {
+                "id": t.id,
+                "tipo_turno": _val(t.tipo_turno) if t.tipo_turno else None,
+                "secuencia_dia": t.secuencia_dia,
+                "estado": _val(t.estado),
+                "total_ventas": round(t.total_ventas or 0.0, 2),
+                "tiene_conteo_apertura": t.tiene_conteo_apertura,
+                "fecha_apertura": t.fecha_apertura.isoformat() if t.fecha_apertura else None,
+                "fecha_cierre": t.fecha_cierre.isoformat() if t.fecha_cierre else None,
+            }
+            for t in turnos
+        ],
+    }
 
 
 def get_flujo_turno(db: Session, turno_id: int) -> dict | None:

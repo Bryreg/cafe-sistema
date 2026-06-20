@@ -5,7 +5,7 @@ import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
 import {
   Menu, X, Check, Circle, AlertTriangle, ClipboardList, Megaphone,
-  Trash2, Package, ShoppingCart, Coins, Truck, ArrowRightLeft, Lock, LogOut,
+  Trash2, Package, ShoppingCart, Coins, Truck, Thermometer, ArrowRightLeft, Lock, LogOut,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 
@@ -24,7 +24,6 @@ const QUICK = [
   { label: 'Inventario',  to: '/inventario', icon: Package },
   { label: 'Pedido',      to: '/pedido',     icon: ShoppingCart },
   { label: 'Sencilla',    to: '/sencilla',   icon: Coins },
-  { label: 'Recibir',     to: '/ingresos',   icon: Truck },
 ]
 
 export default function OperativeBanner() {
@@ -33,7 +32,7 @@ export default function OperativeBanner() {
   const navigate = useNavigate()
 
   const [open, setOpen] = useState(false)
-  const [modal, setModal] = useState<null | 'rutinas' | 'novedad'>(null)
+  const [modal, setModal] = useState<null | 'rutinas' | 'novedad' | 'recepcion' | 'temperatura'>(null)
   const [pendientes, setPendientes] = useState<Pendiente[]>([])
   const [novedades, setNovedades] = useState<Novedad[]>([])
 
@@ -164,6 +163,18 @@ export default function OperativeBanner() {
                   <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Novedad</p>
                   <p className="text-[11px]" style={{ color: dark.inkSubtle }}>registrar</p>
                 </button>
+                <button onClick={() => setModal('recepcion')}
+                  className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
+                  <Truck size={18} style={{ color: dark.amber }} />
+                  <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Recibir</p>
+                  <p className="text-[11px]" style={{ color: dark.inkSubtle }}>mercancía</p>
+                </button>
+                <button onClick={() => setModal('temperatura')}
+                  className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
+                  <Thermometer size={18} style={{ color: dark.amber }} />
+                  <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Temperatura</p>
+                  <p className="text-[11px]" style={{ color: dark.inkSubtle }}>registrar</p>
+                </button>
               </div>
 
               {/* Accesos rápidos */}
@@ -210,6 +221,12 @@ export default function OperativeBanner() {
       )}
       {modal === 'novedad' && (
         <NovedadModal tiendaId={tiendaId} onClose={() => setModal(null)} onDone={() => { cargar() }} />
+      )}
+      {modal === 'recepcion' && (
+        <RecepcionModal tiendaId={tiendaId} onClose={() => setModal(null)} onDone={() => { refresh() }} />
+      )}
+      {modal === 'temperatura' && (
+        <TemperaturaModal tiendaId={tiendaId} onClose={() => setModal(null)} onDone={() => {}} />
       )}
     </>
   )
@@ -315,6 +332,115 @@ function NovedadModal({ tiendaId, onClose, onDone }: {
         <button onClick={guardar} disabled={!titulo.trim() || saving}
           className="w-full py-3 rounded-xl text-[14px] font-bold text-white disabled:opacity-50" style={{ background: dark.greenDim }}>
           {saving ? 'Guardando...' : 'Registrar novedad'}
+        </button>
+      </div>
+    </ModalShell>
+  )
+}
+
+// ── Modal: recibir mercancía (recepción rápida de 1 ítem, sana stock negativo) ──
+function RecepcionModal({ tiendaId, onClose, onDone }: {
+  tiendaId: number | null; onClose: () => void; onDone: () => void
+}) {
+  const [items, setItems] = useState<{ producto_id: number; producto_nombre: string; stock_actual: number }[]>([])
+  const [productoId, setProductoId] = useState<number | ''>('')
+  const [cantidad, setCantidad] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!tiendaId) return
+    api.get(`/inventario/tienda/${tiendaId}`).then(r => setItems(r.data)).catch(() => {})
+  }, [tiendaId])
+
+  const guardar = async () => {
+    if (!tiendaId || !productoId || !cantidad) return
+    setSaving(true); setError('')
+    try {
+      const { data: rec } = await api.post('/recepciones', { tienda_id: tiendaId, proveedor: 'Recepción rápida' })
+      await api.post(`/recepciones/${rec.id}/items`, { producto_id: Number(productoId), cantidad_recibida: Number(cantidad) })
+      await api.post(`/recepciones/${rec.id}/confirmar`)
+      onDone(); onClose()
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'Error al recibir')
+    } finally { setSaving(false) }
+  }
+
+  const sel = items.find(i => i.producto_id === Number(productoId))
+  const input = { background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }
+  return (
+    <ModalShell title="Recibir mercancía" onClose={onClose}>
+      <div className="space-y-3">
+        <select value={productoId} onChange={e => setProductoId(Number(e.target.value))}
+          className="w-full rounded-xl px-3 py-2.5 text-sm outline-none" style={input}>
+          <option value="">Elegí un producto…</option>
+          {items.map(i => (
+            <option key={i.producto_id} value={i.producto_id}>{i.producto_nombre} (stock {i.stock_actual})</option>
+          ))}
+        </select>
+        <input type="number" inputMode="numeric" value={cantidad} onChange={e => setCantidad(e.target.value)}
+          placeholder="Cantidad recibida" className="w-full rounded-xl px-3 py-2.5 text-sm outline-none" style={input} />
+        {sel && sel.stock_actual < 0 && cantidad !== '' && (
+          <p className="text-[12px]" style={{ color: dark.amber }}>
+            Stock {sel.stock_actual} → quedará {sel.stock_actual + Number(cantidad)} (sana el negativo)
+          </p>
+        )}
+        {error && <p className="text-[12px]" style={{ color: dark.danger }}>{error}</p>}
+        <button onClick={guardar} disabled={!productoId || !cantidad || saving}
+          className="w-full py-3 rounded-xl text-[14px] font-bold text-white disabled:opacity-50" style={{ background: dark.greenDim }}>
+          {saving ? 'Recibiendo...' : 'Confirmar recepción'}
+        </button>
+      </div>
+    </ModalShell>
+  )
+}
+
+// ── Modal: registrar temperatura ──────────────────────────────────────────
+function TemperaturaModal({ tiendaId, onClose, onDone }: {
+  tiendaId: number | null; onClose: () => void; onDone: () => void
+}) {
+  const [equipos, setEquipos] = useState<{ id: number; nombre: string; temp_min: number; temp_max: number }[]>([])
+  const [equipoId, setEquipoId] = useState<number | ''>('')
+  const [valor, setValor] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!tiendaId) return
+    api.get(`/temperaturas/equipos?tienda_id=${tiendaId}`).then(r => setEquipos(r.data)).catch(() => {})
+  }, [tiendaId])
+
+  const guardar = async () => {
+    if (!tiendaId || !equipoId || valor === '') return
+    setSaving(true); setError('')
+    try {
+      await api.post('/temperaturas/lecturas', { tienda_id: tiendaId, equipo_id: Number(equipoId), valor: Number(valor) })
+      onDone(); onClose()
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'Error al registrar')
+    } finally { setSaving(false) }
+  }
+
+  const eq = equipos.find(e => e.id === Number(equipoId))
+  const fuera = !!eq && valor !== '' && (Number(valor) < eq.temp_min || Number(valor) > eq.temp_max)
+  const input = { background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }
+  return (
+    <ModalShell title="Registrar temperatura" onClose={onClose}>
+      <div className="space-y-3">
+        {equipos.length === 0 && <p className="text-[13px]" style={{ color: dark.inkSubtle }}>No hay equipos configurados.</p>}
+        <select value={equipoId} onChange={e => setEquipoId(Number(e.target.value))}
+          className="w-full rounded-xl px-3 py-2.5 text-sm outline-none" style={input}>
+          <option value="">Elegí un equipo…</option>
+          {equipos.map(e => <option key={e.id} value={e.id}>{e.nombre} ({e.temp_min}° a {e.temp_max}°)</option>)}
+        </select>
+        <input type="number" inputMode="decimal" value={valor} onChange={e => setValor(e.target.value)}
+          placeholder="Temperatura °C" className="w-full rounded-xl px-3 py-2.5 text-sm outline-none"
+          style={{ ...input, borderColor: fuera ? dark.danger : dark.border }} />
+        {fuera && <p className="text-[12px]" style={{ color: dark.danger }}>⚠ Fuera del rango seguro</p>}
+        {error && <p className="text-[12px]" style={{ color: dark.danger }}>{error}</p>}
+        <button onClick={guardar} disabled={!equipoId || valor === '' || saving}
+          className="w-full py-3 rounded-xl text-[14px] font-bold text-white disabled:opacity-50" style={{ background: dark.greenDim }}>
+          {saving ? 'Guardando...' : 'Registrar lectura'}
         </button>
       </div>
     </ModalShell>

@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
-import { TurnoProvider } from './contexts/TurnoContext'
+import { TurnoProvider, useTurno } from './contexts/TurnoContext'
 import Layout from './components/Layout'
 
 // Device setup
@@ -55,6 +55,35 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function FullLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-bark-900">
+      <p className="text-sm text-warm-500 animate-pulse">Cargando…</p>
+    </div>
+  )
+}
+
+// Landing: decide a dónde entrar según el estado del turno.
+// Admin → dashboard · sin sesión → setup · turno operativo → POS · si no → flujo gateado.
+function Landing() {
+  const { user } = useAuth()
+  const { turno, loading } = useTurno()
+  if (user?.rol === 'admin') return <Navigate to="/dashboard" replace />
+  if (!user) return <KioskSetup />
+  if (loading) return <FullLoader />
+  return <Navigate to={turno?.es_operativo ? '/pos' : '/gestion-turno'} replace />
+}
+
+// Gate duro del POS: solo se entra si el turno está operativo (cuadre + conteo hechos).
+function RequireOperativo({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth()
+  const { turno, loading } = useTurno()
+  if (!user) return <KioskSetup />
+  if (loading) return <FullLoader />
+  if (!turno?.es_operativo) return <Navigate to="/gestion-turno" replace />
+  return <>{children}</>
+}
+
 function AppRoutes() {
   const { user, tiendaId } = useAuth()
 
@@ -69,17 +98,11 @@ function AppRoutes() {
         isAdmin ? <Navigate to="/dashboard" replace /> : <Login />
       } />
 
-      {/* ── Landing: POS o setup ── */}
-      <Route path="/" element={
-        isAdmin
-          ? <Navigate to="/dashboard" replace />
-          : hasSession
-            ? <Navigate to="/pos" replace />
-            : <KioskSetup />
-      } />
+      {/* ── Landing: resolver que rutea POS vs flujo gateado ── */}
+      <Route path="/" element={<Landing />} />
 
-      {/* ── POS (siempre accesible si hay sesión) ── */}
-      <Route path="/pos" element={hasSession ? <POS /> : <KioskSetup />} />
+      {/* ── POS: solo si el turno está operativo (gate duro) ── */}
+      <Route path="/pos" element={<RequireOperativo><POS /></RequireOperativo>} />
 
       {/* ── Gestión de turno ── */}
       <Route path="/gestion-turno" element={hasSession ? <GestionTurno /> : <KioskSetup />} />

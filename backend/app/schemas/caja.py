@@ -73,8 +73,10 @@ class TurnoOut(BaseModel):
     tipo_turno: Optional[str] = None
     usuario_apertura_id: Optional[int] = None
     tiene_conteo_apertura: bool
+    tiene_cuadre_llegada: bool = False
     tiene_ventas: bool
     tiene_conteo_cierre: bool
+    es_operativo: bool = False
     ts_conteo_apertura: Optional[datetime] = None
     ts_conteo_cierre: Optional[datetime] = None
     ultima_entrega_fecha: Optional[datetime] = None

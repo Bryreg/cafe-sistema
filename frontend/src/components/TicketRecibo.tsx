@@ -14,12 +14,14 @@ export interface TicketData {
     cantidad: number
     precio_unitario: number
     subtotal: number
+    descuento?: number
   }>
 }
 
 interface Props {
   ticket: TicketData
   negocio?: string
+  nit?: string
 }
 
 const fmtCO = (v: number) => `$${v.toLocaleString('es-CO')}`
@@ -29,7 +31,7 @@ function parseTicketDate(raw: string): Date {
   return new Date(t.endsWith('Z') ? t : t + 'Z')
 }
 
-export default function TicketRecibo({ ticket, negocio = 'Café' }: Props) {
+export default function TicketRecibo({ ticket, negocio = 'AZ CAFE', nit = '52425817-4' }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Inyecta CSS de impresión una sola vez en el <head>
@@ -81,7 +83,6 @@ export default function TicketRecibo({ ticket, negocio = 'Café' }: Props) {
   const fecha = parseTicketDate(ticket.fecha)
   const fechaStr = fecha.toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const horaStr = fecha.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
-  const line = '─'.repeat(32)
 
   const metodoPagoLabel: Record<string, string> = {
     efectivo: 'EFECTIVO',
@@ -89,9 +90,18 @@ export default function TicketRecibo({ ticket, negocio = 'Café' }: Props) {
     mixto: 'MIXTO',
   }
 
+  const totalDescuento = ticket.items.reduce((s, i) => s + (i.descuento || 0), 0)
+
+  const row = (label: string, value: string, bold = false, small = false) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: small ? '9px' : '10px', fontWeight: bold ? 'bold' : 'normal', margin: '1px 0' }}>
+      <span>{label}</span>
+      <span>{value}</span>
+    </div>
+  )
+
   return (
     <>
-      {/* Contenedor oculto en pantalla; solo visible en impresión */}
+      {/* Hidden on screen; only visible when printing */}
       <div
         id="ticket-print-root"
         ref={containerRef}
@@ -106,55 +116,75 @@ export default function TicketRecibo({ ticket, negocio = 'Café' }: Props) {
           background: '#fff',
         }}
       >
-        {/* Encabezado */}
-        <div style={{ textAlign: 'center', marginBottom: '4px' }}>
-          <div style={{ fontWeight: 'bold', fontSize: '14px', letterSpacing: '2px' }}>
+        {/* Header */}
+        <div style={{ textAlign: 'center', marginBottom: '6px' }}>
+          {/* Logo placeholder — replace with <img> tag when logo file is available */}
+          <div style={{ fontWeight: 'bold', fontSize: '16px', letterSpacing: '3px' }}>
             {negocio.toUpperCase()}
           </div>
-          <div style={{ fontSize: '10px', marginTop: '2px' }}>
-            Documento de Ingreso
+          <div style={{ fontSize: '10px', marginTop: '1px' }}>
+            NIT: {nit}
           </div>
-          <div style={{ fontSize: '9px', color: '#555', marginTop: '1px' }}>
-            Este documento NO reemplaza la factura de venta
+          <div style={{ fontSize: '9px', color: '#555', marginTop: '2px' }}>
+            Documento de Ingreso — NO reemplaza la factura
           </div>
         </div>
 
         <div style={{ borderBottom: '1px dashed #000', margin: '5px 0' }} />
 
-        {/* Fecha y hora */}
+        {/* Date / ticket / client */}
         <div style={{ fontSize: '10px', display: 'flex', justifyContent: 'space-between' }}>
           <span>Fecha: {fechaStr}</span>
           <span>Hora: {horaStr}</span>
         </div>
-        <div style={{ fontSize: '10px' }}>
-          No. Ticket: #{String(ticket.id).padStart(6, '0')}
-        </div>
+        <div style={{ fontSize: '10px' }}>No. Ticket: #{String(ticket.id).padStart(6, '0')}</div>
+        <div style={{ fontSize: '10px' }}>Cliente: Consumidor Final</div>
 
         <div style={{ borderBottom: '1px dashed #000', margin: '5px 0' }} />
 
-        {/* Cabecera de columnas */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '2px' }}>
+        {/* Column headers */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '3px' }}>
           <span style={{ flex: 1 }}>Producto</span>
-          <span style={{ width: '28px', textAlign: 'right' }}>Cant</span>
-          <span style={{ width: '60px', textAlign: 'right' }}>Precio</span>
-          <span style={{ width: '60px', textAlign: 'right' }}>Subtotal</span>
+          <span style={{ width: '24px', textAlign: 'right' }}>Cant</span>
+          <span style={{ width: '58px', textAlign: 'right' }}>P.Unit</span>
+          <span style={{ width: '62px', textAlign: 'right' }}>Subtotal</span>
         </div>
 
-        {/* Items */}
-        {ticket.items.map((item, i) => (
-          <div key={i}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', padding: '1px 0' }}>
-              <span style={{ flex: 1, paddingRight: '4px', wordBreak: 'break-word' }}>{item.nombre_producto}</span>
-              <span style={{ width: '28px', textAlign: 'right', flexShrink: 0 }}>{item.cantidad}</span>
-              <span style={{ width: '60px', textAlign: 'right', flexShrink: 0 }}>{fmtCO(item.precio_unitario)}</span>
-              <span style={{ width: '60px', textAlign: 'right', flexShrink: 0, fontWeight: 'bold' }}>{fmtCO(item.subtotal)}</span>
+        {/* Item rows */}
+        {ticket.items.map((item, i) => {
+          const bruto = item.precio_unitario * item.cantidad
+          const desc = item.descuento || 0
+          return (
+            <div key={i} style={{ marginBottom: desc > 0 ? '4px' : '2px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+                <span style={{ flex: 1, paddingRight: '4px', wordBreak: 'break-word' }}>{item.nombre_producto}</span>
+                <span style={{ width: '24px', textAlign: 'right', flexShrink: 0 }}>{item.cantidad}</span>
+                <span style={{ width: '58px', textAlign: 'right', flexShrink: 0 }}>{fmtCO(item.precio_unitario)}</span>
+                <span style={{ width: '62px', textAlign: 'right', flexShrink: 0, fontWeight: desc > 0 ? 'normal' : 'bold' }}>
+                  {fmtCO(bruto)}
+                </span>
+              </div>
+              {desc > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#555', paddingLeft: '8px' }}>
+                  <span>Descuento ({Math.round(desc / bruto * 100)}%)</span>
+                  <span style={{ fontWeight: 'bold', color: '#000' }}>−{fmtCO(desc)}</span>
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          )
+        })}
 
         <div style={{ borderBottom: '1px solid #000', margin: '5px 0' }} />
 
-        {/* Total */}
+        {/* Totals section */}
+        {totalDescuento > 0 ? (
+          <>
+            {row('Subtotal bruto:', fmtCO(ticket.items.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0)))}
+            {row('Descuento total:', `−${fmtCO(totalDescuento)}`)}
+            <div style={{ borderBottom: '1px dashed #000', margin: '3px 0' }} />
+          </>
+        ) : null}
+
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 'bold', margin: '3px 0' }}>
           <span>TOTAL</span>
           <span>{fmtCO(ticket.total)}</span>
@@ -162,58 +192,32 @@ export default function TicketRecibo({ ticket, negocio = 'Café' }: Props) {
 
         <div style={{ borderBottom: '1px dashed #000', margin: '5px 0' }} />
 
-        {/* Método de pago */}
+        {/* Payment info */}
         <div style={{ fontSize: '10px', margin: '2px 0' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Método:</span>
-            <span style={{ fontWeight: 'bold' }}>{metodoPagoLabel[ticket.metodo_pago] ?? ticket.metodo_pago}</span>
-          </div>
+          {row('Método de pago:', metodoPagoLabel[ticket.metodo_pago] ?? ticket.metodo_pago, true)}
 
           {ticket.metodo_pago === 'efectivo' && ticket.efectivo_recibido != null && (
             <>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Recibido:</span>
-                <span>{fmtCO(ticket.efectivo_recibido)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
-                <span>Cambio:</span>
-                <span>{fmtCO(ticket.cambio)}</span>
-              </div>
+              {row('Recibido:', fmtCO(ticket.efectivo_recibido))}
+              {row('Cambio:', fmtCO(ticket.cambio), true)}
             </>
           )}
 
           {ticket.metodo_pago === 'mixto' && (
             <>
-              {ticket.monto_efectivo != null && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Efectivo:</span>
-                  <span>{fmtCO(ticket.monto_efectivo)}</span>
-                </div>
-              )}
-              {ticket.monto_tarjeta != null && (
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Tarjeta:</span>
-                  <span>{fmtCO(ticket.monto_tarjeta)}</span>
-                </div>
-              )}
-              {ticket.cambio > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
-                  <span>Cambio:</span>
-                  <span>{fmtCO(ticket.cambio)}</span>
-                </div>
-              )}
+              {ticket.monto_efectivo != null && row('Efectivo:', fmtCO(ticket.monto_efectivo))}
+              {ticket.monto_tarjeta != null && row('Tarjeta:', fmtCO(ticket.monto_tarjeta))}
+              {ticket.cambio > 0 && row('Cambio:', fmtCO(ticket.cambio), true)}
             </>
           )}
         </div>
 
         <div style={{ borderBottom: '1px dashed #000', margin: '5px 0' }} />
 
-        {/* Pie */}
+        {/* Footer */}
         <div style={{ textAlign: 'center', fontSize: '9px', color: '#444', marginTop: '4px' }}>
-          <div>¡Gracias por tu compra!</div>
-          <div style={{ marginTop: '2px' }}>
-            {'- '.repeat(16)}
-          </div>
+          <div style={{ fontWeight: 'bold' }}>¡Gracias por tu compra!</div>
+          <div style={{ marginTop: '4px' }}>{'- '.repeat(16)}</div>
         </div>
       </div>
     </>

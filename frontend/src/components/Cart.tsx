@@ -109,18 +109,35 @@ export default function Cart({
                     <Trash2 size={13} />
                   </button>
                 </div>
-                {/* Descuento por producto (casilla libre) */}
-                <div className="flex items-center gap-2 mt-1.5">
-                  <span className="text-[11px] text-warm-400">Descuento $</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    value={item.descuento ? String(item.descuento) : ''}
-                    onChange={e => onDescuento(item.producto_id, Number(e.target.value) || 0)}
-                    placeholder="0"
-                    className="w-24 text-right text-xs font-bold font-mono tabular-nums bg-warm-50 border border-warm-200 rounded-md px-2 py-1 outline-none focus:border-clay-400"
-                  />
-                </div>
+                {/* Descuento en % por producto */}
+                {(() => {
+                  const bruto = item.precio_venta * item.cantidad
+                  const pct = bruto > 0 ? Math.round((item.descuento || 0) / bruto * 100) : 0
+                  return (
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="text-[11px] text-warm-400">Desc.</span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        max={100}
+                        value={pct || ''}
+                        onChange={e => {
+                          const p = Math.min(100, Math.max(0, Number(e.target.value) || 0))
+                          onDescuento(item.producto_id, Math.round((p / 100) * bruto))
+                        }}
+                        placeholder="0"
+                        className="w-14 text-right text-xs font-bold font-mono tabular-nums bg-warm-50 border border-warm-200 rounded-md px-2 py-1 outline-none focus:border-clay-400"
+                      />
+                      <span className="text-[11px] text-warm-400">%</span>
+                      {pct > 0 && (
+                        <span className="text-[11px] text-clay-600 font-semibold">
+                          −{`$${Math.round((pct / 100) * bruto).toLocaleString('es-CO')}`}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             ))}
           </div>

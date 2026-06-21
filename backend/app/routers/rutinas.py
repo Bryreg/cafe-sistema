@@ -85,3 +85,22 @@ def quick_rutina(data: QuickRutinaIn, db: Session = Depends(get_db),
     ensure_tienda_access(user, data.tienda_id)
     ev = svc.registrar_por_clave(db, data.tienda_id, data.clave, user.id, data.nota)
     return {"id": ev.id, "clave": data.clave, "fecha": ev.fecha.isoformat()}
+
+
+@router.get("/frecuencias")
+def frecuencias(user: Usuario = Depends(get_current_user)):
+    return svc.get_frecuencias()
+
+
+@router.get("/bitacora")
+def bitacora(tienda_id: int, db: Session = Depends(get_db),
+             user: Usuario = Depends(get_current_user)):
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_bitacora(db, tienda_id)
+
+
+@router.get("/cumplimiento-semana")
+def cumplimiento_semana(tienda_id: int, db: Session = Depends(get_db),
+                        user: Usuario = Depends(get_current_user)):
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_cumplimiento_semana(db, tienda_id)

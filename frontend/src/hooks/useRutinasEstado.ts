@@ -9,23 +9,34 @@ export interface RutinaEstado {
   ultimo: string | null
   minutos: number | null
   status: 'ok' | 'warn' | 'alert' | null
+  count: number
+}
+
+export interface BitacoraEntry {
+  fecha: string
+  txt: string
+  by: string | null
+  hito: boolean
 }
 
 const POLL_MS = 60_000
 
 export function useRutinasEstado(tiendaId: number | null) {
   const [estados, setEstados] = useState<RutinaEstado[]>([])
+  const [bitacora, setBitacora] = useState<BitacoraEntry[]>([])
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fetch = useCallback(async () => {
     if (!tiendaId) return
     try {
-      const { data } = await api.get<RutinaEstado[]>('/rutinas/estado-turno', {
-        params: { tienda_id: tiendaId },
-      })
-      setEstados(data)
+      const [eRes, bRes] = await Promise.all([
+        api.get<RutinaEstado[]>('/rutinas/estado-turno', { params: { tienda_id: tiendaId } }),
+        api.get<BitacoraEntry[]>('/rutinas/bitacora', { params: { tienda_id: tiendaId } }),
+      ])
+      setEstados(eRes.data)
+      setBitacora(bRes.data)
     } catch {
-      // silencioso — el banner sigue mostrando el último estado conocido
+      // silencioso — muestra último estado conocido
     }
   }, [tiendaId])
 
@@ -45,5 +56,5 @@ export function useRutinasEstado(tiendaId: number | null) {
     [tiendaId, fetch],
   )
 
-  return { estados, registrar, refresh: fetch }
+  return { estados, bitacora, registrar, refresh: fetch }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, ShoppingBag, Printer, ChevronUp, X } from 'lucide-react'
+import { ArrowLeft, ShoppingBag, Printer, ChevronUp, X, LayoutGrid } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
@@ -82,9 +82,10 @@ function GuardShell({ children }: { children: React.ReactNode }) {
 export default function POS() {
   const { turno } = useTurno()
   const navigate = useNavigate()
-  const { estados: rutinasEstado, registrar: registrarRutina } = useRutinasEstado(
+  const { estados: rutinasEstado, bitacora: rutinaBitacora, registrar: registrarRutina } = useRutinasEstado(
     turno?.tienda_id ?? null,
   )
+  const alertCount = rutinasEstado.filter(e => e.track && e.status === 'alert').length
 
   // Hooks antes de cualquier return condicional.
   const [productos, setProductos] = useState<Producto[]>([])
@@ -110,7 +111,9 @@ export default function POS() {
     consignaciones: <Consignaciones />,
     turno: (
       <PanelTurno
+        turno={turno!}
         estados={rutinasEstado}
+        bitacora={rutinaBitacora}
         onRegistrar={registrarRutina}
         onClose={() => setActivePanel(null)}
       />
@@ -235,20 +238,43 @@ export default function POS() {
   return (
     <div className="min-h-screen bg-warm-50 flex flex-col">
       {/* ── Header ── */}
-      <header className="bg-white border-b border-warm-200 px-4 pb-3 header-safe flex items-center gap-3 sticky top-0 z-20">
+      <header className="bg-white border-b border-warm-200 px-4 pb-3 header-safe flex items-center gap-2 sticky top-0 z-20">
         <button
           onClick={() => navigate('/hub')}
-          className="p-2 rounded-xl text-warm-400 hover:text-warm-700 hover:bg-warm-100 transition-colors -ml-1"
+          className="p-2 rounded-xl text-warm-400 hover:text-warm-700 hover:bg-warm-100 transition-colors -ml-1 flex-shrink-0"
         >
           <ArrowLeft size={18} />
         </button>
-        <span className="flex-1 text-sm font-bold text-warm-700">POS · Cobros</span>
+
+        {/* Panel de Turno — botón permanente */}
+        <button
+          onClick={() => setActivePanel(activePanel === 'turno' ? null : 'turno')}
+          className="relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-colors flex-shrink-0"
+          style={{
+            background: activePanel === 'turno' ? dark.greenTint : dark.surfaceAlt,
+            color:      activePanel === 'turno' ? dark.green     : dark.inkMuted,
+            border: `1px solid ${activePanel === 'turno' ? dark.greenDim : dark.border}`,
+          }}
+        >
+          <LayoutGrid size={13} />
+          <span className="hidden sm:inline">Panel</span>
+          {alertCount > 0 && (
+            <span
+              className="absolute -top-1.5 -right-1.5 flex items-center justify-center rounded-full text-white font-bold"
+              style={{ minWidth: 16, height: 16, fontSize: 9, padding: '0 3px', background: dark.danger }}
+            >
+              {alertCount}
+            </span>
+          )}
+        </button>
+
+        <span className="flex-1 text-sm font-bold text-warm-700 truncate">POS · Cobros</span>
         <button
           onClick={reimprimirUltimo}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-warm-600 border border-warm-200 hover:bg-warm-100 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-warm-600 border border-warm-200 hover:bg-warm-100 transition-colors flex-shrink-0"
         >
           <Printer size={14} />
-          <span className="hidden sm:inline">Reimprimir último</span>
+          <span className="hidden sm:inline">Reimprimir</span>
         </button>
       </header>
 
@@ -418,6 +444,7 @@ export default function POS() {
       {/* ── Banner operativo: estado de rutinas, abre PanelTurno ── */}
       <BannerOperativo
         estados={rutinasEstado}
+        panelOpen={activePanel === 'turno'}
         onOpen={() => setActivePanel(activePanel === 'turno' ? null : 'turno')}
       />
 

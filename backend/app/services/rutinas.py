@@ -132,7 +132,7 @@ _PANEL_DEFS = [
 
 
 def get_estado_turno(db: Session, tienda_id: int):
-    """Último evento por clave dentro del turno activo y minutos transcurridos."""
+    """Último evento por clave dentro del turno activo, minutos transcurridos y conteo."""
     from datetime import datetime
     turno = get_turno_activo(db, tienda_id)
     now = datetime.utcnow()
@@ -147,6 +147,7 @@ def get_estado_turno(db: Session, tienda_id: int):
             q = q.filter(RutinaEvento.turno_id == turno.id)
         else:
             q = q.filter(RutinaEvento.tienda_id == tienda_id)
+        count = int(q.count())
         last = q.order_by(RutinaEvento.fecha.desc()).first()
         minutes_ago = None
         status = None
@@ -164,8 +165,108 @@ def get_estado_turno(db: Session, tienda_id: int):
             "ultimo": last.fecha.isoformat() if last else None,
             "minutos": minutes_ago,
             "status": status,
+            "count": count,
         })
     return result
+
+
+def get_frecuencias():
+    """Umbrales de frecuencia controlada — no hardcodear en el front."""
+    return [
+        {"clave": d["k"], "nombre": d["nombre"], "every": d["every"]}
+        for d in _PANEL_DEFS
+        if d["track"]
+    ]
+
+
+def get_bitacora(db: Session, tienda_id: int):
+    """Línea de tiempo del turno activo: inicio + obligatorios + rutinas, orden asc."""
+    from app.models.models import Usuario as UsuarioModel
+    turno = get_turno_activo(db, tienda_id)
+    entries = []
+    if not turno:
+        return entries
+
+    def _iso(val):
+        return val.isoformat() if hasattr(val, "isoformat") else str(val)
+
+    entries.append({"fecha": _iso(turno.fecha_apertura), "txt": "Turno iniciado", "by": None, "hito": True})
+
+    if turno.tiene_cuadre_llegada:
+        entries.append({"fecha": _iso(turno.fecha_apertura), "txt": "Cuadre de llegada completado", "by": None, "hito": True})
+
+    if turno.tiene_conteo_apertura:
+        ts = turno.ts_conteo_apertura or turno.fecha_apertura
+        entries.append({"fecha": _iso(ts), "txt": "Conteo de apertura completado", "by": None, "hito": True})
+
+    eventos = (
+        db.query(RutinaEvento)
+        .filter(RutinaEvento.turno_id == turno.id)
+        .order_by(RutinaEvento.fecha)
+        .all()
+    )
+    for ev in eventos:
+        u = db.query(UsuarioModel).filter(UsuarioModel.id == ev.usuario_id).first()
+        p = ev.plantilla
+        entries.append({
+            "fecha": _iso(ev.fecha),
+            "txt": f"{p.nombre if p else 'Rutina'} registrada",
+            "by": u.nombre if u else None,
+            "hito": False,
+        })
+
+    entries.sort(key=lambda e: e["fecha"])
+    return entries
+
+
+def get_cumplimiento_semana(db: Session, tienda_id: int):
+    """Registros por barista y por rutina en los últimos 7 días."""
+    from datetime import datetime, timedelta
+    from sqlalchemy import func
+    from app.models.models import Usuario as UsuarioModel
+
+    desde = datetime.utcnow() - timedelta(days=7)
+
+    por_rutina = []
+    for defn in _PANEL_DEFS:
+        total = (
+            db.query(func.count(RutinaEvento.id))
+            .join(RutinaPlantilla, RutinaEvento.plantilla_id == RutinaPlantilla.id)
+            .filter(
+                RutinaPlantilla.clave == defn["k"],
+                RutinaEvento.tienda_id == tienda_id,
+                RutinaEvento.fecha >= desde,
+            )
+            .scalar() or 0
+        )
+        por_rutina.append({"clave": defn["k"], "nombre": defn["nombre"], "total": int(total), "track": defn["track"]})
+
+    usuarios = db.query(UsuarioModel).filter(
+        UsuarioModel.tienda_id == tienda_id, UsuarioModel.rol == "barista"
+    ).all()
+    por_barista = []
+    for u in usuarios:
+        cnt = int(
+            db.query(func.count(RutinaEvento.id))
+            .filter(
+                RutinaEvento.tienda_id == tienda_id,
+                RutinaEvento.usuario_id == u.id,
+                RutinaEvento.fecha >= desde,
+            )
+            .scalar() or 0
+        )
+        por_barista.append({"id": u.id, "nombre": u.nombre, "registros": cnt})
+
+    por_barista.sort(key=lambda x: x["registros"], reverse=True)
+    max_reg = max((b["registros"] for b in por_barista), default=1) or 1
+    for b in por_barista:
+        b["pct"] = round(b["registros"] / max_reg * 100)
+
+    return {
+        "por_rutina": por_rutina,
+        "por_barista": por_barista,
+        "total_eventos": sum(b["registros"] for b in por_barista),
+    }
 
 
 def registrar_por_clave(db: Session, tienda_id: int, clave: str, usuario_id: int,

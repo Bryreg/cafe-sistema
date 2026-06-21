@@ -275,8 +275,8 @@ export default function POS() {
               />
             </div>
 
-            {/* Panel derecho: cuenta — se oculta cuando el tool-panel está abierto */}
-            <aside className={`${activePanel ? 'hidden' : 'hidden lg:block'} lg:sticky lg:top-[88px]`}>
+            {/* Panel derecho: cuenta */}
+            <aside className="hidden lg:block lg:sticky lg:top-[88px]">
               <div className="bg-white rounded-2xl border border-warm-200 p-4 flex flex-col max-h-[calc(100vh-170px)]">
                 <Cart
                   items={cart}

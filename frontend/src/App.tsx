@@ -44,6 +44,7 @@ import AuditoriasAdmin from './pages/AuditoriasAdmin'
 import AuditLog from './pages/AuditLog'
 import Catalogo from './pages/Catalogo'
 import NotaCredito from './pages/NotaCredito'
+import CumplimientoAdmin from './pages/CumplimientoAdmin'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -157,6 +158,7 @@ function AppRoutes() {
       <Route path="/mantenimientos"   element={<RequireAdmin><Layout><MantenimientosAdmin /></Layout></RequireAdmin>} />
       <Route path="/auditorias"       element={<RequireAdmin><Layout><AuditoriasAdmin /></Layout></RequireAdmin>} />
       <Route path="/audit-log"        element={<RequireAdmin><Layout><AuditLog /></Layout></RequireAdmin>} />
+      <Route path="/cumplimiento"     element={<RequireAdmin><Layout><CumplimientoAdmin /></Layout></RequireAdmin>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

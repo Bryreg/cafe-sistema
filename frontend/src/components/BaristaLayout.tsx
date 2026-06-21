@@ -1,6 +1,7 @@
 import { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { useEmbedded } from '../contexts/PanelContext'
 import { ArrowLeft, Coffee } from 'lucide-react'
 
 interface Props {
@@ -10,6 +11,12 @@ interface Props {
   alertaBadge?: number
   /** Acción extra en el lado derecho del header (botón o texto) */
   rightAction?: ReactNode
+  /**
+   * Ancho máximo del contenido en modo standalone.
+   * - 'form'  → max-w-3xl (formularios de una columna, lectura cómoda)
+   * - 'wide'  → max-w-6xl (pantallas densas con grillas internas)
+   */
+  width?: 'form' | 'wide'
 }
 
 export default function BaristaLayout({
@@ -17,9 +24,30 @@ export default function BaristaLayout({
   title,
   backTo = '/hub',
   rightAction,
+  width = 'form',
 }: Props) {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const embedded = useEmbedded()
+
+  // ── Modo panel (embebido en el POS) ──────────────────────────────────────
+  // El host del panel ya provee marco, botón de cerrar y scroll. Acá solo
+  // pintamos un título delgado y el contenido a ancho completo de la columna.
+  if (embedded) {
+    return (
+      <div className="flex flex-col w-full">
+        {title && (
+          <div className="px-4 pt-3 pb-1">
+            <h2 className="text-sm font-bold text-warm-700">{title}</h2>
+          </div>
+        )}
+        <div className="p-4 pt-2">{children}</div>
+      </div>
+    )
+  }
+
+  // ── Modo standalone (ruta propia) ────────────────────────────────────────
+  const maxW = width === 'wide' ? 'max-w-6xl' : 'max-w-3xl'
 
   return (
     <div className="min-h-screen bg-warm-50 flex flex-col">
@@ -50,7 +78,7 @@ export default function BaristaLayout({
       </header>
 
       {/* ── Contenido principal ── */}
-      <main className="flex-1 p-4 max-w-lg mx-auto w-full pb-nav">
+      <main className={`flex-1 p-4 ${maxW} mx-auto w-full pb-nav`}>
         {children}
       </main>
     </div>

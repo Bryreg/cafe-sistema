@@ -82,9 +82,9 @@ export default function ContadorEfectivo({ onTotal }: { onTotal: (total: number)
         {showBilletes ? <ChevronUp size={14} style={{ color: dark.inkMuted }} /> : <ChevronDown size={14} style={{ color: dark.inkMuted }} />}
       </button>
       {showBilletes && (
-        <div>
+        <div className="grid grid-cols-1 sm:grid-cols-2" style={{ gap: 1, background: dark.border }}>
           {BILLETES.map(b => (
-            <div key={b.valor} style={{ borderBottom: `1px solid ${dark.border}` }}>
+            <div key={b.valor} style={{ background: dark.surface }}>
               <FilaDenom valor={b.valor} label={b.label} isBillete={true}
                 cantidad={getCantidad(b.valor, true)} onChange={n => setCantidad(b.valor, true, n)} />
             </div>
@@ -107,9 +107,9 @@ export default function ContadorEfectivo({ onTotal }: { onTotal: (total: number)
         {showMonedas ? <ChevronUp size={14} style={{ color: dark.inkMuted }} /> : <ChevronDown size={14} style={{ color: dark.inkMuted }} />}
       </button>
       {showMonedas && (
-        <div>
+        <div className="grid grid-cols-1 sm:grid-cols-2" style={{ gap: 1, background: dark.border }}>
           {MONEDAS.map(m => (
-            <div key={m.valor} style={{ borderBottom: `1px solid ${dark.border}` }}>
+            <div key={m.valor} style={{ background: dark.surface }}>
               <FilaDenom valor={m.valor} label={m.label} isBillete={false}
                 cantidad={getCantidad(m.valor, false)} onChange={n => setCantidad(m.valor, false, n)} />
             </div>

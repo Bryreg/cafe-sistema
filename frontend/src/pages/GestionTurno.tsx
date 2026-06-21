@@ -93,7 +93,7 @@ export default function GestionTurno() {
     <div className="min-h-screen flex flex-col pb-24" style={{ background: dark.bg }}>
 
       {/* Header */}
-      <header className="px-4 pt-4 pb-3 flex items-center gap-2 w-full max-w-4xl mx-auto" style={{ background: dark.bg }}>
+      <header className="px-4 pt-4 pb-3 flex items-center gap-2 w-full max-w-5xl mx-auto" style={{ background: dark.bg }}>
         <div className="flex-1">
           <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.amber }}>
             Gestión de turno
@@ -119,7 +119,7 @@ export default function GestionTurno() {
         )}
       </header>
 
-      <div className="flex-1 px-4 space-y-4 w-full max-w-4xl mx-auto pb-8">
+      <div className="flex-1 px-4 space-y-4 w-full max-w-5xl mx-auto pb-8">
 
         {/* ── CON TURNO ACTIVO ── */}
         {turno && !step && (
@@ -149,6 +149,9 @@ export default function GestionTurno() {
                 )}
               </div>
             )}
+
+            {/* Tarjetas de estado — 2 columnas en desktop para no apilar vertical */}
+            <div className="lg:grid lg:grid-cols-2 lg:gap-4 lg:items-start space-y-4 lg:space-y-0">
 
             {/* Baristas en turno */}
             {turno.baristas.length > 0 && (
@@ -238,6 +241,8 @@ export default function GestionTurno() {
                 </button>
               ))}
             </div>
+
+            </div>
           </>
         )}
 
@@ -303,6 +308,9 @@ export default function GestionTurno() {
               </button>
             </div>
 
+            {/* Baristas + efectivo lado a lado en desktop */}
+            <div className="lg:grid lg:grid-cols-2 lg:gap-4 lg:items-start space-y-4 lg:space-y-0">
+
             {/* Selección de baristas */}
             <div className="rounded-2xl p-4 space-y-2" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
               <p className="text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center gap-2"
@@ -354,6 +362,8 @@ export default function GestionTurno() {
                   Diferencia: {(Number(baseReal) - esperadoInicio) > 0 ? '+' : ''}{fmt(Number(baseReal) - esperadoInicio)} — registrá el motivo abajo
                 </p>
               )}
+            </div>
+
             </div>
 
             <textarea

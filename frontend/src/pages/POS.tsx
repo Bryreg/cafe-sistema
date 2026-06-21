@@ -10,6 +10,9 @@ import ProductGrid, { Producto } from '../components/ProductGrid'
 import Cart, { CartItem } from '../components/Cart'
 import { Toast, Sheet, Pill } from '../components/ui'
 import DockBar from '../components/DockBar'
+import PanelTurno from '../components/PanelTurno'
+import BannerOperativo from '../components/BannerOperativo'
+import { useRutinasEstado } from '../hooks/useRutinasEstado'
 import Ingresos from './Ingresos'
 import Mermas from './Mermas'
 import Inventario from './Inventario'
@@ -79,6 +82,9 @@ function GuardShell({ children }: { children: React.ReactNode }) {
 export default function POS() {
   const { turno } = useTurno()
   const navigate = useNavigate()
+  const { estados: rutinasEstado, registrar: registrarRutina } = useRutinasEstado(
+    turno?.tienda_id ?? null,
+  )
 
   // Hooks antes de cualquier return condicional.
   const [productos, setProductos] = useState<Producto[]>([])
@@ -102,6 +108,13 @@ export default function POS() {
     pedido:         <SolicitudPedido />,
     sencilla:       <SolicitudSencilla />,
     consignaciones: <Consignaciones />,
+    turno: (
+      <PanelTurno
+        estados={rutinasEstado}
+        onRegistrar={registrarRutina}
+        onClose={() => setActivePanel(null)}
+      />
+    ),
   }
 
   const turnoListo = !!turno && turno.tiene_conteo_apertura
@@ -244,7 +257,7 @@ export default function POS() {
 
         {/* Columna POS scrollable */}
         <div className="flex-1 overflow-y-auto min-w-0">
-          <main className="w-full max-w-7xl mx-auto px-4 pt-4 pb-nav lg:pb-[76px] lg:grid lg:grid-cols-[1fr_380px] lg:gap-6 lg:items-start">
+          <main className="w-full max-w-7xl mx-auto px-4 pt-4 pb-[120px] lg:pb-[120px] lg:grid lg:grid-cols-[1fr_380px] lg:gap-6 lg:items-start">
             {/* Panel izquierdo: grilla */}
             <div className="flex flex-col gap-3">
               {loadError && (
@@ -332,7 +345,7 @@ export default function POS() {
       {cart.length > 0 && (
         <button
           onClick={() => setCartSheet(true)}
-          className="lg:hidden fixed left-3 right-3 bottom-[72px] z-30 bg-clay text-white rounded-2xl shadow-lg shadow-clay/30 px-4 py-3 flex items-center justify-between active:scale-[0.99] transition-all"
+          className="lg:hidden fixed left-3 right-3 bottom-[116px] z-30 bg-clay text-white rounded-2xl shadow-lg shadow-clay/30 px-4 py-3 flex items-center justify-between active:scale-[0.99] transition-all"
           style={{ marginBottom: 'env(safe-area-inset-bottom, 0px)' }}
         >
           <span className="flex items-center gap-2 font-bold text-sm">
@@ -401,6 +414,12 @@ export default function POS() {
 
       {/* ── Ticket oculto para reimpresión (window.print) ── */}
       {reprintTicket && <TicketRecibo ticket={reprintTicket} />}
+
+      {/* ── Banner operativo: estado de rutinas, abre PanelTurno ── */}
+      <BannerOperativo
+        estados={rutinasEstado}
+        onOpen={() => setActivePanel(activePanel === 'turno' ? null : 'turno')}
+      />
 
       {/* ── Dock: herramientas de alta frecuencia, siempre visible ── */}
       <DockBar active={activePanel} onSelect={setActivePanel} />

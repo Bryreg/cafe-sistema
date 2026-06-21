@@ -64,3 +64,24 @@ def crear_plantilla(data: PlantillaCreate, db: Session = Depends(get_db),
                     user: Usuario = Depends(require_admin)):
     p = svc.crear_plantilla(db, data.dict())
     return {"id": p.id, "clave": p.clave, "nombre": p.nombre}
+
+
+@router.get("/estado-turno")
+def estado_turno(tienda_id: int, db: Session = Depends(get_db),
+                 user: Usuario = Depends(get_current_user)):
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_estado_turno(db, tienda_id)
+
+
+class QuickRutinaIn(BaseModel):
+    tienda_id: int
+    clave: str
+    nota: Optional[str] = None
+
+
+@router.post("/quick", status_code=201)
+def quick_rutina(data: QuickRutinaIn, db: Session = Depends(get_db),
+                 user: Usuario = Depends(get_current_user)):
+    ensure_tienda_access(user, data.tienda_id)
+    ev = svc.registrar_por_clave(db, data.tienda_id, data.clave, user.id, data.nota)
+    return {"id": ev.id, "clave": data.clave, "fecha": ev.fecha.isoformat()}

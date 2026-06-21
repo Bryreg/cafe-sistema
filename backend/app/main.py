@@ -459,10 +459,16 @@ def _seed_rutinas():
     db = SessionLocal()
     try:
         defaults = [
-            ("limpieza_general", "Limpieza general", CategoriaRutinaEnum.limpieza, FrecuenciaRutinaEnum.por_turno, 1, False, False),
-            ("revision_banos", "Revisión de baños", CategoriaRutinaEnum.banos, FrecuenciaRutinaEnum.por_turno, 2, False, False),
-            ("surtido_vitrina", "Surtido de vitrina", CategoriaRutinaEnum.vitrina, FrecuenciaRutinaEnum.por_turno, 1, False, False),
+            ("limpieza_general",  "Limpieza general",               CategoriaRutinaEnum.limpieza,     FrecuenciaRutinaEnum.por_turno, 1, False, False),
+            ("revision_banos",    "Revisión de baños",              CategoriaRutinaEnum.banos,        FrecuenciaRutinaEnum.por_turno, 2, False, False),
+            ("surtido_vitrina",   "Surtido de vitrina",             CategoriaRutinaEnum.vitrina,      FrecuenciaRutinaEnum.por_turno, 1, False, False),
             ("control_temp_nevera", "Control de temperatura (nevera)", CategoriaRutinaEnum.temperatura, FrecuenciaRutinaEnum.por_turno, 1, False, True),
+            # Panel de turno — rutinas de 1 clic
+            ("limpieza",  "Limpieza General",  CategoriaRutinaEnum.limpieza, FrecuenciaRutinaEnum.por_turno, 1, False, False),
+            ("surtido",   "Surtido",           CategoriaRutinaEnum.surtido,  FrecuenciaRutinaEnum.por_turno, 1, False, False),
+            ("vitrina",   "Revisión Vitrina",  CategoriaRutinaEnum.vitrina,  FrecuenciaRutinaEnum.por_turno, 1, False, False),
+            ("novedad",   "Novedad",           CategoriaRutinaEnum.otro,     FrecuenciaRutinaEnum.por_turno, 0, False, False),
+            ("merma_op",  "Merma rápida",      CategoriaRutinaEnum.otro,     FrecuenciaRutinaEnum.por_turno, 0, False, False),
         ]
         creadas = 0
         for clave, nombre, cat, frec, esp, eimg, eval_ in defaults:

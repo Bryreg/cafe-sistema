@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { useEmbedded } from '../contexts/PanelContext'
 import api from '../api/client'
 import {
   ArrowLeft, ChevronDown, ChevronRight, Search, Plus, X,
@@ -50,6 +51,7 @@ function daysAgo(iso: string | null): string {
 export default function Ingresos() {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const embedded = useEmbedded()
 
   // Form
   const [proveedor, setProveedor]         = useState('')
@@ -197,17 +199,19 @@ export default function Ingresos() {
   const canSave       = !!proveedor && !!valorTotal && Number(valorTotal) > 0 && items.length > 0
 
   return (
-    <div className="min-h-screen bg-warm-50 flex flex-col">
+    <div className={embedded ? 'flex flex-col w-full' : 'min-h-screen bg-warm-50 flex flex-col'}>
 
       {/* ── Header con proveedor tappable ── */}
-      <header className="bg-white border-b border-warm-200 px-4 pb-3 header-safe sticky top-0 z-10">
+      <header className={`bg-white border-b border-warm-200 px-4 pb-3 sticky top-0 z-10 ${embedded ? 'pt-3' : 'header-safe'}`}>
         <div className="flex items-center gap-3 max-w-lg mx-auto">
-          <button
-            onClick={() => navigate('/hub')}
-            className="p-2 -ml-1 rounded-xl text-warm-400 hover:text-warm-700 hover:bg-warm-100 transition-colors"
-          >
-            <ArrowLeft size={18} />
-          </button>
+          {!embedded && (
+            <button
+              onClick={() => navigate('/hub')}
+              className="p-2 -ml-1 rounded-xl text-warm-400 hover:text-warm-700 hover:bg-warm-100 transition-colors"
+            >
+              <ArrowLeft size={18} />
+            </button>
+          )}
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-widest text-amber-600">
               Ingreso · Mercancía
@@ -228,13 +232,15 @@ export default function Ingresos() {
         </div>
       </header>
 
-      {/* ── Proveedor picker overlay ── */}
+      {/* ── Proveedor picker overlay ──
+          Embebido: `absolute` confinado al panel (el POS sigue visible al lado).
+          Standalone: `fixed` a pantalla completa. */}
       {showPickerProv && (
         <div
-          className="fixed inset-0 z-50 flex flex-col"
+          className={`${embedded ? 'absolute' : 'fixed'} inset-0 z-50 flex flex-col`}
           style={{ background: 'rgba(20,15,10,0.5)', backdropFilter: 'blur(2px)' }}
         >
-          <div className="bg-white p-4 border-b border-warm-200" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+          <div className="bg-white p-4 border-b border-warm-200" style={{ paddingTop: embedded ? '1rem' : 'max(1rem, env(safe-area-inset-top))' }}>
             <div className="flex items-center justify-between mb-3">
               <p className="text-[10px] font-bold uppercase tracking-widest text-warm-400">Proveedor</p>
               <button onClick={() => { setShowPickerProv(false); setQueryProv('') }}
@@ -304,7 +310,7 @@ export default function Ingresos() {
       )}
 
       {/* ── Contenido scrollable ── */}
-      <div className="flex-1 overflow-auto pb-nav">
+      <div className={`flex-1 ${embedded ? '' : 'overflow-auto pb-nav'}`}>
         <div className="max-w-lg mx-auto">
 
           {/* ── Hero: valor total ── */}
@@ -485,12 +491,13 @@ export default function Ingresos() {
         </div>
       </div>
 
-      {/* ── CTA sticky encima del nav ── */}
+      {/* ── CTA sticky encima del nav ──
+          Embebido: `sticky` al pie del panel. Standalone: `fixed` sobre el bottom-nav. */}
       <div
-        className="fixed left-0 right-0 px-4 pt-3 pb-2 z-20"
+        className={`${embedded ? 'sticky' : 'fixed'} left-0 right-0 px-4 pt-3 pb-2 z-20`}
         style={{
-          bottom: 'calc(4.5rem + env(safe-area-inset-bottom, 0px))',
-          background: 'linear-gradient(to top, oklch(98% 0.006 75) 65%, transparent)',
+          bottom: embedded ? 0 : 'calc(4.5rem + env(safe-area-inset-bottom, 0px))',
+          background: 'linear-gradient(to top, oklch(98% 0.006 75) 75%, transparent)',
         }}
       >
         <div className="max-w-lg mx-auto">

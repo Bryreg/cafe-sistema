@@ -115,7 +115,7 @@ export default function ConteoInventario({ tipo }: Props) {
         }} />
       </div>
 
-      <div className="flex-1 px-4 max-w-lg mx-auto w-full space-y-4 pt-5"
+      <div className="flex-1 px-4 max-w-4xl mx-auto w-full space-y-4 pt-5"
         style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 16px) + 6rem)' }}>
 
         {/* Título */}
@@ -173,7 +173,7 @@ export default function ConteoInventario({ tipo }: Props) {
             <p className="text-sm animate-pulse" style={{ color: dark.inkSubtle }}>Cargando productos...</p>
           </div>
         ) : (
-          <div className="rounded-2xl overflow-hidden" style={{
+          <div className="rounded-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-2" style={{
             background: dark.surface,
             border: `1px solid ${dark.border}`,
           }}>
@@ -264,7 +264,7 @@ export default function ConteoInventario({ tipo }: Props) {
       </div>
 
       {/* CTA sticky */}
-      <div className="fixed bottom-0 left-0 right-0 p-4 max-w-lg mx-auto" style={{
+      <div className="fixed bottom-0 left-0 right-0 p-4 max-w-4xl mx-auto" style={{
         background: `linear-gradient(to top, ${dark.bg} 70%, transparent)`,
         paddingBottom: 'env(safe-area-inset-bottom, 16px)',
       }}>

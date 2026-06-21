@@ -12,6 +12,7 @@ import { Toast, Sheet, Pill } from '../components/ui'
 import DockBar from '../components/DockBar'
 import PanelTurno from '../components/PanelTurno'
 import BannerOperativo from '../components/BannerOperativo'
+import { PanelProvider } from '../contexts/PanelContext'
 import { useRutinasEstado } from '../hooks/useRutinasEstado'
 import Ingresos from './Ingresos'
 import Mermas from './Mermas'
@@ -332,10 +333,12 @@ export default function POS() {
         </div>
 
         {/* Panel de herramienta: inline en sm+ (ocupa su propia columna),
-            overlay fixed en mobile (cubre pantalla sin backdrop) */}
+            overlay fixed en mobile (cubre pantalla sin backdrop).
+            `relative overflow-hidden` confina los overlays absolute de las
+            páginas embebidas (proveedor, modales) a la columna del panel. */}
         {activePanel && PANELS[activePanel] && (
           <div
-            className="fixed sm:relative sm:flex-shrink-0 inset-0 sm:inset-auto sm:w-[420px] z-40 sm:z-auto flex flex-col border-l"
+            className="fixed sm:relative sm:flex-shrink-0 inset-0 sm:inset-auto sm:w-[440px] z-40 sm:z-auto flex flex-col border-l overflow-hidden"
             style={{
               background: dark.bg,
               borderColor: dark.border,
@@ -360,7 +363,9 @@ export default function POS() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto pb-[60px]">
-              {PANELS[activePanel]}
+              <PanelProvider>
+                {PANELS[activePanel]}
+              </PanelProvider>
             </div>
           </div>
         )}

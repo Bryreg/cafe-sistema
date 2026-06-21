@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import { Plus, Minus, X, RefreshCw, AlertTriangle, Pencil, Package, Check } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
+import { useEmbedded } from '../contexts/PanelContext'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -491,6 +492,7 @@ function InventarioAdmin() {
 
 function InventarioBarista() {
   const { user } = useAuth()
+  const embedded = useEmbedded()
   const [items, setItems] = useState<InvItem[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<InvItem | null>(null)
@@ -558,7 +560,7 @@ function InventarioBarista() {
         </div>
 
         {selected && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center">
+          <div className={`${embedded ? 'absolute' : 'fixed'} inset-0 bg-black/50 z-50 flex items-end justify-center`}>
             <div className="bg-white w-full max-w-md rounded-t-3xl p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <p className="text-base font-bold text-gray-800">{selected.producto_nombre}</p>

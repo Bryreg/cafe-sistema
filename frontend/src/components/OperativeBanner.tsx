@@ -171,46 +171,50 @@ export default function OperativeBanner() {
                 </div>
               )}
 
-              {/* Pendientes + acciones nuevas */}
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => setModal('rutinas')}
-                  className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-                  <ClipboardList size={18} style={{ color: dark.amber }} />
-                  <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Rutinas</p>
-                  <p className="text-[11px]" style={{ color: rutinasPendientes ? dark.amber : dark.inkSubtle }}>
-                    {rutinasPendientes ? `${rutinasPendientes} pendientes` : 'al día'}
-                  </p>
-                </button>
-                <button onClick={() => setModal('novedad')}
-                  className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-                  <Megaphone size={18} style={{ color: dark.amber }} />
-                  <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Novedad</p>
-                  <p className="text-[11px]" style={{ color: dark.inkSubtle }}>registrar</p>
-                </button>
-                <button onClick={() => go('/ingresos')}
-                  className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-                  <Truck size={18} style={{ color: dark.amber }} />
-                  <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Recibir</p>
-                  <p className="text-[11px]" style={{ color: dark.inkSubtle }}>mercancía</p>
-                </button>
-                <button onClick={() => setModal('temperatura')}
-                  className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-                  <Thermometer size={18} style={{ color: dark.amber }} />
-                  <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Temperatura</p>
-                  <p className="text-[11px]" style={{ color: dark.inkSubtle }}>registrar</p>
-                </button>
+              {/* Registros rápidos (modales — no navegan, no pierden contexto) */}
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
+                  Registrar
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <button onClick={() => setModal('rutinas')}
+                    className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
+                    <ClipboardList size={18} style={{ color: dark.amber }} />
+                    <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Rutinas</p>
+                    <p className="text-[11px]" style={{ color: rutinasPendientes ? dark.amber : dark.inkSubtle }}>
+                      {rutinasPendientes ? `${rutinasPendientes} pend.` : 'al día'}
+                    </p>
+                  </button>
+                  <button onClick={() => setModal('novedad')}
+                    className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
+                    <Megaphone size={18} style={{ color: dark.amber }} />
+                    <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Novedad</p>
+                    <p className="text-[11px]" style={{ color: dark.inkSubtle }}>registrar</p>
+                  </button>
+                  <button onClick={() => setModal('temperatura')}
+                    className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
+                    <Thermometer size={18} style={{ color: dark.amber }} />
+                    <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Temp.</p>
+                    <p className="text-[11px]" style={{ color: dark.inkSubtle }}>registrar</p>
+                  </button>
+                </div>
               </div>
 
-              {/* Accesos rápidos */}
-              <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${dark.border}` }}>
-                {QUICK.map((q, i) => (
-                  <button key={q.to} onClick={() => go(q.to)}
-                    className="w-full flex items-center gap-3 px-4 py-3"
-                    style={{ background: dark.surface, borderTop: i > 0 ? `1px solid ${dark.border}` : undefined }}>
-                    <q.icon size={16} style={{ color: dark.inkMuted }} />
-                    <span className="text-[13px]" style={{ color: dark.ink }}>{q.label}</span>
-                  </button>
-                ))}
+              {/* Herramientas operativas (única lista — el POS las abre como panel) */}
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
+                  Herramientas
+                </p>
+                <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${dark.border}` }}>
+                  {QUICK.map((q, i) => (
+                    <button key={q.to} onClick={() => go(q.to)}
+                      className="w-full flex items-center gap-3 px-4 py-3"
+                      style={{ background: dark.surface, borderTop: i > 0 ? `1px solid ${dark.border}` : undefined }}>
+                      <q.icon size={16} style={{ color: dark.inkMuted }} />
+                      <span className="text-[13px]" style={{ color: dark.ink }}>{q.label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Continuidad */}

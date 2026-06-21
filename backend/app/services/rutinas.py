@@ -119,3 +119,67 @@ def crear_plantilla(db: Session, data: dict):
     db.commit()
     db.refresh(p)
     return p
+
+
+# Claves de panel (5 rutinas de 1 clic)
+_PANEL_DEFS = [
+    {"k": "limpieza", "nombre": "Limpieza General", "every": 120, "track": True},
+    {"k": "surtido",  "nombre": "Surtido",           "every": 120, "track": True},
+    {"k": "vitrina",  "nombre": "Revisión Vitrina",  "every": 180, "track": True},
+    {"k": "novedad",  "nombre": "Novedad",            "every": None, "track": False},
+    {"k": "merma_op", "nombre": "Merma rápida",       "every": None, "track": False},
+]
+
+
+def get_estado_turno(db: Session, tienda_id: int):
+    """Último evento por clave dentro del turno activo y minutos transcurridos."""
+    from datetime import datetime
+    turno = get_turno_activo(db, tienda_id)
+    now = datetime.utcnow()
+    result = []
+    for defn in _PANEL_DEFS:
+        q = (
+            db.query(RutinaEvento)
+            .join(RutinaPlantilla, RutinaEvento.plantilla_id == RutinaPlantilla.id)
+            .filter(RutinaPlantilla.clave == defn["k"])
+        )
+        if turno:
+            q = q.filter(RutinaEvento.turno_id == turno.id)
+        else:
+            q = q.filter(RutinaEvento.tienda_id == tienda_id)
+        last = q.order_by(RutinaEvento.fecha.desc()).first()
+        minutes_ago = None
+        status = None
+        if last:
+            diff = now - last.fecha
+            minutes_ago = int(diff.total_seconds() / 60)
+            if defn["track"] and defn["every"]:
+                ratio = minutes_ago / defn["every"]
+                status = "alert" if ratio >= 1 else ("warn" if ratio >= 0.8 else "ok")
+        result.append({
+            "clave": defn["k"],
+            "nombre": defn["nombre"],
+            "every": defn["every"],
+            "track": defn["track"],
+            "ultimo": last.fecha.isoformat() if last else None,
+            "minutos": minutes_ago,
+            "status": status,
+        })
+    return result
+
+
+def registrar_por_clave(db: Session, tienda_id: int, clave: str, usuario_id: int,
+                        nota: str | None = None):
+    """Registra un evento buscando la plantilla por clave (global o de tienda)."""
+    plantilla = (
+        db.query(RutinaPlantilla)
+        .filter(
+            RutinaPlantilla.clave == clave,
+            (RutinaPlantilla.tienda_id == tienda_id) | (RutinaPlantilla.tienda_id.is_(None)),
+            RutinaPlantilla.activa == True,
+        )
+        .first()
+    )
+    if not plantilla:
+        raise HTTPException(status_code=404, detail=f"Rutina '{clave}' no encontrada")
+    return registrar_evento(db, tienda_id, plantilla.id, usuario_id, nota=nota)

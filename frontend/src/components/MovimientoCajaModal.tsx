@@ -94,7 +94,7 @@ export default function MovimientoCajaModal({ turnoId, onClose }: Props) {
           <p className="text-xs font-semibold text-warm-400 uppercase tracking-wide mb-2">
             Foto soporte (opcional)
           </p>
-          <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
           {preview ? (
             <div className="relative">
               <img src={preview} alt="preview" className="w-full h-28 object-cover rounded-xl border-2 border-amber-300" />

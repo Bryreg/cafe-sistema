@@ -221,11 +221,11 @@ export default function PanelTurno({ turno, estados, bitacora, onRegistrar, onCl
             </div>
           </section>
 
-          {/* Botones rápidos */}
+          {/* Botones rápidos — solo rutinas reales (Novedad/Merma viven en su propia herramienta) */}
           <section>
             <p style={{ ...LBL, marginBottom: 10 }}>Registrar rutina · 1 clic</p>
             <div className="grid grid-cols-3 gap-2.5">
-              {RUTINAS.map(({ k, label, Icon, track }) => {
+              {RUTINAS.filter(d => d.track).map(({ k, label, Icon, track }) => {
                 const estado = byKey[k]
                 const isAlert = track && estado?.status === 'alert'
                 const isFlash = flash === k

@@ -84,7 +84,8 @@ def _registrar_consumo_turno(
 
 
 def registrar_conteo(db: Session, tienda_id: int, tipo: str,
-                     items: list[dict], usuario_id: int):
+                     items: list[dict], usuario_id: int,
+                     barista_id: int | None = None, barista_nombre: str | None = None):
     turno = get_turno_activo(db, tienda_id)
     if not turno:
         raise HTTPException(status_code=400, detail="No hay turno abierto")
@@ -103,6 +104,8 @@ def registrar_conteo(db: Session, tienda_id: int, tipo: str,
         tipo=tipo,
         fecha_registro=datetime.utcnow(),
         usuario_id=usuario_id,
+        barista_id=barista_id,
+        barista_nombre=barista_nombre,
     )
     db.add(conteo)
     db.flush()

@@ -204,6 +204,10 @@ class MovimientoCaja(Base):
     fecha = Column(DateTime, default=datetime.utcnow)
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
     imagen_url = Column(String(300), nullable=True)
+    # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK
+    # para no introducir un segundo ForeignKey a usuarios (AmbiguousForeignKeysError).
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
     turno = relationship("CajaTurno", back_populates="movimientos")
     usuario = relationship("Usuario", back_populates="movimientos_caja")
 
@@ -297,6 +301,9 @@ class ConteoFisico(Base):
     tipo = Column(SAEnum(TipoConteoEnum), nullable=False)
     fecha_registro = Column(DateTime, default=datetime.utcnow)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
     turno = relationship("CajaTurno", back_populates="conteos")
     usuario = relationship("Usuario", back_populates="conteos_fisicos")
     items = relationship("ConteoFisicoItem", back_populates="conteo", cascade="all, delete-orphan")
@@ -331,6 +338,9 @@ class Merma(Base):
     fecha_recibido = Column(DateTime, nullable=True)
     fecha_registro = Column(DateTime, default=datetime.utcnow)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
     tienda = relationship("Tienda", back_populates="mermas", foreign_keys=[tienda_id])
     tienda_destino = relationship("Tienda", foreign_keys=[tienda_destino_id])
     producto = relationship("Producto", back_populates="mermas")
@@ -404,6 +414,9 @@ class EntregaTurno(Base):
     diferencia_tarjeta = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     imagen_url = Column(String(300), nullable=True)
     tipo = Column(String(20), default="entrega", nullable=False, server_default="entrega")
+    # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
     turno = relationship("CajaTurno", back_populates="entregas")
     usuario = relationship("Usuario", back_populates="entregas_turno")
 
@@ -435,6 +448,9 @@ class Consignacion(Base):
     imagen_url = Column(String(300), nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     estado = Column(SAEnum(EstadoConsignacionEnum), default=EstadoConsignacionEnum.pendiente)
+    # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
     tienda = relationship("Tienda", back_populates="consignaciones")
     turno = relationship("CajaTurno", foreign_keys=[caja_turno_id])
     usuario = relationship("Usuario", back_populates="consignaciones")
@@ -676,6 +692,9 @@ class FacturaCompra(Base):
     imagen_url = Column(String(300), nullable=True)
     fecha_registro = Column(DateTime, default=datetime.utcnow)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
     tienda = relationship("Tienda", back_populates="facturas_compra")
     usuario = relationship("Usuario")
     items = relationship("FacturaCompraItem", back_populates="factura", cascade="all, delete-orphan")
@@ -837,6 +856,9 @@ class RutinaEvento(Base):
     nota = Column(String(300), nullable=True)
     imagen_url = Column(String(300), nullable=True)
     fecha = Column(DateTime, default=datetime.utcnow, index=True)
+    # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
     plantilla = relationship("RutinaPlantilla")
 
 

@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 
 
@@ -30,4 +30,5 @@ class ConteoFisicoOut(BaseModel):
     tipo: str
     fecha_registro: datetime
     items: List[ConteoItemOut]
+    barista_nombre: Optional[str] = None
     class Config: from_attributes = True

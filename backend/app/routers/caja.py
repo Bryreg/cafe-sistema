@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.core.deps import ensure_tienda_access, ensure_turno_access, get_current_user
+from app.core.deps import ensure_tienda_access, ensure_turno_access, get_current_user, get_barista_actor
 from app.models.models import Usuario, CajaTurno
 from app.schemas.caja import AbrirCajaRequest, CerrarCajaRequest, MovimientoCajaRequest, TurnoOut, EntregaTurnoOut, FlujoCajaOut
 from app.services import caja as svc
@@ -56,10 +56,12 @@ async def movimiento(
     imagen: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
+    barista: tuple = Depends(get_barista_actor),
 ):
     ensure_turno_access(db, user, turno_id)
     imagen_url = await upload_imagen(imagen)
-    return svc.registrar_movimiento(db, turno_id, tipo, concepto, valor, user.id, imagen_url)
+    return svc.registrar_movimiento(db, turno_id, tipo, concepto, valor, user.id, imagen_url,
+                                    barista_id=barista[0], barista_nombre=barista[1])
 
 @router.get("/{turno_id}/movimientos")
 def get_movimientos(turno_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
@@ -84,10 +86,12 @@ async def registrar_entrega(
     imagen: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
+    barista: tuple = Depends(get_barista_actor),
 ):
     ensure_turno_access(db, user, turno_id)
     imagen_url = await upload_imagen(imagen)
-    return svc.registrar_entrega(db, turno_id, user.id, efectivo_real, ventas_tarjeta_bold, imagen_url)
+    return svc.registrar_entrega(db, turno_id, user.id, efectivo_real, ventas_tarjeta_bold, imagen_url,
+                                 barista_id=barista[0], barista_nombre=barista[1])
 
 @router.post("/{turno_id}/cuadre-llegada", response_model=EntregaTurnoOut)
 async def cuadre_llegada(
@@ -97,9 +101,11 @@ async def cuadre_llegada(
     nota: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
+    barista: tuple = Depends(get_barista_actor),
 ):
     ensure_turno_access(db, user, turno_id)
-    return svc.registrar_cuadre_llegada(db, turno_id, user.id, efectivo_real, tipo_turno, nota)
+    return svc.registrar_cuadre_llegada(db, turno_id, user.id, efectivo_real, tipo_turno, nota,
+                                        barista_id=barista[0], barista_nombre=barista[1])
 
 
 @router.get("/{turno_id}/entregas", response_model=List[EntregaTurnoOut])

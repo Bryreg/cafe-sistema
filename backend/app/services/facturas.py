@@ -8,7 +8,8 @@ from app.services import inventario as inv_svc
 from app.services import audit
 
 
-def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int) -> FacturaCompra:
+def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
+                  barista_id: int | None = None, barista_nombre: str | None = None) -> FacturaCompra:
     tipo_map = {
         "contado": TipoPagoEnum.contado,
         "credito": TipoPagoEnum.credito,
@@ -29,6 +30,8 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int) ->
         tipo_pago=tipo_map[data.tipo_pago],
         imagen_url=imagen_url,
         usuario_id=usuario_id,
+        barista_id=barista_id,
+        barista_nombre=barista_nombre,
     )
     db.add(factura)
     db.flush()
@@ -72,6 +75,8 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int) ->
                 concepto=concepto,
                 valor=data.valor_total,
                 usuario_id=usuario_id,
+                barista_id=barista_id,
+                barista_nombre=barista_nombre,
             ))
 
     audit.registrar(
@@ -145,6 +150,8 @@ def _serializar(f: FacturaCompra) -> dict:
         "imagen_url": f.imagen_url,
         "fecha_registro": f.fecha_registro,
         "usuario_nombre": f.usuario.nombre if f.usuario else "",
+        # Barista real (display): la que operó; cae a usuario_nombre del dispositivo si no hay
+        "barista_nombre": f.barista_nombre or (f.usuario.nombre if f.usuario else ""),
         "items": [
             {
                 "id": i.id,

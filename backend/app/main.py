@@ -89,6 +89,24 @@ with engine.connect() as _conn:
         # POS: descuento por ticket (suma) y por linea de producto
         "ALTER TABLE tickets ADD COLUMN descuento NUMERIC(12,2) DEFAULT 0",
         "ALTER TABLE ticket_items ADD COLUMN descuento NUMERIC(12,2) DEFAULT 0",
+        # Barista activa persistente: barista REAL que opera (≠ usuario_id del dispositivo/kiosko).
+        # barista_id es una columna PLANA (sin FK) para no introducir un segundo ForeignKey a
+        # usuarios y disparar AmbiguousForeignKeysError en el mapper. barista_nombre es el snapshot
+        # de display (sin join). El usuario_id existente se mantiene como "dispositivo".
+        "ALTER TABLE mermas ADD COLUMN barista_id INTEGER",
+        "ALTER TABLE mermas ADD COLUMN barista_nombre VARCHAR(100)",
+        "ALTER TABLE conteos_fisicos ADD COLUMN barista_id INTEGER",
+        "ALTER TABLE conteos_fisicos ADD COLUMN barista_nombre VARCHAR(100)",
+        "ALTER TABLE facturas_compra ADD COLUMN barista_id INTEGER",
+        "ALTER TABLE facturas_compra ADD COLUMN barista_nombre VARCHAR(100)",
+        "ALTER TABLE consignaciones ADD COLUMN barista_id INTEGER",
+        "ALTER TABLE consignaciones ADD COLUMN barista_nombre VARCHAR(100)",
+        "ALTER TABLE entregas_turno ADD COLUMN barista_id INTEGER",
+        "ALTER TABLE entregas_turno ADD COLUMN barista_nombre VARCHAR(100)",
+        "ALTER TABLE movimientos_caja ADD COLUMN barista_id INTEGER",
+        "ALTER TABLE movimientos_caja ADD COLUMN barista_nombre VARCHAR(100)",
+        "ALTER TABLE rutina_eventos ADD COLUMN barista_id INTEGER",
+        "ALTER TABLE rutina_eventos ADD COLUMN barista_nombre VARCHAR(100)",
         # Concurrency: only one open shift per store at any time
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_one_turno_abierto ON caja_turnos (tienda_id) WHERE estado = 'abierto'",
         # Concurrency: only one conteo of each type (apertura/cierre) per shift

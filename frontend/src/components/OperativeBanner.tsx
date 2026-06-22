@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
@@ -34,6 +34,8 @@ export default function OperativeBanner() {
   const { user, tiendaId, isKiosk, resetKiosk } = useAuth()
   const { turno, refresh } = useTurno()
   const navigate = useNavigate()
+  // En el POS el fondo lo ocupan el dock + banner de rutinas → el botón va por encima.
+  const onPos = useLocation().pathname === '/pos'
 
   const [open, setOpen] = useState(false)
   const [modal, setModal] = useState<null | 'rutinas' | 'novedad' | 'recepcion' | 'temperatura' | 'caja'>(null)
@@ -62,8 +64,8 @@ export default function OperativeBanner() {
       {/* Botón flotante (colapsado) */}
       <button
         onClick={() => setOpen(true)}
-        className="fixed top-3 left-3 z-40 flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full shadow-lg"
-        style={{ background: dark.surface, border: `1px solid ${dark.border}` }}
+        className="fixed left-3 z-50 flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full shadow-lg"
+        style={{ bottom: onPos ? 116 : 16, background: dark.surface, border: `1px solid ${dark.border}` }}
         aria-label="Panel del turno"
       >
         <Menu size={16} style={{ color: dark.ink }} />

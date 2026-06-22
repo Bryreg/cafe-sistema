@@ -1,616 +1,616 @@
 [
   {
-    "nombre": "AROMATICA DE CIDRON",
+    "nombre": "Aromatica de Cidron",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "AROMATICA DE HIERBABUENA",
+    "nombre": "Aromatica de Hierbabuena",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "AROMATICA DE LIMONCILLO",
+    "nombre": "Aromatica de Limoncillo",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "AROMATICA DE MANZANILLA",
+    "nombre": "Aromatica de Manzanilla",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "AROMATICA DE TORONJIL",
+    "nombre": "Aromatica de Toronjil",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "COCOA",
+    "nombre": "Cocoa",
     "categoria": "bebida",
     "precio": 10900
   },
   {
-    "nombre": "MILO CALIENTE",
+    "nombre": "Milo Caliente",
     "categoria": "bebida",
     "precio": 10900
   },
   {
-    "nombre": "GRANIZADO LULO AGUA",
+    "nombre": "Granizado Lulo Agua",
     "categoria": "bebida",
     "precio": 10900
   },
   {
-    "nombre": "GRANIZADO LULO LECHE",
+    "nombre": "Granizado Lulo Leche",
     "categoria": "bebida",
     "precio": 12900
   },
   {
-    "nombre": "GRANIZADO MANGO AGUA",
+    "nombre": "Granizado Mango Agua",
     "categoria": "bebida",
     "precio": 10900
   },
   {
-    "nombre": "GRANIZADO MANGO LECHE",
+    "nombre": "Granizado Mango Leche",
     "categoria": "bebida",
     "precio": 12900
   },
   {
-    "nombre": "LIMONADA NATURAL",
+    "nombre": "Limonada Natural",
     "categoria": "bebida",
     "precio": 10900
   },
   {
-    "nombre": "MILO FRIO 12 ONZAS",
+    "nombre": "Milo Frio 12 Onzas",
     "categoria": "bebida",
     "precio": 10900
   },
   {
-    "nombre": "GRANIZADO MORA AGUA",
+    "nombre": "Granizado Mora Agua",
     "categoria": "bebida",
     "precio": 10900
   },
   {
-    "nombre": "GRANIZADO MORA LECHE",
+    "nombre": "Granizado Mora Leche",
     "categoria": "bebida",
     "precio": 12900
   },
   {
-    "nombre": "CHAI EN AGUA",
+    "nombre": "Chai en Agua",
     "categoria": "bebida",
     "precio": 10900
   },
   {
-    "nombre": "FROZEN BERRY SEXY",
+    "nombre": "Frozen Berry Sexy",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "FROZEN LULO",
+    "nombre": "Frozen Lulo",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "FROZEN MANGO",
+    "nombre": "Frozen Mango",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "SODA ITALIANA FRUTOS AMARILLOS",
+    "nombre": "Soda Italiana Frutos Amarillos",
     "categoria": "bebida",
     "precio": 11900
   },
   {
-    "nombre": "SODA ITALIANA FRUTOS ROJOS",
+    "nombre": "Soda Italiana Frutos Rojos",
     "categoria": "bebida",
     "precio": 11900
   },
   {
-    "nombre": "AGUA MEDIUM",
+    "nombre": "Agua Medium",
     "categoria": "bebida",
     "precio": 4900
   },
   {
-    "nombre": "AGUA MEDIUM CALIENTE",
+    "nombre": "Agua Medium Caliente",
     "categoria": "bebida",
     "precio": 1900
   },
   {
-    "nombre": "AGUA MEDIUM CON GAS",
+    "nombre": "Agua Medium con Gas",
     "categoria": "bebida",
     "precio": 4900
   },
   {
-    "nombre": "GRANIZADO AMARETTO 12 ONZAS",
+    "nombre": "Granizado Amaretto 12 Onzas",
     "categoria": "bebida",
     "precio": 18900
   },
   {
-    "nombre": "GRANIZADO AMARETTO 16OZ",
+    "nombre": "Granizado Amaretto 16oz",
     "categoria": "bebida",
     "precio": 19900
   },
   {
-    "nombre": "GRANIZADO BAILEYS 12 ONZAS",
+    "nombre": "Granizado Baileys 12 Onzas",
     "categoria": "bebida",
     "precio": 18900
   },
   {
-    "nombre": "GRANIZADO BAILEYS 16OZ",
+    "nombre": "Granizado Baileys 16oz",
     "categoria": "bebida",
     "precio": 19900
   },
   {
-    "nombre": "GRANIZADO CARAMELO 12 ONZAS",
+    "nombre": "Granizado Caramelo 12 Onzas",
     "categoria": "bebida",
     "precio": 13900
   },
   {
-    "nombre": "GRANIZADO CARAMELO 16OZ",
+    "nombre": "Granizado Caramelo 16oz",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "GRANIZADO CHAI 16 OZ",
+    "nombre": "Granizado Chai 16 Oz",
     "categoria": "bebida",
     "precio": 16900
   },
   {
-    "nombre": "GRANIZADO FRUTOS ROJOS",
+    "nombre": "Granizado Frutos Rojos",
     "categoria": "bebida",
     "precio": 14900
   },
   {
-    "nombre": "GRANIZADO IRLANDES",
+    "nombre": "Granizado Irlandes",
     "categoria": "bebida",
     "precio": 19900
   },
   {
-    "nombre": "GRANIZADO LECHE CONDENSADA 12 ONZAS",
+    "nombre": "Granizado Leche Condensada 12 Onzas",
     "categoria": "bebida",
     "precio": 13900
   },
   {
-    "nombre": "GRANIZADO LECHE CONDENSADA 16OZ",
+    "nombre": "Granizado Leche Condensada 16oz",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "GRANIZADO MEDIUM 12oz",
+    "nombre": "Granizado Medium 12oz",
     "categoria": "bebida",
     "precio": 11900
   },
   {
-    "nombre": "GRANIZADO MEDIUM 16oz",
+    "nombre": "Granizado Medium 16oz",
     "categoria": "bebida",
     "precio": 13900
   },
   {
-    "nombre": "GRANIZADO MILO 12 ONZAS",
+    "nombre": "Granizado Milo 12 Onzas",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "GRANIZADO MILO 16 OZ",
+    "nombre": "Granizado Milo 16 Oz",
     "categoria": "bebida",
     "precio": 16900
   },
   {
-    "nombre": "GRANIZADO MOKA 12 ONZAS",
+    "nombre": "Granizado Moka 12 Onzas",
     "categoria": "bebida",
     "precio": 13900
   },
   {
-    "nombre": "GRANIZADO MOKA 16OZ",
+    "nombre": "Granizado Moka 16oz",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "GRANIZADO OREO 12 ONZAS",
+    "nombre": "Granizado Oreo 12 Onzas",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "GRANIZADO OREO 16 OZ",
+    "nombre": "Granizado Oreo 16 Oz",
     "categoria": "bebida",
     "precio": 16900
   },
   {
-    "nombre": "AMERICANO BAILEYS",
+    "nombre": "Americano Baileys",
     "categoria": "bebida",
     "precio": 11900
   },
   {
-    "nombre": "AMERICANO DESCAFEINADO",
+    "nombre": "Americano Descafeinado",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "AMERICANO FRIO",
+    "nombre": "Americano Frio",
     "categoria": "bebida",
     "precio": 6900
   },
   {
-    "nombre": "AMERICANO GRANDE",
+    "nombre": "Americano Grande",
     "categoria": "bebida",
     "precio": 8900
   },
   {
-    "nombre": "AMERICANO IRLANDES",
+    "nombre": "Americano Irlandes",
     "categoria": "bebida",
     "precio": 11900
   },
   {
-    "nombre": "AMERICANO MEDIUM",
+    "nombre": "Americano Medium",
     "categoria": "bebida",
     "precio": 6900
   },
   {
-    "nombre": "CAFE LATTE",
+    "nombre": "Cafe Latte",
     "categoria": "bebida",
     "precio": 10900
   },
   {
-    "nombre": "AFOGATTO",
+    "nombre": "Afogatto",
     "categoria": "bebida",
     "precio": 9900
   },
   {
-    "nombre": "CHAI LATTE",
+    "nombre": "Chai Latte",
     "categoria": "bebida",
     "precio": 12900
   },
   {
-    "nombre": "ESPRESSO DOBLE",
+    "nombre": "Espresso Doble",
     "categoria": "bebida",
     "precio": 8900
   },
   {
-    "nombre": "ESPRESSO MACHIATO",
+    "nombre": "Espresso Machiato",
     "categoria": "bebida",
     "precio": 8900
   },
   {
-    "nombre": "ESPRESSO SENCILLO",
+    "nombre": "Espresso Sencillo",
     "categoria": "bebida",
     "precio": 6900
   },
   {
-    "nombre": "ESPRESSO VIENES",
+    "nombre": "Espresso Vienes",
     "categoria": "bebida",
     "precio": 8900
   },
   {
-    "nombre": "LATTE FRIO",
+    "nombre": "Latte Frio",
     "categoria": "bebida",
     "precio": 10900
   },
   {
-    "nombre": "PORCION ESPRESSO",
+    "nombre": "Porcion Espresso",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "TINTO CAMPESINO",
+    "nombre": "Tinto Campesino",
     "categoria": "bebida",
     "precio": 6900
   },
   {
-    "nombre": "BEBIDA AGRANDADA",
+    "nombre": "Bebida Agrandada",
     "categoria": "bebida",
     "precio": 2000
   },
   {
-    "nombre": "CAFE CON LECHE",
+    "nombre": "Cafe con Leche",
     "categoria": "bebida",
     "precio": 8900
   },
   {
-    "nombre": "MOKACCINO AMARETTO",
+    "nombre": "Mokaccino Amaretto",
     "categoria": "bebida",
     "precio": 16900
   },
   {
-    "nombre": "MOKACCINO BAILEYS",
+    "nombre": "Mokaccino Baileys",
     "categoria": "bebida",
     "precio": 16900
   },
   {
-    "nombre": "MOKACCINO CANELA",
+    "nombre": "Mokaccino Canela",
     "categoria": "bebida",
     "precio": 13900
   },
   {
-    "nombre": "MOKACCINO MACADAMIA",
+    "nombre": "Mokaccino Macadamia",
     "categoria": "bebida",
     "precio": 13900
   },
   {
-    "nombre": "MOKACCINO MEDIUM",
+    "nombre": "Mokaccino Medium",
     "categoria": "bebida",
     "precio": 12900
   },
   {
-    "nombre": "MOKACCINO VAINILLA",
+    "nombre": "Mokaccino Vainilla",
     "categoria": "bebida",
     "precio": 13900
   },
   {
-    "nombre": "MOKACCINO VIENES",
+    "nombre": "Mokaccino Vienes",
     "categoria": "bebida",
     "precio": 13900
   },
   {
-    "nombre": "MOKACCINO VIENES FRIO",
+    "nombre": "Mokaccino Vienes Frio",
     "categoria": "bebida",
     "precio": 13900
   },
   {
-    "nombre": "CAPPUCCINO AMARETTO",
+    "nombre": "Cappuccino Amaretto",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "CAPPUCCINO BAILEYS",
+    "nombre": "Cappuccino Baileys",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "CAPPUCCINO CANELA",
+    "nombre": "Cappuccino Canela",
     "categoria": "bebida",
     "precio": 12900
   },
   {
-    "nombre": "CAPPUCCINO CARAMELO",
+    "nombre": "Cappuccino Caramelo",
     "categoria": "bebida",
     "precio": 12900
   },
   {
-    "nombre": "CAPPUCCINO CHAI",
+    "nombre": "Cappuccino Chai",
     "categoria": "bebida",
     "precio": 12900
   },
   {
-    "nombre": "CAPPUCCINO DESCAFEINADO",
+    "nombre": "Cappuccino Descafeinado",
     "categoria": "bebida",
     "precio": 9900
   },
   {
-    "nombre": "CAPPUCCINO IRLANDES",
+    "nombre": "Cappuccino Irlandes",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "CAPPUCCINO MACADAMIA",
+    "nombre": "Cappuccino Macadamia",
     "categoria": "bebida",
     "precio": 12900
   },
   {
-    "nombre": "CAPPUCCINO TRADICIONAL MEDIUM",
+    "nombre": "Cappuccino Tradicional Medium",
     "categoria": "bebida",
     "precio": 10900
   },
   {
-    "nombre": "CAPPUCCINO VAINILLA",
+    "nombre": "Cappuccino Vainilla",
     "categoria": "bebida",
     "precio": 12900
   },
   {
-    "nombre": "CAPPUCCINO VIENES",
+    "nombre": "Cappuccino Vienes",
     "categoria": "bebida",
     "precio": 12900
   },
   {
-    "nombre": "LIBRA MEDIUM CAFE EXPORTACION",
+    "nombre": "Libra Medium Cafe Exportacion",
     "categoria": "bebida",
     "precio": 49900
   },
   {
-    "nombre": "MEDIA LIBRA MEDIUM CAFE EXPORTACION",
+    "nombre": "Media Libra Medium Cafe Exportacion",
     "categoria": "bebida",
     "precio": 29900
   },
   {
-    "nombre": "MALTEADA CHOCOLATE",
+    "nombre": "Malteada Chocolate",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "MALTEADA FRUTOS ROJOS",
+    "nombre": "Malteada Frutos Rojos",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "MALTEADA MILO",
+    "nombre": "Malteada Milo",
     "categoria": "bebida",
     "precio": 17900
   },
   {
-    "nombre": "MALTEADA MOKA",
+    "nombre": "Malteada Moka",
     "categoria": "bebida",
     "precio": 16900
   },
   {
-    "nombre": "MALTEADA MOKA AMARETTO",
+    "nombre": "Malteada Moka Amaretto",
     "categoria": "bebida",
     "precio": 20900
   },
   {
-    "nombre": "MALTEADA OREO",
+    "nombre": "Malteada Oreo",
     "categoria": "bebida",
     "precio": 17900
   },
   {
-    "nombre": "MALTEADA VAINILLA",
+    "nombre": "Malteada Vainilla",
     "categoria": "bebida",
     "precio": 15900
   },
   {
-    "nombre": "MALTEADA ESPRESSO",
+    "nombre": "Malteada Espresso",
     "categoria": "bebida",
     "precio": 16900
   },
   {
-    "nombre": "MALTEADA ESPRESSO BAILEYS",
+    "nombre": "Malteada Espresso Baileys",
     "categoria": "bebida",
     "precio": 20900
   },
   {
-    "nombre": "MATCHA AGUA",
+    "nombre": "Matcha Agua",
     "categoria": "bebida",
     "precio": 10900
   },
   {
-    "nombre": "MATCHA LATTE",
+    "nombre": "Matcha Latte",
     "categoria": "bebida",
     "precio": 11900
   },
   {
-    "nombre": "MATCHA LATTE VAINILLA",
+    "nombre": "Matcha Latte Vainilla",
     "categoria": "bebida",
     "precio": 13900
   },
   {
-    "nombre": "CROISANT",
+    "nombre": "Croisant",
     "categoria": "pasteleria",
     "precio": 7900
   },
   {
-    "nombre": "CROISANT CHOCOLATE",
+    "nombre": "Croisant Chocolate",
     "categoria": "pasteleria",
     "precio": 10900
   },
   {
-    "nombre": "WAFFLE PANDEBONO",
+    "nombre": "Waffle Pandebono",
     "categoria": "pasteleria",
     "precio": 15900
   },
   {
-    "nombre": "ALMOJABANAS",
+    "nombre": "Almojabanas",
     "categoria": "pasteleria",
     "precio": 3900
   },
   {
-    "nombre": "TORTA CHOCOLATE",
+    "nombre": "Torta Chocolate",
     "categoria": "pasteleria",
     "precio": 13900
   },
   {
-    "nombre": "TORTA NARANJA",
+    "nombre": "Torta Naranja",
     "categoria": "pasteleria",
     "precio": 12900
   },
   {
-    "nombre": "TORTA RED VELVET",
+    "nombre": "Torta Red Velvet",
     "categoria": "pasteleria",
     "precio": 12900
   },
   {
-    "nombre": "TORTA ZANAHORIA",
+    "nombre": "Torta Zanahoria",
     "categoria": "pasteleria",
     "precio": 12900
   },
   {
-    "nombre": "OMELET HUEVO",
+    "nombre": "Omelet Huevo",
     "categoria": "pasteleria",
     "precio": 14900
   },
   {
-    "nombre": "OMELET JAMON Y QUESO",
+    "nombre": "Omelet Jamon y Queso",
     "categoria": "pasteleria",
     "precio": 16900
   },
   {
-    "nombre": "PASTEL DE POLLO",
+    "nombre": "Pastel de Pollo",
     "categoria": "pasteleria",
     "precio": 9900
   },
   {
-    "nombre": "PASTEL DE QUESO",
+    "nombre": "Pastel de Queso",
     "categoria": "pasteleria",
     "precio": 9900
   },
   {
-    "nombre": "PORCION AMARETTO",
+    "nombre": "Porcion Amaretto",
     "categoria": "bebida",
     "precio": 8900
   },
   {
-    "nombre": "PORCION BAILEYS",
+    "nombre": "Porcion Baileys",
     "categoria": "bebida",
     "precio": 8900
   },
   {
-    "nombre": "PORCION CANELA",
+    "nombre": "Porcion Canela",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "PORCION CHANTILLY",
+    "nombre": "Porcion Chantilly",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "PORCION HELADO 1 BOLA",
+    "nombre": "Porcion Helado 1 Bola",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "PORCION LECHE 2 ONZAS",
+    "nombre": "Porcion Leche 2 Onzas",
     "categoria": "bebida",
     "precio": 3900
   },
   {
-    "nombre": "PORCION LECHE CONDENSADA",
+    "nombre": "Porcion Leche Condensada",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "PORCION MACADAMIA",
+    "nombre": "Porcion Macadamia",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "PORCION OREO",
+    "nombre": "Porcion Oreo",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "PORCION SALSA CARAMELO",
+    "nombre": "Porcion Salsa Caramelo",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "PORCION SALSA CHOCOLATE",
+    "nombre": "Porcion Salsa Chocolate",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "PORCION VAINILLA",
+    "nombre": "Porcion Vainilla",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "PORCION WHISKY",
+    "nombre": "Porcion Whisky",
     "categoria": "bebida",
     "precio": 8900
   },
   {
-    "nombre": "VASO 1 BOLA HELADO GOURMET",
+    "nombre": "Vaso 1 Bola Helado Gourmet",
     "categoria": "bebida",
     "precio": 9900
   },
   {
-    "nombre": "VASO DE LECHE 9 ONZAS",
+    "nombre": "Vaso de Leche 9 Onzas",
     "categoria": "bebida",
     "precio": 6900
   },
   {
-    "nombre": "PORCION CHAI",
+    "nombre": "Porcion Chai",
     "categoria": "bebida",
     "precio": 5900
   },
   {
-    "nombre": "PORCION MILO",
+    "nombre": "Porcion Milo",
     "categoria": "bebida",
     "precio": 5900
   }

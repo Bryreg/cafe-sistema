@@ -23,6 +23,7 @@ class MermaOut(BaseModel):
     recibido: bool
     fecha_recibido: Optional[datetime] = None
     fecha_registro: datetime
+    barista_nombre: Optional[str] = None
 
     class Config:
         from_attributes = True

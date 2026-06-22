@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { TurnoProvider, useTurno } from './contexts/TurnoContext'
+import { BaristaActivaProvider } from './contexts/BaristaActivaContext'
 import Layout from './components/Layout'
 import OperativeBanner from './components/OperativeBanner'
 // Device setup
@@ -171,7 +172,9 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <TurnoProvider>
-          <AppRoutes />
+          <BaristaActivaProvider>
+            <AppRoutes />
+          </BaristaActivaProvider>
         </TurnoProvider>
       </AuthProvider>
     </BrowserRouter>

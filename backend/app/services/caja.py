@@ -284,7 +284,8 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
 
 def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
                       efectivo_real: float,
-                      ventas_tarjeta_bold: float, imagen_url: str | None):
+                      ventas_tarjeta_bold: float, imagen_url: str | None,
+                      barista_id: int | None = None, barista_nombre: str | None = None):
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
         CajaTurno.estado == EstadoTurnoEnum.abierto
@@ -320,6 +321,8 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
         diferencia_efectivo=diferencia_efectivo,
         diferencia_tarjeta=diferencia_tarjeta,
         imagen_url=imagen_url,
+        barista_id=barista_id,
+        barista_nombre=barista_nombre,
     )
     db.add(entrega)
     audit.registrar(
@@ -352,7 +355,8 @@ def get_entregas_tienda(db: Session, tienda_id: int, limit: int = 20, solo_hoy: 
 
 
 def registrar_movimiento(db: Session, turno_id: int, tipo: str, concepto: str,
-                         valor: float, usuario_id: int, imagen_url: str | None = None):
+                         valor: float, usuario_id: int, imagen_url: str | None = None,
+                         barista_id: int | None = None, barista_nombre: str | None = None):
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
         CajaTurno.estado == EstadoTurnoEnum.abierto
@@ -373,6 +377,8 @@ def registrar_movimiento(db: Session, turno_id: int, tipo: str, concepto: str,
         valor=valor,
         usuario_id=usuario_id,
         imagen_url=imagen_url,
+        barista_id=barista_id,
+        barista_nombre=barista_nombre,
     )
     db.add(mov)
     audit.registrar(
@@ -386,7 +392,8 @@ def registrar_movimiento(db: Session, turno_id: int, tipo: str, concepto: str,
 
 
 def registrar_cuadre_llegada(db: Session, turno_id: int, usuario_id: int,
-                              efectivo_real: float, tipo_turno: str, nota: str | None = None):
+                              efectivo_real: float, tipo_turno: str, nota: str | None = None,
+                              barista_id: int | None = None, barista_nombre: str | None = None):
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
         CajaTurno.estado == EstadoTurnoEnum.abierto
@@ -419,6 +426,8 @@ def registrar_cuadre_llegada(db: Session, turno_id: int, usuario_id: int,
         diferencia_tarjeta=0.0,
         imagen_url=None,
         tipo="recibo",
+        barista_id=barista_id,
+        barista_nombre=barista_nombre,
     )
     db.add(entrega)
     turno.tiene_cuadre_llegada = True

@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Form, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.core.deps import get_current_user, require_admin, ensure_tienda_access
+from app.core.deps import get_current_user, require_admin, ensure_tienda_access, get_barista_actor
 from app.models.models import Usuario
 from app.services import rutinas as svc
 from app.core.storage import upload_imagen
@@ -39,10 +39,12 @@ async def registrar_evento(
     imagen: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
+    barista: tuple = Depends(get_barista_actor),
 ):
     ensure_tienda_access(user, tienda_id)
     imagen_url = await upload_imagen(imagen)
-    ev = svc.registrar_evento(db, tienda_id, plantilla_id, user.id, valor, nota, imagen_url)
+    ev = svc.registrar_evento(db, tienda_id, plantilla_id, user.id, valor, nota, imagen_url,
+                              barista_id=barista[0], barista_nombre=barista[1])
     return {"id": ev.id, "plantilla_id": ev.plantilla_id, "fecha": ev.fecha.isoformat()}
 
 
@@ -81,9 +83,11 @@ class QuickRutinaIn(BaseModel):
 
 @router.post("/quick", status_code=201)
 def quick_rutina(data: QuickRutinaIn, db: Session = Depends(get_db),
-                 user: Usuario = Depends(get_current_user)):
+                 user: Usuario = Depends(get_current_user),
+                 barista: tuple = Depends(get_barista_actor)):
     ensure_tienda_access(user, data.tienda_id)
-    ev = svc.registrar_por_clave(db, data.tienda_id, data.clave, user.id, data.nota)
+    ev = svc.registrar_por_clave(db, data.tienda_id, data.clave, user.id, data.nota,
+                                 barista_id=barista[0], barista_nombre=barista[1])
     return {"id": ev.id, "clave": data.clave, "fecha": ev.fecha.isoformat()}
 
 

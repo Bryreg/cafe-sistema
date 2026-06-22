@@ -14,7 +14,8 @@ TIPOS_VALIDOS = {"consumo", "traslado", "daño"}
 
 def registrar_merma(db: Session, tienda_id: int, producto_id: int,
                     cantidad: float, motivo: str, usuario_id: int,
-                    tipo: str = "consumo", tienda_destino_id: int | None = None):
+                    tipo: str = "consumo", tienda_destino_id: int | None = None,
+                    barista_id: int | None = None, barista_nombre: str | None = None):
 
     if tipo not in TIPOS_VALIDOS:
         raise HTTPException(400, f"Tipo inválido. Usa: {', '.join(TIPOS_VALIDOS)}")
@@ -44,6 +45,8 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
         tienda_destino_id=tienda_destino_id if tipo == "traslado" else None,
         recibido=False,
         usuario_id=usuario_id,
+        barista_id=barista_id,
+        barista_nombre=barista_nombre,
     )
     db.add(merma)
 

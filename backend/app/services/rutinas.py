@@ -57,7 +57,8 @@ def get_pendientes(db: Session, tienda_id: int):
 
 def registrar_evento(db: Session, tienda_id: int, plantilla_id: int, usuario_id: int,
                      valor: float | None = None, nota: str | None = None,
-                     imagen_url: str | None = None):
+                     imagen_url: str | None = None,
+                     barista_id: int | None = None, barista_nombre: str | None = None):
     """Registra la ejecución de una rutina como un evento (fecha/usuario/turno)."""
     plantilla = db.query(RutinaPlantilla).filter(RutinaPlantilla.id == plantilla_id).first()
     if not plantilla:
@@ -77,6 +78,8 @@ def registrar_evento(db: Session, tienda_id: int, plantilla_id: int, usuario_id:
         valor=valor,
         nota=nota,
         imagen_url=imagen_url,
+        barista_id=barista_id,
+        barista_nombre=barista_nombre,
     )
     db.add(ev)
     db.commit()
@@ -270,7 +273,8 @@ def get_cumplimiento_semana(db: Session, tienda_id: int):
 
 
 def registrar_por_clave(db: Session, tienda_id: int, clave: str, usuario_id: int,
-                        nota: str | None = None):
+                        nota: str | None = None,
+                        barista_id: int | None = None, barista_nombre: str | None = None):
     """Registra un evento buscando la plantilla por clave (global o de tienda)."""
     plantilla = (
         db.query(RutinaPlantilla)
@@ -283,4 +287,5 @@ def registrar_por_clave(db: Session, tienda_id: int, clave: str, usuario_id: int
     )
     if not plantilla:
         raise HTTPException(status_code=404, detail=f"Rutina '{clave}' no encontrada")
-    return registrar_evento(db, tienda_id, plantilla.id, usuario_id, nota=nota)
+    return registrar_evento(db, tienda_id, plantilla.id, usuario_id, nota=nota,
+                            barista_id=barista_id, barista_nombre=barista_nombre)

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.core.deps import ensure_tienda_access, get_current_user, require_admin
+from app.core.deps import ensure_tienda_access, get_current_user, require_admin, get_barista_actor
 from app.models.models import Usuario
 from app.services import consignaciones as svc
 from app.core.storage import upload_imagen
@@ -16,11 +16,13 @@ async def registrar(
     turno_id: Optional[int] = Form(None),
     imagen: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
-    user: Usuario = Depends(get_current_user)
+    user: Usuario = Depends(get_current_user),
+    barista: tuple = Depends(get_barista_actor),
 ):
     ensure_tienda_access(user, tienda_id)
     imagen_url = await upload_imagen(imagen)
-    return svc.registrar(db, tienda_id, valor, imagen_url, user.id, turno_id=turno_id)
+    return svc.registrar(db, tienda_id, valor, imagen_url, user.id, turno_id=turno_id,
+                         barista_id=barista[0], barista_nombre=barista[1])
 
 @router.get("/pendiente/{tienda_id}")
 def pendiente(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):

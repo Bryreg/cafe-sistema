@@ -12,6 +12,7 @@ import { Toast, Sheet, Pill } from '../components/ui'
 import DockBar from '../components/DockBar'
 import PanelTurno from '../components/PanelTurno'
 import BannerOperativo from '../components/BannerOperativo'
+import BaristaSelector from '../components/BaristaSelector'
 import { PanelProvider } from '../contexts/PanelContext'
 import { useRutinasEstado } from '../hooks/useRutinasEstado'
 import Ingresos from './Ingresos'
@@ -242,6 +243,9 @@ export default function POS() {
       {/* ── Header ── */}
       <header className="bg-white border-b border-warm-200 px-4 pb-3 header-safe flex items-center gap-2 sticky top-0 z-20">
         <span className="flex-1 text-sm font-bold text-warm-700 truncate">POS · Cobros</span>
+
+        {/* Barista que opera — selector compacto (atribución de escrituras) */}
+        <BaristaSelector />
 
         {/* Panel de Turno — botón permanente */}
         <button

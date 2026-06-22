@@ -35,13 +35,15 @@ def _turno_pendiente_mas_antiguo(db: Session, tienda_id: int) -> int | None:
 
 
 def registrar(db: Session, tienda_id: int, valor: float, imagen_url: str | None,
-              usuario_id: int, turno_id: int | None = None):
+              usuario_id: int, turno_id: int | None = None,
+              barista_id: int | None = None, barista_nombre: str | None = None):
     if valor <= 0:
         raise HTTPException(status_code=400, detail="El valor de la consignación debe ser mayor a 0")
     caja_turno_id = turno_id or _turno_pendiente_mas_antiguo(db, tienda_id)
     c = Consignacion(tienda_id=tienda_id, caja_turno_id=caja_turno_id,
                      valor=valor, imagen_url=imagen_url,
-                     usuario_id=usuario_id, estado=EstadoConsignacionEnum.pendiente)
+                     usuario_id=usuario_id, estado=EstadoConsignacionEnum.pendiente,
+                     barista_id=barista_id, barista_nombre=barista_nombre)
     db.add(c)
     db.commit()
     db.refresh(c)
@@ -62,6 +64,8 @@ def get_por_tienda(db: Session, tienda_id: int, fecha: date | None = None):
             "estado": c.estado,
             "usuario_id": c.usuario_id,
             "usuario_nombre": c.usuario.nombre if c.usuario else None,
+            # Barista real (display): la que operó; cae a usuario_nombre del dispositivo si no hay
+            "barista_nombre": c.barista_nombre or (c.usuario.nombre if c.usuario else None),
         }
         for c in rows
     ]
@@ -143,6 +147,7 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None):
                     "id": c.id, "valor": c.valor, "estado": c.estado,
                     "fecha": c.fecha, "imagen_url": c.imagen_url,
                     "usuario_nombre": c.usuario.nombre if c.usuario else None,
+                    "barista_nombre": c.barista_nombre or (c.usuario.nombre if c.usuario else None),
                 }
                 for c in consigs
             ],

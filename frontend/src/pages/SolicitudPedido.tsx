@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { Plus, Minus, Send, AlertTriangle, Zap } from 'lucide-react'
+import { Plus, Minus, Send, AlertTriangle, Zap, Search } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
 
 interface Producto { id: number; nombre: string; unidad_medida: string }
@@ -16,6 +16,7 @@ export default function SolicitudPedido() {
   const [productos, setProductos] = useState<Producto[]>([])
   const [alertas, setAlertas] = useState<Alerta[]>([])
   const [items, setItems] = useState<Item[]>([])
+  const [busqueda, setBusqueda] = useState('')
   const [nota, setNota] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -164,11 +165,21 @@ export default function SolicitudPedido() {
 
       {/* Lista de todos los productos */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-gray-100">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Todos los productos</p>
+        <div className="px-3 py-2.5 border-b border-gray-100">
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              placeholder="Buscar producto…"
+              className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+          </div>
         </div>
-        <div className="divide-y divide-gray-50">
-          {productos.map(p => {
+        <div className="divide-y divide-gray-50 max-h-[50vh] overflow-y-auto">
+          {productos
+            .filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase()))
+            .map(p => {
             const ya = items.find(i => i.producto_id === p.id)
             const critico = alertas.find(a => a.producto_id === p.id)
             return (

@@ -31,7 +31,7 @@ interface Sencilla {
   fecha_solicitud: string
 }
 
-// ─── Fila: input en pesos → calcula cantidad ──────────────────────────────────
+// ─── Celda compacta: input en pesos → calcula cantidad (grilla 2-col) ──────────
 function FilaDenom({
   item, monto, onChange,
 }: {
@@ -46,54 +46,30 @@ function FilaDenom({
   const esBillete  = item.tipo === 'billete'
 
   return (
-    <div className={`px-4 py-3 ${montoNum > 0 ? (esBillete ? 'bg-green-50' : 'bg-amber-50') : ''} transition-colors`}>
-      <div className="flex items-center gap-3">
-        {/* Etiqueta denominación */}
-        <div className={`w-16 shrink-0 text-center py-1 rounded-lg text-xs font-bold ${
-          esBillete
-            ? 'bg-green-100 text-green-800 border border-green-200'
-            : 'bg-amber-100 text-amber-800 border border-amber-200'
-        }`}>
-          {item.label}
-        </div>
-
-        {/* Input: monto en pesos */}
-        <div className="flex-1 relative">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-gray-400">$</span>
-          <input
-            type="number"
-            value={monto}
-            onChange={e => onChange(e.target.value)}
-            placeholder="0"
-            step={item.valor}
-            inputMode="numeric"
-            className={`w-full pl-7 pr-3 py-2 text-base font-bold border-2 rounded-xl focus:outline-none transition-colors ${
-              esError
-                ? 'border-red-300 text-red-700 focus:border-red-400 bg-red-50'
-                : 'border-gray-200 focus:border-amber-400'
-            }`}
-          />
-        </div>
-
-        {/* Resultado: cuántos billetes/monedas */}
-        <div className="w-24 text-right shrink-0 text-xs">
-          {esMultiplo ? (
-            <span className="font-semibold text-gray-700">
-              {cantidad} {item.tipo}{cantidad !== 1 ? 's' : ''}
-            </span>
-          ) : esError ? (
-            <span className="text-red-500 font-semibold">no válido</span>
-          ) : (
-            <span className="text-gray-300">—</span>
-          )}
-        </div>
+    <div className={`rounded-xl border-2 p-2.5 transition-colors ${
+      esError       ? 'border-red-300 bg-red-50'
+      : montoNum > 0 ? (esBillete ? 'border-green-200 bg-green-50' : 'border-amber-200 bg-amber-50')
+      : 'border-gray-200 bg-white'
+    }`}>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className={`px-2 py-0.5 rounded-md text-xs font-bold ${
+          esBillete ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
+        }`}>{item.label}</span>
+        {esMultiplo && <span className="text-[11px] font-semibold text-gray-500">×{cantidad}</span>}
+        {esError && <span className="text-[11px] font-semibold text-red-500">no válido</span>}
       </div>
-
-      {esError && (
-        <p className="text-xs text-red-500 mt-1 pl-19">
-          Debe ser múltiplo de {fmt(item.valor)}
-        </p>
-      )}
+      <div className="relative">
+        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm font-bold text-gray-400">$</span>
+        <input
+          type="number"
+          value={monto}
+          onChange={e => onChange(e.target.value)}
+          placeholder="0"
+          step={item.valor}
+          inputMode="numeric"
+          className="w-full pl-6 pr-2 py-1.5 text-sm font-bold bg-white border-2 border-gray-200 rounded-lg focus:outline-none focus:border-amber-400 transition-colors"
+        />
+      </div>
     </div>
   )
 }
@@ -243,7 +219,7 @@ export default function SolicitudSencilla() {
               {showBilletes ? <ChevronUp size={14} className="text-green-600" /> : <ChevronDown size={14} className="text-green-600" />}
             </button>
             {showBilletes && (
-              <div className="divide-y divide-gray-50">
+              <div className="grid grid-cols-2 gap-2 p-3">
                 {BILLETES.map(b => (
                   <FilaDenom key={b.valor} item={b}
                     monto={getMonto('billete', b.valor)}
@@ -266,7 +242,7 @@ export default function SolicitudSencilla() {
               {showMonedas ? <ChevronUp size={14} className="text-amber-600" /> : <ChevronDown size={14} className="text-amber-600" />}
             </button>
             {showMonedas && (
-              <div className="divide-y divide-gray-50">
+              <div className="grid grid-cols-2 gap-2 p-3">
                 {MONEDAS.map(m => (
                   <FilaDenom key={m.valor} item={m}
                     monto={getMonto('moneda', m.valor)}

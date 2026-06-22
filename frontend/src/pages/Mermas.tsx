@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { Trash2, AlertTriangle, Check, PackageCheck, ArrowRight } from 'lucide-react'
+import { Trash2, AlertTriangle, Check, PackageCheck, ArrowRight, Search } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
 
 interface InvItem {
@@ -45,6 +45,7 @@ export default function Mermas() {
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [recibiendoId, setRecibiendoId] = useState<number | null>(null)
+  const [busqueda, setBusqueda] = useState('')
 
   const load = async () => {
     if (!user?.tienda_id) return
@@ -218,8 +219,19 @@ export default function Mermas() {
         {/* Selector de producto */}
         <div>
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Producto</p>
+          <div className="relative mb-2">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              placeholder="Buscar producto…"
+              className="w-full pl-9 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-amber-400"
+            />
+          </div>
           <div className="grid grid-cols-2 gap-2">
-            {items.map(item => (
+            {items
+              .filter(i => i.producto_nombre.toLowerCase().includes(busqueda.toLowerCase()))
+              .map(item => (
               <button key={item.producto_id}
                 onClick={() => { setProductoId(item.producto_id); setCantidad(''); setError('') }}
                 className="text-left px-4 py-3 rounded-2xl border-2 transition-all"

@@ -239,13 +239,9 @@ export default function POS() {
   return (
     <div className="min-h-screen bg-warm-50 flex flex-col">
       {/* ── Header ── */}
-      <header className="bg-white border-b border-warm-200 px-4 pb-3 header-safe flex items-center gap-2 sticky top-0 z-20">
-        <button
-          onClick={() => navigate('/hub')}
-          className="p-2 rounded-xl text-warm-400 hover:text-warm-700 hover:bg-warm-100 transition-colors -ml-1 flex-shrink-0"
-        >
-          <ArrowLeft size={18} />
-        </button>
+      {/* pl deja libre la esquina para el botón flotante "Menú" (OperativeBanner) */}
+      <header className="bg-white border-b border-warm-200 pl-[92px] pr-4 pb-3 header-safe flex items-center gap-2 sticky top-0 z-20">
+        <span className="flex-1 text-sm font-bold text-warm-700 truncate">POS · Cobros</span>
 
         {/* Panel de Turno — botón permanente */}
         <button
@@ -269,7 +265,6 @@ export default function POS() {
           )}
         </button>
 
-        <span className="flex-1 text-sm font-bold text-warm-700 truncate">POS · Cobros</span>
         <button
           onClick={reimprimirUltimo}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-warm-600 border border-warm-200 hover:bg-warm-100 transition-colors flex-shrink-0"

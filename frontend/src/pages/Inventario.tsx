@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { Plus, Minus, X, RefreshCw, AlertTriangle, Pencil, Package, Check } from 'lucide-react'
+import { Plus, Minus, X, RefreshCw, AlertTriangle, Pencil, Package, Check, Search } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
 import { useEmbedded } from '../contexts/PanelContext'
 
@@ -494,6 +494,7 @@ function InventarioBarista() {
   const { user } = useAuth()
   const embedded = useEmbedded()
   const [items, setItems] = useState<InvItem[]>([])
+  const [busqueda, setBusqueda] = useState('')
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<InvItem | null>(null)
   const [tipo, setTipo] = useState<'entrada' | 'salida' | 'ajuste'>('entrada')
@@ -600,8 +601,20 @@ function InventarioBarista() {
           </div>
         )}
 
+        <div className="relative">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={busqueda}
+            onChange={e => setBusqueda(e.target.value)}
+            placeholder="Buscar producto…"
+            className="w-full pl-9 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-amber-400"
+          />
+        </div>
+
         <div className="space-y-2">
-          {items.map(item => {
+          {items
+            .filter(i => i.producto_nombre.toLowerCase().includes(busqueda.toLowerCase()))
+            .map(item => {
             const c = stockColor(item)
             return (
               <div key={item.id}

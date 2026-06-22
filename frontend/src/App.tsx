@@ -9,7 +9,6 @@ import KioskSetup from './pages/KioskSetup'
 // Barista / kiosco pages
 import GestionTurno from './pages/GestionTurno'
 import ConteoApertura from './pages/ConteoApertura'
-import Hub from './pages/Hub'
 import VentasDia from './pages/VentasDia'
 import ConteoCierre from './pages/ConteoCierre'
 import Cierre from './pages/Cierre'
@@ -113,7 +112,8 @@ function AppRoutes() {
       <Route path="/conteo-cierre"   element={hasSession ? <ConteoCierre />   : <KioskSetup />} />
       <Route path="/cierre"          element={hasSession ? <Cierre />         : <KioskSetup />} />
       <Route path="/entrega"         element={hasSession ? <Entrega />        : <KioskSetup />} />
-      <Route path="/hub"             element={hasSession ? <Hub />            : <KioskSetup />} />
+      {/* /hub deprecado: el Landing rutea a POS o gestión-turno según el estado */}
+      <Route path="/hub"             element={<Navigate to="/" replace />} />
 
       {/* ── Herramientas barista ── */}
       <Route path="/mermas"         element={hasSession ? <Mermas />         : <KioskSetup />} />

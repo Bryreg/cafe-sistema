@@ -218,7 +218,7 @@ export default function Entrega() {
         {/* Paso 3 — Foto */}
         <div className="space-y-2">
           <StepHeader n={3} title="Foto del cuadre" done={step3Done} active={currentStep === 3} />
-          <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
 
           {preview ? (
             <div className="relative rounded-xl overflow-hidden">

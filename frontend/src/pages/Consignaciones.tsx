@@ -224,7 +224,7 @@ export default function Consignaciones() {
                 <span className="ml-1.5 normal-case font-normal text-red-400">requerido</span>
               )}
             </label>
-            <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+            <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
             {preview ? (
               <div className="relative">
                 <img src={preview} alt="preview" className="w-full h-36 object-cover rounded-xl border-2 border-amber-300" />

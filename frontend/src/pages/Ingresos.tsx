@@ -420,7 +420,7 @@ export default function Ingresos() {
                 Foto de la factura
                 <span className="ml-1.5 text-xs font-normal text-warm-400">(opcional)</span>
               </p>
-              <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+              <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
               {preview ? (
                 <div className="relative">
                   <img src={preview} alt="preview" className="w-full h-36 object-cover rounded-xl border-2 border-amber-300" />

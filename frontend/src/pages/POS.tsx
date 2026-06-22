@@ -237,7 +237,8 @@ export default function POS() {
   // ── Layout principal ─────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-warm-50 flex flex-col">
+    // h-screen (no min-h): altura fija = el panel y el POS scrollean internos, no la ventana
+    <div className="h-screen bg-warm-50 flex flex-col">
       {/* ── Header ── */}
       <header className="bg-white border-b border-warm-200 px-4 pb-3 header-safe flex items-center gap-2 sticky top-0 z-20">
         <span className="flex-1 text-sm font-bold text-warm-700 truncate">POS · Cobros</span>

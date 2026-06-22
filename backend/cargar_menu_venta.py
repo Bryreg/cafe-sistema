@@ -18,6 +18,11 @@ Uso:
     python cargar_menu_venta.py
 
     python cargar_menu_venta.py --dry-run   # muestra qué haría, sin commitear
+    python cargar_menu_venta.py --limpiar   # además, el POS muestra SOLO el menú:
+                                            # oculta (precio->0) lo vendible que no esté
+                                            # en menu_venta.json. No borra nada.
+
+Recomendado en producción: primero  --dry-run --limpiar  para revisar, luego --limpiar.
 """
 import sys, os, json, re, unicodedata
 
@@ -43,7 +48,7 @@ def norm(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip().upper()
 
 
-def run(dry_run: bool = False):
+def run(dry_run: bool = False, limpiar: bool = False):
     menu = json.load(open(DATA_FILE, encoding="utf-8"))
     db = SessionLocal()
     try:
@@ -53,7 +58,8 @@ def run(dry_run: bool = False):
         for p in existentes:
             idx.setdefault(norm(p.nombre), p)
 
-        creados, actualizados, sin_cambio = 0, 0, 0
+        menu_norm = {norm(item["nombre"]) for item in menu}
+        creados, actualizados, sin_cambio, renombrados = 0, 0, 0, 0
         for item in menu:
             nombre = item["nombre"].strip()
             precio = float(item["precio"])
@@ -61,8 +67,14 @@ def run(dry_run: bool = False):
             existente = idx.get(norm(nombre))
 
             if existente:
+                # Normaliza casing: solo renombra los que están en MAYÚSCULAS
+                # (creados por una carga previa). NO pisa nombres ya bien escritos.
+                if existente.nombre.isupper() and existente.nombre != nombre:
+                    print(f"  R nombre  {existente.nombre} -> {nombre}")
+                    existente.nombre = nombre
+                    renombrados += 1
                 if float(existente.precio_venta or 0) != precio:
-                    print(f"  ~ precio  {existente.nombre}: {existente.precio_venta} -> {precio}")
+                    print(f"  ~ precio  {nombre}: {existente.precio_venta} -> {precio}")
                     existente.precio_venta = precio
                     actualizados += 1
                 else:
@@ -78,6 +90,17 @@ def run(dry_run: bool = False):
                 ))
                 creados += 1
 
+        # --limpiar: el POS muestra SOLO el menú. Cualquier producto vendible
+        # (precio_venta > 0) que no esté en el menú se oculta (precio -> 0).
+        # NO borra nada: el producto sigue existiendo para inventario.
+        ocultos = 0
+        if limpiar:
+            for p in db.query(Producto).filter(Producto.precio_venta > 0).all():
+                if norm(p.nombre) not in menu_norm:
+                    print(f"  - oculta  {p.nombre} (${p.precio_venta}) -> 0")
+                    p.precio_venta = 0
+                    ocultos += 1
+
         if dry_run:
             db.rollback()
             print("\n[DRY-RUN] nada commiteado.")
@@ -86,8 +109,11 @@ def run(dry_run: bool = False):
 
         vendibles = db.query(Producto).filter(Producto.precio_venta > 0).count()
         print(f"\n[OK] Creados              : {creados}")
+        print(f"[OK] Nombre normalizado   : {renombrados}")
         print(f"[OK] Precio actualizado   : {actualizados}")
         print(f"[OK] Sin cambio           : {sin_cambio}")
+        if limpiar:
+            print(f"[OK] Ocultados (no-menu)  : {ocultos}")
         print(f"[OK] Total vendibles POS  : {vendibles}  (precio_venta > 0)")
 
     except Exception as e:
@@ -99,4 +125,4 @@ def run(dry_run: bool = False):
 
 
 if __name__ == "__main__":
-    run(dry_run="--dry-run" in sys.argv)
+    run(dry_run="--dry-run" in sys.argv, limpiar="--limpiar" in sys.argv)

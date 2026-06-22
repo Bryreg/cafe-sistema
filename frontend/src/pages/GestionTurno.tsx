@@ -5,15 +5,28 @@ import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
 import {
   Users, CheckCircle, Circle, ChevronRight, AlertTriangle,
-  Clock, DollarSign, X, Check, LogOut, Package, BarChart2, Sun, Sunset, Moon,
+  Clock, X, Check, LogOut, Package, BarChart2, Sun, Sunset, Moon,
+  Cake, Wallet, Receipt, ArrowRightLeft,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import ContadorEfectivo from '../components/ContadorEfectivo'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 
+// fecha_apertura viene en UTC naïve → normalizamos a Z y calculamos transcurrido
+function tiempoEnTurno(desde: string): string {
+  try {
+    const s = desde.replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1')
+    const t = new Date(s.endsWith('Z') ? s : s + 'Z').getTime()
+    const min = Math.max(0, Math.floor((Date.now() - t) / 60000))
+    const h = Math.floor(min / 60), m = min % 60
+    return h > 0 ? `${h}h ${m}m` : `${m}m`
+  } catch { return '—' }
+}
+
 type TipoTurno = 'apertura' | 'intermedio' | 'cierre'
 interface Barista { id: number; nombre: string; rol: string; tienda_id: number | null }
+interface ImpulsoItem { lote_id: number; producto_nombre: string; cantidad_restante: number; dias_en_inventario: number; urgente: boolean }
 
 const TURNOS: { tipo: TipoTurno; label: string; desc: string; Icon: typeof Sun }[] = [
   { tipo: 'apertura',    label: 'Apertura',    desc: 'Primer turno del día',   Icon: Sun    },
@@ -34,6 +47,7 @@ export default function GestionTurno() {
   const [justificacion, setJustificacion] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [impulso, setImpulso] = useState<ImpulsoItem[]>([])
 
   // step: null = no form | 'tipo' = elegir tipo | 'baristas' = elegir baristas + confirmar
   const [step, setStep] = useState<null | 'tipo' | 'baristas'>(null)
@@ -46,6 +60,10 @@ export default function GestionTurno() {
     if (tiendaId) {
       api.get(`/caja/efectivo-inicio/${tiendaId}`)
         .then(r => setEsperadoInicio(r.data.esperado))
+        .catch(() => {})
+      // Recordatorio de pastelería por impulsar (qué ofrecer según días en inventario)
+      api.get(`/inventario/pasteleria-impulso/${tiendaId}`)
+        .then(r => setImpulso(r.data))
         .catch(() => {})
     }
   }, [tiendaId])
@@ -170,33 +188,69 @@ export default function GestionTurno() {
               </div>
             )}
 
-            {/* Ventas del día */}
+            {/* Ventas del día + tiempo en turno */}
             <div className="rounded-2xl p-4" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-              <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
-                Ventas del día
-              </p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.inkSubtle }}>
+                  Ventas del día
+                </p>
+                <span className="flex items-center gap-1 text-[11px] font-semibold" style={{ color: dark.inkMuted }}>
+                  <Clock size={11} /> {tiempoEnTurno(turno.fecha_apertura)} en turno
+                </span>
+              </div>
               <p className="text-[32px] font-bold font-mono leading-none" style={{ color: dark.ink, letterSpacing: '-1px' }}>
                 {fmt(turno.total_ventas ?? 0)}
               </p>
-              <div className="flex gap-4 mt-3 pt-3" style={{ borderTop: `1px solid ${dark.border}` }}>
+              <div className="grid grid-cols-3 gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${dark.border}` }}>
                 {[
-                  { l: 'Efectivo', v: fmt(turno.total_efectivo ?? 0) },
-                  { l: 'Tarjeta',  v: fmt(turno.total_tarjeta ?? 0) },
+                  { l: 'Efectivo', v: fmt(turno.total_efectivo ?? 0), Icon: Wallet },
+                  { l: 'Tarjeta',  v: fmt(turno.total_tarjeta ?? 0), Icon: Receipt },
+                  { l: 'En caja',  v: fmt(turno.efectivo_esperado_actual ?? 0), Icon: Wallet },
                 ].map(row => (
                   <div key={row.l}>
-                    <p className="text-[10px]" style={{ color: dark.inkSubtle }}>{row.l}</p>
-                    <p className="text-[14px] font-semibold font-mono" style={{ color: dark.ink }}>{row.v}</p>
+                    <p className="text-[10px] flex items-center gap-1" style={{ color: dark.inkSubtle }}>
+                      <row.Icon size={10} /> {row.l}
+                    </p>
+                    <p className="text-[13px] font-semibold font-mono mt-0.5" style={{ color: dark.ink }}>{row.v}</p>
                   </div>
                 ))}
               </div>
             </div>
 
+            {/* Pastelería por impulsar — recordatorio según días en inventario */}
+            {impulso.length > 0 && (
+              <div className="rounded-2xl overflow-hidden" style={{ background: dark.surface, border: `1px solid ${dark.amberDim}` }}>
+                <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: dark.amberTint }}>
+                  <Cake size={14} style={{ color: dark.amber }} />
+                  <p className="text-[11px] font-bold uppercase tracking-wide" style={{ color: dark.amber }}>
+                    Pastelería por impulsar · {impulso.length}
+                  </p>
+                </div>
+                <div>
+                  {impulso.slice(0, 6).map((it, i) => (
+                    <div key={it.lote_id} className="flex items-center gap-3 px-4 py-2.5"
+                      style={{ borderTop: i > 0 ? `1px solid ${dark.border}` : undefined }}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-semibold truncate" style={{ color: dark.ink }}>{it.producto_nombre}</p>
+                        <p className="text-[11px]" style={{ color: dark.inkSubtle }}>
+                          {it.cantidad_restante} {it.cantidad_restante === 1 ? 'unidad' : 'unidades'} disponibles
+                        </p>
+                      </div>
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
+                        style={{ background: it.urgente ? dark.dangerTint : dark.amberTint, color: it.urgente ? dark.danger : dark.amber }}>
+                        {it.urgente ? '¡Último día!' : `${it.dias_en_inventario}d`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Flujo de acciones */}
             <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${dark.border}` }}>
               {[
-                { label: 'Conteo de apertura',    done: turno.tiene_conteo_apertura, to: '/conteo-apertura', icon: Package,      note: 'Recomendado antes de vender' },
-                { label: 'Conteo de cierre',      done: turno.tiene_conteo_cierre,   to: '/conteo-cierre',  icon: CheckCircle,  note: '' },
-                { label: 'Entrega / cierre',      done: false,                        to: '/entrega',        icon: Clock,        note: '' },
+                { label: 'Cuadre de caja',   done: false,                      to: '/entrega',       icon: ArrowRightLeft, note: 'Cambio de turno: contá el efectivo' },
+                { label: 'Conteo de cierre', done: turno.tiene_conteo_cierre,  to: '/conteo-cierre', icon: CheckCircle,    note: 'Solo al cerrar el día' },
               ].map((item, i) => (
                 <button
                   key={item.label}

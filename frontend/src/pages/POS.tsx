@@ -239,8 +239,7 @@ export default function POS() {
   return (
     <div className="min-h-screen bg-warm-50 flex flex-col">
       {/* ── Header ── */}
-      {/* pl deja libre la esquina para el botón flotante "Menú" (OperativeBanner) */}
-      <header className="bg-white border-b border-warm-200 pl-[92px] pr-4 pb-3 header-safe flex items-center gap-2 sticky top-0 z-20">
+      <header className="bg-white border-b border-warm-200 px-4 pb-3 header-safe flex items-center gap-2 sticky top-0 z-20">
         <span className="flex-1 text-sm font-bold text-warm-700 truncate">POS · Cobros</span>
 
         {/* Panel de Turno — botón permanente */}
@@ -340,24 +339,17 @@ export default function POS() {
               boxShadow: '-4px 0 20px rgba(0,0,0,0.06)',
             }}
           >
-            <div
-              className="flex justify-end p-2 flex-shrink-0 border-b"
-              style={{ borderColor: dark.border }}
+            {/* X única flotante — sirve para todos los paneles */}
+            <button
+              onClick={() => setActivePanel(null)}
+              className="absolute top-2.5 right-2.5 z-20 w-8 h-8 flex items-center justify-center rounded-full shadow-md"
+              style={{ background: 'rgba(255,255,255,0.92)', border: '1px solid rgba(0,0,0,0.08)', color: '#1c1917' }}
+              aria-label="Cerrar panel"
             >
-              <button
-                onClick={() => setActivePanel(null)}
-                className="w-8 h-8 flex items-center justify-center rounded-full"
-                style={{
-                  background: dark.surface,
-                  border: `1px solid ${dark.border}`,
-                  color: dark.ink,
-                }}
-                aria-label="Cerrar panel"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto pb-[60px]">
+              <X size={16} />
+            </button>
+            {/* Único contenedor con scroll: overscroll-contain evita arrastrar el POS */}
+            <div className="flex-1 overflow-y-auto overscroll-contain pb-[80px]">
               <PanelProvider>
                 {PANELS[activePanel]}
               </PanelProvider>

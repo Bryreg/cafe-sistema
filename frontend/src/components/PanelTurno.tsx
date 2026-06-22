@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  X, Sparkles, Package, Eye, StickyNote, Trash2, CheckCircle,
+  Sparkles, Package, Eye, StickyNote, Trash2, CheckCircle,
   Check, Lock, AlertTriangle, Circle,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
@@ -56,7 +56,7 @@ function TipoLabel({ tipo }: { tipo: string | null }) {
 
 const LBL = { fontSize: 10, fontWeight: 800, textTransform: 'uppercase' as const, letterSpacing: '.05em', color: dark.inkSubtle, margin: 0 }
 
-export default function PanelTurno({ turno, estados, bitacora, onRegistrar, onClose }: Props) {
+export default function PanelTurno({ turno, estados, bitacora, onRegistrar }: Props) {
   const [tapping, setTapping] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
 
@@ -92,22 +92,15 @@ export default function PanelTurno({ turno, estados, bitacora, onRegistrar, onCl
   const done  = apDone + cierreDone
 
   return (
-    <div className="flex flex-col h-full" style={{ background: dark.bg }}>
+    <div className="flex flex-col" style={{ background: dark.bg }}>
 
-      {/* ── Header ── */}
+      {/* ── Header (sticky dentro del scroll del host) ── */}
       <div
-        className="flex-shrink-0 px-5 py-4"
+        className="sticky top-0 z-10 px-5 py-4"
         style={{ background: 'oklch(18% 0.01 55)', color: '#f8f5f0' }}
       >
-        <div className="flex items-center justify-between">
+        <div className="flex items-center">
           <span style={{ fontSize: 15, fontWeight: 800 }}>Panel de Turno</span>
-          <button
-            onClick={onClose}
-            className="w-7 h-7 flex items-center justify-center rounded-full"
-            style={{ background: 'rgba(255,255,255,.1)', color: '#d4cfc9' }}
-          >
-            <X size={14} />
-          </button>
         </div>
         <div className="flex items-center gap-2 mt-3 flex-wrap">
           <span style={{ fontSize: 13, fontWeight: 700 }}><TipoLabel tipo={turno.tipo_turno} /></span>
@@ -125,8 +118,8 @@ export default function PanelTurno({ turno, estados, bitacora, onRegistrar, onCl
         </div>
       </div>
 
-      {/* ── Body scrollable ── */}
-      <div className="flex-1 overflow-y-auto" style={{ padding: 16 }}>
+      {/* ── Body (scrollea con el host) ── */}
+      <div style={{ padding: 16 }}>
         <div className="flex flex-col gap-5">
 
           {/* Alertas */}

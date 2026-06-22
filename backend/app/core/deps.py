@@ -9,26 +9,6 @@ from app.models.models import CajaTurno, Usuario
 bearer = HTTPBearer()
 
 
-def get_barista_actor(
-    x_barista_id: int | None = Header(None, alias="X-Barista-Id"),
-    db: Session = Depends(get_db),
-) -> tuple[int | None, str | None]:
-    """Barista REAL que opera el kiosko, leída del header X-Barista-Id.
-
-    El dispositivo se autentica como un usuario genérico "Kiosk" (usuario_id fijo);
-    esta dependencia identifica a la barista concreta detrás de la operación para
-    persistirla como snapshot (barista_id + barista_nombre) en cada escritura, sin
-    tocar el auth del dispositivo. Devuelve (None, None) si no hay header o la barista
-    no existe / está inactiva — nunca rompe el request."""
-    if x_barista_id is None:
-        return None, None
-    barista = db.query(Usuario).filter(
-        Usuario.id == x_barista_id, Usuario.activo == True
-    ).first()
-    if not barista:
-        return x_barista_id, None
-    return x_barista_id, barista.nombre
-
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db)
@@ -54,6 +34,31 @@ def require_admin(current_user: Usuario = Depends(get_current_user)) -> Usuario:
     if current_user.rol != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Se requiere rol admin")
     return current_user
+
+
+def get_barista_actor(
+    x_barista_id: int | None = Header(None, alias="X-Barista-Id"),
+    current_user: Usuario = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> tuple[int | None, str | None]:
+    """Barista REAL detrás de la operación. Dos modos, según el dispositivo:
+
+    - Kiosko compartido (PC): el dispositivo es el usuario genérico "Kiosk"; la barista
+      concreta llega por el header X-Barista-Id (selector "barista activa").
+    - Login individual (celular): el usuario autenticado YA es la barista real, así que
+      se usa directamente — sin necesidad de header.
+
+    Así barista_id/barista_nombre queda SIEMPRE con el actor real, venga del PC o del celu.
+    Devuelve (None, None) si no se puede determinar — nunca rompe el request."""
+    if x_barista_id is not None:
+        barista = db.query(Usuario).filter(
+            Usuario.id == x_barista_id, Usuario.activo == True
+        ).first()
+        return (x_barista_id, barista.nombre if barista else None)
+    # Login individual: la barista real es el propio usuario (no el dispositivo kiosko).
+    if current_user.rol == "barista" and not (current_user.email or "").startswith("kiosk@"):
+        return current_user.id, current_user.nombre
+    return None, None
 
 
 def ensure_tienda_access(current_user: Usuario, tienda_id: int) -> int:

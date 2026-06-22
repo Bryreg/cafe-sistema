@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { ChevronDown, Check, User } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import { useBaristaActiva } from '../contexts/BaristaActivaContext'
+import { useAuth } from '../contexts/AuthContext'
 
 /**
  * Selector compacto "Operando: [nombre] ▾".
@@ -12,6 +13,7 @@ import { useBaristaActiva } from '../contexts/BaristaActivaContext'
  * barista correcta sin tocar el auth del dispositivo.
  */
 export default function BaristaSelector() {
+  const { isKiosk } = useAuth()
   const { baristaActiva, setBaristaActiva, baristasTurno } = useBaristaActiva()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -25,6 +27,8 @@ export default function BaristaSelector() {
     return () => document.removeEventListener('mousedown', onClick)
   }, [open])
 
+  // Solo en kiosko compartido: en login individual la barista YA es ella misma.
+  if (!isKiosk) return null
   // Sin baristas en el turno no hay nada que operar/cambiar.
   if (baristasTurno.length === 0) return null
 

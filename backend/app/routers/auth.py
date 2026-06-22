@@ -72,6 +72,20 @@ def listar_baristas(db: Session = Depends(get_db), user: Usuario = Depends(get_c
     ).order_by(Usuario.nombre).all()
 
 
+@router.get("/baristas-login")
+def baristas_para_login(db: Session = Depends(get_db)):
+    """Público: lista mínima (id + nombre) de baristas activas para la pantalla de
+    login individual por PIN en el celular. No expone datos sensibles; el PIN se valida
+    en /login-pin con rate-limit. La tienda de cada barista sale de su propio registro
+    al loguearse, así que no hace falta filtrar por sede (las baristas rotan)."""
+    baristas = db.query(Usuario).filter(
+        Usuario.activo == True,
+        Usuario.rol == RolEnum.barista,
+        ~Usuario.email.like("kiosk@%"),
+    ).order_by(Usuario.nombre).all()
+    return [{"id": b.id, "nombre": b.nombre} for b in baristas]
+
+
 @router.post("/login", response_model=TokenResponse)
 def login(data: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(Usuario).filter(Usuario.email == data.email, Usuario.activo == True).first()
@@ -98,7 +112,8 @@ def login_pin(data: LoginPinRequest, db: Session = Depends(get_db)):
     _pin_attempts[user.id] = []
     user.ultimo_acceso = datetime.utcnow()
     db.commit()
-    token = create_access_token({"sub": str(user.id)})
+    # 12h: dura un turno largo sin expirar a mitad (login individual de barista en su celular)
+    token = create_access_token({"sub": str(user.id)}, expires_delta=timedelta(hours=12))
     return TokenResponse(
         access_token=token, rol=user.rol.value,
         nombre=user.nombre, tienda_id=user.tienda_id, user_id=user.id

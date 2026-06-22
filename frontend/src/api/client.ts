@@ -9,10 +9,13 @@ const api = axios.create({ baseURL: BASE })
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
   if (token) config.headers.Authorization = `Bearer ${token}`
-  // Barista REAL que opera (≠ usuario del dispositivo/kiosko). El backend la persiste
-  // como snapshot en cada escritura. Robusto: si no hay barista activa, no se manda.
-  const baristaId = localStorage.getItem('barista_activa_id')
-  if (baristaId) config.headers['X-Barista-Id'] = baristaId
+  // Barista REAL que opera. SOLO en modo kiosko (PC compartido): la barista llega por el
+  // selector "barista activa". En login individual (celular) NO se manda → el backend
+  // atribuye por el usuario autenticado (la propia barista).
+  if (localStorage.getItem('kiosk') === 'true') {
+    const baristaId = localStorage.getItem('barista_activa_id')
+    if (baristaId) config.headers['X-Barista-Id'] = baristaId
+  }
   return config
 })
 

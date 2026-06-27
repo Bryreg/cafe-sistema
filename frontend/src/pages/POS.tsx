@@ -118,6 +118,7 @@ export default function POS() {
         bitacora={rutinaBitacora}
         onRegistrar={registrarRutina}
         onClose={() => setActivePanel(null)}
+        tiendaId={turno?.tienda_id ?? 0}
       />
     ),
   }

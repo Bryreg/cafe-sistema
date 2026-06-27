@@ -26,3 +26,8 @@ class ProductoUpdate(BaseModel):
 
 class StockMinimoUpdate(BaseModel):
     stock_minimo: float
+
+class UmbralesStockUpdate(BaseModel):
+    stock_minimo: Optional[float] = None
+    stock_ideal: Optional[float] = None
+    stock_critico: Optional[float] = None

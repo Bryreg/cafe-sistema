@@ -51,6 +51,7 @@ import PagosProveedores from './pages/PagosProveedores'
 import InventarioMensual from './pages/InventarioMensual'
 import ConciliacionInventario from './pages/ConciliacionInventario'
 import LotesTrazabilidad from './pages/LotesTrazabilidad'
+import DashboardEjecutivo from './pages/DashboardEjecutivo'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -153,7 +154,8 @@ function AppRoutes() {
       <Route path="/ventas" element={<RequireAdmin><VentasDia /></RequireAdmin>} />
 
       {/* ── Admin ── */}
-      <Route path="/dashboard"        element={<RequireAdmin><Layout><AdminHub /></Layout></RequireAdmin>} />
+      <Route path="/dashboard"           element={<RequireAdmin><Layout><AdminHub /></Layout></RequireAdmin>} />
+      <Route path="/dashboard-ejecutivo" element={<RequireAdmin><Layout><DashboardEjecutivo /></Layout></RequireAdmin>} />
       <Route path="/analytics"        element={<RequireAdmin><Layout><Analytics /></Layout></RequireAdmin>} />
       <Route path="/bandeja"          element={<RequireAdmin><Layout><Bandeja /></Layout></RequireAdmin>} />
       <Route path="/informes"         element={<RequireAdmin><Layout><Informes /></Layout></RequireAdmin>} />

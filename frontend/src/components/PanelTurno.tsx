@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Sparkles, Package, Eye, StickyNote, Trash2, CheckCircle,
   Check, Lock, AlertTriangle, Circle,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
+import api from '../api/client'
 import type { RutinaEstado, BitacoraEntry } from '../hooks/useRutinasEstado'
 import type { Turno } from '../contexts/TurnoContext'
 
@@ -13,6 +14,71 @@ interface Props {
   bitacora: BitacoraEntry[]
   onRegistrar: (clave: string) => Promise<void>
   onClose: () => void
+  tiendaId: number
+}
+
+interface AlertaStockItem {
+  producto_id: number
+  producto: string
+  unidad: string
+  stock_actual: number
+  stock_critico: number
+  stock_minimo: number
+  estado: 'agotado' | 'critico' | 'bajo'
+}
+
+function AlertasStockTurno({ tiendaId }: { tiendaId: number }) {
+  const [items, setItems] = useState<AlertaStockItem[]>([])
+
+  useEffect(() => {
+    api.get(`/inventario/alertas/${tiendaId}`).then(r => setItems(r.data)).catch(() => {})
+  }, [tiendaId])
+
+  const urgentes = items.filter(i => i.estado === 'agotado' || i.estado === 'critico')
+  if (urgentes.length === 0) return null
+
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-2">
+        <p style={{ ...LBL, color: dark.danger }}>Stock crítico</p>
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'white', background: dark.danger, borderRadius: 999, padding: '1px 7px' }}>
+          {urgentes.length}
+        </span>
+      </div>
+      <div className="flex flex-col gap-2">
+        {urgentes.map(a => (
+          <div
+            key={a.producto_id}
+            className="flex items-center gap-3 rounded-2xl border"
+            style={{
+              padding: '9px 12px',
+              background: a.estado === 'agotado' ? dark.dangerTint : 'oklch(22% 0.04 55)',
+              borderColor: a.estado === 'agotado' ? '#fecaca' : 'oklch(35% 0.08 55)',
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p className="m-0 font-bold truncate" style={{ fontSize: 12.5, color: a.estado === 'agotado' ? '#7f1d1d' : dark.amber }}>
+                {a.producto}
+              </p>
+              <p className="m-0 mt-0.5" style={{ fontSize: 10.5, color: a.estado === 'agotado' ? '#b91c1c' : 'oklch(70% 0.12 55)' }}>
+                {a.estado === 'agotado'
+                  ? `Agotado — 0 ${a.unidad}`
+                  : `Crítico — ${Math.round(a.stock_actual)}/${Math.round(a.stock_critico)} ${a.unidad}`}
+              </p>
+            </div>
+            <span style={{
+              fontSize: 9, fontWeight: 800, textTransform: 'uppercase' as const, letterSpacing: '.06em',
+              color: a.estado === 'agotado' ? 'white' : dark.amber,
+              background: a.estado === 'agotado' ? dark.danger : 'oklch(30% 0.06 55)',
+              padding: '3px 7px', borderRadius: 999,
+            }}>
+              {a.estado === 'agotado' ? 'Agotado' : 'Crítico'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
 }
 
 const RUTINAS = [
@@ -56,7 +122,7 @@ function TipoLabel({ tipo }: { tipo: string | null }) {
 
 const LBL = { fontSize: 10, fontWeight: 800, textTransform: 'uppercase' as const, letterSpacing: '.05em', color: dark.inkSubtle, margin: 0 }
 
-export default function PanelTurno({ turno, estados, bitacora, onRegistrar }: Props) {
+export default function PanelTurno({ turno, estados, bitacora, onRegistrar, tiendaId }: Props) {
   const [tapping, setTapping] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
 
@@ -121,6 +187,9 @@ export default function PanelTurno({ turno, estados, bitacora, onRegistrar }: Pr
       {/* ── Body (scrollea con el host) ── */}
       <div style={{ padding: 16 }}>
         <div className="flex flex-col gap-5">
+
+          {/* Stock crítico (Módulo 6) */}
+          <AlertasStockTurno tiendaId={tiendaId} />
 
           {/* Alertas */}
           {alerts.length > 0 && (

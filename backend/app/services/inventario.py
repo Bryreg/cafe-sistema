@@ -6,6 +6,23 @@ from datetime import datetime
 from app.services import audit
 
 
+def clasificar_estado(stock_actual: float, stock_minimo: float,
+                      stock_critico: float, stock_ideal: float = 0.0) -> str:
+    """Clasificador de 4 estados de stock. Único punto de verdad.
+    AGOTADO  si stock_actual <= 0
+    CRITICO  si 0 < stock_actual <= stock_critico (solo si stock_critico está configurado)
+    BAJO     si stock_critico < stock_actual <= stock_minimo
+    NORMAL   si stock_actual > stock_minimo
+    Nota: si stock_critico no está configurado (0), CRITICO no aplica y cae a BAJO/NORMAL."""
+    if stock_actual <= 0:
+        return "agotado"
+    if stock_critico > 0 and stock_actual <= stock_critico:
+        return "critico"
+    if stock_actual <= stock_minimo:
+        return "bajo"
+    return "normal"
+
+
 def get_inventario_tienda(db: Session, tienda_id: int):
     items = db.query(Inventario).options(joinedload(Inventario.producto)).filter(Inventario.tienda_id == tienda_id).all()
     result = []
@@ -233,19 +250,33 @@ def get_trazabilidad(db: Session, tienda_id: int | None = None, producto_id: int
 
 
 def get_alertas(db: Session, tienda_id: int):
+    """Alertas de stock con 4 estados. Filtra todo lo que no es NORMAL.
+    Compat: mantiene 'nivel' (agotado|bajo) para AdminHub; agrega 'estado' de 4 estados
+    y 'cantidad_sugerida' calculada hacia stock_ideal (o el doble del mínimo si no hay ideal)."""
     items = db.query(Inventario).options(joinedload(Inventario.producto)).filter(
         Inventario.tienda_id == tienda_id,
-        Inventario.stock_actual <= Inventario.stock_minimo
-    ).all()
-    return [{
-        "producto_id": i.producto_id,
-        "producto": i.producto.nombre,
-        "unidad": i.producto.unidad_medida,
-        "stock_actual": round(i.stock_actual),
-        "stock_minimo": round(i.stock_minimo),
-        "cantidad_sugerida": max(1, round(i.stock_minimo - i.stock_actual + i.stock_minimo)),
-        "nivel": "agotado" if i.stock_actual <= 0 else "bajo",
-    } for i in items]
+        Inventario.stock_actual <= Inventario.stock_minimo,
+    ).order_by(Inventario.stock_actual.asc()).all()
+    out = []
+    for i in items:
+        estado = clasificar_estado(
+            i.stock_actual, i.stock_minimo,
+            i.stock_critico or 0.0, i.stock_ideal or 0.0,
+        )
+        objetivo = i.stock_ideal if (i.stock_ideal and i.stock_ideal > 0) else (i.stock_minimo * 2)
+        out.append({
+            "producto_id": i.producto_id,
+            "producto": i.producto.nombre,
+            "unidad": i.producto.unidad_medida,
+            "stock_actual": round(i.stock_actual),
+            "stock_minimo": round(i.stock_minimo),
+            "stock_critico": round(i.stock_critico or 0),
+            "stock_ideal": round(i.stock_ideal or 0),
+            "estado": estado,                                        # nuevo: agotado|critico|bajo
+            "nivel": "agotado" if estado == "agotado" else "bajo",  # COMPAT AdminHub actual
+            "cantidad_sugerida": max(1, round(objetivo - i.stock_actual)),
+        })
+    return out
 
 
 def _tick_checklist_inventario(db: Session, tienda_id: int):

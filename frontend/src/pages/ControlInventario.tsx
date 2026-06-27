@@ -18,6 +18,8 @@ interface ProductoInventario {
   lead_time_dias: number
   stock_actual: number
   stock_minimo: number
+  stock_ideal: number
+  stock_critico: number
   consumo_diario: number
   dias_restantes: number | null
   estado: 'agotado' | 'urgente' | 'pronto' | 'bajo' | 'ok'
@@ -175,7 +177,7 @@ function StockSection({
 
 // ─── Calibración de mínimos ───────────────────────────────────────────────────
 
-interface EditState { stock_minimo?: number; lead_time_dias?: number }
+interface EditState { stock_minimo?: number; stock_ideal?: number; stock_critico?: number; lead_time_dias?: number }
 
 function CalibracionSection({
   items, tiendaId, onSaved,
@@ -190,7 +192,11 @@ function CalibracionSection({
   const [saved, setSaved] = useState<Record<number, boolean>>({})
 
   function val(p: ProductoInventario, field: keyof EditState) {
-    return edits[p.producto_id]?.[field] ?? (field === 'stock_minimo' ? p.stock_minimo : p.lead_time_dias)
+    if (edits[p.producto_id]?.[field] !== undefined) return edits[p.producto_id][field]
+    if (field === 'stock_minimo') return p.stock_minimo
+    if (field === 'stock_ideal') return p.stock_ideal ?? 0
+    if (field === 'stock_critico') return p.stock_critico ?? 0
+    return p.lead_time_dias
   }
 
   function setEdit(id: number, field: keyof EditState, v: number) {
@@ -203,9 +209,16 @@ function CalibracionSection({
     setSaving(prev => ({ ...prev, [p.producto_id]: true }))
     try {
       const ops: Promise<unknown>[] = []
-      if (e.stock_minimo !== undefined && e.stock_minimo !== p.stock_minimo) {
-        ops.push(api.patch(`/inventario/tienda/${tiendaId}/producto/${p.producto_id}/minimo`, {
+      const umbralChanged = (
+        (e.stock_minimo !== undefined && e.stock_minimo !== p.stock_minimo) ||
+        (e.stock_ideal !== undefined && e.stock_ideal !== p.stock_ideal) ||
+        (e.stock_critico !== undefined && e.stock_critico !== p.stock_critico)
+      )
+      if (umbralChanged) {
+        ops.push(api.patch(`/inventario/tienda/${tiendaId}/producto/${p.producto_id}/umbrales`, {
           stock_minimo: e.stock_minimo,
+          stock_ideal: e.stock_ideal,
+          stock_critico: e.stock_critico,
         }))
       }
       if (e.lead_time_dias !== undefined && e.lead_time_dias !== p.lead_time_dias) {
@@ -248,14 +261,16 @@ function CalibracionSection({
       {open && (
         <div className="overflow-x-auto border-t border-gray-100">
           <p className="px-4 py-2 text-xs text-gray-400 bg-gray-50 border-b border-gray-100">
-            Ajustá el stock mínimo y el tiempo de entrega por producto. La cobertura muestra cuántos días cubre el mínimo con el consumo real de los últimos 14 días.
+            Ajustá los umbrales por producto. <strong>Crítico</strong>: alerta roja inmediata. <strong>Mínimo</strong>: dispara pedido. <strong>Ideal</strong>: nivel al que reponer. Estados: Agotado → Crítico → Bajo → Normal.
           </p>
           <table className="w-full">
             <thead>
               <tr className="text-xs text-gray-400 uppercase bg-gray-50">
                 <th className="px-4 py-2 text-left font-medium">Producto</th>
                 <th className="px-2 py-2 text-center font-medium">Consumo/día</th>
+                <th className="px-2 py-2 text-center font-medium">Crítico</th>
                 <th className="px-2 py-2 text-center font-medium">Mínimo</th>
+                <th className="px-2 py-2 text-center font-medium">Ideal</th>
                 <th className="px-2 py-2 text-center font-medium">Entrega (días)</th>
                 <th className="px-2 py-2 text-center font-medium">Cobertura</th>
                 <th className="px-2 py-2" />
@@ -268,6 +283,8 @@ function CalibracionSection({
                 const cob = coberturaLabel(minimo, p.consumo_diario, leadTime)
                 const isDirty = edits[p.producto_id] !== undefined && (
                   (edits[p.producto_id].stock_minimo !== undefined && edits[p.producto_id].stock_minimo !== p.stock_minimo) ||
+                  (edits[p.producto_id].stock_ideal !== undefined && edits[p.producto_id].stock_ideal !== p.stock_ideal) ||
+                  (edits[p.producto_id].stock_critico !== undefined && edits[p.producto_id].stock_critico !== p.stock_critico) ||
                   (edits[p.producto_id].lead_time_dias !== undefined && edits[p.producto_id].lead_time_dias !== p.lead_time_dias)
                 )
                 return (
@@ -284,11 +301,30 @@ function CalibracionSection({
                         type="number"
                         min={0}
                         step={0.5}
+                        value={val(p, 'stock_critico') as number}
+                        onChange={e => setEdit(p.producto_id, 'stock_critico', parseFloat(e.target.value) || 0)}
+                        className="w-16 text-center border border-orange-200 rounded-lg py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
+                      />
+                    </td>
+                    <td className="px-2 py-2 text-center">
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
                         value={minimo}
                         onChange={e => setEdit(p.producto_id, 'stock_minimo', parseFloat(e.target.value) || 0)}
-                        className="w-20 text-center border border-gray-300 rounded-lg py-1 text-sm focus:outline-none focus:ring-2 focus:ring-forest/40"
+                        className="w-16 text-center border border-gray-300 rounded-lg py-1 text-sm focus:outline-none focus:ring-2 focus:ring-forest/40"
                       />
-                      <span className="text-xs text-gray-400 ml-1">{p.unidad}</span>
+                    </td>
+                    <td className="px-2 py-2 text-center">
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={val(p, 'stock_ideal') as number}
+                        onChange={e => setEdit(p.producto_id, 'stock_ideal', parseFloat(e.target.value) || 0)}
+                        className="w-16 text-center border border-green-200 rounded-lg py-1 text-sm focus:outline-none focus:ring-2 focus:ring-green-300"
+                      />
                     </td>
                     <td className="px-2 py-2 text-center">
                       <input

@@ -103,6 +103,8 @@ def sugerencia_pedido(db: Session, tienda_id: int) -> dict:
             "lead_time_dias": lead_time,
             "stock_actual": round(stock, 1),
             "stock_minimo": round(inv.stock_minimo, 1),
+            "stock_ideal": round(inv.stock_ideal or 0, 1),
+            "stock_critico": round(inv.stock_critico or 0, 1),
             "consumo_diario": consumo_diario,
             "dias_restantes": dias_restantes,
             "estado": estado,

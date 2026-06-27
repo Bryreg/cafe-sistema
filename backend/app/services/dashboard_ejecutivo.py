@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models.models import (
     Ticket, TicketItem, Tienda, Inventario, Producto, CategoriaProductoEnum,
+    FacturaCompraItem,
 )
 
 
@@ -115,21 +116,26 @@ def inventario_valorizado(
     db: Session,
     tienda_id: int | None = None,
 ) -> dict:
-    """Valor del inventario a precio de venta.
+    """Valor del inventario a COSTO de adquisición.
 
-    Nota: no existe costo unitario en la tabla Inventario. Se usa precio_venta
-    de Producto como proxy. El resultado se etiqueta explícitamente "a precio
-    de venta" para no confundirlo con costo de adquisición.
+    Costo unitario = promedio de precio_unitario en facturas de compra del producto.
+    Si el producto nunca se compró por factura, cae a precio_venta como proxy. La 'nota'
+    informa qué proporción quedó valorizada a costo real.
 
     Solo incluye productos con controla_stock=True (los que mueven stock real).
     Devuelve total global + desglose por sede + desglose por categoría.
     """
+    cost_rows = (
+        db.query(FacturaCompraItem.producto_id, func.avg(FacturaCompraItem.precio_unitario))
+        .group_by(FacturaCompraItem.producto_id)
+        .all()
+    )
+    cost_map = {pid: float(c or 0) for pid, c in cost_rows}
+
     q = (
         db.query(
-            Tienda.id,
-            Tienda.nombre,
-            Producto.categoria,
-            func.sum(Inventario.stock_actual * Producto.precio_venta),
+            Tienda.id, Tienda.nombre, Producto.id, Producto.categoria,
+            Inventario.stock_actual, Producto.precio_venta,
         )
         .join(Inventario, Inventario.tienda_id == Tienda.id)
         .join(Producto, Producto.id == Inventario.producto_id)
@@ -137,15 +143,22 @@ def inventario_valorizado(
     )
     if tienda_id is not None:
         q = q.filter(Tienda.id == tienda_id)
-
-    rows = q.group_by(Tienda.id, Tienda.nombre, Producto.categoria).all()
+    rows = q.all()
 
     por_sede: dict = {}
     por_cat: dict = {}
     total = 0.0
+    con_costo = 0
+    total_items = 0
 
-    for tid, tnom, cat, val in rows:
-        v = round(float(val or 0), 2)
+    for tid, tnom, pid, cat, stock, pventa in rows:
+        total_items += 1
+        costo = cost_map.get(pid)
+        if costo and costo > 0:
+            con_costo += 1
+        else:
+            costo = float(pventa or 0)
+        v = round(float(stock or 0) * costo, 2)
         total += v
         if tid not in por_sede:
             por_sede[tid] = {"tienda_id": tid, "tienda": tnom, "valor": 0.0}
@@ -157,7 +170,7 @@ def inventario_valorizado(
 
     return {
         "total": round(total, 2),
-        "nota": "valorizado a precio de venta (sin costo de adquisición)",
+        "nota": f"valorizado a costo de compra ({con_costo}/{total_items} productos con costo real de factura; el resto a precio de venta)",
         "por_sede": sorted(por_sede.values(), key=lambda x: -x["valor"]),
         "por_categoria": sorted(por_cat.values(), key=lambda x: -x["valor"]),
     }

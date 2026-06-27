@@ -780,6 +780,9 @@ class Ticket(Base):
     efectivo_recibido = Column(Numeric(12, 2, asdecimal=False), nullable=True)
     cambio = Column(Numeric(12, 2, asdecimal=False), nullable=True)
     estado = Column(String(20), default="completado")
+    # Barista REAL que vendió (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
     items = relationship("TicketItem", back_populates="ticket", cascade="all, delete-orphan")
     tienda = relationship("Tienda", foreign_keys=[tienda_id])
     turno = relationship("CajaTurno", foreign_keys=[caja_turno_id])

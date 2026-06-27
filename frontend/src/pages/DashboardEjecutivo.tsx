@@ -403,9 +403,9 @@ export default function DashboardEjecutivo() {
           value={fmt(resumen?.total_tarjeta ?? 0)}
         />
         <KpiCard
-          label="Inventario (precio venta)"
+          label="Inventario valorizado"
           value={fmt(invValorizado?.total ?? 0)}
-          sub="a precio de venta"
+          sub="a costo de compra"
           color="#2d5a9a"
         />
         <KpiCard

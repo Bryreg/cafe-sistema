@@ -147,7 +147,7 @@ function AppRoutes() {
       <Route path="/ventas" element={<RequireAdmin><VentasDia /></RequireAdmin>} />
 
       {/* ── Admin ── */}
-      <Route path="/dashboard"        element={<RequireAdmin><AdminHub /></RequireAdmin>} />
+      <Route path="/dashboard"        element={<RequireAdmin><Layout><AdminHub /></Layout></RequireAdmin>} />
       <Route path="/analytics"        element={<RequireAdmin><Layout><Analytics /></Layout></RequireAdmin>} />
       <Route path="/bandeja"          element={<RequireAdmin><Layout><Bandeja /></Layout></RequireAdmin>} />
       <Route path="/informes"         element={<RequireAdmin><Layout><Informes /></Layout></RequireAdmin>} />

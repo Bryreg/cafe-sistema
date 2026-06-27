@@ -170,86 +170,10 @@ export default function AdminHub() {
   const maxUnidades = topProductos.length > 0 ? Math.max(...topProductos.map(p => p.cantidad)) : 1
 
   return (
-    <div className="min-h-screen flex flex-col bg-warm-50 text-warm-700"
-      style={{ fontFamily: '"Plus Jakarta Sans", -apple-system, system-ui, sans-serif' }}>
+    <div className="w-full" style={{ fontFamily: '"Plus Jakarta Sans", -apple-system, system-ui, sans-serif' }}>
 
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-10 flex items-center justify-between header-safe px-4 pb-3"
-        style={{ background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid oklch(94% 0.008 75)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-          <button
-            className="md:hidden"
-            onClick={() => setMenuOpen(true)}
-            style={{ padding: '4px 2px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-            aria-label="Abrir menú"
-          >
-            <Menu size={20} className="text-warm-600" />
-          </button>
-          <div className="bg-forest-50 border border-forest-100 flex items-center justify-center"
-            style={{ width: 28, height: 28, borderRadius: 9 }}>
-            <Coffee size={14} className="text-forest" />
-          </div>
-          <div>
-            <p className="text-warm-700" style={{ margin: 0, fontSize: 13, fontWeight: 700, letterSpacing: '-0.005em' }}>
-              Admin · {user?.nombre?.split(' ')[0]}
-            </p>
-            <p className="text-warm-500 tabular-nums" style={{ margin: 0, fontSize: 10, fontWeight: 500 }}>
-              {new Date().toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })} · {time}
-            </p>
-          </div>
-          {/* Desktop nav — hidden on mobile */}
-          <nav className="hidden md:flex items-center gap-1 ml-6">
-            {[
-              { label: 'Inicio',         path: '/dashboard' },
-              { label: 'Inventario',     path: '/inventario' },
-              { label: 'Informes',       path: '/informes' },
-              { label: 'Consignaciones', path: '/consignaciones' },
-              { label: 'Comunicados',    path: '/comunicados' },
-              { label: 'Pedidos',        path: '/pedidos-admin' },
-              { label: 'Compras',        path: '/compras' },
-              { label: 'Bandeja',        path: '/bandeja' },
-            ].map(item => (
-              <button
-                key={item.path}
-                onClick={() => navigate(item.path)}
-                style={{
-                  padding: '5px 10px',
-                  borderRadius: 7,
-                  border: 'none',
-                  background: location.pathname === item.path ? 'oklch(93% 0.025 155)' : 'transparent',
-                  color: location.pathname === item.path ? 'oklch(30% 0.06 155)' : 'oklch(50% 0.01 60)',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {item.label}
-              </button>
-            ))}
-          </nav>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ position: 'relative' }}>
-            <Bell size={16} className="text-warm-500" />
-            {hayAlertas && (
-              <span style={{ position: 'absolute', top: -4, right: -4, background: '#d97757', color: '#fff', fontSize: 8, fontWeight: 700, minWidth: 13, height: 13, padding: '0 3px', borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1.5px solid oklch(97% 0.012 75)' }}>
-                {totalAlerts + (hayConsig ? 1 : 0)}
-              </span>
-            )}
-          </div>
-          <button
-            onClick={() => { if (window.confirm('¿Cerrar sesión?')) { logout(); navigate('/login') } }}
-            style={{ padding: 6, background: 'transparent', border: 'none', cursor: 'pointer' }}
-          >
-            <LogOut size={14} className="text-warm-400" />
-          </button>
-        </div>
-      </header>
-
-      {/* ── Scroll body ────────────────────────────────────────────────── */}
-      <div className="flex-1 pb-nav max-w-5xl mx-auto w-full" style={{ padding: '0 16px 16px' }}>
+      {/* Contenido del dashboard — el chrome (nav, header, sesión) lo provee Layout */}
+      <div className="w-full" style={{ padding: '4px 0 16px' }}>
 
         {/* ── HERO: Resumen del día ──────────────────────────────────── */}
         <div style={{
@@ -607,74 +531,6 @@ export default function AdminHub() {
 
       </div>{/* /scroll */}
 
-      {/* ── Drawer de navegación ─────────────────────────────────────── */}
-      {menuOpen && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex' }}>
-          {/* Backdrop */}
-          <div
-            style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.45)' }}
-            onClick={() => setMenuOpen(false)}
-          />
-          {/* Panel */}
-          <div className="bg-white flex flex-col"
-            style={{ position: 'relative', width: 256, height: '100%', boxShadow: '4px 0 24px rgba(0,0,0,.15)', paddingTop: 'env(safe-area-inset-top, 0px)' }}>
-            {/* Drawer header */}
-            <div className="flex items-center justify-between border-b border-warm-200"
-              style={{ padding: '14px 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Coffee size={15} className="text-forest" />
-                <span className="text-warm-700" style={{ fontWeight: 700, fontSize: 13, fontFamily: '"Plus Jakarta Sans", system-ui, sans-serif' }}>Sistema Café</span>
-              </div>
-              <button
-                onClick={() => setMenuOpen(false)}
-                className="text-warm-500"
-                style={{ padding: 4, background: 'transparent', border: 'none', cursor: 'pointer' }}
-                aria-label="Cerrar menú"
-              >
-                <XIcon size={18} />
-              </button>
-            </div>
-            {/* Links */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 8px' }}>
-              {NAV_ADMIN.map(({ to, label, icon: Icon }) => (
-                <NavLink
-                  key={to} to={to}
-                  onClick={() => setMenuOpen(false)}
-                  style={({ isActive }) => ({
-                    display: 'flex', alignItems: 'center', gap: 12,
-                    padding: '11px 14px', borderRadius: 12, marginBottom: 2,
-                    fontSize: 13.5, fontWeight: isActive ? 700 : 500,
-                    color: isActive ? 'oklch(35% 0.05 155)' : 'oklch(35% 0.01 60)',
-                    background: isActive ? 'oklch(95% 0.018 155)' : 'transparent',
-                    textDecoration: 'none', fontFamily: '"Plus Jakarta Sans", system-ui, sans-serif',
-                    transition: 'background .15s',
-                  })}
-                >
-                  <Icon size={16} />
-                  {label}
-                </NavLink>
-              ))}
-            </div>
-            {/* User footer */}
-            <div className="border-t border-warm-200" style={{ padding: '12px 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <p className="text-warm-700" style={{ margin: 0, fontSize: 13, fontWeight: 700, fontFamily: '"Plus Jakarta Sans", system-ui, sans-serif' }}>{user?.nombre}</p>
-                  <span style={{ fontSize: 10.5, padding: '1px 7px', borderRadius: 999, fontWeight: 600, background: 'oklch(93% 0.02 290)', color: 'oklch(40% 0.1 290)', fontFamily: '"Plus Jakarta Sans", system-ui, sans-serif' }}>admin</span>
-                </div>
-                <button
-                  onClick={() => { setMenuOpen(false); if (window.confirm('¿Cerrar sesión?')) { logout(); navigate('/login') } }}
-                  className="text-warm-500"
-                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: '"Plus Jakarta Sans", system-ui, sans-serif' }}
-                >
-                  <LogOut size={13} /> Salir
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── "Más herramientas" overlay ────────────────────────────────── */}
       {showMas && (
         <div
@@ -710,31 +566,6 @@ export default function AdminHub() {
           </div>
         </div>
       )}
-
-      {/* ── Admin bottom nav ─────────────────────────────────────────── */}
-      <nav className="md:hidden border-t border-warm-200"
-        style={{ display: 'flex', background: 'rgba(255,255,255,.95)', paddingBottom: 'env(safe-area-inset-bottom, 0px)', backdropFilter: 'blur(12px)' }}>
-        {[
-          { icon: Home,         label: 'Inicio',  path: '/dashboard',   active: true  },
-          { icon: DollarSign,   label: 'Ventas',  path: '/informes',    active: false },
-          { icon: Inbox,        label: 'Comuni.', path: '/comunicados', active: false },
-          { icon: LayoutGrid,   label: 'Más',     path: null,           active: false },
-        ].map((item, i) => (
-          <button
-            key={i}
-            onClick={() => item.path ? navigate(item.path) : setShowMas(true)}
-            style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '12px 0 8px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', position: 'relative' }}
-          >
-            {item.active && (
-              <span className="absolute bg-forest top-0 left-1/2 -translate-x-1/2" style={{ width: 22, height: 2.5, borderRadius: 999 }} />
-            )}
-            <item.icon size={20} style={{ color: item.active ? 'oklch(35% 0.05 155)' : 'oklch(72% 0.008 60)' }} />
-            <span style={{ fontSize: 9.5, fontWeight: 600, color: item.active ? 'oklch(35% 0.05 155)' : 'oklch(72% 0.008 60)' }}>
-              {item.label}
-            </span>
-          </button>
-        ))}
-      </nav>
 
     </div>
   )

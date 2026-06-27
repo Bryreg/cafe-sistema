@@ -140,6 +140,15 @@ def analytics_resumen(fecha_desde: Optional[date] = Query(None),
     return svc.get_analytics_resumen(db, fecha_desde, fecha_hasta, tienda_id)
 
 
+@router.get("/analytics/contador")
+def analytics_contador(anio: int = Query(...), mes: int = Query(...),
+                       tienda_id: Optional[int] = Query(None),
+                       db: Session = Depends(get_db),
+                       user: Usuario = Depends(require_admin)):
+    """Informe Contador: consolidado contable diario/mensual por método de pago."""
+    return svc.get_informe_contador(db, anio, mes, tienda_id)
+
+
 @router.get("/analytics/productos-top", response_model=List[ProductoTopOut])
 def analytics_productos_top(fecha_desde: Optional[date] = Query(None),
                             fecha_hasta: Optional[date] = Query(None),

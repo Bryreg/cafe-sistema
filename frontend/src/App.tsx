@@ -46,6 +46,7 @@ import AuditLog from './pages/AuditLog'
 import Catalogo from './pages/Catalogo'
 import NotaCredito from './pages/NotaCredito'
 import CumplimientoAdmin from './pages/CumplimientoAdmin'
+import InformeContador from './pages/InformeContador'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -151,6 +152,7 @@ function AppRoutes() {
       <Route path="/analytics"        element={<RequireAdmin><Layout><Analytics /></Layout></RequireAdmin>} />
       <Route path="/bandeja"          element={<RequireAdmin><Layout><Bandeja /></Layout></RequireAdmin>} />
       <Route path="/informes"         element={<RequireAdmin><Layout><Informes /></Layout></RequireAdmin>} />
+      <Route path="/informe-contador" element={<RequireAdmin><Layout><InformeContador /></Layout></RequireAdmin>} />
       <Route path="/compras"          element={<RequireAdmin><Layout><ComprasAdmin /></Layout></RequireAdmin>} />
       <Route path="/comunicados"      element={<RequireAdmin><Layout><Comunicados /></Layout></RequireAdmin>} />
       <Route path="/usuarios"         element={<RequireAdmin><Layout><Usuarios /></Layout></RequireAdmin>} />

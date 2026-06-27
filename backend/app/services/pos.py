@@ -355,6 +355,82 @@ def get_analytics_resumen(db: Session, fecha_desde: date | None = None,
     }
 
 
+def get_informe_contador(db: Session, anio: int, mes: int, tienda_id: int | None = None):
+    """Consolidado contable del mes: ventas por día desglosadas por método de pago,
+    con acumulado, promedios, participación y días de mayor/menor venta. Insumo del
+    módulo 'Informe Contador'. Efectivo/Tarjeta salen del split real del ticket
+    (monto_efectivo/monto_tarjeta); transferencia/otros quedan en 0 hasta que el POS
+    los soporte (se exponen igual para completitud contable)."""
+    from calendar import monthrange
+    from collections import defaultdict
+    ultimo = monthrange(anio, mes)[1]
+    desde = datetime(anio, mes, 1)
+    hasta = datetime(anio, mes, ultimo, 23, 59, 59)
+    filtros = [Ticket.estado.notin_(("anulado", "reversado")), Ticket.fecha >= desde, Ticket.fecha <= hasta]
+    if tienda_id is not None:
+        filtros.append(Ticket.tienda_id == tienda_id)
+
+    filas = db.query(
+        Ticket.fecha, Ticket.total, Ticket.monto_efectivo, Ticket.monto_tarjeta,
+    ).filter(*filtros).all()
+
+    por_dia: dict = defaultdict(lambda: {"efectivo": 0.0, "tarjeta": 0.0, "transferencia": 0.0, "otros": 0.0, "total": 0.0, "facturas": 0})
+    for fecha, total, ef, tar in filas:
+        d = fecha.date().isoformat()
+        por_dia[d]["efectivo"] += float(ef or 0)
+        por_dia[d]["tarjeta"] += float(tar or 0)
+        por_dia[d]["total"] += float(total or 0)
+        por_dia[d]["facturas"] += 1
+
+    dias = []
+    acumulado = 0.0
+    for d in sorted(por_dia.keys()):
+        r = por_dia[d]
+        acumulado += r["total"]
+        tp = r["total"] / r["facturas"] if r["facturas"] else 0.0
+        dias.append({
+            "fecha": d,
+            "efectivo": round(r["efectivo"], 2),
+            "tarjeta": round(r["tarjeta"], 2),
+            "transferencia": round(r["transferencia"], 2),
+            "otros": round(r["otros"], 2),
+            "total": round(r["total"], 2),
+            "acumulado": round(acumulado, 2),
+            "facturas": r["facturas"],
+            "ticket_promedio": round(tp, 2),
+        })
+
+    total_mes = round(acumulado, 2)
+    total_efectivo = round(sum(x["efectivo"] for x in dias), 2)
+    total_tarjeta = round(sum(x["tarjeta"] for x in dias), 2)
+    total_facturas = sum(x["facturas"] for x in dias)
+    dias_con_venta = len(dias)
+    promedio_diario = round(total_mes / dias_con_venta, 2) if dias_con_venta else 0.0
+    ticket_promedio_mes = round(total_mes / total_facturas, 2) if total_facturas else 0.0
+    dia_max = max(dias, key=lambda x: x["total"]) if dias else None
+    dia_min = min(dias, key=lambda x: x["total"]) if dias else None
+    base = total_efectivo + total_tarjeta
+    return {
+        "anio": anio, "mes": mes,
+        "dias": dias,
+        "total_mes": total_mes,
+        "total_efectivo": total_efectivo,
+        "total_tarjeta": total_tarjeta,
+        "total_transferencia": 0.0,
+        "total_otros": 0.0,
+        "total_facturas": total_facturas,
+        "dias_con_venta": dias_con_venta,
+        "promedio_diario": promedio_diario,
+        "ticket_promedio_mes": ticket_promedio_mes,
+        "participacion": {
+            "efectivo": round(total_efectivo / base * 100, 1) if base else 0.0,
+            "tarjeta": round(total_tarjeta / base * 100, 1) if base else 0.0,
+        },
+        "dia_max": {"fecha": dia_max["fecha"], "total": dia_max["total"]} if dia_max else None,
+        "dia_min": {"fecha": dia_min["fecha"], "total": dia_min["total"]} if dia_min else None,
+    }
+
+
 def get_analytics_productos_top(db: Session, fecha_desde: date | None = None,
                                 fecha_hasta: date | None = None, tienda_id: int | None = None):
     """Por producto: unidades vendidas y $ ingresado, ordenado desc por $."""

@@ -236,6 +236,8 @@ class Inventario(Base):
     tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False, index=True)
     stock_actual = Column(Float, default=0.0)
     stock_minimo = Column(Float, default=0.0)
+    stock_ideal = Column(Float, default=0.0, server_default="0")
+    stock_critico = Column(Float, default=0.0, server_default="0")
     producto = relationship("Producto", back_populates="inventarios")
     tienda = relationship("Tienda", back_populates="inventarios")
     __table_args__ = (

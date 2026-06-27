@@ -7,7 +7,7 @@ from app.database import get_db
 from app.core.deps import ensure_tienda_access, get_current_user, require_admin
 from app.models.models import Usuario, Producto, Inventario, Tienda, CategoriaProductoEnum, LoteInventario
 from app.schemas.inventario import (
-    MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate,
+    MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate, UmbralesStockUpdate,
 )
 from app.services import inventario as svc
 
@@ -99,6 +99,32 @@ def actualizar_minimo(tienda_id: int, producto_id: int, data: StockMinimoUpdate,
     db.commit()
     return {"ok": True}
 
+@router.patch("/tienda/{tienda_id}/producto/{producto_id}/umbrales")
+def actualizar_umbrales(tienda_id: int, producto_id: int, data: UmbralesStockUpdate,
+                        db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    """Módulo 6: setea stock_minimo, stock_ideal y stock_critico por producto/sede.
+    Valida coherencia: critico <= minimo <= ideal (los que vengan)."""
+    inv = db.query(Inventario).filter_by(tienda_id=tienda_id, producto_id=producto_id).first()
+    if not inv:
+        raise HTTPException(404, "Registro de inventario no encontrado")
+    if data.stock_minimo is not None:
+        inv.stock_minimo = data.stock_minimo
+    if data.stock_ideal is not None:
+        inv.stock_ideal = data.stock_ideal
+    if data.stock_critico is not None:
+        inv.stock_critico = data.stock_critico
+    if inv.stock_critico and inv.stock_minimo and inv.stock_critico > inv.stock_minimo:
+        raise HTTPException(400, "stock_critico no puede ser mayor que stock_minimo")
+    if inv.stock_ideal and inv.stock_minimo and inv.stock_ideal < inv.stock_minimo:
+        raise HTTPException(400, "stock_ideal no puede ser menor que stock_minimo")
+    db.commit()
+    return {
+        "ok": True,
+        "stock_minimo": inv.stock_minimo,
+        "stock_ideal": inv.stock_ideal,
+        "stock_critico": inv.stock_critico,
+    }
+
 @router.get("/admin/resumen")
 def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
     """Todos los productos con stock por tienda — para el panel de admin."""
@@ -124,6 +150,8 @@ def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require
             stocks[str(t.id)] = {
                 "stock_actual": inv.stock_actual if inv else 0,
                 "stock_minimo": inv.stock_minimo if inv else 0,
+                "stock_ideal": inv.stock_ideal if inv else 0,
+                "stock_critico": inv.stock_critico if inv else 0,
                 "alerta": (inv.stock_actual <= inv.stock_minimo) if inv else False,
             }
         result.append({

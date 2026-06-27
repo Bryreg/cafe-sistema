@@ -11,7 +11,7 @@ from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
                           informes, audit, alertas, notificaciones, limpieza,
                           facturas, compras, comunicados, pedidos, mantenimientos,
                           auditorias, pos, rutinas, novedades, temperaturas, recepciones,
-                          inventario_mensual)
+                          inventario_mensual, dashboard_ejecutivo)
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -118,6 +118,9 @@ with engine.connect() as _conn:
         "ALTER TABLE lotes_inventario ADD COLUMN fecha_fabricacion DATETIME",
         "ALTER TABLE lotes_inventario ADD COLUMN factura_id INTEGER",
         "ALTER TABLE lotes_inventario ADD COLUMN fecha_agotado DATETIME",
+        # Módulo 6: umbrales de stock configurables (ideal hacia el que reponer, crítico para alerta roja)
+        "ALTER TABLE inventario ADD COLUMN stock_ideal FLOAT DEFAULT 0",
+        "ALTER TABLE inventario ADD COLUMN stock_critico FLOAT DEFAULT 0",
         # Concurrency: only one open shift per store at any time
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_one_turno_abierto ON caja_turnos (tienda_id) WHERE estado = 'abierto'",
         # Concurrency: only one conteo of each type (apertura/cierre) per shift
@@ -593,6 +596,7 @@ app.include_router(novedades.router, prefix="/api/v1")
 app.include_router(temperaturas.router, prefix="/api/v1")
 app.include_router(recepciones.router, prefix="/api/v1")
 app.include_router(inventario_mensual.router, prefix="/api/v1")
+app.include_router(dashboard_ejecutivo.router, prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────
 _frontend_dist = os.path.abspath(

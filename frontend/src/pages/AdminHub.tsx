@@ -65,8 +65,9 @@ interface DashData {
 
 interface AlertaStock {
   producto_id: number; producto: string; unidad: string
-  stock_actual: number; stock_minimo: number
+  stock_actual: number; stock_minimo: number; stock_critico: number; stock_ideal: number
   nivel: 'agotado' | 'bajo'
+  estado: 'agotado' | 'critico' | 'bajo'
 }
 
 interface PendienteConsig {
@@ -159,8 +160,9 @@ export default function AdminHub() {
   const deltaPct    = ventasAyer > 0 ? (delta / ventasAyer) * 100 : 0
   const positive    = delta >= 0
 
-  const agotados    = alertas.filter(a => a.nivel === 'agotado')
-  const bajos       = alertas.filter(a => a.nivel === 'bajo')
+  const agotados    = alertas.filter(a => a.estado === 'agotado')
+  const criticos    = alertas.filter(a => a.estado === 'critico')
+  const bajos       = alertas.filter(a => a.estado === 'bajo')
   const totalAlerts = alertas.length
 
   const consigItems = consigPendiente?.items.filter(i => i.pendiente > 0) ?? []
@@ -309,7 +311,7 @@ export default function AdminHub() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p className="text-danger-700" style={{ margin: 0, fontSize: 12.5, fontWeight: 700, letterSpacing: '-0.005em' }}>Stock crítico</p>
                     <p style={{ margin: 0, fontSize: 10, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#a8493a' }}>
-                      {agotados.length} agotados · {bajos.length} bajos
+                      {agotados.length} agotados · {criticos.length} críticos · {bajos.length} bajos
                     </p>
                   </div>
                   <button
@@ -333,8 +335,21 @@ export default function AdminHub() {
                     ))}
                   </div>
                 )}
+                {criticos.length > 0 && (
+                  <div style={{ padding: '8px 14px 10px', borderTop: agotados.length > 0 ? '1px solid oklch(96% 0.018 30)' : 'none', background: 'oklch(98% 0.025 55)' }}>
+                    <p style={{ margin: '0 0 4px', fontSize: 9, fontWeight: 700, color: 'oklch(42% 0.15 55)', letterSpacing: '.1em', textTransform: 'uppercase' }}>Críticos</p>
+                    {criticos.map(a => (
+                      <div key={a.producto_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'oklch(35% 0.15 55)' }}>{a.producto}</span>
+                        <span className="tabular-nums" style={{ fontSize: 10, fontWeight: 700, color: 'white', background: 'oklch(55% 0.18 55)', padding: '2px 8px', borderRadius: 999 }}>
+                          {Math.round(a.stock_actual)}/{Math.round(a.stock_critico)} {a.unidad}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {bajos.length > 0 && (
-                  <div style={{ padding: '8px 14px 10px', borderTop: agotados.length > 0 ? '1px solid oklch(96% 0.018 30)' : 'none' }}>
+                  <div style={{ padding: '8px 14px 10px', borderTop: (agotados.length > 0 || criticos.length > 0) ? '1px solid oklch(96% 0.018 30)' : 'none' }}>
                     <p style={{ margin: '0 0 4px', fontSize: 9, fontWeight: 700, color: 'oklch(50% 0.14 75)', letterSpacing: '.1em', textTransform: 'uppercase' }}>Por agotarse</p>
                     {bajos.map(a => (
                       <div key={a.producto_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>

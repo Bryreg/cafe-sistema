@@ -5,7 +5,7 @@ import api from '../api/client'
 import {
   Coffee, LogOut, Bell, Menu, X, CheckCheck,
 } from 'lucide-react'
-import { NAV_ADMIN } from '../constants/nav'
+import { NAV_GROUPS } from '../constants/nav'
 
 // ─── Notificaciones ──────────────────────────────────────────────────────────
 interface Notif {
@@ -150,23 +150,28 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <span className="font-bold text-warm-700 text-sm leading-tight">Sistema Café</span>
         </div>
 
-        {/* Sidebar — nav links */}
+        {/* Sidebar — nav agrupada por dominio */}
         <nav className="flex-1 overflow-y-auto py-3 px-2">
-          {NAV_ADMIN.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-xl mb-0.5 text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'bg-forest-50 text-forest-700 font-semibold'
-                    : 'text-warm-600 hover:text-warm-800 hover:bg-warm-100'
-                }`
-              }
-            >
-              <Icon size={15} className="shrink-0" />
-              <span>{label}</span>
-            </NavLink>
+          {NAV_GROUPS.map(group => (
+            <div key={group.label} className="mb-2">
+              <p className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-warm-400">{group.label}</p>
+              {group.items.map(({ to, label, icon: Icon }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 px-3 py-2 rounded-xl mb-0.5 text-sm font-medium transition-colors ${
+                      isActive
+                        ? 'bg-forest-50 text-forest-700 font-semibold'
+                        : 'text-warm-600 hover:text-warm-800 hover:bg-warm-100'
+                    }`
+                  }
+                >
+                  <Icon size={15} className="shrink-0" />
+                  <span>{label}</span>
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
 
@@ -253,21 +258,26 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               </button>
             </div>
 
-            {/* Nav links */}
+            {/* Nav agrupada */}
             <div className="flex-1 overflow-y-auto py-2 px-2">
-              {NAV_ADMIN.map(({ to, label, icon: Icon }) => (
-                <NavLink key={to} to={to}
-                  onClick={() => setMenuOpen(false)}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 px-4 py-3 rounded-xl mb-0.5 text-sm font-medium transition-colors ${
-                      isActive
-                        ? 'bg-forest-50 text-forest-700 font-semibold'
-                        : 'text-warm-600 hover:text-warm-800 hover:bg-warm-100'
-                    }`
-                  }
-                >
-                  <Icon size={16} /> {label}
-                </NavLink>
+              {NAV_GROUPS.map(group => (
+                <div key={group.label} className="mb-2">
+                  <p className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-warm-400">{group.label}</p>
+                  {group.items.map(({ to, label, icon: Icon }) => (
+                    <NavLink key={to} to={to}
+                      onClick={() => setMenuOpen(false)}
+                      className={({ isActive }) =>
+                        `flex items-center gap-3 px-4 py-3 rounded-xl mb-0.5 text-sm font-medium transition-colors ${
+                          isActive
+                            ? 'bg-forest-50 text-forest-700 font-semibold'
+                            : 'text-warm-600 hover:text-warm-800 hover:bg-warm-100'
+                        }`
+                      }
+                    >
+                      <Icon size={16} /> {label}
+                    </NavLink>
+                  ))}
+                </div>
               ))}
             </div>
 

@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.core.deps import get_current_user, require_admin, ensure_tienda_access
+from app.core.deps import get_current_user, require_admin, ensure_tienda_access, get_barista_actor
 from app.models.models import Usuario
 from app.schemas.pos import (
     TicketCreate, PrecioUpdate, ProductoPOSOut, TicketOut,
@@ -35,7 +35,8 @@ def productos(categoria: Optional[str] = None, db: Session = Depends(get_db),
 
 @router.post("/ticket", response_model=TicketOut, status_code=201)
 def crear_ticket(data: TicketCreate, db: Session = Depends(get_db),
-                 user: Usuario = Depends(get_current_user)):
+                 user: Usuario = Depends(get_current_user),
+                 barista: tuple = Depends(get_barista_actor)):
     ensure_tienda_access(user, data.tienda_id)
     ticket = svc.crear_ticket(
         db,
@@ -46,6 +47,7 @@ def crear_ticket(data: TicketCreate, db: Session = Depends(get_db),
         efectivo_recibido=data.efectivo_recibido,
         monto_efectivo=data.monto_efectivo,
         monto_tarjeta=data.monto_tarjeta,
+        barista_id=barista[0], barista_nombre=barista[1],
     )
     return ticket
 

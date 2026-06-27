@@ -118,6 +118,9 @@ with engine.connect() as _conn:
         "ALTER TABLE lotes_inventario ADD COLUMN fecha_fabricacion DATETIME",
         "ALTER TABLE lotes_inventario ADD COLUMN factura_id INTEGER",
         "ALTER TABLE lotes_inventario ADD COLUMN fecha_agotado DATETIME",
+        # Atribución de VENTAS por barista en kiosko compartido (plano, sin FK).
+        "ALTER TABLE tickets ADD COLUMN barista_id INTEGER",
+        "ALTER TABLE tickets ADD COLUMN barista_nombre VARCHAR(100)",
         # Módulo 6: umbrales de stock configurables (ideal hacia el que reponer, crítico para alerta roja)
         "ALTER TABLE inventario ADD COLUMN stock_ideal FLOAT DEFAULT 0",
         "ALTER TABLE inventario ADD COLUMN stock_critico FLOAT DEFAULT 0",

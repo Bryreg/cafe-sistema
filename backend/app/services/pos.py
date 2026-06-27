@@ -68,7 +68,8 @@ def get_productos_pos(db: Session, categoria: str | None = None):
 def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
                  metodo_pago: str, efectivo_recibido: float | None = None,
                  monto_efectivo: float | None = None,
-                 monto_tarjeta: float | None = None):
+                 monto_tarjeta: float | None = None,
+                 barista_id: int | None = None, barista_nombre: str | None = None):
     """Crea una venta itemizada. Atómico: si algo falla, no se persiste nada.
 
     `items`: lista de dicts/objetos con `producto_id` y `cantidad`.
@@ -164,6 +165,8 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
         efectivo_recibido=efectivo_recibido,
         cambio=cambio,
         estado="completado",
+        barista_id=barista_id,
+        barista_nombre=barista_nombre,
     )
     db.add(ticket)
     db.flush()  # obtener ticket.id
@@ -495,16 +498,21 @@ def get_analytics_por_barista(db: Session, fecha_desde: date | None = None,
     if tienda_id is not None:
         filtros.append(Ticket.tienda_id == tienda_id)
 
+    # Actor real: la barista que vendió (barista_id/nombre) o, para tickets viejos
+    # sin atribución, el usuario del dispositivo. Así en kiosko compartido la venta
+    # se imputa a la barista correcta y no a "Kiosk".
+    actor_id = func.coalesce(Ticket.barista_id, Ticket.usuario_id)
+    actor_nombre = func.coalesce(Ticket.barista_nombre, Usuario.nombre)
     rows = (
         db.query(
-            Ticket.usuario_id.label("usuario_id"),
-            Usuario.nombre.label("nombre"),
+            actor_id.label("usuario_id"),
+            actor_nombre.label("nombre"),
             func.coalesce(func.sum(Ticket.total), 0.0).label("total"),
             func.count(Ticket.id).label("n_tickets"),
         )
         .join(Usuario, Usuario.id == Ticket.usuario_id)
         .filter(*filtros)
-        .group_by(Ticket.usuario_id, Usuario.nombre)
+        .group_by(actor_id, actor_nombre)
         .order_by(func.sum(Ticket.total).desc())
         .all()
     )

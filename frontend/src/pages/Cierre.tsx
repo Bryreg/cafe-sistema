@@ -233,7 +233,7 @@ export default function Cierre() {
               {showBilletes ? <ChevronUp size={14} style={{ color: dark.green }} /> : <ChevronDown size={14} style={{ color: dark.green }} />}
             </button>
             {showBilletes && (
-              <div style={{ borderTop: `1px solid ${dark.border}` }}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 sm:gap-x-2" style={{ borderTop: `1px solid ${dark.border}` }}>
                 {BILLETES.map(b => (
                   <FilaDenom key={b.valor} valor={b.valor} label={b.label} isBillete cantidad={getB(b.valor)} onChange={n => setB(b.valor, n)} accentColor="green" />
                 ))}
@@ -260,7 +260,7 @@ export default function Cierre() {
               {showMonedas ? <ChevronUp size={14} style={{ color: dark.amber }} /> : <ChevronDown size={14} style={{ color: dark.amber }} />}
             </button>
             {showMonedas && (
-              <div style={{ borderTop: `1px solid ${dark.border}` }}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 sm:gap-x-2" style={{ borderTop: `1px solid ${dark.border}` }}>
                 {MONEDAS.map(m => (
                   <FilaDenom key={m.valor} valor={m.valor} label={m.label} isBillete={false} cantidad={getM(m.valor)} onChange={n => setM(m.valor, n)} accentColor="green" />
                 ))}

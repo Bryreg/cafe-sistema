@@ -1036,3 +1036,42 @@ class NotaCreditoItem(Base):
     cantidad = Column(Float, nullable=False)
     producto_usado = Column(Boolean, nullable=False)   # True = consumido (no vuelve) | False = vuelve al stock
     nota = relationship("NotaCredito", back_populates="items")
+
+
+# ─── Inventario físico mensual (módulo de conciliación) ───────────────────────
+class InventarioMensual(Base):
+    """Conteo físico COMPLETO mensual por sede. Relacional: FK a tienda y usuario;
+    items con FK a producto. estado en_proceso → cerrado al finalizar el conteo."""
+    __tablename__ = "inventarios_mensuales"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False, index=True)
+    anio = Column(Integer, nullable=False)
+    mes = Column(Integer, nullable=False)
+    estado = Column(String(20), default="en_proceso")   # en_proceso | cerrado
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
+    fecha_inicio = Column(DateTime, default=datetime.utcnow)
+    fecha_cierre = Column(DateTime, nullable=True)
+    valor_diferencia_total = Column(Numeric(12, 2, asdecimal=False), default=0)
+    tienda = relationship("Tienda")
+    items = relationship("InventarioMensualItem", back_populates="inventario", cascade="all, delete-orphan")
+    __table_args__ = (
+        UniqueConstraint("tienda_id", "anio", "mes", name="uq_inv_mensual_tienda_periodo"),
+    )
+
+
+class InventarioMensualItem(Base):
+    __tablename__ = "inventarios_mensuales_items"
+    id = Column(Integer, primary_key=True)
+    inventario_id = Column(Integer, ForeignKey("inventarios_mensuales.id", ondelete="CASCADE"), nullable=False, index=True)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
+    categoria = Column(String(30), nullable=True)
+    unidad_medida = Column(String(30), nullable=True)
+    cantidad_sistema = Column(Float, default=0)
+    cantidad_real = Column(Float, nullable=True)       # null = aún no contado
+    diferencia = Column(Float, default=0)
+    valor_unitario = Column(Numeric(12, 2, asdecimal=False), default=0)
+    valor_diferencia = Column(Numeric(12, 2, asdecimal=False), default=0)
+    inventario = relationship("InventarioMensual", back_populates="items")
+    producto = relationship("Producto")

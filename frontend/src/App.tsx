@@ -48,6 +48,8 @@ import NotaCredito from './pages/NotaCredito'
 import CumplimientoAdmin from './pages/CumplimientoAdmin'
 import InformeContador from './pages/InformeContador'
 import PagosProveedores from './pages/PagosProveedores'
+import InventarioMensual from './pages/InventarioMensual'
+import ConciliacionInventario from './pages/ConciliacionInventario'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -125,6 +127,7 @@ function AppRoutes() {
       <Route path="/pedido"         element={hasSession ? <SolicitudPedido />: <KioskSetup />} />
       <Route path="/sencilla"       element={hasSession ? <SolicitudSencilla /> : <KioskSetup />} />
       <Route path="/conteos"        element={hasSession ? <ConteoFisico />   : <KioskSetup />} />
+      <Route path="/inventario-mensual" element={hasSession ? <InventarioMensual /> : <KioskSetup />} />
       <Route path="/ingresos"       element={hasSession ? <Ingresos />       : <KioskSetup />} />
       <Route path="/historial-ventas" element={hasSession ? <HistorialVentas /> : <KioskSetup />} />
       <Route path="/conteo-compras" element={hasSession ? <ConteoCompras />  : <KioskSetup />} />
@@ -156,6 +159,7 @@ function AppRoutes() {
       <Route path="/informe-contador" element={<RequireAdmin><Layout><InformeContador /></Layout></RequireAdmin>} />
       <Route path="/compras"          element={<RequireAdmin><Layout><ComprasAdmin /></Layout></RequireAdmin>} />
       <Route path="/pagos-proveedores" element={<RequireAdmin><Layout><PagosProveedores /></Layout></RequireAdmin>} />
+      <Route path="/conciliacion-inventario" element={<RequireAdmin><Layout><ConciliacionInventario /></Layout></RequireAdmin>} />
       <Route path="/comunicados"      element={<RequireAdmin><Layout><Comunicados /></Layout></RequireAdmin>} />
       <Route path="/usuarios"         element={<RequireAdmin><Layout><Usuarios /></Layout></RequireAdmin>} />
       <Route path="/control-inventario" element={<RequireAdmin><Layout><ControlInventario /></Layout></RequireAdmin>} />

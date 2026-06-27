@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Optional
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.core.deps import ensure_tienda_access, get_current_user, require_admin
@@ -26,6 +27,21 @@ def movimiento(data: MovimientoInvRequest, db: Session = Depends(get_db), user: 
 def alertas(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     ensure_tienda_access(user, tienda_id)
     return svc.get_alertas(db, tienda_id)
+
+
+@router.get("/lotes-trazabilidad")
+def lotes_trazabilidad(
+    tienda_id: Optional[int] = Query(None),
+    producto_id: Optional[int] = Query(None),
+    proveedor: Optional[str] = Query(None),
+    estado: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    """Trazabilidad de lotes (baristas y admin): origen, vencimiento, consumo, estado."""
+    if tienda_id is not None:
+        ensure_tienda_access(user, tienda_id)
+    return svc.get_trazabilidad(db, tienda_id, producto_id, proveedor, estado)
 
 @router.get("/productos")
 def productos(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):

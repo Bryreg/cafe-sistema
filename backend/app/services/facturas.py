@@ -61,6 +61,8 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
             usuario_id=usuario_id,
             fecha_vencimiento=item.fecha_vencimiento,
             commit=False,  # toda la factura en UNA transacción (db.commit final, línea ~88)
+            # Trazabilidad: el lote conserva de dónde vino.
+            numero_lote=numero_lote_item, proveedor=data.proveedor, factura_id=factura.id,
         )
 
     # Si el pago es en efectivo, registrar el egreso en el turno activo

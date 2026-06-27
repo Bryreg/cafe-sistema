@@ -50,6 +50,7 @@ import InformeContador from './pages/InformeContador'
 import PagosProveedores from './pages/PagosProveedores'
 import InventarioMensual from './pages/InventarioMensual'
 import ConciliacionInventario from './pages/ConciliacionInventario'
+import LotesTrazabilidad from './pages/LotesTrazabilidad'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -160,6 +161,7 @@ function AppRoutes() {
       <Route path="/compras"          element={<RequireAdmin><Layout><ComprasAdmin /></Layout></RequireAdmin>} />
       <Route path="/pagos-proveedores" element={<RequireAdmin><Layout><PagosProveedores /></Layout></RequireAdmin>} />
       <Route path="/conciliacion-inventario" element={<RequireAdmin><Layout><ConciliacionInventario /></Layout></RequireAdmin>} />
+      <Route path="/lotes"            element={<RequireAdmin><Layout><LotesTrazabilidad /></Layout></RequireAdmin>} />
       <Route path="/comunicados"      element={<RequireAdmin><Layout><Comunicados /></Layout></RequireAdmin>} />
       <Route path="/usuarios"         element={<RequireAdmin><Layout><Usuarios /></Layout></RequireAdmin>} />
       <Route path="/control-inventario" element={<RequireAdmin><Layout><ControlInventario /></Layout></RequireAdmin>} />

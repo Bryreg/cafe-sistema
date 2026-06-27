@@ -76,8 +76,12 @@ def tickets_recientes(tienda_id: int, dias: int = 7, db: Session = Depends(get_d
 @router.get("/tickets/historial", response_model=List[TicketOut])
 def tickets_historial(tienda_id: int, fecha_desde: Optional[date] = Query(None),
                       fecha_hasta: Optional[date] = Query(None),
-                      db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
-    """Historial de ventas (tickets individuales) en un rango. Solo admin."""
+                      db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    """Historial de ventas (tickets individuales) en un rango.
+
+    Accesible para la barista (Historial de Ventas del Panel de Turno), scopeado a SU
+    tienda; el admin puede consultar cualquier sede."""
+    ensure_tienda_access(user, tienda_id)
     return svc.get_tickets_historial(db, tienda_id, fecha_desde, fecha_hasta)
 
 

@@ -6,7 +6,7 @@ import api from '../api/client'
 import {
   Menu, X, Check, Circle, AlertTriangle, ClipboardList, Megaphone,
   Trash2, Package, ShoppingCart, Coins, Truck, Thermometer, ArrowRightLeft, Lock, LogOut,
-  Calculator, CalendarClock, Banknote,
+  Calculator, CalendarClock, Banknote, Receipt,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import MovimientoCajaModal from './MovimientoCajaModal'
@@ -22,6 +22,7 @@ interface Novedad {
 }
 
 const QUICK = [
+  { label: 'Ventas',          to: '/historial-ventas', icon: Receipt },
   { label: 'Recibir',         to: '/ingresos',       icon: Truck },
   { label: 'Merma',           to: '/mermas',         icon: Trash2 },
   { label: 'Inventario',      to: '/inventario',     icon: Package },

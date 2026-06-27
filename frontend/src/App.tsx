@@ -26,6 +26,7 @@ import ConteoFisico from './pages/ConteoFisico'
 import Limpieza from './pages/Limpieza'
 import Ingresos from './pages/Ingresos'
 import ConteoCompras from './pages/ConteoCompras'
+import HistorialVentas from './pages/HistorialVentas'
 import POS from './pages/POS'
 
 // Admin pages
@@ -123,6 +124,7 @@ function AppRoutes() {
       <Route path="/sencilla"       element={hasSession ? <SolicitudSencilla /> : <KioskSetup />} />
       <Route path="/conteos"        element={hasSession ? <ConteoFisico />   : <KioskSetup />} />
       <Route path="/ingresos"       element={hasSession ? <Ingresos />       : <KioskSetup />} />
+      <Route path="/historial-ventas" element={hasSession ? <HistorialVentas /> : <KioskSetup />} />
       <Route path="/conteo-compras" element={hasSession ? <ConteoCompras />  : <KioskSetup />} />
       <Route path="/ventas-hoy"     element={hasSession ? <VentasHoy />      : <KioskSetup />} />
       <Route path="/limpieza"       element={

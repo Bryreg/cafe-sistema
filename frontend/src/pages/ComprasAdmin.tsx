@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import api from '../api/client'
-import { CheckCircle, AlertTriangle, ClipboardList, ShoppingCart, ChevronDown, ChevronUp, Copy, Check } from 'lucide-react'
+import { CheckCircle, AlertTriangle, ClipboardList, ShoppingCart, ChevronDown, ChevronUp, Copy, Check, FileText } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -39,6 +39,20 @@ interface PanelItem {
 
 interface Tienda { id: number; nombre: string }
 
+interface FacturaItem { producto_nombre: string; cantidad: number; unidad_medida: string }
+interface Factura {
+  id: number
+  proveedor: string
+  numero_factura: string | null
+  valor_total: number
+  tipo_pago: string
+  fecha_recibido: string | null
+  fecha_registro: string
+  barista_nombre: string
+  imagen_url: string | null
+  items: FacturaItem[]
+}
+
 const CAT_LABEL: Record<string, string> = {
   pasteleria: 'Pastelería',
   bebida: 'Bebidas',
@@ -54,7 +68,7 @@ const NIVEL_STYLE: Record<string, string> = {
 // ─── Componente ───────────────────────────────────────────────────────────────
 
 export default function ComprasAdmin() {
-  const [tab, setTab] = useState<'conteos' | 'panel'>('conteos')
+  const [tab, setTab] = useState<'conteos' | 'panel' | 'facturas'>('conteos')
   const [conteos, setConteos] = useState<Conteo[]>([])
   const [tiendas, setTiendas] = useState<Tienda[]>([])
   const [tiendaPanel, setTiendaPanel] = useState<number | null>(null)
@@ -65,6 +79,8 @@ export default function ComprasAdmin() {
   const [copiado, setCopiado] = useState(false)
   const [error, setError] = useState('')
   const [loadingPanel, setLoadingPanel] = useState(false)
+  const [facturas, setFacturas] = useState<Factura[]>([])
+  const [loadingFacturas, setLoadingFacturas] = useState(false)
 
   const cargarConteos = useCallback(async () => {
     try {
@@ -94,6 +110,16 @@ export default function ComprasAdmin() {
       .then(r => setPanel(r.data.productos))
       .finally(() => setLoadingPanel(false))
   }, [tiendaPanel])
+
+  // Facturas de compra (entradas) con foto — el endpoint ya existe y devuelve imagen_url (Cloudinary)
+  useEffect(() => {
+    if (tab !== 'facturas' || !tiendaPanel) return
+    setLoadingFacturas(true)
+    api.get<Factura[]>(`/facturas/tienda/${tiendaPanel}`)
+      .then(r => setFacturas(r.data))
+      .catch(() => setFacturas([]))
+      .finally(() => setLoadingFacturas(false))
+  }, [tab, tiendaPanel])
 
   // ── Ajustar stock ────────────────────────────────────────────────────────
 
@@ -169,7 +195,7 @@ export default function ComprasAdmin() {
 
       {/* Tabs */}
       <div className="flex gap-2">
-        {([['conteos', 'Conteos Pendientes', ClipboardList], ['panel', 'Panel de Pedido', ShoppingCart]] as const).map(
+        {([['conteos', 'Conteos Pendientes', ClipboardList], ['panel', 'Panel de Pedido', ShoppingCart], ['facturas', 'Facturas / Entradas', FileText]] as const).map(
           ([key, label, Icon]) => (
             <button key={key} onClick={() => setTab(key)}
               className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
@@ -352,6 +378,72 @@ export default function ComprasAdmin() {
               <p className="text-sm text-gray-500">Todo el stock está sobre el mínimo</p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── TAB: Facturas / Entradas (con foto) ── */}
+      {tab === 'facturas' && (
+        <div className="space-y-4">
+          {/* Selector de sede */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {tiendas.map(t => (
+              <button key={t.id} onClick={() => setTiendaPanel(t.id)}
+                className={`px-3 py-1.5 rounded-xl text-sm font-semibold transition-colors ${
+                  tiendaPanel === t.id ? 'bg-amber-600 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'
+                }`}>{t.nombre}</button>
+            ))}
+          </div>
+
+          {loadingFacturas && (
+            <p className="text-sm text-gray-400 text-center py-4 animate-pulse">Cargando facturas...</p>
+          )}
+
+          {!loadingFacturas && facturas.length === 0 && (
+            <div className="bg-white border border-gray-200 rounded-2xl px-4 py-8 text-center">
+              <FileText size={28} className="text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-500">No hay facturas registradas en esta sede</p>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {facturas.map(f => (
+              <div key={f.id} className="bg-white border border-gray-200 rounded-2xl p-4 flex items-start gap-3">
+                {/* Foto de la factura (Cloudinary, URL absoluta) */}
+                {f.imagen_url ? (
+                  <a href={f.imagen_url} target="_blank" rel="noreferrer" className="shrink-0" title="Ver factura completa">
+                    <img src={f.imagen_url} alt="factura" className="h-16 w-16 object-cover rounded-lg border border-gray-200 hover:opacity-80 transition-opacity" />
+                  </a>
+                ) : (
+                  <div className="h-16 w-16 shrink-0 rounded-lg border border-dashed border-gray-200 flex items-center justify-center">
+                    <span className="text-[10px] text-gray-400 text-center leading-tight">sin foto</span>
+                  </div>
+                )}
+                {/* Datos */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-bold text-gray-800 truncate">{f.proveedor}</p>
+                    <p className="text-sm font-bold text-gray-800 shrink-0">${f.valor_total.toLocaleString('es-CO')}</p>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {f.numero_factura ? `Fact. ${f.numero_factura} · ` : ''}
+                    <span className="capitalize">{f.tipo_pago}</span>
+                    {f.fecha_recibido ? ` · ${new Date(f.fecha_recibido).toLocaleDateString('es-CO')}` : ''}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Por: <span className="font-semibold text-gray-700">{f.barista_nombre || '—'}</span>
+                    {f.items.length > 0 && (
+                      <span className="text-gray-400"> · {f.items.length} ítem{f.items.length > 1 ? 's' : ''}</span>
+                    )}
+                  </p>
+                  {f.items.length > 0 && (
+                    <p className="text-xs text-gray-400 mt-1 truncate">
+                      {f.items.map(i => `${i.producto_nombre} (${Math.round(i.cantidad)})`).join(' · ')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

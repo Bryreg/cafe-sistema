@@ -20,6 +20,8 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
     if not data.items:
         raise HTTPException(400, "Debes agregar al menos un producto")
 
+    # Contado/transferencia se paga al recibir; crédito queda pendiente (valor_pagado=0).
+    pagado_inicial = data.valor_total if data.tipo_pago in ("contado", "transferencia") else 0
     factura = FacturaCompra(
         tienda_id=data.tienda_id,
         proveedor=data.proveedor,
@@ -32,6 +34,8 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
         usuario_id=usuario_id,
         barista_id=barista_id,
         barista_nombre=barista_nombre,
+        valor_pagado=pagado_inicial,
+        forma_pago_real=(data.tipo_pago if pagado_inicial > 0 else None),
     )
     db.add(factura)
     db.flush()
@@ -152,6 +156,14 @@ def _serializar(f: FacturaCompra) -> dict:
         "usuario_nombre": f.usuario.nombre if f.usuario else "",
         # Barista real (display): la que operó; cae a usuario_nombre del dispositivo si no hay
         "barista_nombre": f.barista_nombre or (f.usuario.nombre if f.usuario else ""),
+        "tienda_nombre": f.tienda.nombre if f.tienda else None,
+        # Pagos a proveedores
+        "valor_pagado": round(float(f.valor_pagado or 0), 2),
+        "saldo": round(float(f.valor_total) - float(f.valor_pagado or 0), 2),
+        "estado_pago": ("pagado" if float(f.valor_pagado or 0) >= float(f.valor_total)
+                        else ("parcial" if float(f.valor_pagado or 0) > 0 else "pendiente")),
+        "forma_pago_real": f.forma_pago_real,
+        "imagen_soporte_url": f.imagen_soporte_url,
         "items": [
             {
                 "id": i.id,
@@ -165,4 +177,84 @@ def _serializar(f: FacturaCompra) -> dict:
             }
             for i in f.items
         ],
+    }
+
+
+def registrar_pago(db: Session, factura_id: int, monto: float, forma_pago: str | None,
+                   imagen_soporte_url: str | None, usuario_id: int) -> dict:
+    """Registra un pago (total o parcial) a una factura de proveedor. Suma al valor_pagado
+    (sin sobrepasar el total), guarda la forma y la foto del soporte de pago."""
+    f = db.query(FacturaCompra).filter_by(id=factura_id).first()
+    if not f:
+        raise HTTPException(404, "Factura no encontrada")
+    if monto <= 0:
+        raise HTTPException(400, "El monto del pago debe ser mayor a 0")
+    nuevo = float(f.valor_pagado or 0) + float(monto)
+    f.valor_pagado = min(nuevo, float(f.valor_total))   # no permitir sobrepago
+    if forma_pago:
+        f.forma_pago_real = forma_pago
+    if imagen_soporte_url:
+        f.imagen_soporte_url = imagen_soporte_url
+    audit.registrar(
+        db, accion="pago_proveedor", tabla="facturas_compra", registro_id=f.id,
+        usuario_id=usuario_id, tienda_id=f.tienda_id,
+        datos_despues={"monto": monto, "valor_pagado": f.valor_pagado, "forma": forma_pago},
+    )
+    db.commit()
+    db.refresh(f)
+    return _serializar(f)
+
+
+def get_dashboard_pagos(db: Session, tienda_id: int | None = None,
+                        desde=None, hasta=None) -> dict:
+    """Consolidado de pagos a proveedores: totales, ranking por proveedor, por mes y por sede,
+    + la lista de facturas (filtrable en el front por proveedor/estado/producto)."""
+    q = db.query(FacturaCompra)
+    if tienda_id is not None:
+        q = q.filter(FacturaCompra.tienda_id == tienda_id)
+    if desde is not None:
+        q = q.filter(FacturaCompra.fecha_recibido >= desde)
+    if hasta is not None:
+        q = q.filter(FacturaCompra.fecha_recibido <= hasta)
+    facturas = q.order_by(FacturaCompra.fecha_recibido.desc()).all()
+
+    por_prov: dict = {}
+    por_mes: dict = {}
+    por_sede: dict = {}
+    tot_fact = tot_pag = 0.0
+    for f in facturas:
+        vt = float(f.valor_total or 0)
+        vp = float(f.valor_pagado or 0)
+        tot_fact += vt
+        tot_pag += vp
+        p = por_prov.setdefault(f.proveedor, {"proveedor": f.proveedor, "facturado": 0.0, "pagado": 0.0, "n": 0})
+        p["facturado"] += vt; p["pagado"] += vp; p["n"] += 1
+        mes = (f.fecha_recibido or f.fecha_registro).strftime("%Y-%m")
+        m = por_mes.setdefault(mes, {"mes": mes, "facturado": 0.0, "pagado": 0.0})
+        m["facturado"] += vt; m["pagado"] += vp
+        snombre = f.tienda.nombre if f.tienda else f"Sede {f.tienda_id}"
+        s = por_sede.setdefault(f.tienda_id, {"tienda": snombre, "facturado": 0.0, "pagado": 0.0})
+        s["facturado"] += vt; s["pagado"] += vp
+
+    def _round_grupo(g, *campos):
+        for x in g:
+            for c in campos:
+                x[c] = round(x[c], 2)
+            if "facturado" in x and "pagado" in x:
+                x["pendiente"] = round(x["facturado"] - x["pagado"], 2)
+        return g
+
+    ranking = sorted(_round_grupo(list(por_prov.values()), "facturado", "pagado"),
+                     key=lambda x: x["facturado"], reverse=True)
+    return {
+        "totales": {
+            "facturado": round(tot_fact, 2),
+            "pagado": round(tot_pag, 2),
+            "pendiente": round(tot_fact - tot_pag, 2),
+            "n_facturas": len(facturas),
+        },
+        "por_proveedor": ranking,
+        "por_mes": _round_grupo(sorted(por_mes.values(), key=lambda x: x["mes"]), "facturado", "pagado"),
+        "por_sede": _round_grupo(list(por_sede.values()), "facturado", "pagado"),
+        "facturas": [_serializar(f) for f in facturas],
     }

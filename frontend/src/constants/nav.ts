@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Layers, ClipboardList, ShoppingCart,
   Banknote, Wrench, ClipboardCheck, Activity,
-  Bell, Inbox, BarChart2, Users, Tag, BarChart3, RotateCcw,
+  Bell, Inbox, BarChart2, Users, Tag, BarChart3, RotateCcw, Calculator,
 } from 'lucide-react'
 
 export interface NavItem { to: string; label: string; icon: typeof Layers }
@@ -18,9 +18,10 @@ export const NAV_GROUPS: NavGroup[] = [
     { to: '/dashboard',          label: 'Dashboard',      icon: LayoutDashboard },
   ]},
   { label: 'Ventas', items: [
-    { to: '/analytics',          label: 'Analítica',      icon: BarChart3       },
-    { to: '/informes',           label: 'Informes',       icon: BarChart2       },
-    { to: '/notas-credito',      label: 'Notas crédito',  icon: RotateCcw       },
+    { to: '/analytics',          label: 'Analítica',        icon: BarChart3       },
+    { to: '/informe-contador',   label: 'Informe Contador', icon: Calculator      },
+    { to: '/informes',           label: 'Informes',         icon: BarChart2       },
+    { to: '/notas-credito',      label: 'Notas crédito',    icon: RotateCcw       },
   ]},
   { label: 'Inventario', items: [
     { to: '/control-inventario', label: 'Inventario',     icon: Layers          },

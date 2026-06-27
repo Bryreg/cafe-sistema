@@ -269,6 +269,12 @@ class LoteInventario(Base):
     fecha_entrada = Column(DateTime, default=datetime.utcnow)
     fecha_vencimiento = Column(DateTime, nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    # Trazabilidad: de dónde vino el lote y cuándo se agotó (consumo FIFO completo).
+    numero_lote = Column(String(100), nullable=True)
+    proveedor = Column(String(150), nullable=True)
+    fecha_fabricacion = Column(DateTime, nullable=True)
+    factura_id = Column(Integer, nullable=True)        # plano, sin FK (evita acoplar)
+    fecha_agotado = Column(DateTime, nullable=True)     # set cuando cantidad_restante llega a 0
     producto = relationship("Producto", back_populates="lotes")
     tienda = relationship("Tienda", back_populates="lotes")
     usuario = relationship("Usuario", back_populates="lotes_inventario")

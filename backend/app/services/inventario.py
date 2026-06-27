@@ -27,7 +27,9 @@ def get_inventario_tienda(db: Session, tienda_id: int):
 def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: str,
                           cantidad: float, motivo: str | None, usuario_id: int,
                           fecha_vencimiento: datetime | None = None, commit: bool = True,
-                          allow_negative: bool = False):
+                          allow_negative: bool = False,
+                          numero_lote: str | None = None, proveedor: str | None = None,
+                          fecha_fabricacion: datetime | None = None, factura_id: int | None = None):
     if tipo not in {"entrada", "salida", "ajuste"}:
         raise HTTPException(status_code=400, detail="tipo debe ser entrada, salida o ajuste")
     if tipo in {"entrada", "salida"} and cantidad <= 0:
@@ -52,7 +54,9 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
             )
             .values(stock_actual=Inventario.stock_actual + cantidad)
         )
-        agregar_lote(db, producto_id, tienda_id, cantidad, usuario_id, fecha_vencimiento)
+        agregar_lote(db, producto_id, tienda_id, cantidad, usuario_id, fecha_vencimiento,
+                     numero_lote=numero_lote, proveedor=proveedor,
+                     fecha_fabricacion=fecha_fabricacion, factura_id=factura_id)
     elif tipo == "salida":
         if allow_negative:
             # POS mode: permitir stock negativo (proveedor llega después)
@@ -124,8 +128,10 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
 
 def agregar_lote(db: Session, producto_id: int, tienda_id: int,
                  cantidad: float, usuario_id: int,
-                 fecha_vencimiento: datetime | None = None):
-    """Crea un lote FIFO. NO hace commit — debe estar dentro de una transacción."""
+                 fecha_vencimiento: datetime | None = None,
+                 numero_lote: str | None = None, proveedor: str | None = None,
+                 fecha_fabricacion: datetime | None = None, factura_id: int | None = None):
+    """Crea un lote FIFO con su trazabilidad. NO hace commit — dentro de una transacción."""
     lote = LoteInventario(
         producto_id=producto_id,
         tienda_id=tienda_id,
@@ -133,12 +139,17 @@ def agregar_lote(db: Session, producto_id: int, tienda_id: int,
         cantidad_restante=cantidad,
         usuario_id=usuario_id,
         fecha_vencimiento=fecha_vencimiento,
+        numero_lote=numero_lote,
+        proveedor=proveedor,
+        fecha_fabricacion=fecha_fabricacion,
+        factura_id=factura_id,
     )
     db.add(lote)
 
 
 def consumir_fifo(db: Session, producto_id: int, tienda_id: int, cantidad: float):
-    """Descuenta cantidad de los lotes más antiguos (FIFO). NO hace commit."""
+    """Descuenta cantidad de los lotes más antiguos (FIFO). NO hace commit.
+    Marca fecha_agotado cuando un lote llega a 0 (trazabilidad de consumo)."""
     lotes = db.query(LoteInventario).filter(
         LoteInventario.producto_id == producto_id,
         LoteInventario.tienda_id == tienda_id,
@@ -152,6 +163,8 @@ def consumir_fifo(db: Session, producto_id: int, tienda_id: int, cantidad: float
         consumido = min(lote.cantidad_restante, restante)
         lote.cantidad_restante -= consumido
         restante -= consumido
+        if lote.cantidad_restante <= 0 and lote.fecha_agotado is None:
+            lote.fecha_agotado = datetime.utcnow()
     # Si restante > 0, los lotes no cubren (stock registrado antes del FIFO).
     # Se ignora silenciosamente para no bloquear operaciones.
 
@@ -162,6 +175,61 @@ def get_lotes(db: Session, tienda_id: int, producto_id: int):
         LoteInventario.tienda_id == tienda_id,
         LoteInventario.producto_id == producto_id,
     ).order_by(LoteInventario.fecha_entrada.asc()).all()
+
+
+def get_trazabilidad(db: Session, tienda_id: int | None = None, producto_id: int | None = None,
+                     proveedor: str | None = None, estado: str | None = None):
+    """Trazabilidad de lotes: qué lote entró, cuándo, qué proveedor, vencimiento,
+    cuánto queda / % consumido, estado (activo/por_vencer/vencido/agotado) y cuándo se
+    agotó. Filtrable por sede, producto, proveedor y estado."""
+    from datetime import timedelta
+    q = db.query(LoteInventario).options(
+        joinedload(LoteInventario.producto), joinedload(LoteInventario.tienda),
+    )
+    if tienda_id is not None:
+        q = q.filter(LoteInventario.tienda_id == tienda_id)
+    if producto_id is not None:
+        q = q.filter(LoteInventario.producto_id == producto_id)
+    if proveedor:
+        q = q.filter(LoteInventario.proveedor == proveedor)
+    lotes = q.order_by(LoteInventario.fecha_entrada.desc()).limit(800).all()
+
+    ahora = datetime.utcnow()
+    pronto = ahora + timedelta(days=7)
+    out = []
+    for l in lotes:
+        ini = l.cantidad_inicial or 0
+        rest = l.cantidad_restante or 0
+        if rest <= 0:
+            est = "agotado"
+        elif l.fecha_vencimiento and l.fecha_vencimiento < ahora:
+            est = "vencido"
+        elif l.fecha_vencimiento and l.fecha_vencimiento <= pronto:
+            est = "por_vencer"
+        else:
+            est = "activo"
+        out.append({
+            "id": l.id,
+            "producto_id": l.producto_id,
+            "producto_nombre": l.producto.nombre if l.producto else "",
+            "unidad_medida": l.producto.unidad_medida if l.producto else "",
+            "tienda_id": l.tienda_id,
+            "tienda_nombre": l.tienda.nombre if l.tienda else None,
+            "proveedor": l.proveedor,
+            "numero_lote": l.numero_lote,
+            "factura_id": l.factura_id,
+            "cantidad_inicial": round(ini, 2),
+            "cantidad_restante": round(rest, 2),
+            "consumido_pct": round((1 - rest / ini) * 100, 1) if ini else 0,
+            "fecha_entrada": l.fecha_entrada,
+            "fecha_fabricacion": l.fecha_fabricacion,
+            "fecha_vencimiento": l.fecha_vencimiento,
+            "fecha_agotado": l.fecha_agotado,
+            "estado": est,
+        })
+    if estado:
+        out = [o for o in out if o["estado"] == estado]
+    return out
 
 
 def get_alertas(db: Session, tienda_id: int):

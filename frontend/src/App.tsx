@@ -47,6 +47,7 @@ import Catalogo from './pages/Catalogo'
 import NotaCredito from './pages/NotaCredito'
 import CumplimientoAdmin from './pages/CumplimientoAdmin'
 import InformeContador from './pages/InformeContador'
+import PagosProveedores from './pages/PagosProveedores'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -154,6 +155,7 @@ function AppRoutes() {
       <Route path="/informes"         element={<RequireAdmin><Layout><Informes /></Layout></RequireAdmin>} />
       <Route path="/informe-contador" element={<RequireAdmin><Layout><InformeContador /></Layout></RequireAdmin>} />
       <Route path="/compras"          element={<RequireAdmin><Layout><ComprasAdmin /></Layout></RequireAdmin>} />
+      <Route path="/pagos-proveedores" element={<RequireAdmin><Layout><PagosProveedores /></Layout></RequireAdmin>} />
       <Route path="/comunicados"      element={<RequireAdmin><Layout><Comunicados /></Layout></RequireAdmin>} />
       <Route path="/usuarios"         element={<RequireAdmin><Layout><Usuarios /></Layout></RequireAdmin>} />
       <Route path="/control-inventario" element={<RequireAdmin><Layout><ControlInventario /></Layout></RequireAdmin>} />

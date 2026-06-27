@@ -107,6 +107,10 @@ with engine.connect() as _conn:
         "ALTER TABLE movimientos_caja ADD COLUMN barista_nombre VARCHAR(100)",
         "ALTER TABLE rutina_eventos ADD COLUMN barista_id INTEGER",
         "ALTER TABLE rutina_eventos ADD COLUMN barista_nombre VARCHAR(100)",
+        # Pagos a proveedores: valor pagado, forma de pago real y foto del soporte de pago.
+        "ALTER TABLE facturas_compra ADD COLUMN valor_pagado NUMERIC(12,2) DEFAULT 0",
+        "ALTER TABLE facturas_compra ADD COLUMN forma_pago_real VARCHAR(40)",
+        "ALTER TABLE facturas_compra ADD COLUMN imagen_soporte_url VARCHAR(300)",
         # Concurrency: only one open shift per store at any time
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_one_turno_abierto ON caja_turnos (tienda_id) WHERE estado = 'abierto'",
         # Concurrency: only one conteo of each type (apertura/cierre) per shift

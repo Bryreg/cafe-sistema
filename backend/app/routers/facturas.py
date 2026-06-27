@@ -1,5 +1,6 @@
 import json
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from datetime import date, datetime, time
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
@@ -51,6 +52,35 @@ def listar_facturas(
 ):
     ensure_tienda_access(user, tienda_id)
     return svc.get_facturas_tienda(db, tienda_id)
+
+
+# Before /{factura_id} para evitar conflicto de ruta.
+@router.get("/dashboard")
+def dashboard_pagos(
+    tienda_id: Optional[int] = Query(None),
+    desde: Optional[date] = Query(None),
+    hasta: Optional[date] = Query(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(require_admin),
+):
+    """Pagos a proveedores: totales, ranking por proveedor, por mes, por sede + facturas."""
+    d = datetime.combine(desde, time.min) if desde else None
+    h = datetime.combine(hasta, time.max) if hasta else None
+    return svc.get_dashboard_pagos(db, tienda_id, d, h)
+
+
+@router.patch("/{factura_id}/pago")
+async def registrar_pago(
+    factura_id: int,
+    monto: float = Form(...),
+    forma_pago: Optional[str] = Form(None),
+    imagen: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(require_admin),
+):
+    """Registra un pago (total/parcial) a un proveedor + foto del soporte de pago."""
+    soporte_url = await upload_imagen(imagen)
+    return svc.registrar_pago(db, factura_id, monto, forma_pago, soporte_url, user.id)
 
 
 @router.get("/{factura_id}")

@@ -1,0 +1,324 @@
+import { useEffect, useMemo, useState } from 'react'
+import api from '../api/client'
+import {
+  Truck, Wallet, Receipt, Download, Camera, X, Search,
+  CheckCircle, AlertCircle, Clock, Building2,
+} from 'lucide-react'
+
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+interface FacturaItem { producto_nombre: string; cantidad: number; precio_unitario: number; unidad_medida: string }
+interface Factura {
+  id: number; tienda_id: number; tienda_nombre: string | null
+  proveedor: string; numero_factura: string | null
+  fecha_recibido: string | null; valor_total: number
+  tipo_pago: string; valor_pagado: number; saldo: number
+  estado_pago: 'pagado' | 'parcial' | 'pendiente'
+  forma_pago_real: string | null
+  imagen_url: string | null; imagen_soporte_url: string | null
+  barista_nombre: string; items: FacturaItem[]
+}
+interface Grupo { proveedor?: string; tienda?: string; facturado: number; pagado: number; pendiente: number; n?: number }
+interface Dashboard {
+  totales: { facturado: number; pagado: number; pendiente: number; n_facturas: number }
+  por_proveedor: Grupo[]; por_sede: Grupo[]; facturas: Factura[]
+}
+interface Tienda { id: number; nombre: string }
+
+const fmt = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO')
+const ESTADO: Record<string, { label: string; cls: string; Icon: typeof CheckCircle }> = {
+  pagado:    { label: 'Pagado',    cls: 'bg-green-100 text-green-700', Icon: CheckCircle },
+  parcial:   { label: 'Parcial',   cls: 'bg-amber-100 text-amber-700', Icon: Clock },
+  pendiente: { label: 'Pendiente', cls: 'bg-red-100 text-red-700',     Icon: AlertCircle },
+}
+
+export default function PagosProveedores() {
+  const [tiendas, setTiendas] = useState<Tienda[]>([])
+  const [tiendaId, setTiendaId] = useState<number | null>(null)  // null = todas
+  const [desde, setDesde] = useState('')
+  const [hasta, setHasta] = useState('')
+  const [data, setData] = useState<Dashboard | null>(null)
+  const [loading, setLoading] = useState(false)
+  // filtros client-side
+  const [fProveedor, setFProveedor] = useState('')
+  const [fEstado, setFEstado] = useState('')
+  const [busqueda, setBusqueda] = useState('')
+  // registrar pago
+  const [pagoFactura, setPagoFactura] = useState<Factura | null>(null)
+  const [monto, setMonto] = useState('')
+  const [formaPago, setFormaPago] = useState('transferencia')
+  const [soporte, setSoporte] = useState<File | null>(null)
+  const [guardando, setGuardando] = useState(false)
+
+  useEffect(() => {
+    api.get<Tienda[]>('/auth/tiendas').then(r => setTiendas(r.data)).catch(() => {})
+  }, [])
+
+  const cargar = () => {
+    setLoading(true)
+    const params: Record<string, string | number> = {}
+    if (tiendaId) params.tienda_id = tiendaId
+    if (desde) params.desde = desde
+    if (hasta) params.hasta = hasta
+    api.get<Dashboard>('/facturas/dashboard', { params })
+      .then(r => setData(r.data))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false))
+  }
+  useEffect(cargar, [tiendaId, desde, hasta])
+
+  const proveedores = useMemo(() => [...new Set((data?.facturas ?? []).map(f => f.proveedor))].sort(), [data])
+
+  const facturas = useMemo(() => (data?.facturas ?? []).filter(f =>
+    (!fProveedor || f.proveedor === fProveedor) &&
+    (!fEstado || f.estado_pago === fEstado) &&
+    (!busqueda || f.proveedor.toLowerCase().includes(busqueda.toLowerCase())
+      || (f.numero_factura || '').toLowerCase().includes(busqueda.toLowerCase())
+      || f.items.some(i => i.producto_nombre.toLowerCase().includes(busqueda.toLowerCase())))
+  ), [data, fProveedor, fEstado, busqueda])
+
+  const maxProv = Math.max(1, ...(data?.por_proveedor ?? []).map(p => p.facturado))
+
+  const registrarPago = async () => {
+    if (!pagoFactura || !monto || Number(monto) <= 0) return
+    setGuardando(true)
+    try {
+      const fd = new FormData()
+      fd.append('monto', monto)
+      fd.append('forma_pago', formaPago)
+      if (soporte) fd.append('imagen', soporte)
+      await api.patch(`/facturas/${pagoFactura.id}/pago`, fd)
+      setPagoFactura(null); setMonto(''); setSoporte(null)
+      cargar()
+    } catch { /* noop */ } finally { setGuardando(false) }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header + filtros */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          <Truck size={20} className="text-forest" />
+          <h1 className="text-lg font-bold text-gray-800">Pagos a Proveedores</h1>
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
+            className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
+          <span className="text-gray-400 text-sm">→</span>
+          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
+            className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
+        </div>
+      </div>
+
+      {/* Sede */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button onClick={() => setTiendaId(null)}
+          className={`px-3 py-1.5 rounded-xl text-sm font-semibold transition-colors ${
+            tiendaId === null ? 'bg-forest text-white' : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'
+          }`}>Todas las sedes</button>
+        {tiendas.map(t => (
+          <button key={t.id} onClick={() => setTiendaId(t.id)}
+            className={`px-3 py-1.5 rounded-xl text-sm font-semibold transition-colors ${
+              tiendaId === t.id ? 'bg-forest text-white' : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'
+            }`}>{t.nombre}</button>
+        ))}
+      </div>
+
+      {loading && <p className="text-sm text-gray-400 text-center py-8 animate-pulse">Cargando pagos...</p>}
+
+      {!loading && data && (
+        <>
+          {/* KPIs */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Total facturado</p>
+              <p className="text-xl font-bold text-gray-800 font-mono">{fmt(data.totales.facturado)}</p>
+              <p className="text-xs text-gray-400">{data.totales.n_facturas} facturas</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Total pagado</p>
+              <p className="text-xl font-bold text-green-700 font-mono">{fmt(data.totales.pagado)}</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Pendiente</p>
+              <p className="text-xl font-bold text-red-600 font-mono">{fmt(data.totales.pendiente)}</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">% Pagado</p>
+              <p className="text-xl font-bold text-gray-800 font-mono">
+                {data.totales.facturado > 0 ? Math.round(data.totales.pagado / data.totales.facturado * 100) : 0}%
+              </p>
+            </div>
+          </div>
+
+          {/* Ranking proveedores + por sede */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-3">Ranking de proveedores</p>
+              <div className="space-y-2.5">
+                {data.por_proveedor.slice(0, 8).map(p => (
+                  <div key={p.proveedor}>
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="font-semibold text-gray-700 truncate">{p.proveedor}</span>
+                      <span className="font-mono text-gray-500 shrink-0 ml-2">{fmt(p.facturado)}</span>
+                    </div>
+                    <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden flex">
+                      <div className="h-full bg-green-500" style={{ width: `${(p.pagado / maxProv) * 100}%` }} title={`Pagado ${fmt(p.pagado)}`} />
+                      <div className="h-full bg-red-300" style={{ width: `${(p.pendiente / maxProv) * 100}%` }} title={`Pendiente ${fmt(p.pendiente)}`} />
+                    </div>
+                  </div>
+                ))}
+                {data.por_proveedor.length === 0 && <p className="text-sm text-gray-400">Sin datos</p>}
+              </div>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-3">Por sede</p>
+              <div className="space-y-2">
+                {data.por_sede.map(s => (
+                  <div key={s.tienda} className="flex items-center gap-2 text-sm">
+                    <Building2 size={14} className="text-gray-400 shrink-0" />
+                    <span className="flex-1 font-medium text-gray-700">{s.tienda}</span>
+                    <span className="font-mono text-green-700">{fmt(s.pagado)}</span>
+                    <span className="text-gray-300">/</span>
+                    <span className="font-mono text-gray-500">{fmt(s.facturado)}</span>
+                  </div>
+                ))}
+                {data.por_sede.length === 0 && <p className="text-sm text-gray-400">Sin datos</p>}
+              </div>
+            </div>
+          </div>
+
+          {/* Filtros lista */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar proveedor, factura o producto…"
+                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm" />
+            </div>
+            <select value={fProveedor} onChange={e => setFProveedor(e.target.value)}
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
+              <option value="">Todos los proveedores</option>
+              {proveedores.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <select value={fEstado} onChange={e => setFEstado(e.target.value)}
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
+              <option value="">Todo estado</option>
+              <option value="pagado">Pagado</option>
+              <option value="parcial">Parcial</option>
+              <option value="pendiente">Pendiente</option>
+            </select>
+          </div>
+
+          {/* Lista de facturas */}
+          <div className="space-y-2">
+            {facturas.map(f => {
+              const e = ESTADO[f.estado_pago]
+              return (
+                <div key={f.id} className="bg-white border border-gray-200 rounded-2xl p-4">
+                  <div className="flex items-start gap-3">
+                    {/* Foto factura */}
+                    {f.imagen_url ? (
+                      <a href={f.imagen_url} target="_blank" rel="noreferrer" className="shrink-0" title="Ver factura">
+                        <img src={f.imagen_url} alt="factura" className="h-14 w-14 object-cover rounded-lg border border-gray-200 hover:opacity-80" />
+                      </a>
+                    ) : (
+                      <div className="h-14 w-14 shrink-0 rounded-lg border border-dashed border-gray-200 flex items-center justify-center text-[9px] text-gray-400">factura</div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-bold text-gray-800 truncate">{f.proveedor}</p>
+                        <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 shrink-0 ${e.cls}`}>
+                          <e.Icon size={11} /> {e.label}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {f.numero_factura ? `Fact. ${f.numero_factura} · ` : ''}
+                        {f.tienda_nombre || ''}{f.fecha_recibido ? ` · ${new Date(f.fecha_recibido).toLocaleDateString('es-CO')}` : ''}
+                      </p>
+                      <div className="flex items-center gap-3 mt-1.5 text-sm flex-wrap">
+                        <span className="text-gray-500">Total: <span className="font-mono font-bold text-gray-800">{fmt(f.valor_total)}</span></span>
+                        <span className="text-gray-500">Pagado: <span className="font-mono font-bold text-green-700">{fmt(f.valor_pagado)}</span></span>
+                        {f.saldo > 0 && <span className="text-gray-500">Saldo: <span className="font-mono font-bold text-red-600">{fmt(f.saldo)}</span></span>}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Acciones + soportes */}
+                  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-50 flex-wrap">
+                    {f.imagen_url && (
+                      <a href={f.imagen_url} download target="_blank" rel="noreferrer"
+                        className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded-lg border border-gray-200">
+                        <Download size={12} /> Factura
+                      </a>
+                    )}
+                    {f.imagen_soporte_url ? (
+                      <a href={f.imagen_soporte_url} download target="_blank" rel="noreferrer"
+                        className="flex items-center gap-1 text-xs text-green-700 hover:text-green-800 px-2 py-1 rounded-lg border border-green-200 bg-green-50">
+                        <Download size={12} /> Soporte de pago
+                      </a>
+                    ) : (
+                      <span className="text-xs text-gray-300">Sin soporte de pago</span>
+                    )}
+                    {f.estado_pago !== 'pagado' && (
+                      <button onClick={() => { setPagoFactura(f); setMonto(String(f.saldo)) }}
+                        className="ml-auto flex items-center gap-1.5 text-xs font-bold text-white bg-forest hover:bg-forest-700 px-3 py-1.5 rounded-lg">
+                        <Wallet size={13} /> Registrar pago
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+            {facturas.length === 0 && (
+              <div className="bg-white border border-gray-200 rounded-2xl px-4 py-10 text-center">
+                <Receipt size={26} className="text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">No hay facturas con esos filtros</p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Modal registrar pago */}
+      {pagoFactura && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPagoFactura(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-gray-800">Registrar pago</h2>
+              <button onClick={() => setPagoFactura(null)} className="text-gray-400"><X size={18} /></button>
+            </div>
+            <div className="text-sm text-gray-500">
+              <p className="font-semibold text-gray-700">{pagoFactura.proveedor}</p>
+              <p>Saldo pendiente: <span className="font-mono font-bold text-red-600">{fmt(pagoFactura.saldo)}</span></p>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Monto a pagar</label>
+              <input type="number" value={monto} onChange={e => setMonto(e.target.value)}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-lg font-bold font-mono focus:outline-none focus:border-forest" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Forma de pago</label>
+              <select value={formaPago} onChange={e => setFormaPago(e.target.value)}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm bg-white">
+                <option value="transferencia">Transferencia</option>
+                <option value="efectivo">Efectivo</option>
+                <option value="cheque">Cheque</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Foto del soporte (opcional)</label>
+              <label className="flex items-center gap-2 border-2 border-dashed border-gray-200 rounded-xl px-4 py-3 cursor-pointer text-sm text-gray-500">
+                <Camera size={16} /> {soporte ? soporte.name : 'Adjuntar comprobante'}
+                <input type="file" accept="image/*" capture="environment" className="hidden"
+                  onChange={e => setSoporte(e.target.files?.[0] ?? null)} />
+              </label>
+            </div>
+            <button onClick={registrarPago} disabled={guardando || !monto || Number(monto) <= 0}
+              className="w-full bg-forest hover:bg-forest-700 disabled:opacity-40 text-white font-bold py-3 rounded-xl text-sm">
+              {guardando ? 'Guardando...' : 'Confirmar pago'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

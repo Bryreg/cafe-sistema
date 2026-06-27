@@ -695,6 +695,10 @@ class FacturaCompra(Base):
     # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.
     barista_id = Column(Integer, nullable=True)
     barista_nombre = Column(String(100), nullable=True)
+    # Pagos a proveedores: cuánto se pagó, con qué forma y la foto del soporte de pago.
+    valor_pagado = Column(Numeric(12, 2, asdecimal=False), default=0)
+    forma_pago_real = Column(String(40), nullable=True)
+    imagen_soporte_url = Column(String(300), nullable=True)
     tienda = relationship("Tienda", back_populates="facturas_compra")
     usuario = relationship("Usuario")
     items = relationship("FacturaCompraItem", back_populates="factura", cascade="all, delete-orphan")

@@ -12,6 +12,9 @@ export default defineConfig(({ mode }) => {
       react(),
       VitePWA({
         registerType: 'autoUpdate',
+        strategies: 'injectManifest',
+        srcDir: 'src',
+        filename: 'sw.ts',
         includeAssets: ['icon-192.png', 'icon-512.png', 'apple-touch-icon.png'],
         manifest: {
           name: 'Sistema Café',
@@ -28,19 +31,10 @@ export default defineConfig(({ mode }) => {
             { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
           ],
         },
-        workbox: {
+        // En injectManifest el precache lo arma el SW custom (src/sw.ts). El
+        // runtimeCaching de workbox.* NO aplica en esta estrategia.
+        injectManifest: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-          runtimeCaching: [
-            {
-              urlPattern: /^\/api\/v1\/(auth\/tiendas|inventario|catalogo)/,
-              handler: 'NetworkFirst',
-              options: {
-                cacheName: 'api-cache',
-                networkTimeoutSeconds: 5,
-                expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 },
-              },
-            },
-          ],
         },
       }),
     ],

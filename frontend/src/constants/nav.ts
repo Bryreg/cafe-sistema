@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Layers, ClipboardList, ShoppingCart,
   Banknote, Wrench, ClipboardCheck, Activity,
-  Bell, Inbox, BarChart2, Users, Tag, BarChart3, RotateCcw, Calculator, Truck, Scale, Boxes,
+  Bell, Inbox, BarChart2, Users, Tag, RotateCcw, Calculator, Truck, Scale, Boxes,
 } from 'lucide-react'
 
 export interface NavItem { to: string; label: string; icon: typeof Layers }
@@ -18,7 +18,6 @@ export const NAV_GROUPS: NavGroup[] = [
     { to: '/dashboard',           label: 'Dashboard',   icon: LayoutDashboard },
   ]},
   { label: 'Ventas', items: [
-    { to: '/analytics',          label: 'Analítica',        icon: BarChart3       },
     { to: '/informe-contador',   label: 'Informe Contador', icon: Calculator      },
     { to: '/informes',           label: 'Informes',         icon: BarChart2       },
     { to: '/notas-credito',      label: 'Notas crédito',    icon: RotateCcw       },
@@ -38,10 +37,11 @@ export const NAV_GROUPS: NavGroup[] = [
     { to: '/consignaciones',     label: 'Consignaciones', icon: Banknote        },
   ]},
   { label: 'Operación', items: [
-    { to: '/mantenimientos',     label: 'Mantenimientos', icon: Wrench          },
-    { to: '/auditorias',         label: 'Auditorías',     icon: ClipboardCheck  },
-    { to: '/comunicados',        label: 'Comunicados',    icon: Bell            },
-    { to: '/bandeja',            label: 'Bandeja',        icon: Inbox           },
+    { to: '/mantenimientos',      label: 'Mantenimientos', icon: Wrench          },
+    { to: '/auditorias',          label: 'Auditorías',     icon: ClipboardCheck  },
+    { to: '/comunicados',         label: 'Comunicados',    icon: Bell            },
+    { to: '/bandeja',             label: 'Bandeja',        icon: Inbox           },
+    { to: '/notificaciones-config', label: 'Notificaciones', icon: Bell          },
   ]},
   { label: 'Registro', items: [
     { to: '/audit-log',          label: 'Historial',      icon: Activity        },

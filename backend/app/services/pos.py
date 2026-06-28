@@ -222,6 +222,25 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
     db.refresh(ticket)
     logger.info("Ticket %s creado en tienda %s por usuario %s (total %.2f)",
                 ticket.id, tienda_id, usuario_id, total)
+
+    # Motor de notificaciones: meta de ventas del día. Nunca rompe la venta.
+    try:
+        from app.services import notificaciones
+        hoy = datetime.utcnow().date()
+        total_dia = db.query(func.coalesce(func.sum(Ticket.total), 0.0)).filter(
+            Ticket.tienda_id == tienda_id,
+            func.date(Ticket.fecha) == hoy,
+            Ticket.estado.notin_(("anulado", "reversado")),
+        ).scalar() or 0.0
+        notificaciones.evaluar_ventas_dia(db, tienda_id, float(total_dia))
+        # disparar() ya no commitea (transacción-safe): persistimos acá la fila
+        # de la notificación, que vive en una transacción aparte de la venta
+        # (esta ya está commiteada en la línea 221).
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("evaluar_ventas_dia tras venta fallo: %s", e)
+        db.rollback()
+
     return ticket
 
 

@@ -645,6 +645,36 @@ class Notificacion(Base):
     tienda = relationship("Tienda", back_populates="notificaciones")
 
 
+class NotificacionRegla(Base):
+    """Motor de reglas: configura por tienda y tipo qué eventos disparan
+    notificación, su umbral, canales (campana / push) y nivel."""
+    __tablename__ = "notificacion_reglas"
+    id         = Column(Integer, primary_key=True)
+    tienda_id  = Column(Integer, ForeignKey("tiendas.id"), index=True, nullable=False)
+    tipo       = Column(String(40), nullable=False)   # ventas_dia, stock_critico, ...
+    umbral     = Column(Float, default=0)             # monto/tolerancia según el tipo
+    activa     = Column(Boolean, default=True)
+    canal_bell = Column(Boolean, default=True)        # notificación in-app (campana)
+    canal_push = Column(Boolean, default=False)       # push web (PWA)
+    nivel      = Column(String(20), default="advertencia")
+    __table_args__ = (
+        UniqueConstraint("tienda_id", "tipo", name="uq_notif_regla_tienda_tipo"),
+    )
+
+
+class PushSubscription(Base):
+    """Suscripción Web Push (PWA) de un dispositivo. Columnas de atribución
+    PLANAS (sin ForeignKey) para no romper el mapper."""
+    __tablename__ = "push_subscriptions"
+    id         = Column(Integer, primary_key=True)
+    tienda_id  = Column(Integer, index=True, nullable=True)   # plano, sin FK
+    usuario_id = Column(Integer, nullable=True)               # plano, sin FK
+    endpoint   = Column(String(500), unique=True, nullable=False)
+    p256dh     = Column(String(255), nullable=False)
+    auth       = Column(String(255), nullable=False)
+    creado     = Column(DateTime, default=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Comunicados admin → barista
 # ---------------------------------------------------------------------------

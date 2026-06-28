@@ -1,0 +1,166 @@
+"""CRUD de reglas de notificación con siembra de defaults por tienda.
+
+La metadata estática (label, descripcion, unidad) vive acá; los valores
+configurables (umbral, activa, canal_bell, canal_push, nivel) viven en la fila
+NotificacionRegla. get_reglas mergea ambos para la UI.
+"""
+from sqlalchemy.orm import Session
+
+from app.models.models import NotificacionRegla
+
+
+# Catálogo de reglas soportadas. `umbral/activa/canal_*/nivel` son los defaults
+# con los que se siembra cada tienda la primera vez.
+DEFAULTS = [
+    {
+        "tipo": "ventas_dia",
+        "label": "Ventas del dia alcanzan un monto",
+        "descripcion": "Avisa cuando las ventas acumuladas del dia superan el monto definido.",
+        "unidad": "$",
+        "umbral": 0,
+        "activa": False,
+        "canal_bell": True,
+        "canal_push": True,
+        "nivel": "info",
+    },
+    {
+        "tipo": "stock_critico",
+        "label": "Producto en nivel critico",
+        "descripcion": "Avisa cuando un producto cae a nivel critico de stock.",
+        "unidad": "",
+        "umbral": 0,
+        "activa": True,
+        "canal_bell": True,
+        "canal_push": True,
+        "nivel": "advertencia",
+    },
+    {
+        "tipo": "stock_agotado",
+        "label": "Producto agotado",
+        "descripcion": "Avisa cuando un producto queda en cero (agotado).",
+        "unidad": "",
+        "umbral": 0,
+        "activa": True,
+        "canal_bell": True,
+        "canal_push": True,
+        "nivel": "critico",
+    },
+    {
+        "tipo": "descuadre_caja",
+        "label": "Descuadre de caja al cierre",
+        "descripcion": "Avisa cuando el cierre de caja tiene una diferencia mayor a la tolerancia.",
+        "unidad": "$",
+        "umbral": 0,  # tolerancia: solo avisa si |diferencia| supera este valor
+        "activa": True,
+        "canal_bell": True,
+        "canal_push": True,
+        "nivel": "advertencia",
+    },
+    {
+        "tipo": "consignacion_pendiente",
+        "label": "Consignacion pendiente al cierre",
+        "descripcion": "Avisa cuando quedan consignaciones pendientes al cerrar el dia.",
+        "unidad": "$",
+        "umbral": 0,
+        "activa": True,
+        "canal_bell": True,
+        "canal_push": False,
+        "nivel": "advertencia",
+    },
+]
+
+# Índice por tipo para mergear metadata estática rápido.
+_META = {d["tipo"]: d for d in DEFAULTS}
+
+
+def _a_dict(regla: NotificacionRegla) -> dict:
+    """Mergea la metadata estática del tipo con los valores guardados en la fila."""
+    meta = _META.get(regla.tipo, {})
+    return {
+        "id": regla.id,
+        "tipo": regla.tipo,
+        "label": meta.get("label", regla.tipo),
+        "descripcion": meta.get("descripcion", ""),
+        "unidad": meta.get("unidad", ""),
+        "umbral": regla.umbral,
+        "activa": regla.activa,
+        "canal_bell": regla.canal_bell,
+        "canal_push": regla.canal_push,
+        "nivel": regla.nivel,
+    }
+
+
+def get_reglas(db: Session, tienda_id: int) -> list:
+    """Devuelve todas las reglas de la tienda, sembrando los defaults faltantes."""
+    existentes = {
+        r.tipo: r
+        for r in db.query(NotificacionRegla).filter(
+            NotificacionRegla.tienda_id == tienda_id
+        ).all()
+    }
+    creada = False
+    for d in DEFAULTS:
+        if d["tipo"] not in existentes:
+            r = NotificacionRegla(
+                tienda_id=tienda_id,
+                tipo=d["tipo"],
+                umbral=d["umbral"],
+                activa=d["activa"],
+                canal_bell=d["canal_bell"],
+                canal_push=d["canal_push"],
+                nivel=d["nivel"],
+            )
+            db.add(r)
+            existentes[d["tipo"]] = r
+            creada = True
+    if creada:
+        db.commit()
+
+    # Orden estable según el catálogo.
+    return [_a_dict(existentes[d["tipo"]]) for d in DEFAULTS if d["tipo"] in existentes]
+
+
+def set_reglas(db: Session, tienda_id: int, payload: list) -> list:
+    """Upsert de reglas desde un payload [{tipo, umbral, activa, canal_bell,
+    canal_push, nivel?}]. Devuelve el estado final (get_reglas)."""
+    # Asegura que existan los defaults antes de aplicar cambios.
+    get_reglas(db, tienda_id)
+
+    existentes = {
+        r.tipo: r
+        for r in db.query(NotificacionRegla).filter(
+            NotificacionRegla.tienda_id == tienda_id
+        ).all()
+    }
+    for item in payload or []:
+        tipo = item.get("tipo") if isinstance(item, dict) else getattr(item, "tipo", None)
+        if not tipo:
+            continue
+        r = existentes.get(tipo)
+        if r is None:
+            r = NotificacionRegla(tienda_id=tienda_id, tipo=tipo)
+            db.add(r)
+            existentes[tipo] = r
+
+        def _get(key, default):
+            if isinstance(item, dict):
+                return item.get(key, default)
+            return getattr(item, key, default)
+
+        r.umbral = _get("umbral", r.umbral if r.umbral is not None else 0)
+        r.activa = bool(_get("activa", r.activa))
+        r.canal_bell = bool(_get("canal_bell", r.canal_bell))
+        r.canal_push = bool(_get("canal_push", r.canal_push))
+        nivel = _get("nivel", None)
+        if nivel:
+            r.nivel = nivel
+    db.commit()
+    return get_reglas(db, tienda_id)
+
+
+def get_regla(db: Session, tienda_id: int, tipo: str):
+    """Devuelve la fila NotificacionRegla(tienda_id, tipo) o None."""
+    return db.query(NotificacionRegla).filter(
+        NotificacionRegla.tienda_id == tienda_id,
+        NotificacionRegla.tipo == tipo,
+    ).first()

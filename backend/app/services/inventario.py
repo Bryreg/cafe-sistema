@@ -137,6 +137,21 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
                        "cantidad": cantidad, "motivo": motivo,
                        "stock_resultante": inv.stock_actual},
     )
+
+    # Motor de notificaciones: alerta de stock al consumir. Nunca rompe el flujo.
+    if tipo == "salida":
+        try:
+            from app.services import notificaciones
+            estado = clasificar_estado(
+                inv.stock_actual, inv.stock_minimo or 0.0,
+                inv.stock_critico or 0.0, inv.stock_ideal or 0.0,
+            )
+            if estado in ("critico", "agotado"):
+                nombre = inv.producto.nombre if inv.producto else None
+                notificaciones.evaluar_stock(db, tienda_id, producto_id, nombre, estado)
+        except Exception:
+            pass
+
     if commit:
         db.commit()
         db.refresh(inv)

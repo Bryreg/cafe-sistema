@@ -268,14 +268,20 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
                        "diferencia_tarjeta": diferencia_tarjeta,
                        "justificacion": justificacion},
     )
-    # Etapa 7: notificación si hay diferencia
+    # Etapa 7+: notificación de descuadre por el motor de reglas (canal_bell/push).
+    # El umbral de la regla actúa como TOLERANCIA: solo avisa si |diferencia| la supera.
     if diferencia_cierre is not None and round(diferencia_cierre, 2) != 0:
-        notificaciones.crear(
-            db, tienda_id=turno.tienda_id, tipo="diferencia_caja",
-            nivel="critico" if abs(diferencia_cierre) > 10000 else "advertencia",
-            mensaje=f"Diferencia de ${diferencia_cierre:,.0f} en cierre de turno #{turno_id}",
-            referencia_id=turno_id,
-        )
+        from app.services import notif_reglas
+        regla = notif_reglas.get_regla(db, turno.tienda_id, "descuadre_caja")
+        tolerancia = (regla.umbral or 0) if regla else 0
+        if abs(diferencia_cierre) > tolerancia:
+            nivel = "critico" if abs(diferencia_cierre) > 10000 else "advertencia"
+            msg = f"Diferencia de ${diferencia_cierre:,.0f} en cierre de turno #{turno_id}"
+            notificaciones.disparar(
+                db, tienda_id=turno.tienda_id, tipo="descuadre_caja",
+                mensaje=msg, nivel=nivel, referencia_id=turno_id,
+                push_titulo="Descuadre de caja", push_cuerpo=msg,
+            )
     db.commit()
     db.refresh(turno)
     logger.info(f"Turno {turno.id} cerrado. Δefectivo: {diferencia_cierre}, Δtarjeta: {diferencia_tarjeta}")

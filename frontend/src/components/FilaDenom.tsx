@@ -19,28 +19,34 @@ export default function FilaDenom({
   valor, label, isBillete, cantidad, onChange, accentColor = 'amber',
 }: Props) {
   const subtotal = valor * cantidad
-  // Acento fuerte: sirve como borde de foco y como fondo del botón "+" con
-  // texto claro (dark.bg) encima. En modo día el acento debe ser saturado.
   const accent = accentColor === 'green' ? dark.green : dark.amber
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5 transition-colors" style={{
+    <div className="flex items-center gap-2 px-3 py-2 transition-colors" style={{
       background: cantidad > 0
         ? (isBillete ? 'oklch(94% 0.04 155 / 0.6)' : 'oklch(95% 0.045 70 / 0.6)')
         : 'transparent',
     }}>
+      {/* Zona 1: label fijo */}
       <div className="w-16 shrink-0 text-center py-1 rounded-lg text-[11px] font-bold" style={{
         background: isBillete ? dark.greenTint : dark.amberTint,
         color: isBillete ? dark.green : dark.amber,
       }}>
         {label}
       </div>
-      <div className="flex items-center gap-2 flex-1 justify-center">
+
+      {/* Zona 2: control compacto [−|input|+] como un único grupo */}
+      <div className="inline-flex shrink-0 rounded-lg overflow-hidden" style={{ border: `1.5px solid ${dark.border}` }}>
         <button
           onClick={() => onChange(Math.max(0, cantidad - 1))}
           disabled={cantidad === 0}
-          className="w-9 h-9 rounded-xl flex items-center justify-center transition-colors"
-          style={{ background: dark.surfaceAlt, color: dark.inkMuted, opacity: cantidad === 0 ? 0.3 : 1 }}
+          className="w-8 h-8 flex items-center justify-center transition-colors"
+          style={{
+            background: dark.surfaceAlt,
+            color: dark.inkMuted,
+            opacity: cantidad === 0 ? 0.3 : 1,
+            borderRight: `1px solid ${dark.border}`,
+          }}
         >
           <Minus size={13} />
         </button>
@@ -50,29 +56,47 @@ export default function FilaDenom({
           onChange={e => onChange(Math.max(0, parseInt(e.target.value) || 0))}
           placeholder="0"
           inputMode="numeric"
-          className="w-14 text-center rounded-xl py-1.5 text-base font-bold outline-none"
+          className="w-12 h-8 text-center text-base font-bold outline-none"
           style={{
             background: dark.surface,
-            border: `2px solid ${dark.border}`,
+            border: 'none',
             color: dark.ink,
             fontFamily: '"JetBrains Mono", monospace',
           }}
-          onFocus={e => (e.target.style.borderColor = accent)}
-          onBlur={e => (e.target.style.borderColor = dark.border)}
+          onFocus={e => {
+            const parent = e.target.parentElement
+            if (parent) parent.style.borderColor = accent
+          }}
+          onBlur={e => {
+            const parent = e.target.parentElement
+            if (parent) parent.style.borderColor = dark.border
+          }}
         />
         <button
           onClick={() => onChange(cantidad + 1)}
-          className="w-9 h-9 rounded-xl flex items-center justify-center transition-colors"
-          style={{ background: accent, color: dark.bg }}
+          className="w-8 h-8 flex items-center justify-center transition-colors"
+          style={{
+            background: accent,
+            color: dark.bg,
+            borderLeft: `1px solid ${dark.border}`,
+          }}
         >
           <Plus size={13} />
         </button>
       </div>
-      <div className="w-20 text-right shrink-0" style={{ fontFamily: '"JetBrains Mono", monospace' }}>
-        {subtotal > 0
-          ? <span className="text-sm font-bold" style={{ color: accentColor === 'green' ? dark.ink : dark.amber }}>{`$${subtotal.toLocaleString('es-CO')}`}</span>
-          : <span className="text-xs" style={{ color: dark.inkSubtle }}>—</span>
-        }
+
+      {/* Zona 3: subtotal empujado a la derecha */}
+      <div className="ml-auto w-24 text-right shrink-0" style={{ fontFamily: '"JetBrains Mono", monospace' }}>
+        <span
+          className="text-sm font-bold"
+          style={{
+            color: subtotal > 0
+              ? (accentColor === 'green' ? dark.ink : dark.amber)
+              : dark.inkSubtle,
+          }}
+        >
+          {`$${subtotal.toLocaleString('es-CO')}`}
+        </span>
       </div>
     </div>
   )

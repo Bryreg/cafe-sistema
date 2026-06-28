@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../api/client'
-import { Boxes, Search, Calendar, AlertTriangle, Truck } from 'lucide-react'
+import { Boxes, Search, Calendar, AlertTriangle, Truck, Download } from 'lucide-react'
 
 interface Lote {
   id: number; producto_id: number; producto_nombre: string; unidad_medida: string
@@ -53,6 +53,32 @@ export default function LotesTrazabilidad() {
 
   const porVencer = lotes.filter(l => l.estado === 'por_vencer' || l.estado === 'vencido').length
 
+  const exportarCSV = () => {
+    if (!filtrados.length) return
+    const cabeceras = ['Producto', 'Sede', 'Proveedor', 'Lote', 'Estado', 'Cant. inicial', 'Cant. restante', 'Unidad', 'Entrada', 'Vencimiento', '% consumido']
+    const filas = filtrados.map(l => [
+      l.producto_nombre,
+      l.tienda_nombre ?? '',
+      l.proveedor ?? '',
+      l.numero_lote ?? '',
+      ESTADO[l.estado]?.label ?? l.estado,
+      l.cantidad_inicial,
+      l.cantidad_restante,
+      l.unidad_medida,
+      l.fecha_entrada ?? '',
+      l.fecha_vencimiento ?? '',
+      l.consumido_pct,
+    ])
+    const csv = [cabeceras, ...filas].map(r => r.join(',')).join('\n')
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `lotes_${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -65,6 +91,17 @@ export default function LotesTrazabilidad() {
             <AlertTriangle size={12} /> {porVencer} por vencer / vencidos
           </span>
         )}
+        <div className="ml-auto">
+          <button
+            onClick={exportarCSV}
+            disabled={filtrados.length === 0}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-white transition-colors disabled:opacity-40"
+            style={{ background: 'oklch(48% 0.15 155)' }}
+            title="Descargar CSV"
+          >
+            <Download size={14} /> CSV
+          </button>
+        </div>
       </div>
 
       {/* Sede */}

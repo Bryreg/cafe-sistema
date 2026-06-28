@@ -16,7 +16,7 @@ interface Contador {
   dias: DiaContador[]
   total_mes: number; total_efectivo: number; total_tarjeta: number
   total_transferencia: number; total_otros: number; total_facturas: number
-  dias_con_venta: number; promedio_diario: number; ticket_promedio_mes: number
+  dias_con_venta: number; dias_periodo: number; promedio_diario: number; promedio_venta_diaria: number; ticket_promedio_mes: number
   participacion: { efectivo: number; tarjeta: number }
   dia_max: { fecha: string; total: number } | null
   dia_min: { fecha: string; total: number } | null
@@ -146,9 +146,10 @@ export default function InformeContador() {
       {!loading && tieneDatos && data && (
         <>
           {/* KPIs */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
             <Kpi label="Total del mes" value={fmt(data.total_mes)} sub={`${data.dias_con_venta} días con venta`} Icon={Receipt} tint="#2d5a3f" />
-            <Kpi label="Promedio diario" value={fmt(data.promedio_diario)} Icon={TrendingUp} tint="#5b8def" />
+            <Kpi label="Venta diaria (mes)" value={fmt(data.promedio_venta_diaria)} sub={`${data.total_mes ? fmt(data.total_mes) : '$0'} ÷ ${data.dias_periodo} días`} Icon={TrendingUp} tint="#2d5a3f" />
+            <Kpi label="Promedio por día con venta" value={fmt(data.promedio_diario)} sub={`${data.dias_con_venta} días`} Icon={TrendingUp} tint="#5b8def" />
             <Kpi label="Ticket promedio" value={fmt(data.ticket_promedio_mes)} sub={`${data.total_facturas} facturas`} Icon={Receipt} tint="#c08a3e" />
             <Kpi label="Efectivo / Tarjeta" value={`${data.participacion.efectivo}% / ${data.participacion.tarjeta}%`} Icon={Wallet} tint="#2a8d8a" />
           </div>

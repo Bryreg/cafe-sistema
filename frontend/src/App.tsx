@@ -33,7 +33,7 @@ import POS from './pages/POS'
 import Login from './pages/Login'
 import Analytics from './pages/Analytics'
 import ControlInventario from './pages/ControlInventario'
-import AdminHub from './pages/AdminHub'
+import Dashboard from './pages/Dashboard'
 import Bandeja from './pages/Bandeja'
 import Informes from './pages/Informes'
 import ComprasAdmin from './pages/ComprasAdmin'
@@ -51,7 +51,6 @@ import PagosProveedores from './pages/PagosProveedores'
 import InventarioMensual from './pages/InventarioMensual'
 import ConciliacionInventario from './pages/ConciliacionInventario'
 import LotesTrazabilidad from './pages/LotesTrazabilidad'
-import DashboardEjecutivo from './pages/DashboardEjecutivo'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -154,8 +153,8 @@ function AppRoutes() {
       <Route path="/ventas" element={<RequireAdmin><VentasDia /></RequireAdmin>} />
 
       {/* ── Admin ── */}
-      <Route path="/dashboard"           element={<RequireAdmin><Layout><AdminHub /></Layout></RequireAdmin>} />
-      <Route path="/dashboard-ejecutivo" element={<RequireAdmin><Layout><DashboardEjecutivo /></Layout></RequireAdmin>} />
+      <Route path="/dashboard"           element={<RequireAdmin><Layout><Dashboard /></Layout></RequireAdmin>} />
+      <Route path="/dashboard-ejecutivo" element={<Navigate to="/dashboard" replace />} />
       <Route path="/analytics"        element={<RequireAdmin><Layout><Analytics /></Layout></RequireAdmin>} />
       <Route path="/bandeja"          element={<RequireAdmin><Layout><Bandeja /></Layout></RequireAdmin>} />
       <Route path="/informes"         element={<RequireAdmin><Layout><Informes /></Layout></RequireAdmin>} />

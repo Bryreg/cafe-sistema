@@ -20,7 +20,7 @@ interface ResumenDia {
   tienda_id: number
   tienda_nombre: string
   fecha_apertura: string
-  fecha_cierre: string
+  fecha_cierre: string | null
   total_efectivo: number
   efectivo_final_real: number
   base_real: number
@@ -44,11 +44,12 @@ const parseUTC = (f: string) => {
   return new Date(s.endsWith('Z') ? s : s + 'Z')
 }
 
-const fmtFecha = (f: string) =>
-  parseUTC(f).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+// Tolerantes a null/'' — un turno cerrado puede no tener fecha_cierre cargada.
+const fmtFecha = (f: string | null | undefined) =>
+  f ? parseUTC(f).toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '—'
 
-const fmtHora = (f: string) =>
-  parseUTC(f).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+const fmtHora = (f: string | null | undefined) =>
+  f ? parseUTC(f).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : '—'
 
 // ─── Exportar Excel ───────────────────────────────────────────────────────────
 
@@ -427,6 +428,8 @@ export default function ConsignacionesAdmin() {
   const [fotoModal, setFotoModal] = useState<string | null>(null)
   const [confirmando, setConfirmando] = useState<number | null>(null)
   const [expandido, setExpandido] = useState<number | null>(null)
+  const [desde, setDesde] = useState('')
+  const [hasta, setHasta] = useState('')
 
   // Cargar sedes disponibles
   useEffect(() => {
@@ -439,9 +442,10 @@ export default function ConsignacionesAdmin() {
   const load = async (tid: number) => {
     setLoading(true)
     try {
-      const { data } = await api.get('/consignaciones/resumen-admin', {
-        params: { tienda_id: tid },
-      })
+      const params: Record<string, string | number> = { tienda_id: tid }
+      if (desde) params.desde = desde
+      if (hasta) params.hasta = hasta
+      const { data } = await api.get('/consignaciones/resumen-admin', { params })
       setDias(data)
       setExpandido(null)
       const primero = data.find((d: ResumenDia) =>
@@ -451,7 +455,18 @@ export default function ConsignacionesAdmin() {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { if (tiendaId !== null) load(tiendaId) }, [tiendaId])
+  useEffect(() => { if (tiendaId !== null) load(tiendaId) }, [tiendaId, desde, hasta])
+
+  // Atajos de rango: setea desde/hasta en formato YYYY-MM-DD (local).
+  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const aplicarRango = (preset: 'hoy' | '7d' | 'mes' | 'todo') => {
+    const hoy = new Date()
+    if (preset === 'todo') { setDesde(''); setHasta(''); return }
+    if (preset === 'hoy') { const s = ymd(hoy); setDesde(s); setHasta(s); return }
+    if (preset === '7d') { const d = new Date(hoy); d.setDate(d.getDate() - 6); setDesde(ymd(d)); setHasta(ymd(hoy)); return }
+    if (preset === 'mes') { setDesde(ymd(new Date(hoy.getFullYear(), hoy.getMonth(), 1))); setHasta(ymd(hoy)) }
+  }
+  const rangoActivo = !!(desde || hasta)
 
   const confirmar = async (id: number) => {
     setConfirmando(id)
@@ -548,6 +563,37 @@ export default function ConsignacionesAdmin() {
       {/* ─── Tab: Consignaciones ─────────────────────────────────────────────── */}
       {tab === 'consignaciones' && (
         <>
+          {/* Filtro de fecha */}
+          <div className="flex items-center gap-2 flex-wrap bg-white border border-gray-200 rounded-xl px-3 py-2.5">
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Periodo</span>
+            <div className="flex gap-1">
+              {([['hoy', 'Hoy'], ['7d', '7 días'], ['mes', 'Este mes'], ['todo', 'Todo']] as const).map(([k, label]) => {
+                const activo = (k === 'todo' && !rangoActivo)
+                return (
+                  <button key={k} onClick={() => aplicarRango(k)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-colors ${
+                      activo ? 'bg-amber-600 text-white border-amber-600' : 'bg-white text-gray-600 border-gray-200 hover:border-amber-400'
+                    }`}>
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="flex items-center gap-1.5 ml-auto">
+              <input type="date" value={desde} max={hasta || undefined}
+                onChange={e => setDesde(e.target.value)}
+                className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 outline-none focus:border-amber-400" />
+              <span className="text-gray-300 text-xs">→</span>
+              <input type="date" value={hasta} min={desde || undefined}
+                onChange={e => setHasta(e.target.value)}
+                className="border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700 outline-none focus:border-amber-400" />
+              {rangoActivo && (
+                <button onClick={() => aplicarRango('todo')} title="Limpiar filtro"
+                  className="text-gray-400 hover:text-gray-600 p-1"><X size={14} /></button>
+              )}
+            </div>
+          </div>
+
           {loading
             ? <p className="text-sm text-gray-400 text-center py-12">Cargando...</p>
             : (
@@ -612,7 +658,7 @@ export default function ConsignacionesAdmin() {
                 {/* Fecha + sede */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-bold text-gray-800 capitalize">{fmtFecha(dia.fecha_cierre)}</p>
+                    <p className="text-sm font-bold text-gray-800 capitalize">{fmtFecha(dia.fecha_cierre || dia.fecha_apertura)}</p>
                     {sedes.length > 1 && (
                       <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">
                         {dia.tienda_nombre}

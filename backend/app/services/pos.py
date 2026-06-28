@@ -409,6 +409,14 @@ def get_informe_contador(db: Session, anio: int, mes: int, tienda_id: int | None
     total_facturas = sum(x["facturas"] for x in dias)
     dias_con_venta = len(dias)
     promedio_diario = round(total_mes / dias_con_venta, 2) if dias_con_venta else 0.0
+    # Promedio de venta diaria sobre los días del MES (no solo los días con venta):
+    # mes en curso -> días transcurridos; mes cerrado -> días calendario completos.
+    hoy = datetime.now()
+    if anio == hoy.year and mes == hoy.month:
+        dias_periodo = hoy.day
+    else:
+        dias_periodo = ultimo
+    promedio_venta_diaria = round(total_mes / dias_periodo, 2) if dias_periodo else 0.0
     ticket_promedio_mes = round(total_mes / total_facturas, 2) if total_facturas else 0.0
     dia_max = max(dias, key=lambda x: x["total"]) if dias else None
     dia_min = min(dias, key=lambda x: x["total"]) if dias else None
@@ -423,7 +431,9 @@ def get_informe_contador(db: Session, anio: int, mes: int, tienda_id: int | None
         "total_otros": 0.0,
         "total_facturas": total_facturas,
         "dias_con_venta": dias_con_venta,
+        "dias_periodo": dias_periodo,
         "promedio_diario": promedio_diario,
+        "promedio_venta_diaria": promedio_venta_diaria,
         "ticket_promedio_mes": ticket_promedio_mes,
         "participacion": {
             "efectivo": round(total_efectivo / base * 100, 1) if base else 0.0,

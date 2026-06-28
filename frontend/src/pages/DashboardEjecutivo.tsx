@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useAuth } from '../contexts/AuthContext'
+import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import {
   BarChart3, TrendingUp, ShoppingCart, Package,
   AlertTriangle, Download, RefreshCw, DollarSign,
-  Layers, Store,
+  Layers, Store, ExternalLink,
 } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -93,6 +93,29 @@ interface MermaItem {
   tipo: string
 }
 
+interface ConciliacionResumen {
+  valor_neto: number
+  valor_diferencia_total: number
+}
+
+interface DescuadresResumen {
+  con_diferencia: number
+  n_turnos: number
+}
+
+interface ConsignPend {
+  n: number
+  monto: number
+}
+
+interface ConsignTurno {
+  turno_id: number
+  tienda_nombre?: string
+  esperado_consignar: number
+  total_consignado: number
+  diferencia: number
+}
+
 // ─── Componentes auxiliares ───────────────────────────────────────────────────
 
 function KpiCard({
@@ -123,6 +146,51 @@ function SectionTitle({ icon: Icon, label }: { icon: React.ElementType; label: s
     <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
       <Icon size={15} style={{ color: '#5c7a4e' }} />
       <h2 style={{ fontSize: 13, fontWeight: 700, color: '#2d1f0f', letterSpacing: '0.01em' }}>{label}</h2>
+    </div>
+  )
+}
+
+function ResumenCard({
+  icon: Icon, label, value, hint, tone, to,
+}: {
+  icon: React.ElementType
+  label: string
+  value: string
+  hint?: string
+  tone: 'ok' | 'warn' | 'danger' | 'muted'
+  to: string
+}) {
+  const navigate = useNavigate()
+  const toneColor = tone === 'ok' ? '#1a6b3a' : tone === 'warn' ? '#b45309' : tone === 'danger' ? '#991b1b' : '#8b7d6b'
+  const toneBorder = tone === 'ok' ? '#c8dbbf' : tone === 'warn' ? '#fcd34d' : tone === 'danger' ? '#fca5a5' : '#e0d9cc'
+  const toneBg = tone === 'ok' ? '#f0faf4' : tone === 'warn' ? '#fffbeb' : tone === 'danger' ? '#fff5f5' : '#f5f0e8'
+  return (
+    <div
+      style={{
+        background: toneBg,
+        border: `1px solid ${toneBorder}`,
+        borderRadius: 14,
+        padding: '12px 14px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        cursor: 'pointer',
+        transition: 'box-shadow 0.15s',
+      }}
+      onClick={() => navigate(to)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={e => e.key === 'Enter' && navigate(to)}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Icon size={13} style={{ color: toneColor, flexShrink: 0 }} />
+          <p style={{ fontSize: 10, fontWeight: 700, color: '#8b7d6b', textTransform: 'uppercase', letterSpacing: '0.04em', margin: 0 }}>{label}</p>
+        </div>
+        <ExternalLink size={11} style={{ color: '#c0b8ae', flexShrink: 0 }} />
+      </div>
+      <p style={{ fontSize: 20, fontWeight: 700, color: toneColor, lineHeight: 1.1, margin: 0 }}>{value}</p>
+      {hint && <p style={{ fontSize: 11, color: '#8b7d6b', margin: 0 }}>{hint}</p>}
     </div>
   )
 }
@@ -166,8 +234,6 @@ function periodoRango(p: Periodo): { desde: string; hasta: string } {
 }
 
 export default function DashboardEjecutivo() {
-  const { user } = useAuth()
-
   const [sedes, setSedes] = useState<Sede[]>([])
   const [sedeId, setSedeId] = useState<number | null>(null)
   const [periodo, setPeriodo] = useState<Periodo>('hoy')
@@ -183,6 +249,9 @@ export default function DashboardEjecutivo() {
   const [alertas, setAlertas] = useState<AlertaStock[]>([])
   const [lotesVencer, setLotesVencer] = useState<LoteVencer[]>([])
   const [mermas, setMermas] = useState<MermaItem[]>([])
+  const [conciliacion, setConciliacion] = useState<ConciliacionResumen | null>(null)
+  const [descuadres, setDescuadres] = useState<DescuadresResumen | null>(null)
+  const [consignPend, setConsignPend] = useState<ConsignPend | null>(null)
 
   // Cargar sedes
   useEffect(() => {
@@ -232,6 +301,47 @@ export default function DashboardEjecutivo() {
       setAlertas([])
     }
 
+    // Conciliación inventario: solo si hay sede seleccionada (requiere tienda_id)
+    if (sedeId !== null) {
+      calls.push(
+        api.get('/inventario-mensual/conciliacion', { params: { tienda_id: sedeId, anio, mes } })
+          .then(r => setConciliacion({
+            valor_neto: r.data?.resumen?.valor_neto ?? 0,
+            valor_diferencia_total: r.data?.valor_diferencia_total ?? 0,
+          }))
+          .catch(() => setConciliacion(null))
+      )
+    } else {
+      setConciliacion(null)
+    }
+
+    // Descuadres de caja: solo si hay sede seleccionada
+    if (sedeId !== null) {
+      calls.push(
+        api.get('/informes/turnos', { params: { tienda_id: sedeId, fecha_desde: desde, fecha_hasta: hasta } })
+          .then(r => setDescuadres({
+            con_diferencia: r.data?.totales?.con_diferencia ?? 0,
+            n_turnos: r.data?.totales?.n_turnos ?? 0,
+          }))
+          .catch(() => setDescuadres(null))
+      )
+    } else {
+      setDescuadres(null)
+    }
+
+    // Consignaciones pendientes (funciona con o sin sede)
+    const consignParams = sedeId !== null ? { tienda_id: sedeId } : {}
+    calls.push(
+      api.get('/consignaciones/resumen-admin', { params: consignParams })
+        .then(r => {
+          const filas: ConsignTurno[] = Array.isArray(r.data) ? r.data : []
+          const pendientes = filas.filter(f => f.total_consignado < f.esperado_consignar)
+          const monto = pendientes.reduce((acc, f) => acc + Math.max(0, f.esperado_consignar - f.total_consignado), 0)
+          setConsignPend({ n: pendientes.length, monto })
+        })
+        .catch(() => setConsignPend(null))
+    )
+
     Promise.all(calls).finally(() => setLoading(false))
   }, [periodo, sedeId])
 
@@ -264,8 +374,18 @@ export default function DashboardEjecutivo() {
       'Top productos',
       'Producto,Unidades,Total',
       ...topProductos.slice(0, 10).map(p => `${p.nombre_producto},${p.unidades},${p.total}`),
+      '',
+      'Resumen de alertas',
+      'Indicador,Valor',
+      `Alertas de stock crítico,${alertas.filter(a => a.estado === 'agotado' || a.estado === 'critico').length}`,
+      `Lotes por vencer,${lotesVencer.length}`,
+      `Compras pendientes,${compras?.total_pendiente ?? 0}`,
+      `Conciliación inventario (valor neto),${conciliacion?.valor_neto ?? 'N/A (requiere sede)'}`,
+      `Mermas período (unidades),${mermas.reduce((a, m) => a + (m.cantidad ?? 0), 0)}`,
+      `Descuadres de caja,${descuadres ? `${descuadres.con_diferencia} de ${descuadres.n_turnos}` : 'N/A (requiere sede)'}`,
+      `Consignaciones pendientes,${consignPend ? `${consignPend.n} (${consignPend.monto})` : 'Cargando'}`,
     ]
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -413,6 +533,66 @@ export default function DashboardEjecutivo() {
           value={fmt(compras?.total_pendiente ?? 0)}
           sub={`de ${fmt(compras?.total_facturado ?? 0)} facturado`}
           color={((compras?.total_pendiente ?? 0) > 0) ? '#b45309' : undefined}
+        />
+      </div>
+
+      {/* Tarjetas resumen con drill-down */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 20 }}>
+        <ResumenCard
+          icon={AlertTriangle}
+          label="Stock crítico"
+          value={sedeId !== null ? `${agotados.length + criticos.length}` : '—'}
+          hint={sedeId !== null ? (agotados.length + criticos.length > 0 ? `${agotados.length} agotados · ${criticos.length} críticos` : 'Sin alertas activas') : 'Elegí una sede'}
+          tone={sedeId === null ? 'muted' : (agotados.length + criticos.length > 0 ? 'danger' : 'ok')}
+          to="/control-inventario"
+        />
+        <ResumenCard
+          icon={Package}
+          label="Lotes por vencer"
+          value={`${lotesVencer.length}`}
+          hint={lotesVencer.length > 0 ? 'Próximos 30 días' : 'Sin vencimientos próximos'}
+          tone={lotesVencer.length > 0 ? 'warn' : 'ok'}
+          to="/lotes"
+        />
+        <ResumenCard
+          icon={ShoppingCart}
+          label="Pagos pendientes"
+          value={compras ? fmt(compras.total_pendiente) : '…'}
+          hint={compras ? `de ${fmt(compras.total_facturado)} facturado` : undefined}
+          tone={(compras?.total_pendiente ?? 0) > 0 ? 'warn' : 'ok'}
+          to="/pagos-proveedores"
+        />
+        <ResumenCard
+          icon={Layers}
+          label="Conciliación (mes)"
+          value={sedeId !== null ? (conciliacion ? fmt(conciliacion.valor_neto) : '…') : '—'}
+          hint={sedeId !== null ? (conciliacion ? (conciliacion.valor_neto === 0 ? 'Sin diferencias' : 'Diferencia neta') : undefined) : 'Elegí una sede'}
+          tone={sedeId === null ? 'muted' : (conciliacion === null ? 'muted' : (conciliacion.valor_neto === 0 ? 'ok' : 'danger'))}
+          to="/conciliacion-inventario"
+        />
+        <ResumenCard
+          icon={DollarSign}
+          label="Mermas período"
+          value={`${Math.round(mermas.reduce((a, m) => a + (m.cantidad ?? 0), 0))} u.`}
+          hint={mermas.length > 0 ? `${mermas.length} productos` : 'Sin mermas registradas'}
+          tone={mermas.length > 0 ? 'warn' : 'ok'}
+          to="/informes"
+        />
+        <ResumenCard
+          icon={TrendingUp}
+          label="Descuadres caja"
+          value={sedeId !== null ? (descuadres ? `${descuadres.con_diferencia}` : '…') : '—'}
+          hint={sedeId !== null ? (descuadres ? `de ${descuadres.n_turnos} turnos` : undefined) : 'Elegí una sede'}
+          tone={sedeId === null ? 'muted' : (descuadres === null ? 'muted' : (descuadres.con_diferencia > 0 ? 'danger' : 'ok'))}
+          to="/informes"
+        />
+        <ResumenCard
+          icon={Store}
+          label="Consignaciones pend."
+          value={consignPend ? `${consignPend.n}` : '…'}
+          hint={consignPend ? (consignPend.n > 0 ? `Faltante: ${fmt(consignPend.monto)}` : 'Al día') : undefined}
+          tone={consignPend === null ? 'muted' : (consignPend.n > 0 ? 'warn' : 'ok')}
+          to="/consignaciones"
         />
       </div>
 

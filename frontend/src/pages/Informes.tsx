@@ -4,8 +4,9 @@ import { useAuth } from '../contexts/AuthContext'
 import { FiltroProvider, useFiltro } from '../contexts/FiltroContext'
 import FilterBar from '../components/FilterBar'
 import api from '../api/client'
-import { ArrowUpDown, Package, ChevronDown, ChevronUp, UserCheck, Clock, AlertTriangle, Download, TrendingUp } from 'lucide-react'
+import { ArrowUpDown, Package, ChevronDown, ChevronUp, UserCheck, Clock, AlertTriangle, Download, TrendingUp, Printer } from 'lucide-react'
 import DifferenceBadge from '../components/DifferenceBadge'
+import TicketRecibo, { TicketData } from '../components/TicketRecibo'
 
 interface Sede { id: number; nombre: string }
 
@@ -47,10 +48,26 @@ interface TicketHist {
   items: { nombre_producto: string }[]
 }
 
+interface TicketFull {
+  id: number; tienda_id: number; caja_turno_id: number; usuario_id: number
+  fecha: string; total: number; descuento: number; metodo_pago: string
+  monto_efectivo: number; monto_tarjeta: number
+  efectivo_recibido: number | null; cambio: number | null
+  estado: string
+  items: {
+    id: number; producto_id: number; nombre_producto: string
+    cantidad: number; precio_unitario: number; subtotal: number; descuento: number
+  }[]
+}
+
 function TabVentas() {
   const { filtro } = useFiltro()
   const [tickets, setTickets] = useState<TicketHist[] | null>(null)
   const [loading, setLoading] = useState(false)
+  const [expandido, setExpandido] = useState<number | null>(null)
+  const [detalle, setDetalle] = useState<Record<number, TicketFull>>({})
+  const [loadingDetalle, setLoadingDetalle] = useState<number | null>(null)
+  const [reprint, setReprint] = useState<TicketData | null>(null)
 
   const cargar = async () => {
     setLoading(true)
@@ -59,9 +76,40 @@ function TabVentas() {
         params: cleanParams({ tienda_id: filtro.tiendaId, fecha_desde: filtro.desde, fecha_hasta: filtro.hasta }),
       })
       setTickets(data)
+      setExpandido(null)
     } finally { setLoading(false) }
   }
   useEffect(() => { cargar() }, [filtro]) // eslint-disable-line
+
+  // Dispara window.print() cuando se monta el recibo
+  useEffect(() => {
+    if (!reprint) return
+    const id = setTimeout(() => window.print(), 80)
+    return () => clearTimeout(id)
+  }, [reprint])
+
+  const toggleDetalle = async (id: number) => {
+    if (expandido === id) { setExpandido(null); return }
+    setExpandido(id)
+    if (!detalle[id]) {
+      setLoadingDetalle(id)
+      try {
+        const { data } = await api.get<TicketFull>(`/pos/ticket/${id}`)
+        setDetalle(prev => ({ ...prev, [id]: data }))
+      } finally { setLoadingDetalle(null) }
+    }
+  }
+
+  const armarTicketData = (t: TicketFull): TicketData => ({
+    id: t.id, fecha: t.fecha, total: t.total, cambio: t.cambio ?? 0,
+    metodo_pago: t.metodo_pago as TicketData['metodo_pago'],
+    efectivo_recibido: t.efectivo_recibido ?? undefined,
+    monto_efectivo: t.monto_efectivo, monto_tarjeta: t.monto_tarjeta,
+    items: t.items.map(i => ({
+      nombre_producto: i.nombre_producto, cantidad: i.cantidad,
+      precio_unitario: i.precio_unitario, subtotal: i.subtotal, descuento: i.descuento,
+    })),
+  })
 
   const lista = tickets ?? []
   const neto = lista.filter(t => t.estado === 'completado').reduce((a, t) => a + t.total, 0)
@@ -96,33 +144,98 @@ function TabVentas() {
                 <th className="text-left px-3 py-2.5">Método</th>
                 <th className="text-left px-3 py-2.5">Productos</th>
                 <th className="text-left px-3 py-2.5">Estado</th>
+                <th className="px-3 py-2.5"></th>
               </tr>
             </thead>
             <tbody>
-              {lista.map(t => (
-                <tr key={t.id} className="border-t border-gray-100">
-                  <td className="px-3 py-2.5 font-mono font-semibold text-gray-700">#{t.id}</td>
-                  <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{fechaCorta(t.fecha)}</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-semibold text-gray-800">{fmt(t.total)}</td>
-                  <td className="px-3 py-2.5 capitalize text-gray-600">{t.metodo_pago}</td>
-                  <td className="px-3 py-2.5 text-gray-500 max-w-xs truncate">{t.items.map(i => i.nombre_producto).join(', ')}</td>
-                  <td className="px-3 py-2.5">
-                    <span className={
-                      t.estado === 'reversado' ? 'text-red-600 font-semibold'
-                        : t.estado === 'anulado' ? 'text-gray-400'
-                        : 'text-green-700'}>
-                      {t.estado}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {lista.map(t => {
+                const abierto = expandido === t.id
+                const det = detalle[t.id]
+                return (
+                  <>
+                    <tr
+                      key={t.id}
+                      className="border-t border-gray-100 hover:bg-gray-50 cursor-pointer"
+                      onClick={() => toggleDetalle(t.id)}
+                    >
+                      <td className="px-3 py-2.5 font-mono font-semibold text-gray-700">#{t.id}</td>
+                      <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{fechaCorta(t.fecha)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono font-semibold text-gray-800">{fmt(t.total)}</td>
+                      <td className="px-3 py-2.5 capitalize text-gray-600">{t.metodo_pago}</td>
+                      <td className="px-3 py-2.5 text-gray-500 max-w-xs truncate">{t.items.map(i => i.nombre_producto).join(', ')}</td>
+                      <td className="px-3 py-2.5">
+                        <span className={
+                          t.estado === 'reversado' ? 'text-red-600 font-semibold'
+                            : t.estado === 'anulado' ? 'text-gray-400'
+                            : 'text-green-700'}>
+                          {t.estado}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-gray-400">
+                        {abierto ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </td>
+                    </tr>
+                    {abierto && (
+                      <tr key={`det-${t.id}`} className="bg-gray-50 border-t border-gray-100">
+                        <td colSpan={7} className="px-4 py-3">
+                          {loadingDetalle === t.id && (
+                            <p className="text-xs text-gray-400 py-2">Cargando detalle...</p>
+                          )}
+                          {det && (
+                            <div className="space-y-2">
+                              {/* Items del ticket */}
+                              <div className="divide-y divide-gray-100">
+                                {det.items.map(i => (
+                                  <div key={i.id} className="flex items-center justify-between py-1.5 text-sm">
+                                    <span className="text-gray-700">{i.cantidad}× {i.nombre_producto}</span>
+                                    <span className="text-gray-500 font-mono">{fmt(i.subtotal)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                              {det.descuento > 0 && (
+                                <div className="flex justify-between text-xs text-amber-700">
+                                  <span>Descuento</span>
+                                  <span className="font-mono">−{fmt(det.descuento)}</span>
+                                </div>
+                              )}
+                              {det.metodo_pago === 'mixto' && (
+                                <p className="text-xs text-gray-400">
+                                  Efectivo {fmt(det.monto_efectivo)} · Tarjeta {fmt(det.monto_tarjeta)}
+                                </p>
+                              )}
+                              {det.metodo_pago === 'efectivo' && det.efectivo_recibido != null && (
+                                <p className="text-xs text-gray-400">
+                                  Recibido {fmt(det.efectivo_recibido)} · Cambio {fmt(det.cambio ?? 0)}
+                                </p>
+                              )}
+                              {/* Botones */}
+                              <div className="flex gap-2 pt-1">
+                                <button
+                                  onClick={() => setReprint(armarTicketData(det))}
+                                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-white transition-colors"
+                                  style={{ background: '#374151' }}
+                                >
+                                  <Printer size={14} /> Descargar / Imprimir
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                )
+              })}
               {lista.length === 0 && (
-                <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-400">Sin ventas en el período.</td></tr>
+                <tr><td colSpan={7} className="px-3 py-8 text-center text-gray-400">Sin ventas en el período.</td></tr>
               )}
             </tbody>
           </table>
         </div>
       )}
+
+      {/* Recibo oculto para imprimir */}
+      {reprint && <TicketRecibo ticket={reprint} />}
     </div>
   )
 }

@@ -85,7 +85,7 @@ export default function GestionTurno() {
     if (!tiendaId || !tipoTurno) return
     setSaving(true); setError('')
     try {
-      await api.post('/caja/abrir', {
+      const { data } = await api.post('/caja/abrir', {
         tienda_id: tiendaId,
         tipo_turno: tipoTurno,
         base_real: Number(baseReal) || 0,
@@ -94,6 +94,9 @@ export default function GestionTurno() {
       })
       cancelar()
       await refresh()
+      // Llevar directo al paso requerido para no quedar trabado: si el turno ya quedó
+      // operativo (p.ej. turno intermedio con el día ya contado) → POS; si no → conteo.
+      navigate(data?.es_operativo ? '/pos' : '/conteo-apertura')
     } catch (e: any) {
       setError(e.response?.data?.detail || 'Error al abrir turno')
     } finally {

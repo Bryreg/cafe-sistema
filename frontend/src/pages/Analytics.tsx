@@ -239,7 +239,7 @@ function metodoPagoLabel(m: string) {
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
-export default function Analytics() {
+export function AnaliticaContenido() {
   const [rango, setRango] = useState<Rango>('hoy')
   const [custom, setCustom] = useState({
     desde: new Date().toISOString().split('T')[0],
@@ -467,4 +467,8 @@ export default function Analytics() {
       )}
     </div>
   )
+}
+
+export default function Analytics() {
+  return <AnaliticaContenido />
 }

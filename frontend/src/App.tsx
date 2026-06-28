@@ -31,7 +31,6 @@ import POS from './pages/POS'
 
 // Admin pages
 import Login from './pages/Login'
-import Analytics from './pages/Analytics'
 import ControlInventario from './pages/ControlInventario'
 import Dashboard from './pages/Dashboard'
 import Bandeja from './pages/Bandeja'
@@ -51,6 +50,7 @@ import PagosProveedores from './pages/PagosProveedores'
 import InventarioMensual from './pages/InventarioMensual'
 import ConciliacionInventario from './pages/ConciliacionInventario'
 import LotesTrazabilidad from './pages/LotesTrazabilidad'
+import NotificacionesConfig from './pages/NotificacionesConfig'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -155,7 +155,7 @@ function AppRoutes() {
       {/* ── Admin ── */}
       <Route path="/dashboard"           element={<RequireAdmin><Layout><Dashboard /></Layout></RequireAdmin>} />
       <Route path="/dashboard-ejecutivo" element={<Navigate to="/dashboard" replace />} />
-      <Route path="/analytics"        element={<RequireAdmin><Layout><Analytics /></Layout></RequireAdmin>} />
+      <Route path="/analytics"        element={<Navigate to="/informes" replace />} />
       <Route path="/bandeja"          element={<RequireAdmin><Layout><Bandeja /></Layout></RequireAdmin>} />
       <Route path="/informes"         element={<RequireAdmin><Layout><Informes /></Layout></RequireAdmin>} />
       <Route path="/informe-contador" element={<RequireAdmin><Layout><InformeContador /></Layout></RequireAdmin>} />
@@ -172,6 +172,7 @@ function AppRoutes() {
       <Route path="/mantenimientos"   element={<RequireAdmin><Layout><MantenimientosAdmin /></Layout></RequireAdmin>} />
       <Route path="/auditorias"       element={<RequireAdmin><Layout><AuditoriasAdmin /></Layout></RequireAdmin>} />
       <Route path="/audit-log"        element={<RequireAdmin><Layout><AuditLog /></Layout></RequireAdmin>} />
+      <Route path="/notificaciones-config" element={<RequireAdmin><Layout><NotificacionesConfig /></Layout></RequireAdmin>} />
       <Route path="/cumplimiento"     element={<RequireAdmin><Layout><CumplimientoAdmin /></Layout></RequireAdmin>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />

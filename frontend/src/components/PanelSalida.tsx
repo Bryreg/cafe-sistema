@@ -8,7 +8,7 @@ import api from '../api/client'
 export default function PanelSalida() {
   const { turno, refresh } = useTurno()
   const navigate = useNavigate()
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
@@ -17,19 +17,26 @@ export default function PanelSalida() {
 
   const salidas = turno.baristas_salidas ?? []
   const remaining = turno.baristas.filter(b => !salidas.includes(b))
-  const isLast = remaining.length === 1 && remaining[0] === selected
+  const isLast = selected.length > 0 && selected.length === remaining.length
+
+  const toggle = (name: string) =>
+    setSelected(prev =>
+      prev.includes(name) ? prev.filter(b => b !== name) : [...prev, name]
+    )
 
   const handleConfirm = async () => {
-    if (!selected) return
+    if (selected.length === 0) return
     setSaving(true)
     setError('')
     try {
       if (isLast) {
         navigate('/conteo-cierre?kiosk=1')
       } else {
-        const fd = new FormData()
-        fd.append('barista_nombre', selected)
-        await api.post(`/caja/${turno.id}/salida-barista`, fd)
+        for (const barista of selected) {
+          const fd = new FormData()
+          fd.append('barista_nombre', barista)
+          await api.post(`/caja/${turno.id}/salida-barista`, fd)
+        }
         await refresh()
         setDone(true)
       }
@@ -40,7 +47,7 @@ export default function PanelSalida() {
   }
 
   if (done) {
-    const stillActive = remaining.filter(b => b !== selected)
+    const stillActive = remaining.filter(b => !selected.includes(b))
     return (
       <div className="flex flex-col items-center justify-center px-4 pt-14 pb-6 gap-4 min-h-[300px]">
         <div className="w-16 h-16 rounded-full flex items-center justify-center"
@@ -48,7 +55,7 @@ export default function PanelSalida() {
           <Check size={28} style={{ color: dark.green }} />
         </div>
         <p className="text-[17px] font-bold text-center" style={{ color: dark.ink }}>
-          Salida registrada
+          {selected.length === 1 ? 'Salida registrada' : 'Salidas registradas'}
         </p>
         {stillActive.length > 0 && (
           <p className="text-[13px] text-center" style={{ color: dark.inkSubtle }}>
@@ -76,32 +83,44 @@ export default function PanelSalida() {
             Todas las baristas ya registraron salida.
           </p>
         ) : (
-          remaining.map(barista => (
-            <button
-              key={barista}
-              onClick={() => setSelected(barista)}
-              className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all"
-              style={{
-                background: selected === barista ? dark.amberTint : dark.surface,
-                border: `1px solid ${selected === barista ? dark.amber : dark.border}`,
-              }}
-            >
-              <User size={18} style={{ color: selected === barista ? dark.amber : dark.inkSubtle }} />
-              <span className="flex-1 text-left text-[15px] font-semibold" style={{ color: dark.ink }}>
-                {barista}
-              </span>
-              {selected === barista && <Check size={16} style={{ color: dark.amber }} />}
-            </button>
-          ))
+          remaining.map(barista => {
+            const sel = selected.includes(barista)
+            return (
+              <button
+                key={barista}
+                onClick={() => toggle(barista)}
+                className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all"
+                style={{
+                  background: sel ? dark.amberTint : dark.surface,
+                  border: `1px solid ${sel ? dark.amber : dark.border}`,
+                }}
+              >
+                <div className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0"
+                  style={{
+                    background: sel ? dark.amber : 'transparent',
+                    border: `2px solid ${sel ? dark.amber : dark.border}`,
+                  }}>
+                  {sel && <Check size={12} className="text-white" />}
+                </div>
+                <User size={16} style={{ color: sel ? dark.amber : dark.inkSubtle }} />
+                <span className="flex-1 text-left text-[15px] font-semibold" style={{ color: dark.ink }}>
+                  {barista}
+                </span>
+              </button>
+            )
+          })
         )}
       </div>
 
-      {selected && (
+      {selected.length > 0 && (
         <div className="rounded-2xl p-4" style={{ background: dark.amberTint, border: `1px solid ${dark.amberDim}` }}>
           <p className="text-[12px]" style={{ color: dark.amber }}>
             {isLast
-              ? 'Última barista del turno — se hará conteo de inventario y cuadre de caja antes de cerrar.'
-              : `${remaining.filter(b => b !== selected).join(' y ')} continuará con el turno.`
+              ? 'Última(s) barista(s) del turno — se hará conteo de inventario y cuadre de caja antes de cerrar.'
+              : (() => {
+                  const stays = remaining.filter(b => !selected.includes(b))
+                  return `${stays.join(' y ')} continuará${stays.length > 1 ? 'n' : ''} con el turno.`
+                })()
             }
           </p>
         </div>
@@ -116,11 +135,18 @@ export default function PanelSalida() {
 
       <button
         onClick={handleConfirm}
-        disabled={!selected || saving}
+        disabled={selected.length === 0 || saving}
         className="w-full py-4 rounded-2xl font-bold text-[15px] text-white disabled:opacity-40"
         style={{ background: isLast ? dark.danger : dark.amber }}
       >
-        {saving ? 'Procesando...' : isLast ? 'Iniciar cierre del turno' : 'Confirmar salida'}
+        {saving
+          ? 'Procesando...'
+          : isLast
+            ? 'Iniciar cierre del turno'
+            : selected.length > 1
+              ? `Confirmar ${selected.length} salidas`
+              : 'Confirmar salida'
+        }
       </button>
     </div>
   )

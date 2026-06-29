@@ -11,6 +11,8 @@ import Cart, { CartItem } from '../components/Cart'
 import { Toast, Sheet, Pill } from '../components/ui'
 import DockBar from '../components/DockBar'
 import PanelTurno from '../components/PanelTurno'
+import PanelEntrada from '../components/PanelEntrada'
+import PanelSalida from '../components/PanelSalida'
 import BannerOperativo from '../components/BannerOperativo'
 import BaristaSelector from '../components/BaristaSelector'
 import { PanelProvider } from '../contexts/PanelContext'
@@ -111,6 +113,8 @@ export default function POS() {
     pedido:         <SolicitudPedido />,
     sencilla:       <SolicitudSencilla />,
     consignaciones: <Consignaciones />,
+    entrada: <PanelEntrada onClose={() => setActivePanel(null)} />,
+    salida: <PanelSalida />,
     turno: (
       <PanelTurno
         turno={turno!}

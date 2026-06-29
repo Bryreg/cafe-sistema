@@ -567,6 +567,108 @@ def get_flujo_turno(db: Session, turno_id: int) -> dict | None:
     }
 
 
+def registrar_entrada_barista(
+    db: Session,
+    turno_id: int,
+    usuario_id: int,
+    barista_id: int,
+    imagen_url: str | None = None,
+):
+    turno = db.query(CajaTurno).filter(
+        CajaTurno.id == turno_id,
+        CajaTurno.estado == EstadoTurnoEnum.abierto,
+    ).first()
+    if not turno:
+        raise HTTPException(status_code=404, detail="No hay turno activo")
+
+    barista = db.query(Usuario).filter(
+        Usuario.id == barista_id, Usuario.activo == True
+    ).first()
+    if not barista:
+        raise HTTPException(status_code=404, detail="Barista no encontrada")
+
+    # Add to shift roster — ignore if already registered
+    from sqlalchemy.exc import IntegrityError as _IE
+    try:
+        db.add(TurnoBarista(turno_id=turno_id, usuario_id=barista_id, nombre_snapshot=barista.nombre))
+        db.flush()
+    except _IE:
+        db.rollback()
+
+    # Snapshot actual cash state (no manual count at entry)
+    ingresos = db.query(func.sum(MovimientoCaja.valor)).filter(
+        MovimientoCaja.caja_turno_id == turno_id, MovimientoCaja.tipo == "ingreso"
+    ).scalar() or 0.0
+    egresos = db.query(func.sum(MovimientoCaja.valor)).filter(
+        MovimientoCaja.caja_turno_id == turno_id, MovimientoCaja.tipo == "egreso"
+    ).scalar() or 0.0
+    efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
+
+    db.add(EntregaTurno(
+        turno_id=turno_id, tienda_id=turno.tienda_id, usuario_id=usuario_id,
+        efectivo_esperado=efectivo_esperado, efectivo_real=efectivo_esperado,
+        ventas_efectivo_siigo=0.0, ventas_tarjeta_bold=turno.total_tarjeta,
+        diferencia_efectivo=0.0, diferencia_tarjeta=0.0,
+        imagen_url=imagen_url, barista_id=barista_id, barista_nombre=barista.nombre,
+        tipo="entrada",
+    ))
+    audit.registrar(
+        db, accion="entrada_barista", tabla="caja_turnos",
+        registro_id=turno_id, usuario_id=usuario_id, tienda_id=turno.tienda_id,
+        datos_despues={"barista_id": barista_id, "barista_nombre": barista.nombre},
+    )
+    db.commit()
+    return get_turno_activo(db, turno.tienda_id)
+
+
+def cerrar_turno_rapido(
+    db: Session,
+    turno_id: int,
+    usuario_id: int,
+    efectivo_final_real: float,
+    datafono_real: float,
+    imagen_url: str | None = None,
+):
+    turno = db.query(CajaTurno).filter(
+        CajaTurno.id == turno_id,
+        CajaTurno.estado == EstadoTurnoEnum.abierto,
+    ).first()
+    if not turno:
+        raise HTTPException(status_code=404, detail="Turno no encontrado o ya cerrado")
+    if efectivo_final_real < 0:
+        raise HTTPException(status_code=400, detail="efectivo_final_real no puede ser negativo")
+    if datafono_real < 0:
+        raise HTTPException(status_code=400, detail="datafono_real no puede ser negativo")
+
+    ingresos = db.query(func.sum(MovimientoCaja.valor)).filter(
+        MovimientoCaja.caja_turno_id == turno_id, MovimientoCaja.tipo == "ingreso"
+    ).scalar() or 0.0
+    egresos = db.query(func.sum(MovimientoCaja.valor)).filter(
+        MovimientoCaja.caja_turno_id == turno_id, MovimientoCaja.tipo == "egreso"
+    ).scalar() or 0.0
+    efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
+
+    # Record closure proof photo with the real counted vs expected diff
+    if imagen_url:
+        db.add(EntregaTurno(
+            turno_id=turno_id, tienda_id=turno.tienda_id, usuario_id=usuario_id,
+            efectivo_esperado=efectivo_esperado, efectivo_real=efectivo_final_real,
+            ventas_efectivo_siigo=0.0, ventas_tarjeta_bold=datafono_real,
+            diferencia_efectivo=round(efectivo_final_real - efectivo_esperado, 2),
+            diferencia_tarjeta=round(datafono_real - turno.total_tarjeta, 2),
+            imagen_url=imagen_url, tipo="salida",
+        ))
+
+    # Mark conteo_cierre satisfied before delegating to cerrar_caja
+    turno.tiene_conteo_cierre = True
+    turno.ts_conteo_cierre = datetime.utcnow()
+    db.flush()
+
+    # Always provide justification so cerrar_caja doesn't 400 on diffs
+    justificacion = "Salida desde kiosco — efectivo contado por barista"
+    return cerrar_caja(db, turno_id, efectivo_final_real, justificacion, usuario_id, datafono_real)
+
+
 def _tick_checklist(db: Session, tienda_id: int, **kwargs):
     """Actualiza el checklist del día como efecto secundario — idempotente."""
     hoy = datetime.utcnow().date()

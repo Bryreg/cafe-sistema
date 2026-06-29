@@ -1,13 +1,15 @@
-import { Truck, Trash2, Package, ShoppingCart, Coins, Receipt } from 'lucide-react'
+import { Truck, Trash2, Package, ShoppingCart, Coins, Receipt, UserPlus, DoorOpen } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 
 const TOOLS = [
-  { key: 'ingresos',       label: 'Recibir',       icon: Truck },
-  { key: 'mermas',         label: 'Merma',          icon: Trash2 },
-  { key: 'inventario',     label: 'Inventario',     icon: Package },
+  { key: 'entrada',        label: 'Entrada',        icon: UserPlus  },
+  { key: 'salida',         label: 'Salida',         icon: DoorOpen  },
+  { key: 'ingresos',       label: 'Recibir',        icon: Truck     },
+  { key: 'mermas',         label: 'Merma',          icon: Trash2    },
+  { key: 'inventario',     label: 'Inventario',     icon: Package   },
   { key: 'pedido',         label: 'Pedido',         icon: ShoppingCart },
-  { key: 'sencilla',       label: 'Sencilla',       icon: Coins },
-  { key: 'consignaciones', label: 'Consignaciones', icon: Receipt },
+  { key: 'sencilla',       label: 'Sencilla',       icon: Coins     },
+  { key: 'consignaciones', label: 'Consignaciones', icon: Receipt   },
 ]
 
 export default function DockBar({
@@ -35,9 +37,9 @@ export default function DockBar({
             onClick={() => onSelect(on ? null : key)}
             className="flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all"
             style={{
-              minWidth: 52,
+              minWidth: 44,
               height: 48,
-              padding: '6px 8px',
+              padding: '6px 4px',
               background: on ? dark.greenTint : 'transparent',
               color: on ? dark.green : dark.inkSubtle,
             }}

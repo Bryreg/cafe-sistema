@@ -9,7 +9,13 @@ import json
 import logging
 import threading
 
-from pywebpush import webpush, WebPushException
+try:
+    from pywebpush import webpush, WebPushException
+    _PUSH_AVAILABLE = True
+except ImportError:
+    webpush = None
+    WebPushException = Exception
+    _PUSH_AVAILABLE = False
 
 from app.models.models import PushSubscription
 
@@ -89,7 +95,7 @@ def enviar(db, tienda_id, titulo: str, cuerpo: str, url: str = "/dashboard") -> 
     commiteadas y limpia las expiradas (404/410) sin tocar la transacción de
     negocio. El parámetro `db` se ignora a propósito (compat de firma).
     """
-    if VAPID_PRIVATE is None:
+    if VAPID_PRIVATE is None or not _PUSH_AVAILABLE:
         return 0
 
     from app.database import SessionLocal
@@ -145,7 +151,7 @@ def enviar_async(tienda_id, titulo: str, cuerpo: str, url: str = "/dashboard") -
     corren a mitad de la transacción de la venta. El thread usa su propia sesión
     (enviar abre SessionLocal), así que no toca la transacción del request.
     """
-    if VAPID_PRIVATE is None:
+    if VAPID_PRIVATE is None or not _PUSH_AVAILABLE:
         return
     t = threading.Thread(
         target=enviar, args=(None, tienda_id, titulo, cuerpo, url), daemon=True

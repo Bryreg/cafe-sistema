@@ -113,6 +113,33 @@ def get_entregas(turno_id: int, db: Session = Depends(get_db), user: Usuario = D
     ensure_turno_access(db, user, turno_id)
     return svc.get_entregas_turno(db, turno_id)
 
+@router.post("/{turno_id}/entrada", response_model=TurnoOut)
+async def registrar_entrada(
+    turno_id: int,
+    barista_id: int = Form(...),
+    imagen: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    ensure_turno_access(db, user, turno_id)
+    imagen_url = await upload_imagen(imagen)
+    return svc.registrar_entrada_barista(db, turno_id, user.id, barista_id, imagen_url)
+
+
+@router.post("/{turno_id}/salida", response_model=TurnoOut)
+async def salida_rapida(
+    turno_id: int,
+    efectivo_final_real: float = Form(...),
+    datafono_real: float = Form(...),
+    imagen: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    ensure_turno_access(db, user, turno_id)
+    imagen_url = await upload_imagen(imagen)
+    return svc.cerrar_turno_rapido(db, turno_id, user.id, efectivo_final_real, datafono_real, imagen_url)
+
+
 @router.get("/historial/{tienda_id}")
 def historial(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     ensure_tienda_access(user, tienda_id)

@@ -128,6 +128,9 @@ with engine.connect() as _conn:
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_one_turno_abierto ON caja_turnos (tienda_id) WHERE estado = 'abierto'",
         # Concurrency: only one conteo of each type (apertura/cierre) per shift
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_conteo_turno_tipo ON conteos_fisicos (turno_id, tipo)",
+        # Perf: ventas del día por tienda (lo consulta crear_ticket en cada venta para la
+        # regla ventas_dia, y los informes/dashboard). Filtrar por rango de fecha usa este índice.
+        "CREATE INDEX IF NOT EXISTS ix_tickets_tienda_fecha ON tickets (tienda_id, fecha)",
     ]:
         try:
             _conn.execute(_text(_sql))

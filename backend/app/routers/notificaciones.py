@@ -72,7 +72,7 @@ def push_unsubscribe(
     user: Usuario = Depends(get_current_user),
 ):
     endpoint = payload.get("endpoint")
-    ok = push.borrar_subscription(db, endpoint) if endpoint else False
+    ok = push.borrar_subscription(db, endpoint, usuario_id=user.id) if endpoint else False
     return {"ok": ok}
 
 

@@ -82,15 +82,16 @@ def disparar(db: Session, tienda_id: int, tipo: str, mensaje: str, nivel: str,
     # importar models que importan esto).
     from app.services import notif_reglas, push
     try:
-        regla = notif_reglas.get_regla(db, tienda_id, tipo)
+        regla = notif_reglas.get_regla_efectiva(db, tienda_id, tipo)
         if regla is None or not regla.activa:
             return
         # Registrar siempre (silenciosa si la campana está off) para el dedupe.
         crear(db, tienda_id, tipo, mensaje, nivel, referencia_id,
               leida=not regla.canal_bell)
         if regla.canal_push:
-            push.enviar(db, tienda_id, push_titulo or "Sistema Café",
-                        push_cuerpo or mensaje)
+            # Fire-and-forget: NO bloquear la venta con los HTTP de webpush.
+            push.enviar_async(tienda_id, push_titulo or "Sistema Café",
+                              push_cuerpo or mensaje)
     except Exception as e:  # noqa: BLE001
         logger.warning("notificaciones.disparar fallo (tipo=%s): %s", tipo, e)
 
@@ -114,7 +115,7 @@ def evaluar_ventas_dia(db: Session, tienda_id: int, total_dia: float) -> None:
     """Dispara la meta de ventas del día si se alcanzó el umbral (una vez por día)."""
     from app.services import notif_reglas
     try:
-        regla = notif_reglas.get_regla(db, tienda_id, "ventas_dia")
+        regla = notif_reglas.get_regla_efectiva(db, tienda_id, "ventas_dia")
         if not regla or not regla.activa:
             return
         if not regla.umbral or regla.umbral <= 0:

@@ -4,6 +4,8 @@ La metadata estática (label, descripcion, unidad) vive acá; los valores
 configurables (umbral, activa, canal_bell, canal_push, nivel) viven en la fila
 NotificacionRegla. get_reglas mergea ambos para la UI.
 """
+from types import SimpleNamespace
+
 from sqlalchemy.orm import Session
 
 from app.models.models import NotificacionRegla
@@ -164,3 +166,30 @@ def get_regla(db: Session, tienda_id: int, tipo: str):
         NotificacionRegla.tienda_id == tienda_id,
         NotificacionRegla.tipo == tipo,
     ).first()
+
+
+def get_regla_efectiva(db: Session, tienda_id: int, tipo: str):
+    """Regla vigente para el MOTOR, sin escribir en la DB.
+
+    Si la tienda todavía no tiene fila guardada (el admin nunca abrió el panel),
+    cae a los DEFAULTS del catálogo. Así el motor funciona out-of-the-box (las
+    reglas activas por default disparan desde la primera venta) SIN sembrar/commit
+    a mitad de una transacción de venta. Devuelve None solo si el tipo no existe
+    en el catálogo. El objeto expone .activa/.canal_bell/.canal_push/.umbral/.nivel
+    igual que la fila ORM."""
+    fila = get_regla(db, tienda_id, tipo)
+    if fila is not None:
+        return fila
+    meta = _META.get(tipo)
+    if meta is None:
+        return None
+    return SimpleNamespace(
+        id=None,
+        tienda_id=tienda_id,
+        tipo=tipo,
+        umbral=meta["umbral"],
+        activa=meta["activa"],
+        canal_bell=meta["canal_bell"],
+        canal_push=meta["canal_push"],
+        nivel=meta["nivel"],
+    )

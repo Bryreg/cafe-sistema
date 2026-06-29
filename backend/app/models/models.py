@@ -846,6 +846,7 @@ class TurnoBarista(Base):
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
     nombre_snapshot = Column(String(100), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    salida_at = Column(DateTime, nullable=True)
     __table_args__ = (UniqueConstraint("turno_id", "usuario_id", name="uq_turno_barista"),)
     turno = relationship("CajaTurno", back_populates="baristas_turno")
     usuario = relationship("Usuario")

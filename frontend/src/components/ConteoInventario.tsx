@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
@@ -29,6 +29,8 @@ export default function ConteoInventario({ tipo }: Props) {
   const [isDirty, setIsDirty] = useState(false)
   const [error, setError] = useState('')
 
+  const [searchParams] = useSearchParams()
+  const isKioskClose = searchParams.get('kiosk') === '1'
   const isApertura = tipo === 'apertura'
   const paso = isApertura ? 'Paso 2 de 5' : 'Paso 4 de 5'
   const titulo = isApertura ? 'Conteo de apertura' : 'Conteo de cierre'
@@ -37,7 +39,7 @@ export default function ConteoInventario({ tipo }: Props) {
     : 'Verifica el stock físico al finalizar el turno.'
   const ctaLabel = isApertura ? 'Confirmar conteo de apertura' : 'Confirmar y continuar al cierre'
   const backPath = isApertura ? '/gestion-turno' : '/hub'
-  const nextPath = isApertura ? '/gestion-turno' : '/cierre'
+  const nextPath = isApertura ? '/gestion-turno' : (isKioskClose ? '/salida-efectivo' : '/cierre')
 
   useEffect(() => {
     if (!user?.tienda_id) return

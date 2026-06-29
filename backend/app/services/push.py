@@ -7,6 +7,7 @@ falta, el canal push queda deshabilitado silenciosamente (la campana sigue).
 import os
 import json
 import logging
+import threading
 
 from pywebpush import webpush, WebPushException
 
@@ -60,11 +61,17 @@ def guardar_subscription(db, tienda_id, usuario_id, sub: dict) -> PushSubscripti
     return fila
 
 
-def borrar_subscription(db, endpoint: str) -> bool:
-    """Borra una suscripción por endpoint. Devuelve True si borró algo."""
-    fila = db.query(PushSubscription).filter(
-        PushSubscription.endpoint == endpoint
-    ).first()
+def borrar_subscription(db, endpoint: str, usuario_id=None) -> bool:
+    """Borra una suscripción por endpoint. Devuelve True si borró algo.
+
+    Si se pasa `usuario_id`, solo borra la suscripción de ESE usuario (evita que
+    un usuario desuscriba el dispositivo de otro conociendo su endpoint). Si no
+    matchea, el cliente igual hace sub.unsubscribe() local y la fila huérfana se
+    limpia sola en el próximo push fallido (410)."""
+    q = db.query(PushSubscription).filter(PushSubscription.endpoint == endpoint)
+    if usuario_id is not None:
+        q = q.filter(PushSubscription.usuario_id == usuario_id)
+    fila = q.first()
     if not fila:
         return False
     db.delete(fila)
@@ -129,3 +136,18 @@ def enviar(db, tienda_id, titulo: str, cuerpo: str, url: str = "/dashboard") -> 
     finally:
         s_db.close()
     return enviados
+
+
+def enviar_async(tienda_id, titulo: str, cuerpo: str, url: str = "/dashboard") -> None:
+    """Versión fire-and-forget de `enviar`: dispara el envío en un thread daemon
+    y vuelve de inmediato. La usa el motor de notificaciones (disparar) para NO
+    bloquear la venta del POS con los HTTP síncronos de webpush — que además
+    corren a mitad de la transacción de la venta. El thread usa su propia sesión
+    (enviar abre SessionLocal), así que no toca la transacción del request.
+    """
+    if VAPID_PRIVATE is None:
+        return
+    t = threading.Thread(
+        target=enviar, args=(None, tienda_id, titulo, cuerpo, url), daemon=True
+    )
+    t.start()

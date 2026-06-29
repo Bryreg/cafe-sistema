@@ -625,6 +625,7 @@ def cerrar_turno_rapido(
     db: Session,
     turno_id: int,
     usuario_id: int,
+    efectivo_final_real: float,
     datafono_real: float,
     imagen_url: str | None = None,
 ):
@@ -634,6 +635,8 @@ def cerrar_turno_rapido(
     ).first()
     if not turno:
         raise HTTPException(status_code=404, detail="Turno no encontrado o ya cerrado")
+    if efectivo_final_real < 0:
+        raise HTTPException(status_code=400, detail="efectivo_final_real no puede ser negativo")
     if datafono_real < 0:
         raise HTTPException(status_code=400, detail="datafono_real no puede ser negativo")
 
@@ -645,13 +648,13 @@ def cerrar_turno_rapido(
     ).scalar() or 0.0
     efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
 
-    # Record closure proof photo
+    # Record closure proof photo with the real counted vs expected diff
     if imagen_url:
         db.add(EntregaTurno(
             turno_id=turno_id, tienda_id=turno.tienda_id, usuario_id=usuario_id,
-            efectivo_esperado=efectivo_esperado, efectivo_real=efectivo_esperado,
+            efectivo_esperado=efectivo_esperado, efectivo_real=efectivo_final_real,
             ventas_efectivo_siigo=0.0, ventas_tarjeta_bold=datafono_real,
-            diferencia_efectivo=0.0,
+            diferencia_efectivo=round(efectivo_final_real - efectivo_esperado, 2),
             diferencia_tarjeta=round(datafono_real - turno.total_tarjeta, 2),
             imagen_url=imagen_url, tipo="salida",
         ))
@@ -662,8 +665,8 @@ def cerrar_turno_rapido(
     db.flush()
 
     # Always provide justification so cerrar_caja doesn't 400 on diffs
-    justificacion = "Salida rápida — efectivo tomado de sistema"
-    return cerrar_caja(db, turno_id, efectivo_esperado, justificacion, usuario_id, datafono_real)
+    justificacion = "Salida desde kiosco — efectivo contado por barista"
+    return cerrar_caja(db, turno_id, efectivo_final_real, justificacion, usuario_id, datafono_real)
 
 
 def _tick_checklist(db: Session, tienda_id: int, **kwargs):

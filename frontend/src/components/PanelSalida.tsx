@@ -5,6 +5,7 @@ import { dark } from '../constants/darkTheme'
 import { useTurno } from '../contexts/TurnoContext'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
+import ContadorEfectivo from './ContadorEfectivo'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 
@@ -12,6 +13,7 @@ export default function PanelSalida() {
   const { turno } = useTurno()
   const { resetKiosk } = useAuth()
   const navigate = useNavigate()
+  const [efectivoContado, setEfectivoContado] = useState(0)
   const [datafono, setDatafono] = useState(String(Math.round(turno?.total_tarjeta ?? 0)))
   const [imagen, setImagen] = useState<File | null>(null)
   const [confirming, setConfirming] = useState(false)
@@ -23,13 +25,16 @@ export default function PanelSalida() {
 
   const efectivoEsperado = turno.efectivo_esperado_actual ?? 0
   const datafonoVal = Number(datafono) || 0
+  const diffEfectivo = Math.round((efectivoContado - efectivoEsperado) * 100) / 100
   const diffDatafono = Math.round((datafonoVal - (turno.total_tarjeta ?? 0)) * 100) / 100
+  const hayDescuadre = diffEfectivo !== 0 || diffDatafono !== 0
 
   const cerrar = async () => {
     setSaving(true)
     setError('')
     try {
       const fd = new FormData()
+      fd.append('efectivo_final_real', String(efectivoContado))
       fd.append('datafono_real', String(datafonoVal))
       if (imagen) fd.append('imagen', imagen)
       await api.post(`/caja/${turno.id}/salida`, fd)
@@ -54,31 +59,42 @@ export default function PanelSalida() {
           </p>
         </div>
 
-        <div className="rounded-2xl p-4" style={{ background: dark.dangerTint, border: `1px solid ${dark.dangerDim}` }}>
-          <p className="text-[13px] font-semibold" style={{ color: dark.danger }}>
-            El turno se cerrará y el kiosco regresará a la pantalla de inicio.
-            Esta acción no se puede deshacer.
-          </p>
-        </div>
+        {hayDescuadre && (
+          <div className="rounded-2xl p-4" style={{ background: dark.dangerTint, border: `1px solid ${dark.dangerDim}` }}>
+            <p className="text-[12px] font-bold mb-2 flex items-center gap-1.5" style={{ color: dark.danger }}>
+              <AlertTriangle size={13} /> Hay diferencias — quedará registrado
+            </p>
+            {diffEfectivo !== 0 && (
+              <p className="text-[13px] font-mono" style={{ color: dark.danger }}>
+                Efectivo: {diffEfectivo > 0 ? '+' : ''}{fmt(diffEfectivo)}
+              </p>
+            )}
+            {diffDatafono !== 0 && (
+              <p className="text-[13px] font-mono" style={{ color: dark.danger }}>
+                Datáfono: {diffDatafono > 0 ? '+' : ''}{fmt(diffDatafono)}
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="rounded-2xl p-4 space-y-2" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
           <div className="flex justify-between text-[13px]">
-            <span style={{ color: dark.inkSubtle }}>Ventas totales</span>
-            <span className="font-mono font-semibold" style={{ color: dark.ink }}>{fmt(turno.total_ventas ?? 0)}</span>
+            <span style={{ color: dark.inkSubtle }}>Efectivo contado</span>
+            <span className="font-mono font-semibold" style={{ color: dark.ink }}>{fmt(efectivoContado)}</span>
           </div>
           <div className="flex justify-between text-[13px]">
             <span style={{ color: dark.inkSubtle }}>Datáfono a registrar</span>
             <span className="font-mono font-semibold" style={{ color: dark.ink }}>{fmt(datafonoVal)}</span>
           </div>
-          {diffDatafono !== 0 && (
-            <div className="flex justify-between text-[12px]">
-              <span style={{ color: dark.amber }}>Diferencia datáfono</span>
-              <span className="font-mono font-semibold" style={{ color: diffDatafono > 0 ? dark.green : dark.amber }}>
-                {diffDatafono > 0 ? '+' : ''}{fmt(diffDatafono)}
-              </span>
-            </div>
-          )}
+          <div className="flex justify-between text-[13px]">
+            <span style={{ color: dark.inkSubtle }}>Total ventas</span>
+            <span className="font-mono font-semibold" style={{ color: dark.ink }}>{fmt(turno.total_ventas ?? 0)}</span>
+          </div>
         </div>
+
+        <p className="text-[12px]" style={{ color: dark.inkSubtle }}>
+          El turno se cerrará y el kiosco regresará a la pantalla de inicio.
+        </p>
 
         {error && (
           <div className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-[12px]"
@@ -101,7 +117,7 @@ export default function PanelSalida() {
             className="w-full py-3 rounded-2xl font-semibold text-[14px]"
             style={{ background: dark.surface, color: dark.inkSubtle, border: `1px solid ${dark.border}` }}
           >
-            Cancelar
+            Volver
           </button>
         </div>
       </div>
@@ -109,7 +125,7 @@ export default function PanelSalida() {
   }
 
   return (
-    <div className="flex flex-col px-4 pt-14 pb-6 gap-4">
+    <div className="flex flex-col px-4 pt-14 pb-6 gap-5">
       <div>
         <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.amber }}>
           Salida de turno
@@ -121,7 +137,7 @@ export default function PanelSalida() {
 
       {/* Turno summary */}
       <div className="rounded-2xl p-4" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-        <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{ color: dark.inkSubtle }}>
+        <p className="text-[10px] font-bold uppercase tracking-widest mb-2.5" style={{ color: dark.inkSubtle }}>
           Turno activo
         </p>
         {turno.baristas.length > 0 && (
@@ -134,12 +150,10 @@ export default function PanelSalida() {
             ))}
           </div>
         )}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-2">
           {[
             { l: 'Total ventas', v: fmt(turno.total_ventas ?? 0) },
-            { l: 'En caja (sistema)', v: fmt(efectivoEsperado) },
-            { l: 'Efectivo', v: fmt(turno.total_efectivo ?? 0) },
-            { l: 'Tarjeta (sistema)', v: fmt(turno.total_tarjeta ?? 0) },
+            { l: 'Efectivo esperado', v: fmt(efectivoEsperado) },
           ].map(r => (
             <div key={r.l}>
               <p className="text-[10px]" style={{ color: dark.inkSubtle }}>{r.l}</p>
@@ -147,6 +161,21 @@ export default function PanelSalida() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Denomination counter */}
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
+          Conteo de efectivo en caja
+        </p>
+        <ContadorEfectivo onTotal={setEfectivoContado} />
+        {efectivoContado > 0 && diffEfectivo !== 0 && (
+          <p className="text-[12px] font-semibold mt-2 pl-1"
+            style={{ color: Math.abs(diffEfectivo) > 0 ? dark.danger : dark.green }}>
+            Diferencia: {diffEfectivo > 0 ? '+' : ''}{fmt(diffEfectivo)}
+            {' '}vs sistema
+          </p>
+        )}
       </div>
 
       {/* Datafono input */}
@@ -165,7 +194,7 @@ export default function PanelSalida() {
         />
         {diffDatafono !== 0 && (
           <p className="text-[12px] font-semibold mt-1.5 pl-1" style={{ color: dark.amber }}>
-            Diferencia vs sistema: {diffDatafono > 0 ? '+' : ''}{fmt(diffDatafono)}
+            Diferencia datáfono: {diffDatafono > 0 ? '+' : ''}{fmt(diffDatafono)}
           </p>
         )}
       </div>
@@ -192,10 +221,11 @@ export default function PanelSalida() {
 
       <button
         onClick={() => setConfirming(true)}
-        className="w-full py-4 rounded-2xl font-bold text-[15px] text-white flex items-center justify-center gap-2"
+        disabled={efectivoContado === 0}
+        className="w-full py-4 rounded-2xl font-bold text-[15px] text-white disabled:opacity-40 flex items-center justify-center gap-2"
         style={{ background: dark.danger }}
       >
-        Cerrar turno — Salida
+        {efectivoContado === 0 ? 'Contá el efectivo primero' : 'Cerrar turno — Salida'}
       </button>
     </div>
   )

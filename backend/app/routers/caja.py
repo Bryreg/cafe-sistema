@@ -129,6 +129,7 @@ async def registrar_entrada(
 @router.post("/{turno_id}/salida", response_model=TurnoOut)
 async def salida_rapida(
     turno_id: int,
+    efectivo_final_real: float = Form(...),
     datafono_real: float = Form(...),
     imagen: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
@@ -136,7 +137,7 @@ async def salida_rapida(
 ):
     ensure_turno_access(db, user, turno_id)
     imagen_url = await upload_imagen(imagen)
-    return svc.cerrar_turno_rapido(db, turno_id, user.id, datafono_real, imagen_url)
+    return svc.cerrar_turno_rapido(db, turno_id, user.id, efectivo_final_real, datafono_real, imagen_url)
 
 
 @router.get("/historial/{tienda_id}")

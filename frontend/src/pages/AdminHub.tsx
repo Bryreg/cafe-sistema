@@ -8,7 +8,7 @@ import {
   BarChart2, ClipboardList, Inbox, Sparkles, ShoppingCart,
   ClipboardCheck, Zap, LayoutGrid, Check,
   Home, DollarSign, X as XIcon,
-  Menu,
+  Menu, Wallet,
 } from 'lucide-react'
 import { NAV_ADMIN } from '../constants/nav'
 
@@ -43,7 +43,8 @@ const TOOLS_MAIN = [
   { id: 'pedidos',     label: 'Pedidos',     sublabel: 'Solicitudes activas', icon: ClipboardList,  path: '/pedidos-admin',       tint: '#d97757' },
 ]
 const TOOLS_MORE = [
-  { id: 'bandeja',       label: 'Bandeja',       icon: Inbox,          path: '/bandeja',          tint: '#c08a3e' },
+  { id: 'cuadres',       label: 'Cuadres',        icon: Wallet,         path: '/cuadre-turnos',    tint: '#2a7d5e' },
+  { id: 'bandeja',       label: 'Bandeja',        icon: Inbox,          path: '/bandeja',          tint: '#c08a3e' },
   { id: 'consig',        label: 'Consig.',        icon: Banknote,       path: '/consignaciones',   tint: '#2a8d8a' },
   { id: 'auditoria',     label: 'Auditoría',      icon: ClipboardCheck, path: '/auditorias',       tint: '#8a5dc7' },
   { id: 'limpieza',      label: 'Limpieza',       icon: Sparkles,       path: '/limpieza',         tint: '#d169a4' },

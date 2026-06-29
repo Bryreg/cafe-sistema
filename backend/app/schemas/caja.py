@@ -89,6 +89,26 @@ class TurnoOut(BaseModel):
     class Config: from_attributes = True
 
 
+class TurnoHistorialItem(BaseModel):
+    id: int
+    fecha_apertura: datetime
+    fecha_cierre: Optional[datetime] = None
+    estado: str
+    tipo_turno: Optional[str] = None
+    total_ventas: float = 0
+    total_efectivo: float = 0
+    total_tarjeta: float = 0
+    base_real: float = 0
+    efectivo_final_real: Optional[float] = None
+    datafono_real: Optional[float] = None
+    diferencia_apertura: float = 0
+    diferencia_cierre: Optional[float] = None
+    diferencia_tarjeta: Optional[float] = None
+    baristas: List[str] = []
+    imagen_cierre_url: Optional[str] = None
+    class Config: from_attributes = True
+
+
 class MovimientoFlujoItem(BaseModel):
     tipo: str  # "ingreso" | "egreso"
     concepto: str

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import api from '../api/client'
-import { Plus, Pencil, Check, X, AlertTriangle, Package, Tag } from 'lucide-react'
+import { Plus, Pencil, Check, X, AlertTriangle, Package, Tag, Trash2, Copy } from 'lucide-react'
 
 interface Tienda { id: number; nombre: string }
 interface StockInfo { stock_actual: number; stock_minimo: number; alerta: boolean }
@@ -44,8 +44,20 @@ export default function Catalogo() {
   const [mostrarNuevo, setMostrarNuevo] = useState(false)
   const [minimoEditing, setMinimoEditing] = useState<{ productoId: number; tiendaId: number; valor: string } | null>(null)
   const [precioEditing, setPrecioEditing] = useState<{ productoId: number; valor: string } | null>(null)
+  const [showDuplicados, setShowDuplicados] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // Groups of products sharing the same normalized name
+  const gruposDuplicados = (() => {
+    const map = new Map<string, Producto[]>()
+    for (const p of productos) {
+      const key = p.nombre.trim().toLowerCase()
+      map.set(key, [...(map.get(key) ?? []), p])
+    }
+    return [...map.values()].filter(g => g.length > 1)
+  })()
 
   const load = async () => {
     const res = await api.get('/inventario/admin/resumen')
@@ -94,6 +106,17 @@ export default function Catalogo() {
     } catch (e: any) { setError(e.response?.data?.detail || 'Error') }
   }
 
+  const eliminarProducto = async (id: number) => {
+    try {
+      await api.delete(`/inventario/productos/${id}`)
+      setConfirmDelete(null)
+      load()
+    } catch (e: any) {
+      setConfirmDelete(null)
+      setError(e.response?.data?.detail || 'No se puede eliminar: tiene historial de movimientos')
+    }
+  }
+
   const guardarPrecio = async () => {
     if (!precioEditing) return
     const precio = Number(precioEditing.valor)
@@ -140,9 +163,9 @@ export default function Catalogo() {
       <div className="flex gap-2 flex-wrap">
         {(['todas', ...CATEGORIAS] as const).map(c => (
           <button key={c}
-            onClick={() => setCatFiltro(c)}
+            onClick={() => { setCatFiltro(c); setShowDuplicados(false) }}
             className="px-3 py-1.5 rounded-xl text-xs font-semibold border-2 transition-all"
-            style={catFiltro === c ? {
+            style={!showDuplicados && catFiltro === c ? {
               background: c === 'todas' ? 'oklch(35% 0.05 155)' : CAT_COLOR[c as Cat].bg,
               borderColor: c === 'todas' ? 'oklch(35% 0.05 155)' : CAT_COLOR[c as Cat].text,
               color: c === 'todas' ? 'white' : CAT_COLOR[c as Cat].text,
@@ -154,6 +177,27 @@ export default function Catalogo() {
             {c === 'todas' ? 'Todas' : CAT_LABEL[c as Cat]}
           </button>
         ))}
+        <button
+          onClick={() => setShowDuplicados(d => !d)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border-2 transition-all"
+          style={showDuplicados ? {
+            background: 'oklch(96% 0.06 35)',
+            borderColor: 'oklch(55% 0.16 35)',
+            color: 'oklch(38% 0.16 35)',
+          } : {
+            background: 'white',
+            borderColor: 'oklch(88% 0.006 75)',
+            color: gruposDuplicados.length > 0 ? 'oklch(42% 0.14 35)' : 'oklch(40% 0.01 60)',
+          }}>
+          <Copy size={11} />
+          Duplicados
+          {gruposDuplicados.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-xs font-bold"
+              style={{ background: showDuplicados ? 'oklch(55% 0.16 35)' : 'oklch(55% 0.16 35)', color: 'white', fontSize: 9 }}>
+              {gruposDuplicados.length}
+            </span>
+          )}
+        </button>
         <input
           value={busqueda}
           onChange={e => setBusqueda(e.target.value)}
@@ -208,10 +252,100 @@ export default function Catalogo() {
         </div>
       )}
 
+      {/* Vista duplicados */}
+      {showDuplicados && (
+        <div className="space-y-4">
+          {gruposDuplicados.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-200 px-6 py-10 text-center">
+              <Check size={32} className="mx-auto mb-3" style={{ color: 'oklch(50% 0.12 155)' }} />
+              <p className="text-sm font-semibold text-gray-700">Sin duplicados detectados</p>
+              <p className="text-xs text-gray-400 mt-1">Todos los nombres de producto son únicos</p>
+            </div>
+          ) : (
+            gruposDuplicados.map((grupo, gi) => (
+              <div key={gi} className="bg-white rounded-2xl border-2 overflow-hidden"
+                style={{ borderColor: 'oklch(82% 0.08 35)' }}>
+                <div className="px-4 py-2.5 flex items-center gap-2"
+                  style={{ background: 'oklch(97% 0.03 35)' }}>
+                  <Copy size={13} style={{ color: 'oklch(50% 0.14 35)' }} />
+                  <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'oklch(38% 0.14 35)' }}>
+                    {grupo[0].nombre.trim()} — {grupo.length} registros
+                  </p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide">ID</th>
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide">Nombre exacto</th>
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide">Categoría</th>
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide">Unidad</th>
+                        <th className="text-center px-3 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide">Precio POS</th>
+                        {tiendas.map(t => (
+                          <th key={t.id} className="text-center px-3 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide whitespace-nowrap">
+                            Stock {t.nombre}
+                          </th>
+                        ))}
+                        <th className="w-20"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {grupo.map(p => (
+                        <tr key={p.id} className="hover:bg-orange-50 transition-colors">
+                          <td className="px-4 py-2.5 text-xs text-gray-400 font-mono">#{p.id}</td>
+                          <td className="px-4 py-2.5 font-medium text-gray-800">{p.nombre}</td>
+                          <td className="px-4 py-2.5">{badge(p.categoria)}</td>
+                          <td className="px-4 py-2.5 text-xs text-gray-400 font-mono">{p.unidad_medida}</td>
+                          <td className="px-3 py-2.5 text-center text-xs font-semibold"
+                            style={{ color: p.precio_venta ? 'oklch(38% 0.12 155)' : 'oklch(65% 0.01 60)' }}>
+                            {p.precio_venta ? `$${p.precio_venta.toLocaleString('es-CO')}` : '—'}
+                          </td>
+                          {tiendas.map(t => {
+                            const s = p.stocks[String(t.id)]
+                            return (
+                              <td key={t.id} className="px-3 py-2.5 text-center">
+                                <span className={`text-sm font-bold font-mono ${s?.alerta ? 'text-red-500' : 'text-gray-700'}`}>
+                                  {p.controla_stock ? Math.round(s?.stock_actual ?? 0) : '—'}
+                                </span>
+                              </td>
+                            )
+                          })}
+                          <td className="px-3 py-2.5">
+                            {confirmDelete === p.id ? (
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => eliminarProducto(p.id)}
+                                  className="px-2 py-1 rounded-lg text-xs font-bold text-white"
+                                  style={{ background: 'oklch(45% 0.18 25)' }}>
+                                  Sí
+                                </button>
+                                <button onClick={() => setConfirmDelete(null)}
+                                  className="px-2 py-1 rounded-lg text-xs border-2 border-gray-200 text-gray-500">
+                                  No
+                                </button>
+                              </div>
+                            ) : (
+                              <button onClick={() => setConfirmDelete(p.id)}
+                                className="p-1.5 rounded-lg border-2 border-gray-200 text-gray-400 hover:border-red-300 hover:text-red-500 transition-colors"
+                                title="Eliminar producto">
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
       {/* Tabla por categoría */}
-      {(catFiltro === 'todas' ? CATEGORIAS : [catFiltro]).map(cat => {
+      {!showDuplicados && (catFiltro === 'todas' ? CATEGORIAS : [catFiltro]).map(cat => {
         const lista = productosFiltrados.filter(p => p.categoria === cat)
-        if (lista.length === 0) return null
+        if (!lista.length) return null
         return (
           <div key={cat} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
             <div className="px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">

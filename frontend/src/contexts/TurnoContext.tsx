@@ -35,6 +35,7 @@ export interface Turno {
   es_operativo: boolean
   dia_tiene_conteo_apertura: boolean
   baristas: string[]
+  baristas_salidas: string[]
 }
 
 interface TurnoCtx {
@@ -61,7 +62,7 @@ export function TurnoProvider({ children }: { children: ReactNode }) {
         ? `/caja/activo-pub/${tiendaId}`
         : `/caja/activo/${tiendaId}`
       const { data } = await api.get(endpoint)
-      setTurno(data ? { baristas: [], tipo_turno: null, tiene_cuadre_llegada: false, es_operativo: false, dia_tiene_conteo_apertura: false, ...data } : null)
+      setTurno(data ? { baristas: [], baristas_salidas: [], tipo_turno: null, tiene_cuadre_llegada: false, es_operativo: false, dia_tiene_conteo_apertura: false, ...data } : null)
     } catch {
       if (!silent) setTurno(null)
     } finally {

@@ -12,6 +12,7 @@ import GestionTurno from './pages/GestionTurno'
 import ConteoApertura from './pages/ConteoApertura'
 import VentasDia from './pages/VentasDia'
 import ConteoCierre from './pages/ConteoCierre'
+import SalidaEfectivo from './pages/SalidaEfectivo'
 import Cierre from './pages/Cierre'
 import Entrega from './pages/Entrega'
 import VentasHoy from './pages/VentasHoy'
@@ -117,6 +118,7 @@ function AppRoutes() {
       {/* ── Flujo de turno (accesibles con cualquier sesión) ── */}
       <Route path="/conteo-apertura" element={hasSession ? <ConteoApertura /> : <KioskSetup />} />
       <Route path="/conteo-cierre"   element={hasSession ? <ConteoCierre />   : <KioskSetup />} />
+      <Route path="/salida-efectivo" element={hasSession ? <SalidaEfectivo /> : <KioskSetup />} />
       <Route path="/cierre"          element={hasSession ? <Cierre />         : <KioskSetup />} />
       <Route path="/entrega"         element={hasSession ? <Entrega />        : <KioskSetup />} />
       {/* /hub deprecado: el Landing rutea a POS o gestión-turno según el estado */}

@@ -126,6 +126,17 @@ async def registrar_entrada(
     return svc.registrar_entrada_barista(db, turno_id, user.id, barista_id, imagen_url)
 
 
+@router.post("/{turno_id}/salida-barista", response_model=TurnoOut)
+async def salida_barista(
+    turno_id: int,
+    barista_nombre: str = Form(...),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    ensure_turno_access(db, user, turno_id)
+    return svc.registrar_salida_barista(db, turno_id, barista_nombre)
+
+
 @router.post("/{turno_id}/salida", response_model=TurnoOut)
 async def salida_rapida(
     turno_id: int,

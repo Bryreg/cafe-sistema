@@ -108,6 +108,7 @@ def get_turno_activo(db: Session, tienda_id: int):
     turno.consignaciones_turno = consigs_sum
     baristas_db = db.query(TurnoBarista).filter(TurnoBarista.turno_id == turno.id).all()
     turno.baristas = [b.nombre_snapshot for b in baristas_db]
+    turno.baristas_salidas = [b.nombre_snapshot for b in baristas_db if b.salida_at is not None]
     turno.dia_tiene_conteo_apertura = _hay_conteo_apertura_en_dia(db, turno)
     turno.es_operativo = _es_operativo(db, turno)
     return turno
@@ -616,6 +617,35 @@ def registrar_entrada_barista(
         db, accion="entrada_barista", tabla="caja_turnos",
         registro_id=turno_id, usuario_id=usuario_id, tienda_id=turno.tienda_id,
         datos_despues={"barista_id": barista_id, "barista_nombre": barista.nombre},
+    )
+    db.commit()
+    return get_turno_activo(db, turno.tienda_id)
+
+
+def registrar_salida_barista(db: Session, turno_id: int, barista_nombre: str):
+    """Marca la salida de UNA barista sin cerrar el turno.
+    Sólo válido cuando hay más de una barista activa. Si es la última, usar cerrar_turno_rapido.
+    """
+    turno = db.query(CajaTurno).filter(
+        CajaTurno.id == turno_id,
+        CajaTurno.estado == EstadoTurnoEnum.abierto,
+    ).first()
+    if not turno:
+        raise HTTPException(status_code=404, detail="Turno no encontrado o ya cerrado")
+
+    tb = db.query(TurnoBarista).filter(
+        TurnoBarista.turno_id == turno_id,
+        TurnoBarista.nombre_snapshot == barista_nombre,
+        TurnoBarista.salida_at.is_(None),
+    ).first()
+    if not tb:
+        raise HTTPException(status_code=404, detail="Barista no encontrada en este turno o ya registró salida")
+
+    tb.salida_at = datetime.utcnow()
+    audit.registrar(
+        db, accion="salida_barista", tabla="turno_baristas",
+        registro_id=tb.id, usuario_id=tb.usuario_id, tienda_id=turno.tienda_id,
+        datos_despues={"barista_nombre": barista_nombre},
     )
     db.commit()
     return get_turno_activo(db, turno.tienda_id)

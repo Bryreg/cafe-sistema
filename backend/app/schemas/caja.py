@@ -85,6 +85,7 @@ class TurnoOut(BaseModel):
     consignaciones_turno: float = 0.0
     consignaciones_deducidas: Optional[float] = None
     baristas: List[str] = []
+    baristas_salidas: List[str] = []
     class Config: from_attributes = True
 
 

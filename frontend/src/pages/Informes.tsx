@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { FiltroProvider, useFiltro } from '../contexts/FiltroContext'
 import FilterBar from '../components/FilterBar'
 import api from '../api/client'
-import { ArrowUpDown, Package, ChevronDown, ChevronUp, UserCheck, Clock, AlertTriangle, Download, TrendingUp, Printer, BarChart3 } from 'lucide-react'
+import { ArrowUpDown, Package, ChevronDown, ChevronUp, AlertTriangle, Download, TrendingUp, Printer, BarChart3 } from 'lucide-react'
 import DifferenceBadge from '../components/DifferenceBadge'
 import TicketRecibo, { TicketData } from '../components/TicketRecibo'
 import { AnaliticaContenido } from './Analytics'
@@ -33,7 +33,7 @@ function BtnExcel({ onClick }: { onClick: () => void }) {
   )
 }
 
-type Tab = 'analitica' | 'ventas' | 'movimientos' | 'inventario' | 'cuadres' | 'turnos'
+type Tab = 'analitica' | 'ventas' | 'movimientos' | 'inventario'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 const fmtN = (v: number, dec = 2) => v.toLocaleString('es-CO', { minimumFractionDigits: dec, maximumFractionDigits: dec })
@@ -809,8 +809,6 @@ export default function Informes() {
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'analitica',    label: 'Analítica',    icon: <BarChart3 size={14} /> },
     { id: 'ventas',       label: 'Ventas',       icon: <TrendingUp size={14} /> },
-    { id: 'turnos',       label: 'Turnos',       icon: <Clock size={14} /> },
-    { id: 'cuadres',      label: 'Cuadres',      icon: <UserCheck size={14} /> },
     { id: 'movimientos',  label: 'Movimientos',  icon: <ArrowUpDown size={14} /> },
     { id: 'inventario',   label: 'Inventario',   icon: <Package size={14} /> },
   ]
@@ -895,8 +893,6 @@ function InformesContent({
       {/* Tab content */}
       {tab === 'analitica'   && <AnaliticaContenido />}
       {tab === 'ventas'      && <TabVentas />}
-      {tab === 'turnos'      && <TabTurnos      tiendaId={tiendaId} />}
-      {tab === 'cuadres'     && <TabCuadres     tiendaId={tiendaId} />}
       {tab === 'movimientos' && <TabMovimientos tiendaId={tiendaId} />}
       {tab === 'inventario'  && <TabInventario  tiendaId={tiendaId} />}
     </div>

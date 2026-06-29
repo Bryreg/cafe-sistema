@@ -226,10 +226,16 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
     # Motor de notificaciones: meta de ventas del día. Nunca rompe la venta.
     try:
         from app.services import notificaciones
+        # Rango [hoy 00:00, mañana 00:00) en vez de func.date(fecha)==hoy: una
+        # función sobre la columna anula el índice ix_tickets_tienda_fecha; el
+        # rango sí lo usa (esto corre en CADA venta).
         hoy = datetime.utcnow().date()
+        desde_hoy = datetime(hoy.year, hoy.month, hoy.day)
+        manana = desde_hoy + timedelta(days=1)
         total_dia = db.query(func.coalesce(func.sum(Ticket.total), 0.0)).filter(
             Ticket.tienda_id == tienda_id,
-            func.date(Ticket.fecha) == hoy,
+            Ticket.fecha >= desde_hoy,
+            Ticket.fecha < manana,
             Ticket.estado.notin_(("anulado", "reversado")),
         ).scalar() or 0.0
         notificaciones.evaluar_ventas_dia(db, tienda_id, float(total_dia))

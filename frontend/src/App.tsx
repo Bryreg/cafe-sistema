@@ -52,6 +52,7 @@ import InventarioMensual from './pages/InventarioMensual'
 import ConciliacionInventario from './pages/ConciliacionInventario'
 import LotesTrazabilidad from './pages/LotesTrazabilidad'
 import NotificacionesConfig from './pages/NotificacionesConfig'
+import CuadreTurnos from './pages/CuadreTurnos'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -133,6 +134,7 @@ function AppRoutes() {
       <Route path="/inventario-mensual" element={hasSession ? <InventarioMensual /> : <KioskSetup />} />
       <Route path="/ingresos"       element={hasSession ? <Ingresos />       : <KioskSetup />} />
       <Route path="/historial-ventas" element={hasSession ? <HistorialVentas /> : <KioskSetup />} />
+      <Route path="/cuadre-turnos"   element={hasSession ? <CuadreTurnos />   : <KioskSetup />} />
       <Route path="/conteo-compras" element={hasSession ? <ConteoCompras />  : <KioskSetup />} />
       <Route path="/ventas-hoy"     element={hasSession ? <VentasHoy />      : <KioskSetup />} />
       <Route path="/limpieza"       element={

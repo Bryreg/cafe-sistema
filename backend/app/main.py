@@ -125,7 +125,7 @@ with engine.connect() as _conn:
         "ALTER TABLE inventario ADD COLUMN stock_ideal FLOAT DEFAULT 0",
         "ALTER TABLE inventario ADD COLUMN stock_critico FLOAT DEFAULT 0",
         # Salida parcial de barista sin cerrar el turno
-        "ALTER TABLE turno_baristas ADD COLUMN salida_at DATETIME",
+        "ALTER TABLE turno_baristas ADD COLUMN salida_at TIMESTAMP",
         # Concurrency: only one open shift per store at any time
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_one_turno_abierto ON caja_turnos (tienda_id) WHERE estado = 'abierto'",
         # Concurrency: only one conteo of each type (apertura/cierre) per shift

@@ -5,8 +5,8 @@ import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
 import {
   Menu, X, Check, Circle, AlertTriangle, ClipboardList, Megaphone,
-  Trash2, Package, ShoppingCart, Coins, Truck, Thermometer, ArrowRightLeft, Lock, LogOut,
-  Calculator, CalendarClock, Banknote, Receipt, Boxes,
+  Trash2, Package, ShoppingCart, Coins, Truck, Thermometer, ArrowRightLeft, LogOut,
+  Calculator, CalendarClock, Banknote, Receipt, Boxes, Sparkles,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import MovimientoCajaModal from './MovimientoCajaModal'
@@ -181,13 +181,11 @@ export default function OperativeBanner() {
                   Registrar
                 </p>
                 <div className="grid grid-cols-3 gap-2">
-                  <button onClick={() => setModal('rutinas')}
+                  <button onClick={() => { setOpen(false); navigate('/limpieza') }}
                     className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-                    <ClipboardList size={18} style={{ color: dark.amber }} />
-                    <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Rutinas</p>
-                    <p className="text-[11px]" style={{ color: rutinasPendientes ? dark.amber : dark.inkSubtle }}>
-                      {rutinasPendientes ? `${rutinasPendientes} pend.` : 'al día'}
-                    </p>
+                    <Sparkles size={18} style={{ color: dark.amber }} />
+                    <p className="text-[12px] font-bold mt-1.5" style={{ color: dark.ink }}>Limpieza</p>
+                    <p className="text-[11px]" style={{ color: dark.inkSubtle }}>cumplimiento</p>
                   </button>
                   <button onClick={() => setModal('novedad')}
                     className="rounded-2xl p-3 text-left" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
@@ -221,16 +219,6 @@ export default function OperativeBanner() {
                 </div>
               </div>
 
-              {/* Continuidad */}
-              {turno && (
-                <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${dark.border}` }}>
-                  <button onClick={() => go('/conteo-cierre')}
-                    className="w-full flex items-center gap-3 px-4 py-3" style={{ background: dark.surface }}>
-                    <Lock size={16} style={{ color: dark.inkMuted }} />
-                    <span className="text-[13px]" style={{ color: dark.ink }}>Cerrar turno</span>
-                  </button>
-                </div>
-              )}
 
               {isKiosk && (
                 <button onClick={resetKiosk}

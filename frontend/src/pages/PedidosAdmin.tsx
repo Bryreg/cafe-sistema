@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
   ShoppingCart, AlertTriangle, Clock, CheckCircle2, CheckCircle,
-  Copy, ChevronDown, ChevronUp, Phone, ClipboardList, Settings2, Check,
+  Copy, ChevronDown, ChevronUp, Phone, ClipboardList, Settings2, Check, Search,
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -564,7 +564,17 @@ function TabProveedores({ tiendaId }: { tiendaId: number | null }) {
     ...(grupos['__sin__'] ? [['__sin__', grupos['__sin__']] as [string, ProdFlat[]]] : []),
   ]
 
+  const [busqueda, setBusqueda] = useState('')
   const listId = 'proveedores-list'
+
+  const gruposFiltrados: [string, ProdFlat[]][] = busqueda.trim()
+    ? gruposOrdenados
+        .map(([key, items]) => [
+          key,
+          items.filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase())),
+        ] as [string, ProdFlat[]])
+        .filter(([, items]) => items.length > 0)
+    : gruposOrdenados
 
   if (loading) return <p className="text-sm text-gray-400 text-center py-8 animate-pulse">Cargando…</p>
 
@@ -574,12 +584,23 @@ function TabProveedores({ tiendaId }: { tiendaId: number | null }) {
         {proveedoresExistentes.map(p => <option key={p} value={p} />)}
       </datalist>
 
+      <div className="relative">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          type="text"
+          placeholder="Buscar producto…"
+          value={busqueda}
+          onChange={e => setBusqueda(e.target.value)}
+          className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-300"
+        />
+      </div>
+
       <p className="text-xs text-gray-400">
         Asigná un proveedor a cada producto para que aparezca agrupado en la sugerencia de pedido.
         Dejá el campo vacío para moverlo a "Insumos generales".
       </p>
 
-      {gruposOrdenados.map(([key, items]) => (
+      {gruposFiltrados.map(([key, items]) => (
         <div key={key} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
             <Phone size={13} className="text-gray-400" />

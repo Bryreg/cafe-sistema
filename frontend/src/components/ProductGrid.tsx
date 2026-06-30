@@ -143,7 +143,7 @@ export default function ProductGrid({
               : 'No hay productos disponibles'}
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-2.5">
           {filtrados.map(p => {
             const inCart = cart.find(i => i.producto_id === p.id)
             const esTop = p.vendidos_7d > 0

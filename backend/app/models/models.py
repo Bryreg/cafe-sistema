@@ -99,20 +99,6 @@ class ConfigTicket(Base):
     ancho_papel_mm  = Column(Integer, nullable=False, server_default="80")
     escala_fuente   = Column(String(10), nullable=False, server_default="normal")  # small | normal | large
     tienda          = relationship("Tienda", foreign_keys=[tienda_id])
-    usuarios = relationship("Usuario", back_populates="tienda")
-    turnos = relationship("CajaTurno", back_populates="tienda")
-    inventarios = relationship("Inventario", back_populates="tienda")
-    movimientos_inv = relationship("MovimientoInventario", back_populates="tienda")
-    pastelerias = relationship("PasteleriaDiaria", back_populates="tienda")
-    consignaciones = relationship("Consignacion", back_populates="tienda")
-    checklists = relationship("ChecklistDiario", back_populates="tienda")
-    lotes = relationship("LoteInventario", back_populates="tienda")
-    mermas = relationship("Merma", back_populates="tienda", foreign_keys="Merma.tienda_id")
-    solicitudes_pedido = relationship("SolicitudPedido", back_populates="tienda")
-    solicitudes_sencilla = relationship("SolicitudSencilla", back_populates="tienda")
-    notificaciones = relationship("Notificacion", back_populates="tienda")
-    facturas_compra = relationship("FacturaCompra", back_populates="tienda")
-    conteos_compras = relationship("ConteoCompras", back_populates="tienda")
 
 
 class Usuario(Base):

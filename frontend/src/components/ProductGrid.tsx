@@ -34,6 +34,7 @@ const CAT_LABEL: Record<string, string> = {
   bebida: 'Bebidas',
   pasteleria: 'Pastelería',
   insumo: 'Insumos',
+  porciones: 'Porciones',
 }
 
 // Tono de Badge por categoría (tokens del sistema, sin oklch inline).
@@ -41,6 +42,7 @@ const CAT_TONE: Record<string, 'success' | 'gold' | 'clay' | 'warm'> = {
   bebida: 'success',
   pasteleria: 'gold',
   insumo: 'clay',
+  porciones: 'warm',
 }
 
 // ─── Componente ──────────────────────────────────────────────────────────────

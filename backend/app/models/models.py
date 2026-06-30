@@ -29,6 +29,7 @@ class CategoriaProductoEnum(str, enum.Enum):
     pasteleria = "pasteleria"
     bebida = "bebida"
     insumo = "insumo"
+    porciones = "porciones"
 
 
 class TipoMovInvEnum(str, enum.Enum):

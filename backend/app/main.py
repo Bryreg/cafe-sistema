@@ -147,6 +147,9 @@ with engine.connect() as _conn:
         # Config ticket: dimensiones de impresión
         "ALTER TABLE config_tickets ADD COLUMN ancho_papel_mm INTEGER DEFAULT 80",
         "ALTER TABLE config_tickets ADD COLUMN escala_fuente VARCHAR(10) DEFAULT 'normal'",
+        # Categoría nueva "porciones" en el enum nativo de Postgres (en SQLite el ALTER TYPE
+        # falla y se ignora; el enum allí es varchar). PG 12+ permite ADD VALUE en transacción.
+        "ALTER TYPE categoriaproductoenum ADD VALUE IF NOT EXISTS 'porciones'",
     ]:
         try:
             _conn.execute(_text(_sql))

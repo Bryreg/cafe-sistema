@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { FiltroProvider, useFiltro } from '../contexts/FiltroContext'
 import FilterBar from '../components/FilterBar'
 import api from '../api/client'
-import { ArrowUpDown, Package, ChevronDown, ChevronUp, AlertTriangle, Download, TrendingUp, Printer, BarChart3 } from 'lucide-react'
+import { ArrowUpDown, ChevronDown, ChevronUp, Download, TrendingUp, Printer, BarChart3 } from 'lucide-react'
 import DifferenceBadge from '../components/DifferenceBadge'
 import TicketRecibo, { TicketData } from '../components/TicketRecibo'
 import { AnaliticaContenido } from './Analytics'
@@ -33,10 +33,9 @@ function BtnExcel({ onClick }: { onClick: () => void }) {
   )
 }
 
-type Tab = 'analitica' | 'ventas' | 'movimientos' | 'inventario'
+type Tab = 'analitica' | 'ventas' | 'movimientos'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
-const fmtN = (v: number, dec = 2) => v.toLocaleString('es-CO', { minimumFractionDigits: dec, maximumFractionDigits: dec })
 
 /** Strip null/undefined values from a params object before sending to API */
 function cleanParams(params: Record<string, unknown>): Record<string, unknown> {
@@ -358,131 +357,6 @@ function TabMovimientos({ tiendaId }: { tiendaId: number }) {
   )
 }
 
-// ─── Inventario (Rotación de stock) ─────────────────────────────────────────
-function TabInventario({ tiendaId }: { tiendaId: number }) {
-  const { filtro } = useFiltro()
-  const [rotFilas, setRotFilas] = useState<FilaRotacion[] | null>(null)
-  const [resumen, setResumen] = useState<ResumenRotacion | null>(null)
-  const [filtroEstado, setFiltroEstado] = useState<string>('todos')
-  const [loading, setLoading] = useState(false)
-
-  const cargar = async () => {
-    setLoading(true)
-    try {
-      const params = cleanParams({
-        tienda_id: tiendaId,
-        fecha_desde: filtro.desde,
-        fecha_hasta: filtro.hasta,
-        categoria: filtro.categoria,
-        producto_search: filtro.productoSearch,
-      })
-      const { data } = await api.get('/informes/rotacion', { params })
-      setRotFilas(data.filas)
-      setResumen(data.resumen)
-      setFiltroEstado('todos')
-    } finally { setLoading(false) }
-  }
-
-  useEffect(() => { cargar() }, [filtro])
-
-  const rotFiltradas = rotFilas?.filter(f => filtroEstado === 'todos' || f.estado === filtroEstado) ?? []
-
-  const exportar = () => {
-    if (!rotFilas) return
-    exportarExcel(`inventario_${filtro.desde}_${filtro.hasta}`,
-      ['Producto', 'Unidad', 'Stock actual', 'Stock mínimo', 'Entradas', 'Salidas', 'Rotación', 'Estado'],
-      rotFilas.map(f => [f.producto, f.unidad, f.stock_actual, f.stock_minimo, f.entradas, f.salidas, f.rotacion ?? '', f.estado]))
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex gap-2 flex-wrap items-center justify-between">
-        <button onClick={cargar} disabled={loading}
-          className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg text-sm">
-          {loading ? 'Cargando...' : 'Consultar'}
-        </button>
-        {rotFilas && rotFilas.length > 0 && <BtnExcel onClick={exportar} />}
-      </div>
-
-      {resumen && (
-        <>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {[
-              { key: 'activos',        label: 'Activos',        val: resumen.activos,        color: 'text-green-700',  desc: 'Tuvo entradas y salidas' },
-              { key: 'estancados',     label: 'Estancados',     val: resumen.estancados,     color: resumen.estancados > 0 ? 'text-orange-600' : 'text-gray-800', desc: 'Llegó mercancía pero no se consumió' },
-              { key: 'sin_movimiento', label: 'Sin movimiento', val: resumen.sin_movimiento, color: 'text-gray-500',    desc: 'Sin ningún movimiento en el período' },
-              { key: 'bajo_minimo',    label: 'Bajo mínimo',    val: resumen.bajo_minimo,    color: resumen.bajo_minimo > 0 ? 'text-red-600' : 'text-gray-800', desc: 'Stock actual ≤ stock mínimo' },
-            ].map(({ key, label, val, color, desc }) => (
-              <button key={key}
-                onClick={() => setFiltroEstado(filtroEstado === key ? 'todos' : key)}
-                className={`bg-white border rounded-xl p-3 text-center transition-all ${filtroEstado === key ? 'border-amber-400 ring-1 ring-amber-200' : 'border-gray-200'}`}>
-                <p className="text-xs font-semibold text-gray-500">{label}</p>
-                <p className={`text-xl font-bold font-mono mt-0.5 ${color}`}>{val}</p>
-                <p className="text-[10px] text-gray-400 mt-1 leading-tight">{desc}</p>
-              </button>
-            ))}
-          </div>
-
-          {rotFilas !== null && (
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-100">
-                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Producto</th>
-                      <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase">Stock</th>
-                      <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase">Entradas</th>
-                      <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase">Salidas</th>
-                      <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase">Rotación</th>
-                      <th className="px-3 py-2.5"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {rotFiltradas.length === 0 && (
-                      <tr><td colSpan={6} className="text-center text-sm text-gray-400 py-6">Sin productos con este filtro.</td></tr>
-                    )}
-                    {rotFiltradas.map(f => {
-                      const cfg = ESTADO_CFG[f.estado] || ESTADO_CFG.sin_movimiento
-                      return (
-                        <tr key={f.producto_id} className="hover:bg-gray-50">
-                          <td className="px-4 py-2.5">
-                            <p className="font-medium text-gray-800 text-sm">{f.producto}</p>
-                            <p className="text-xs text-gray-400">{f.unidad}</p>
-                          </td>
-                          <td className={`px-3 py-2.5 text-right font-mono font-bold text-sm ${f.alerta_min ? 'text-red-600' : 'text-gray-700'}`}>
-                            {fmtN(f.stock_actual, 0)}
-                            {f.alerta_min && <AlertTriangle size={10} className="inline ml-1 text-red-500" />}
-                          </td>
-                          <td className="px-3 py-2.5 text-right font-mono text-sm text-green-700">{fmtN(f.entradas, 0)}</td>
-                          <td className="px-3 py-2.5 text-right font-mono text-sm text-blue-700">{fmtN(f.salidas, 0)}</td>
-                          <td className="px-3 py-2.5 text-right font-mono text-sm text-gray-600">
-                            {f.rotacion !== null ? `${f.rotacion}x` : '—'}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <span className="text-xs px-1.5 py-0.5 rounded-md font-semibold whitespace-nowrap cursor-help"
-                              style={{ background: cfg.bg, color: cfg.text }}
-                              title={cfg.title}>
-                              {cfg.label}
-                            </span>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {rotFilas !== null && rotFilas.length === 0 && !loading && (
-        <p className="text-sm text-gray-400 text-center py-6">Sin movimientos en el período.</p>
-      )}
-    </div>
-  )
-}
-
 // ─── Cuadres + Baristas ───────────────────────────────────────────────────────
 interface FilaEntrega {
   id: number; fecha_hora: string; usuario: string
@@ -769,22 +643,6 @@ function TabTurnos({ tiendaId }: { tiendaId: number }) {
   )
 }
 
-// ─── Rotación (interfaces usadas por TabInventario) ───────────────────────────
-interface FilaRotacion {
-  producto_id: number; producto: string; categoria: string; unidad: string
-  stock_actual: number; stock_minimo: number; entradas: number; salidas: number
-  rotacion: number | null; estado: string; alerta_min: boolean
-}
-interface ResumenRotacion { activos: number; estancados: number; sin_movimiento: number; agotados: number; bajo_minimo: number }
-
-const ESTADO_CFG: Record<string, { label: string; bg: string; text: string; title: string }> = {
-  activo:          { label: 'Activo',         bg: 'oklch(93% 0.015 155)', text: 'oklch(30% 0.10 155)', title: 'Tuvo entradas y salidas en el período' },
-  estancado:       { label: 'Estancado',       bg: 'oklch(95% 0.015 60)',  text: 'oklch(38% 0.12 55)',  title: 'Llegó mercancía pero no se consumió nada' },
-  agotado:         { label: 'Agotado',         bg: 'oklch(96% 0.015 20)',  text: 'oklch(38% 0.16 25)',  title: 'Stock en cero con salidas registradas' },
-  sin_movimiento:  { label: 'Sin movimiento',  bg: 'oklch(95% 0.005 60)',  text: 'oklch(55% 0.01 60)',  title: 'Sin ningún movimiento en el período' },
-}
-
-
 // ─── Página principal ─────────────────────────────────────────────────────────
 export default function Informes() {
   const { user } = useAuth()
@@ -807,10 +665,9 @@ export default function Informes() {
   )
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'analitica',    label: 'Analítica',    icon: <BarChart3 size={14} /> },
-    { id: 'ventas',       label: 'Ventas',       icon: <TrendingUp size={14} /> },
-    { id: 'movimientos',  label: 'Movimientos',  icon: <ArrowUpDown size={14} /> },
-    { id: 'inventario',   label: 'Inventario',   icon: <Package size={14} /> },
+    { id: 'analitica',    label: 'Analítica',   icon: <BarChart3 size={14} /> },
+    { id: 'ventas',       label: 'Ventas',      icon: <TrendingUp size={14} /> },
+    { id: 'movimientos',  label: 'Movimientos', icon: <ArrowUpDown size={14} /> },
   ]
 
   return (
@@ -894,7 +751,6 @@ function InformesContent({
       {tab === 'analitica'   && <AnaliticaContenido />}
       {tab === 'ventas'      && <TabVentas />}
       {tab === 'movimientos' && <TabMovimientos tiendaId={tiendaId} />}
-      {tab === 'inventario'  && <TabInventario  tiendaId={tiendaId} />}
     </div>
   )
 }

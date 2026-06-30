@@ -147,7 +147,6 @@ def get_mermas_tienda(db: Session, tienda_id: int):
         db.query(Merma)
         .filter(Merma.tienda_id == tienda_id)
         .order_by(Merma.fecha_registro.desc())
-        .limit(50)
         .all()
     )
 

@@ -28,7 +28,7 @@ async def crear_factura(
 
     ensure_tienda_access(user, payload.tienda_id)
 
-    imagen_url = await upload_imagen(imagen)
+    imagen_url = await upload_imagen(imagen, max_side=1600, quality=85)
     return svc.crear_factura(db, payload, imagen_url, user.id,
                              barista_id=barista[0], barista_nombre=barista[1])
 
@@ -79,7 +79,7 @@ async def registrar_pago(
     user: Usuario = Depends(require_admin),
 ):
     """Registra un pago (total/parcial) a un proveedor + foto del soporte de pago."""
-    soporte_url = await upload_imagen(imagen)
+    soporte_url = await upload_imagen(imagen, max_side=1600, quality=85)
     return svc.registrar_pago(db, factura_id, monto, forma_pago, soporte_url, user.id)
 
 

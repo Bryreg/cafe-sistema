@@ -121,7 +121,7 @@ function FormNuevaAudInv({ tiendaId, onCreada, onClose }: {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    api.get('/inventario/', { params: { tienda_id: tiendaId } })
+    api.get(`/inventario/tienda/${tiendaId}`)
       .then(r => setProductos(r.data))
       .catch(() => {})
       .finally(() => setLoadingProds(false))

@@ -283,7 +283,7 @@ def get_tickets_recientes(db: Session, tienda_id: int, dias: int = 7, limit: int
 
 
 def get_tickets_historial(db: Session, tienda_id: int, fecha_desde: date | None = None,
-                          fecha_hasta: date | None = None, limit: int = 1000):
+                          fecha_hasta: date | None = None, limit: int | None = None):
     """Historial de ventas (tickets individuales) en un rango — para consultar en Informes."""
     desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
     return (

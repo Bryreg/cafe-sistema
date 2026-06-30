@@ -5,7 +5,7 @@ import api from '../api/client'
 import {
   Coffee, LogOut, Bell, ChevronRight, ChevronUp, ChevronDown,
   AlertTriangle, Banknote, Package, TrendingUp, TrendingDown,
-  BarChart2, ClipboardList, Inbox, Sparkles, ShoppingCart,
+  BarChart2, ClipboardList, Inbox, Sparkles,
   ClipboardCheck, Zap, LayoutGrid, Check,
   Home, DollarSign, X as XIcon,
   Menu, Wallet,
@@ -48,7 +48,6 @@ const TOOLS_MORE = [
   { id: 'consig',        label: 'Consig.',        icon: Banknote,       path: '/consignaciones',   tint: '#2a8d8a' },
   { id: 'auditoria',     label: 'Auditoría',      icon: ClipboardCheck, path: '/auditorias',       tint: '#8a5dc7' },
   { id: 'limpieza',      label: 'Limpieza',       icon: Sparkles,       path: '/limpieza',         tint: '#d169a4' },
-  { id: 'compras',       label: 'Compras',        icon: ShoppingCart,   path: '/compras',          tint: '#7a6a55' },
   { id: 'calibrar',      label: 'Calibrar',       icon: Zap,            path: '/control-inventario', tint: '#a14e9a' },
   { id: 'cumplimiento',  label: 'Cumplimiento',   icon: ClipboardCheck, path: '/cumplimiento',     tint: '#2a7d9a' },
 ]

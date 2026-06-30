@@ -36,7 +36,6 @@ import ControlInventario from './pages/ControlInventario'
 import Dashboard from './pages/Dashboard'
 import Bandeja from './pages/Bandeja'
 import Informes from './pages/Informes'
-import ComprasAdmin from './pages/ComprasAdmin'
 import Comunicados from './pages/Comunicados'
 import Usuarios from './pages/Usuarios'
 import PedidosAdmin from './pages/PedidosAdmin'
@@ -167,7 +166,6 @@ function AppRoutes() {
       <Route path="/bandeja"          element={<RequireAdmin><Layout><Bandeja /></Layout></RequireAdmin>} />
       <Route path="/informes"         element={<RequireAdmin><Layout><Informes /></Layout></RequireAdmin>} />
       <Route path="/informe-contador" element={<RequireAdmin><Layout><InformeContador /></Layout></RequireAdmin>} />
-      <Route path="/compras"          element={<RequireAdmin><Layout><ComprasAdmin /></Layout></RequireAdmin>} />
       <Route path="/pagos-proveedores" element={<RequireAdmin><Layout><PagosProveedores /></Layout></RequireAdmin>} />
       <Route path="/conciliacion-inventario" element={<RequireAdmin><Layout><ConciliacionInventario /></Layout></RequireAdmin>} />
       <Route path="/lotes"            element={<RequireAdmin><Layout><LotesTrazabilidad /></Layout></RequireAdmin>} />

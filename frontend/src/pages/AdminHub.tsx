@@ -8,7 +8,7 @@ import {
   BarChart2, ClipboardList, Inbox, Sparkles,
   ClipboardCheck, Zap, LayoutGrid, Check,
   Home, DollarSign, X as XIcon,
-  Menu, Wallet,
+  Menu, Wallet, Receipt,
 } from 'lucide-react'
 import { NAV_ADMIN } from '../constants/nav'
 
@@ -50,6 +50,7 @@ const TOOLS_MORE = [
   { id: 'limpieza',      label: 'Limpieza',       icon: Sparkles,       path: '/limpieza',         tint: '#d169a4' },
   { id: 'calibrar',      label: 'Calibrar',       icon: Zap,            path: '/control-inventario', tint: '#a14e9a' },
   { id: 'cumplimiento',  label: 'Cumplimiento',   icon: ClipboardCheck, path: '/cumplimiento',     tint: '#2a7d9a' },
+  { id: 'ticket',        label: 'Ticket',         icon: Receipt,        path: '/config-ticket',    tint: '#4a7abf' },
 ]
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────

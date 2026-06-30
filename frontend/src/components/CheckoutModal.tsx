@@ -41,6 +41,17 @@ const fmtCO = (v: number) => `$${v.toLocaleString('es-CO')}`
 
 type Metodo = 'efectivo' | 'tarjeta' | 'mixto'
 
+interface TicketConfig {
+  nombre_negocio: string
+  nit:            string | null
+  telefono:       string | null
+  direccion:      string | null
+  logo_url:       string | null
+  mensaje_footer: string | null
+  ancho_papel_mm: number
+  escala_fuente:  'small' | 'normal' | 'large'
+}
+
 export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess }: Props) {
   const { user } = useAuth()
   const [metodo, setMetodo] = useState<Metodo>('efectivo')
@@ -52,7 +63,16 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
   const [ticket, setTicket] = useState<TicketData | null>(null)
   const [confirmed, setConfirmed] = useState(false)
   const [cambioFinal, setCambioFinal] = useState(0)
+  const [ticketCfg, setTicketCfg] = useState<TicketConfig | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (user?.tienda_id) {
+      api.get(`/config-ticket/${user.tienda_id}`)
+        .then(r => setTicketCfg(r.data))
+        .catch(() => null)
+    }
+  }, [user?.tienda_id])
 
   useEffect(() => {
     if (metodo === 'efectivo') setTimeout(() => inputRef.current?.focus(), 100)
@@ -280,7 +300,19 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
       </Sheet>
 
       {/* Ticket montado en DOM (oculto en pantalla, visible en impresión) */}
-      {ticket && <TicketRecibo ticket={ticket} />}
+      {ticket && (
+        <TicketRecibo
+          ticket={ticket}
+          negocio={ticketCfg?.nombre_negocio ?? undefined}
+          nit={ticketCfg?.nit ?? undefined}
+          telefono={ticketCfg?.telefono ?? undefined}
+          direccion={ticketCfg?.direccion ?? undefined}
+          logoUrl={ticketCfg?.logo_url ?? undefined}
+          mensajeFooter={ticketCfg?.mensaje_footer ?? undefined}
+          anchoPapelMm={ticketCfg?.ancho_papel_mm ?? 80}
+          escalaFuente={ticketCfg?.escala_fuente ?? 'normal'}
+        />
+      )}
     </>
   )
 }

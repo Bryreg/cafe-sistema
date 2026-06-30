@@ -168,11 +168,19 @@ def historial(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Dep
     for b in baristas_rows:
         baristas_by_turno.setdefault(b.turno_id, []).append(b.nombre_snapshot)
 
-    fotos_rows = db.query(EntregaTurno).filter(
-        EntregaTurno.turno_id.in_(turno_ids),
-        EntregaTurno.tipo == "salida",
-    ).all()
-    foto_by_turno: dict = {f.turno_id: f.imagen_url for f in fotos_rows if f.imagen_url}
+    fotos_rows = (
+        db.query(EntregaTurno)
+        .filter(
+            EntregaTurno.turno_id.in_(turno_ids),
+            EntregaTurno.imagen_url.isnot(None),
+        )
+        .order_by(EntregaTurno.turno_id, EntregaTurno.id.asc())
+        .all()
+    )
+    # Latest photo per turno wins (salida is always last for closed shifts)
+    foto_by_turno: dict = {}
+    for f in fotos_rows:
+        foto_by_turno[f.turno_id] = f.imagen_url
 
     result = []
     for t in turnos:

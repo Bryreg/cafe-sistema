@@ -12,6 +12,7 @@ from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
                           facturas, compras, comunicados, pedidos, mantenimientos,
                           auditorias, pos, rutinas, novedades, temperaturas, recepciones,
                           inventario_mensual, dashboard_ejecutivo)
+from app.routers import config_ticket
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -134,6 +135,9 @@ with engine.connect() as _conn:
         # regla ventas_dia, y los informes/dashboard). Filtrar por rango de fecha usa este índice.
         "CREATE INDEX IF NOT EXISTS ix_tickets_tienda_fecha ON tickets (tienda_id, fecha)",
         "ALTER TABLE productos ADD COLUMN incluir_en_conteo BOOLEAN DEFAULT TRUE",
+        # Config ticket: dimensiones de impresión
+        "ALTER TABLE config_tickets ADD COLUMN ancho_papel_mm INTEGER DEFAULT 80",
+        "ALTER TABLE config_tickets ADD COLUMN escala_fuente VARCHAR(10) DEFAULT 'normal'",
     ]:
         try:
             _conn.execute(_text(_sql))
@@ -640,6 +644,7 @@ app.include_router(temperaturas.router, prefix="/api/v1")
 app.include_router(recepciones.router, prefix="/api/v1")
 app.include_router(inventario_mensual.router, prefix="/api/v1")
 app.include_router(dashboard_ejecutivo.router, prefix="/api/v1")
+app.include_router(config_ticket.router,     prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────
 _frontend_dist = os.path.abspath(

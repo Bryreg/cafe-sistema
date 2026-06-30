@@ -22,6 +22,12 @@ interface Props {
   ticket: TicketData
   negocio?: string
   nit?: string
+  telefono?: string
+  direccion?: string
+  logoUrl?: string | null
+  mensajeFooter?: string
+  anchoPapelMm?: number
+  escalaFuente?: 'small' | 'normal' | 'large'
 }
 
 const fmtCO = (v: number) => `$${v.toLocaleString('es-CO')}`
@@ -31,25 +37,39 @@ function parseTicketDate(raw: string): Date {
   return new Date(t.endsWith('Z') ? t : t + 'Z')
 }
 
-export default function TicketRecibo({ ticket, negocio = 'AZ CAFE', nit = '52425817-4' }: Props) {
+const ESCALA: Record<string, number> = { small: 0.82, normal: 1.0, large: 1.22 }
+
+export default function TicketRecibo({
+  ticket,
+  negocio = 'AZ CAFE',
+  nit,
+  telefono,
+  direccion,
+  logoUrl,
+  mensajeFooter = '¡Gracias por tu compra!',
+  anchoPapelMm = 80,
+  escalaFuente = 'normal',
+}: Props) {
+  const zoom = ESCALA[escalaFuente] ?? 1.0
+  const anchoBase = Math.round(anchoPapelMm / zoom)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Inyecta CSS de impresión una sola vez en el <head>
+  // Inyecta CSS de impresión — se actualiza si cambian anchoPapelMm o escalaFuente
   useEffect(() => {
     const styleId = 'ticket-print-style'
-    if (document.getElementById(styleId)) return
-
-    const style = document.createElement('style')
-    style.id = styleId
+    let style = document.getElementById(styleId) as HTMLStyleElement | null
+    if (!style) {
+      style = document.createElement('style')
+      style.id = styleId
+      document.head.appendChild(style)
+    }
     // Patrón "imprimir solo este div" con visibility (NO display:none).
-    // El ticket está anidado dentro de #root; si se oculta el padre con
-    // display:none, el hijo no se muestra aunque tenga display:block. visibility
-    // sí se hereda y se puede revertir en los descendientes, así que ocultamos
-    // todo y volvemos a mostrar solo el subárbol del ticket.
+    // zoom escala todo el contenido; anchoBase compensa para que al escalar
+    // quede exactamente el ancho de papel seleccionado.
     style.textContent = `
       @media print {
         @page {
-          size: 80mm auto;
+          size: ${anchoPapelMm}mm auto;
           margin: 0;
         }
         html, body {
@@ -69,16 +89,16 @@ export default function TicketRecibo({ ticket, negocio = 'AZ CAFE', nit = '52425
           position: absolute;
           left: 0;
           top: 0;
-          width: 80mm;
+          width: ${anchoBase}mm;
+          zoom: ${zoom};
         }
       }
     `
-    document.head.appendChild(style)
     return () => {
       const el = document.getElementById(styleId)
       if (el) el.remove()
     }
-  }, [])
+  }, [anchoPapelMm, anchoBase, zoom])
 
   const fecha = parseTicketDate(ticket.fecha)
   const fechaStr = fecha.toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -118,13 +138,19 @@ export default function TicketRecibo({ ticket, negocio = 'AZ CAFE', nit = '52425
       >
         {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: '6px' }}>
-          {/* Logo placeholder — replace with <img> tag when logo file is available */}
+          {logoUrl && (
+            <img
+              src={logoUrl}
+              alt="Logo"
+              style={{ maxHeight: '40px', maxWidth: '120px', objectFit: 'contain', display: 'block', margin: '0 auto 4px' }}
+            />
+          )}
           <div style={{ fontWeight: 'bold', fontSize: '16px', letterSpacing: '3px' }}>
             {negocio.toUpperCase()}
           </div>
-          <div style={{ fontSize: '10px', marginTop: '1px' }}>
-            NIT: {nit}
-          </div>
+          {nit      && <div style={{ fontSize: '10px', marginTop: '1px' }}>NIT: {nit}</div>}
+          {telefono && <div style={{ fontSize: '10px', marginTop: '1px' }}>Tel: {telefono}</div>}
+          {direccion && <div style={{ fontSize: '9px', marginTop: '1px', color: '#444' }}>{direccion}</div>}
           <div style={{ fontSize: '9px', color: '#555', marginTop: '2px' }}>
             Documento de Ingreso — NO reemplaza la factura
           </div>
@@ -216,7 +242,7 @@ export default function TicketRecibo({ ticket, negocio = 'AZ CAFE', nit = '52425
 
         {/* Footer */}
         <div style={{ textAlign: 'center', fontSize: '9px', color: '#444', marginTop: '4px' }}>
-          <div style={{ fontWeight: 'bold' }}>¡Gracias por tu compra!</div>
+          {mensajeFooter && <div style={{ fontWeight: 'bold' }}>{mensajeFooter}</div>}
           <div style={{ marginTop: '4px' }}>{'- '.repeat(16)}</div>
         </div>
       </div>

@@ -82,6 +82,23 @@ class Tienda(Base):
     nombre = Column(String(100), nullable=False)
     direccion = Column(String(200))
     activa = Column(Boolean, default=True)
+
+
+class ConfigTicket(Base):
+    """Datos que aparecen en el ticket impreso del POS, editables por admin."""
+    __tablename__ = "config_tickets"
+    id              = Column(Integer, primary_key=True)
+    tienda_id       = Column(Integer, ForeignKey("tiendas.id"), unique=True, nullable=False)
+    nombre_negocio  = Column(String(150), nullable=False, server_default="AZ CAFE")
+    nit             = Column(String(30),  nullable=True)
+    telefono        = Column(String(30),  nullable=True)
+    direccion       = Column(String(250), nullable=True)
+    logo_url        = Column(String(500), nullable=True)
+    mensaje_footer  = Column(String(300), nullable=True, server_default="¡Gracias por tu compra!")
+    # Dimensiones de impresión
+    ancho_papel_mm  = Column(Integer, nullable=False, server_default="80")
+    escala_fuente   = Column(String(10), nullable=False, server_default="normal")  # small | normal | large
+    tienda          = relationship("Tienda", foreign_keys=[tienda_id])
     usuarios = relationship("Usuario", back_populates="tienda")
     turnos = relationship("CajaTurno", back_populates="tienda")
     inventarios = relationship("Inventario", back_populates="tienda")

@@ -82,6 +82,20 @@ class Tienda(Base):
     nombre = Column(String(100), nullable=False)
     direccion = Column(String(200))
     activa = Column(Boolean, default=True)
+    usuarios = relationship("Usuario", back_populates="tienda")
+    turnos = relationship("CajaTurno", back_populates="tienda")
+    inventarios = relationship("Inventario", back_populates="tienda")
+    movimientos_inv = relationship("MovimientoInventario", back_populates="tienda")
+    pastelerias = relationship("PasteleriaDiaria", back_populates="tienda")
+    consignaciones = relationship("Consignacion", back_populates="tienda")
+    checklists = relationship("ChecklistDiario", back_populates="tienda")
+    lotes = relationship("LoteInventario", back_populates="tienda")
+    mermas = relationship("Merma", back_populates="tienda", foreign_keys="Merma.tienda_id")
+    solicitudes_pedido = relationship("SolicitudPedido", back_populates="tienda")
+    solicitudes_sencilla = relationship("SolicitudSencilla", back_populates="tienda")
+    notificaciones = relationship("Notificacion", back_populates="tienda")
+    facturas_compra = relationship("FacturaCompra", back_populates="tienda")
+    conteos_compras = relationship("ConteoCompras", back_populates="tienda")
 
 
 class ConfigTicket(Base):

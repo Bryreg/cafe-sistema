@@ -53,6 +53,7 @@ import ConciliacionInventario from './pages/ConciliacionInventario'
 import LotesTrazabilidad from './pages/LotesTrazabilidad'
 import NotificacionesConfig from './pages/NotificacionesConfig'
 import CuadreTurnos from './pages/CuadreTurnos'
+import ConfigTicketPage from './pages/ConfigTicket'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -182,6 +183,7 @@ function AppRoutes() {
       <Route path="/audit-log"        element={<RequireAdmin><Layout><AuditLog /></Layout></RequireAdmin>} />
       <Route path="/notificaciones-config" element={<RequireAdmin><Layout><NotificacionesConfig /></Layout></RequireAdmin>} />
       <Route path="/cumplimiento"     element={<RequireAdmin><Layout><CumplimientoAdmin /></Layout></RequireAdmin>} />
+      <Route path="/config-ticket"   element={<RequireAdmin><Layout><ConfigTicketPage /></Layout></RequireAdmin>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

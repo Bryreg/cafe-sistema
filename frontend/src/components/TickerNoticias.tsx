@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
@@ -104,22 +104,7 @@ export default function TickerNoticias() {
         flexShrink: 0,
       }}
     >
-      <style>{`
-        @keyframes ticker-scroll {
-          0%   { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
-        }
-        .ticker-track {
-          display: flex;
-          align-items: center;
-          height: 100%;
-          white-space: nowrap;
-          width: max-content;
-          animation: ticker-scroll ${duration}s linear infinite;
-        }
-        .ticker-track:hover { animation-play-state: paused; }
-      `}</style>
-      <div className="ticker-track">
+      <div className="ticker-track" style={{ '--ticker-duration': `${duration}s` } as React.CSSProperties}>
         {doubled.map((item, i) => {
           const cfg = TIPO_CFG[item.tipo]
           if (item.navigateTo) {

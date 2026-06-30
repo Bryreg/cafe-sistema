@@ -232,7 +232,7 @@ function InventarioAdmin() {
               )}
               <div className="flex gap-2">
                 {(['entrada', 'salida', 'ajuste'] as const).map(t => (
-                  <button key={t} onClick={() => setTipo(t)}
+                  <button key={t} onClick={() => { setTipo(t); setError('') }}
                     className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border-2 transition-colors ${
                       tipo === t
                         ? t === 'entrada' ? 'bg-green-100 border-green-400 text-green-700'
@@ -530,11 +530,12 @@ function InventarioBarista() {
       setCantidad(''); setMotivo(''); setSelected(null)
       load()
     } catch (e: any) {
-      const detail: string = e.response?.data?.detail || ''
-      const isInsuficiente = e.response?.status === 400 && detail.toLowerCase().includes('insuficiente')
+      const raw = e.response?.data?.detail
+      const detail = Array.isArray(raw) ? (raw[0]?.msg ?? 'Error de validación') : (raw || '')
+      const isInsuficiente = e.response?.status === 400 && typeof detail === 'string' && detail.toLowerCase().includes('insuficiente')
       setError(isInsuficiente
         ? 'Stock insuficiente. Los datos se actualizaron — verificá el stock actual.'
-        : detail || 'Error')
+        : detail || (e.message ? `Error: ${e.message}` : 'Error al conectar con el servidor'))
     } finally { setSaving(false) }
   }
 
@@ -577,7 +578,7 @@ function InventarioBarista() {
               )}
               <div className="flex gap-2">
                 {(['entrada', 'salida', 'ajuste'] as const).map(t => (
-                  <button key={t} onClick={() => setTipo(t)}
+                  <button key={t} onClick={() => { setTipo(t); setError('') }}
                     className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border-2 transition-colors ${
                       tipo === t
                         ? t === 'entrada' ? 'bg-green-100 border-green-400 text-green-700'

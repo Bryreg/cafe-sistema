@@ -46,6 +46,21 @@ input, select, textarea {
   font-size: 16px;
 }
 
+/* ── News ticker ─────────────────────────────────────────────────────────── */
+@keyframes ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.ticker-track {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  white-space: nowrap;
+  width: max-content;
+  animation: ticker-scroll var(--ticker-duration, 20s) linear infinite;
+}
+.ticker-track:hover { animation-play-state: paused; }
+
 /* ── Safe-area utilities (para headers pegajosos con notch/Dynamic Island) ── */
 @layer utilities {
   .pt-safe {

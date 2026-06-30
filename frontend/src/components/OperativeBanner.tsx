@@ -224,13 +224,8 @@ export default function OperativeBanner() {
               {/* Continuidad */}
               {turno && (
                 <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${dark.border}` }}>
-                  <button onClick={() => go('/entrega')}
-                    className="w-full flex items-center gap-3 px-4 py-3" style={{ background: dark.surface }}>
-                    <ArrowRightLeft size={16} style={{ color: dark.inkMuted }} />
-                    <span className="text-[13px]" style={{ color: dark.ink }}>Cambio de turno (entrega)</span>
-                  </button>
                   <button onClick={() => go('/conteo-cierre')}
-                    className="w-full flex items-center gap-3 px-4 py-3" style={{ background: dark.surface, borderTop: `1px solid ${dark.border}` }}>
+                    className="w-full flex items-center gap-3 px-4 py-3" style={{ background: dark.surface }}>
                     <Lock size={16} style={{ color: dark.inkMuted }} />
                     <span className="text-[13px]" style={{ color: dark.ink }}>Cerrar turno</span>
                   </button>

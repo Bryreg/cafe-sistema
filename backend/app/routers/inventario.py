@@ -85,9 +85,11 @@ def editar_producto(producto_id: int, data: ProductoUpdate, db: Session = Depend
     if data.controla_stock is not None: p.controla_stock = data.controla_stock
     if data.lead_time_dias is not None: p.lead_time_dias = data.lead_time_dias
     if data.proveedor is not None: p.proveedor = data.proveedor if data.proveedor.strip() else None
+    if data.incluir_en_conteo is not None: p.incluir_en_conteo = data.incluir_en_conteo
     db.commit()
     return {"id": p.id, "nombre": p.nombre, "categoria": p.categoria.value,
-            "unidad_medida": p.unidad_medida, "controla_stock": p.controla_stock}
+            "unidad_medida": p.unidad_medida, "controla_stock": p.controla_stock,
+            "incluir_en_conteo": p.incluir_en_conteo}
 
 @router.patch("/tienda/{tienda_id}/producto/{producto_id}/minimo")
 def actualizar_minimo(tienda_id: int, producto_id: int, data: StockMinimoUpdate,
@@ -160,6 +162,7 @@ def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require
             "categoria": p.categoria.value,
             "unidad_medida": p.unidad_medida,
             "controla_stock": p.controla_stock,
+            "incluir_en_conteo": p.incluir_en_conteo if p.incluir_en_conteo is not None else True,
             "precio_venta": p.precio_venta or 0.0,
             "stocks": stocks,
         })

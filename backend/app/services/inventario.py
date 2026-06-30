@@ -24,7 +24,13 @@ def clasificar_estado(stock_actual: float, stock_minimo: float,
 
 
 def get_inventario_tienda(db: Session, tienda_id: int):
-    items = db.query(Inventario).options(joinedload(Inventario.producto)).filter(Inventario.tienda_id == tienda_id).all()
+    items = (
+        db.query(Inventario)
+        .options(joinedload(Inventario.producto))
+        .join(Inventario.producto)
+        .filter(Inventario.tienda_id == tienda_id, Producto.incluir_en_conteo.isnot(False))
+        .all()
+    )
     result = []
     for item in items:
         result.append({

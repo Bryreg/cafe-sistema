@@ -133,6 +133,7 @@ with engine.connect() as _conn:
         # Perf: ventas del día por tienda (lo consulta crear_ticket en cada venta para la
         # regla ventas_dia, y los informes/dashboard). Filtrar por rango de fecha usa este índice.
         "CREATE INDEX IF NOT EXISTS ix_tickets_tienda_fecha ON tickets (tienda_id, fecha)",
+        "ALTER TABLE productos ADD COLUMN incluir_en_conteo BOOLEAN DEFAULT TRUE",
     ]:
         try:
             _conn.execute(_text(_sql))

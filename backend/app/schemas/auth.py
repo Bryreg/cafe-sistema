@@ -14,8 +14,8 @@ class UsuarioPublic(BaseModel):
 
 class RegisterRequest(BaseModel):
     nombre: str
-    email: str
-    password: str
+    email: Optional[str] = None      # requerido solo para admin (login); barista lo genera el backend
+    password: Optional[str] = None   # idem
     rol: str = "barista"
     tienda_id: Optional[int] = None
 

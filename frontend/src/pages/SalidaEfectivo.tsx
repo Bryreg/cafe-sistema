@@ -180,7 +180,7 @@ export default function SalidaEfectivo() {
 
         <div>
           <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
-            Foto del datáfono (opcional)
+            Foto del datáfono (obligatoria)
           </p>
           <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
             onChange={e => setImagen(e.target.files?.[0] ?? null)} />
@@ -191,7 +191,7 @@ export default function SalidaEfectivo() {
           >
             <Camera size={18} style={{ color: imagen ? dark.green : dark.inkSubtle }} />
             <span className="flex-1 text-left text-[13px]" style={{ color: imagen ? dark.green : dark.inkSubtle }}>
-              {imagen ? imagen.name : 'Foto de comprobante (opcional)'}
+              {imagen ? imagen.name : 'Foto de comprobante (obligatoria)'}
             </span>
             {imagen && <Check size={14} style={{ color: dark.green }} />}
           </button>
@@ -199,11 +199,11 @@ export default function SalidaEfectivo() {
 
         <button
           onClick={() => setConfirming(true)}
-          disabled={efectivoContado === 0}
+          disabled={efectivoContado === 0 || imagen === null}
           className="w-full py-4 rounded-2xl font-bold text-[15px] text-white disabled:opacity-40"
           style={{ background: dark.danger }}
         >
-          {efectivoContado === 0 ? 'Contá el efectivo primero' : 'Revisar y cerrar turno'}
+          {efectivoContado === 0 ? 'Contá el efectivo primero' : imagen === null ? 'Falta la foto obligatoria' : 'Revisar y cerrar turno'}
         </button>
       </div>
     </div>

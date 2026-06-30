@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
-import { AlertTriangle, Lock, ChevronLeft, ChevronDown, ChevronUp, Check, X } from 'lucide-react'
+import { AlertTriangle, Lock, ChevronLeft, ChevronDown, ChevronUp, Check, X, Camera } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import FilaDenom from '../components/FilaDenom'
 
@@ -84,6 +84,8 @@ export default function Cierre() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
+  const [imagen, setImagen] = useState<File | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   // Depende solo de los campos relevantes para navegación, NO del objeto completo.
   // Si dependiera de `turno`, el efecto se dispararía en cada poll de 15 s
@@ -114,12 +116,18 @@ export default function Cierre() {
   const datafonoDigitado = datafono.trim() !== ''
 
   const hayDiff  = (diffEfectivo !== null && diffEfectivo !== 0) || (diffTarjeta !== null && diffTarjeta !== 0)
-  const canSubmit = totalCaja > 0 && (!requiereDatafono || datafonoDigitado) && (!hayDiff || justificacion.trim())
+  const canSubmit = totalCaja > 0 && (!requiereDatafono || datafonoDigitado) && (!hayDiff || justificacion.trim()) && imagen !== null
 
   const cerrar = async () => {
     if (!canSubmit) return
     setError(''); setLoading(true)
     try {
+      const fd = new FormData()
+      fd.append('efectivo_real', String(totalCaja))
+      fd.append('ventas_tarjeta_bold', String(datafonoDigitado ? datafonoNum : 0))
+      if (imagen) fd.append('imagen', imagen)
+      await api.post(`/caja/${turno.id}/entrega`, fd)
+
       await api.post(`/caja/${turno.id}/cerrar`, {
         efectivo_final_real: totalCaja,
         datafono_real: datafonoDigitado ? datafonoNum : null,
@@ -360,6 +368,25 @@ export default function Cierre() {
             <span style={{ color: dark.inkSubtle }}>Base que queda en caja</span>
             <span className="font-mono" style={{ color: dark.inkSubtle }}>{fmt(turno.base_real)}</span>
           </div>
+        </div>
+
+        {/* Foto obligatoria */}
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-widest mb-2"
+            style={{ color: imagen ? dark.inkSubtle : dark.danger }}>
+            Foto del datáfono (obligatoria)
+          </p>
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
+            onChange={e => setImagen(e.target.files?.[0] ?? null)} />
+          <button onClick={() => fileRef.current?.click()}
+            className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl"
+            style={{ background: dark.surface, border: `1px solid ${imagen ? dark.green : dark.dangerDim}` }}>
+            <Camera size={18} style={{ color: imagen ? dark.green : dark.danger }} />
+            <span className="flex-1 text-left text-[13px]" style={{ color: imagen ? dark.green : dark.danger }}>
+              {imagen ? imagen.name : 'Foto del datáfono (obligatoria para cerrar)'}
+            </span>
+            {imagen && <Check size={14} style={{ color: dark.green }} />}
+          </button>
         </div>
 
         {/* Justificación si hay diferencias */}

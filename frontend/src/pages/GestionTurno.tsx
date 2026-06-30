@@ -6,7 +6,7 @@ import api from '../api/client'
 import {
   Users, CheckCircle, Circle, ChevronRight, AlertTriangle,
   Clock, X, Check, LogOut, Package, BarChart2, Sun, Sunset, Moon,
-  Cake, Wallet, Receipt, ArrowRightLeft,
+  Cake, Wallet, Receipt,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import ContadorEfectivo from '../components/ContadorEfectivo'
@@ -252,8 +252,7 @@ export default function GestionTurno() {
             {/* Flujo de acciones */}
             <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${dark.border}` }}>
               {[
-                { label: 'Cuadre de caja',   done: false,                      to: '/entrega',       icon: ArrowRightLeft, note: 'Cambio de turno: contá el efectivo' },
-                { label: 'Conteo de cierre', done: turno.tiene_conteo_cierre,  to: '/conteo-cierre', icon: CheckCircle,    note: 'Solo al cerrar el día' },
+                { label: 'Conteo de cierre', done: turno.tiene_conteo_cierre, to: '/conteo-cierre', icon: CheckCircle, note: 'Solo al cerrar el día' },
               ].map((item, i) => (
                 <button
                   key={item.label}

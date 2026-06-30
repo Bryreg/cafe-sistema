@@ -41,6 +41,7 @@ const TOOLS_MAIN = [
   { id: 'comunicados', label: 'Comunicados', sublabel: 'Mensajes a baristas', icon: Inbox,          path: '/comunicados',         tint: '#c08a3e' },
   { id: 'informes',    label: 'Informes',    sublabel: 'Reportes y métricas', icon: BarChart2,      path: '/informes',            tint: '#2d5a3f' },
   { id: 'pedidos',     label: 'Pedidos',     sublabel: 'Solicitudes activas', icon: ClipboardList,  path: '/pedidos-admin',       tint: '#d97757' },
+  { id: 'ticket',      label: 'Ticket',      sublabel: 'Config. de impresión', icon: Receipt,       path: '/config-ticket',       tint: '#4a7abf' },
 ]
 const TOOLS_MORE = [
   { id: 'cuadres',       label: 'Cuadres',        icon: Wallet,         path: '/cuadre-turnos',    tint: '#2a7d5e' },
@@ -50,7 +51,6 @@ const TOOLS_MORE = [
   { id: 'limpieza',      label: 'Limpieza',       icon: Sparkles,       path: '/limpieza',         tint: '#d169a4' },
   { id: 'calibrar',      label: 'Calibrar',       icon: Zap,            path: '/control-inventario', tint: '#a14e9a' },
   { id: 'cumplimiento',  label: 'Cumplimiento',   icon: ClipboardCheck, path: '/cumplimiento',     tint: '#2a7d9a' },
-  { id: 'ticket',        label: 'Ticket',         icon: Receipt,        path: '/config-ticket',    tint: '#4a7abf' },
 ]
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────

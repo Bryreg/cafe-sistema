@@ -207,13 +207,36 @@ def kiosk_init(tienda_id: int, kiosk_pin: str, db: Session = Depends(get_db)):
 
 @router.post("/usuarios")
 def crear_usuario(data: RegisterRequest, db: Session = Depends(get_db), _: Usuario = Depends(require_admin)):
-    """Crea un nuevo usuario (barista o admin) desde el panel."""
-    email = data.email.strip().lower()
-    if db.query(Usuario).filter(Usuario.email == email).first():
-        raise HTTPException(status_code=400, detail="Email ya registrado")
+    """Crea un usuario. El admin inicia sesión → requiere email + contraseña.
+    La barista es solo un perfil del roster (no inicia sesión): alcanza con el nombre;
+    el email y la contraseña se generan internos."""
+    nombre = (data.nombre or "").strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="El nombre es obligatorio")
+    email = (data.email or "").strip().lower()
+
+    if data.rol == "admin":
+        if not email or not data.password:
+            raise HTTPException(status_code=400, detail="Un admin necesita email y contraseña")
+        if db.query(Usuario).filter(Usuario.email == email).first():
+            raise HTTPException(status_code=400, detail="Email ya registrado")
+        password = data.password
+    else:
+        # Barista: email interno único (no se usa para login) + clave aleatoria.
+        if email and db.query(Usuario).filter(Usuario.email == email).first():
+            raise HTTPException(status_code=400, detail="Email ya registrado")
+        if not email:
+            slug = "".join(ch for ch in nombre.lower() if ch.isalnum()) or "barista"
+            email = f"{slug}@barista.local"
+            n = 1
+            while db.query(Usuario).filter(Usuario.email == email).first():
+                n += 1
+                email = f"{slug}{n}@barista.local"
+        password = secrets.token_hex(16)
+
     user = Usuario(
-        nombre=data.nombre.strip(), email=email,
-        password_hash=hash_password(data.password if data.password else "sincontraseña"),
+        nombre=nombre, email=email,
+        password_hash=hash_password(password),
         rol=data.rol, tienda_id=data.tienda_id, activo=True,
     )
     db.add(user)

@@ -117,12 +117,14 @@ function FormUsuario({
   const [email, setEmail]     = useState(inicial?.email ?? '')
   const [rol, setRol]         = useState(inicial?.rol ?? 'barista')
   const [tienda, setTienda]   = useState<string>(String(inicial?.tienda_id ?? ''))
+  const [password, setPassword] = useState('')
   const [saving, setSaving]   = useState(false)
   const [error, setError]     = useState('')
 
   const guardar = async () => {
-    if (!nombre.trim() || (!editando && !email.trim())) {
-      setError('Nombre y email son obligatorios'); return
+    if (!nombre.trim()) { setError('El nombre es obligatorio'); return }
+    if (!editando && rol === 'admin' && (!email.trim() || password.length < 6)) {
+      setError('Un admin necesita email y contraseña (mínimo 6 caracteres)'); return
     }
     setSaving(true); setError('')
     try {
@@ -133,13 +135,14 @@ function FormUsuario({
           tienda_id: tienda ? Number(tienda) : null,
         })
       } else {
-        await api.post('/auth/usuarios', {
-          nombre: nombre.trim(),
-          email: email.trim().toLowerCase(),
-          password: Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, '0')).join(''),
-          rol,
-          tienda_id: tienda ? Number(tienda) : null,
-        })
+        // Barista: solo perfil del roster → el backend genera email/clave internos.
+        // Admin: inicia sesión, así que sí lleva email + contraseña.
+        const payload: any = { nombre: nombre.trim(), rol, tienda_id: tienda ? Number(tienda) : null }
+        if (rol === 'admin') {
+          payload.email = email.trim().toLowerCase()
+          payload.password = password
+        }
+        await api.post('/auth/usuarios', payload)
       }
       onGuardar()
     } catch (e: any) {
@@ -157,15 +160,6 @@ function FormUsuario({
           className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
           placeholder="Nombre completo" />
       </div>
-      {!editando && (
-        <div>
-          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Email</label>
-          <input value={email} onChange={e => setEmail(e.target.value)}
-            type="email"
-            className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
-            placeholder="correo@ejemplo.com" />
-        </div>
-      )}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Rol</label>
@@ -184,6 +178,25 @@ function FormUsuario({
           </select>
         </div>
       </div>
+      {!editando && rol === 'admin' && (
+        <>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Email (para iniciar sesión)</label>
+            <input value={email} onChange={e => setEmail(e.target.value)} type="email"
+              className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
+              placeholder="correo@ejemplo.com" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Contraseña</label>
+            <input value={password} onChange={e => setPassword(e.target.value)} type="text" autoComplete="new-password"
+              className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-amber-400"
+              placeholder="Mínimo 6 caracteres" />
+          </div>
+        </>
+      )}
+      {!editando && rol === 'barista' && (
+        <p className="text-xs text-gray-400">La barista no inicia sesión: con el nombre alcanza. Aparecerá para elegirla al abrir turno.</p>
+      )}
       {error && <p className="text-xs text-red-500">{error}</p>}
       <button onClick={guardar} disabled={saving}
         className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm transition-colors">

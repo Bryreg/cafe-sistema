@@ -70,7 +70,7 @@ export default function PanelEntrada({ onClose }: { onClose: () => void }) {
   }
 
   const selectedBarista = baristas.find(b => b.id === selected)
-  const canCuadre = efectivoReal > 0 && ventasTarjetaBold.trim() !== ''
+  const canCuadre = efectivoReal > 0 && ventasTarjetaBold.trim() !== '' && imagen !== null
 
   if (step === 'select') {
     return (
@@ -168,7 +168,7 @@ export default function PanelEntrada({ onClose }: { onClose: () => void }) {
           style={{ background: dark.surface, border: `1px solid ${imagen ? dark.green : dark.border}` }}>
           <Camera size={18} style={{ color: imagen ? dark.green : dark.inkSubtle }} />
           <span className="flex-1 text-left text-[13px]" style={{ color: imagen ? dark.green : dark.inkSubtle }}>
-            {imagen ? imagen.name : 'Foto de pantalla + datáfono (opcional)'}
+            {imagen ? imagen.name : 'Foto de pantalla + datáfono (obligatoria)'}
           </span>
           {imagen && <Check size={14} style={{ color: dark.green }} />}
         </button>

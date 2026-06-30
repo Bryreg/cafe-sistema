@@ -197,6 +197,26 @@ def registrar_pago(db: Session, factura_id: int, monto: float, forma_pago: str |
         f.forma_pago_real = forma_pago
     if imagen_soporte_url:
         f.imagen_soporte_url = imagen_soporte_url
+
+    # Solo el pago en EFECTIVO sale del cajón → egreso de caja (descuenta de consignaciones).
+    # Bancos/crédito/cheque se manejan por el banco: quedan solo como registro de la factura.
+    if (forma_pago or "").lower() in ("efectivo", "contado"):
+        turno_activo = db.query(CajaTurno).filter(
+            CajaTurno.tienda_id == f.tienda_id,
+            CajaTurno.estado == EstadoTurnoEnum.abierto,
+        ).first()
+        if turno_activo:
+            concepto = f"Pago proveedor: {f.proveedor}"
+            if f.numero_factura:
+                concepto += f" — Fact. {f.numero_factura}"
+            db.add(MovimientoCaja(
+                caja_turno_id=turno_activo.id,
+                tipo="egreso",
+                concepto=concepto,
+                valor=float(monto),
+                usuario_id=usuario_id,
+            ))
+
     audit.registrar(
         db, accion="pago_proveedor", tabla="facturas_compra", registro_id=f.id,
         usuario_id=usuario_id, tienda_id=f.tienda_id,

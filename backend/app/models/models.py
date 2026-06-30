@@ -610,6 +610,17 @@ class LimpiezaSemanal(Base):
     usuario = relationship("Usuario")
 
 
+class TareaLimpieza(Base):
+    """Catálogo de tareas de limpieza por tienda (editable por admin)."""
+    __tablename__ = "tareas_limpieza"
+    id        = Column(Integer, primary_key=True, index=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
+    key       = Column(String(80),  nullable=False)
+    label     = Column(String(200), nullable=False)
+    activa    = Column(Boolean, default=True, nullable=False)
+    orden     = Column(Integer, default=0, nullable=False)
+
+
 class Receta(Base):
     """Escandallo / receta estándar con lista de ingredientes y costo teórico."""
     __tablename__ = "recetas"

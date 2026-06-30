@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, Layers, ClipboardList, ShoppingCart,
+  LayoutDashboard, Layers, ClipboardList,
   Banknote, Wrench, ClipboardCheck, Activity,
   Bell, Inbox, BarChart2, Users, Tag, RotateCcw, Calculator, Truck, Scale, Boxes, Wallet,
 } from 'lucide-react'
@@ -30,7 +30,6 @@ export const NAV_GROUPS: NavGroup[] = [
   ]},
   { label: 'Pedidos y compras', items: [
     { to: '/pedidos-admin',      label: 'Pedidos',        icon: ClipboardList   },
-    { to: '/compras',            label: 'Compras',        icon: ShoppingCart    },
     { to: '/pagos-proveedores',  label: 'Pagos proveedores', icon: Truck        },
   ]},
   { label: 'Caja', items: [

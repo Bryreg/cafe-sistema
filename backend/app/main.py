@@ -45,26 +45,26 @@ with engine.connect() as _conn:
         "ALTER TABLE caja_turnos ADD COLUMN diferencia_tarjeta FLOAT",
         "ALTER TABLE pasteleria_diaria ADD COLUMN activo BOOLEAN DEFAULT TRUE",
         # Etapa 6: timestamps operativos en turnos
-        "ALTER TABLE caja_turnos ADD COLUMN ts_conteo_apertura DATETIME",
-        "ALTER TABLE caja_turnos ADD COLUMN ts_primera_venta DATETIME",
-        "ALTER TABLE caja_turnos ADD COLUMN ts_conteo_cierre DATETIME",
+        "ALTER TABLE caja_turnos ADD COLUMN ts_conteo_apertura TIMESTAMP",
+        "ALTER TABLE caja_turnos ADD COLUMN ts_primera_venta TIMESTAMP",
+        "ALTER TABLE caja_turnos ADD COLUMN ts_conteo_cierre TIMESTAMP",
         # Etapa 9: último acceso de usuario
-        "ALTER TABLE usuarios ADD COLUMN ultimo_acceso DATETIME",
+        "ALTER TABLE usuarios ADD COLUMN ultimo_acceso TIMESTAMP",
         # Mermas: tipo, traslado y seguimiento
         "ALTER TABLE mermas ADD COLUMN tipo VARCHAR(20) DEFAULT 'consumo'",
         "ALTER TABLE mermas ADD COLUMN tienda_destino_id INTEGER",
         "ALTER TABLE mermas ADD COLUMN recibido BOOLEAN DEFAULT FALSE",
-        "ALTER TABLE mermas ADD COLUMN fecha_recibido DATETIME",
+        "ALTER TABLE mermas ADD COLUMN fecha_recibido TIMESTAMP",
         "ALTER TABLE movimientos_caja ADD COLUMN imagen_url VARCHAR(300)",
         "ALTER TABLE entregas_turno ADD COLUMN tipo VARCHAR(20) DEFAULT 'entrega' NOT NULL",
         "ALTER TABLE pasteleria_diaria ADD COLUMN numero_lote VARCHAR(100)",
-        "ALTER TABLE pasteleria_diaria ADD COLUMN fecha_vencimiento DATETIME",
+        "ALTER TABLE pasteleria_diaria ADD COLUMN fecha_vencimiento TIMESTAMP",
         # Facturas de compra
         "ALTER TABLE facturas_compra ADD COLUMN numero_lote VARCHAR(100)",
-        "ALTER TABLE facturas_compra ADD COLUMN fecha_recibido DATETIME",
+        "ALTER TABLE facturas_compra ADD COLUMN fecha_recibido TIMESTAMP",
         # Conteos de compras
         "ALTER TABLE conteos_compras ADD COLUMN nota VARCHAR(300)",
-        "ALTER TABLE conteos_compras ADD COLUMN fecha_ajuste DATETIME",
+        "ALTER TABLE conteos_compras ADD COLUMN fecha_ajuste TIMESTAMP",
         "ALTER TABLE conteos_compras ADD COLUMN usuario_ajuste_id INTEGER",
         # Integridad relacional: consignaciones ligadas a un turno específico
         "ALTER TABLE consignaciones ADD COLUMN caja_turno_id INTEGER REFERENCES caja_turnos(id)",
@@ -116,9 +116,9 @@ with engine.connect() as _conn:
         # Trazabilidad de lotes: proveedor/lote/fabricación/factura/agotado.
         "ALTER TABLE lotes_inventario ADD COLUMN numero_lote VARCHAR(100)",
         "ALTER TABLE lotes_inventario ADD COLUMN proveedor VARCHAR(150)",
-        "ALTER TABLE lotes_inventario ADD COLUMN fecha_fabricacion DATETIME",
+        "ALTER TABLE lotes_inventario ADD COLUMN fecha_fabricacion TIMESTAMP",
         "ALTER TABLE lotes_inventario ADD COLUMN factura_id INTEGER",
-        "ALTER TABLE lotes_inventario ADD COLUMN fecha_agotado DATETIME",
+        "ALTER TABLE lotes_inventario ADD COLUMN fecha_agotado TIMESTAMP",
         # Atribución de VENTAS por barista en kiosko compartido (plano, sin FK).
         "ALTER TABLE tickets ADD COLUMN barista_id INTEGER",
         "ALTER TABLE tickets ADD COLUMN barista_nombre VARCHAR(100)",

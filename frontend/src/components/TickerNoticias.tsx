@@ -65,12 +65,15 @@ export default function TickerNoticias() {
 
     try {
       const { data } = await api.get(`/consignaciones/pendiente/${tiendaId}`)
-      const total = data?.total_pendiente ?? 0
-      if (total > 0) {
+      for (const item of data?.items ?? []) {
+        if ((item.pendiente ?? 0) <= 0) continue
+        const fecha = item.fecha_cierre
+          ? new Date(item.fecha_cierre).toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit' })
+          : `turno #${item.turno_id}`
         next.push({
-          id: 'consig',
+          id: `consig-${item.turno_id}`,
           tipo: 'consignacion',
-          label: `Consignación pendiente: $${Math.round(total).toLocaleString('es-CO')}`,
+          label: `Consignación pendiente (${fecha}): $${Math.round(item.pendiente).toLocaleString('es-CO')}`,
           urgente: false,
           navigateTo: '/consignaciones',
         })

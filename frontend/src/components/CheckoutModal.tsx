@@ -197,13 +197,15 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
                   size="lg"
                 />
 
-                {/* Numpad en pantalla */}
-                <Numpad
-                  value={recibido}
-                  onValue={setRecibido}
-                  onQuick={amount => setRecibido(String(amount))}
-                  totalEstimado={totalEstimado}
-                />
+                {/* Numpad en pantalla — solo mobile (desktop tiene teclado físico) */}
+                <div className="sm:hidden">
+                  <Numpad
+                    value={recibido}
+                    onValue={setRecibido}
+                    onQuick={amount => setRecibido(String(amount))}
+                    totalEstimado={totalEstimado}
+                  />
+                </div>
 
                 {/* Cambio en vivo */}
                 {numRecibido > 0 && (

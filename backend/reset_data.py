@@ -144,6 +144,15 @@ with engine.connect() as conn:
 
 print(f"\n  Total filas eliminadas: {total_rows}")
 
+# ── Resetear stock a cero ──────────────────────────────────────────────────
+try:
+    with engine.connect() as conn:
+        result = conn.execute(text("UPDATE inventario SET stock_actual = 0"))
+        conn.commit()
+    print(f"  ✓ inventario: stock reseteado a 0 ({result.rowcount} productos)")
+except Exception as e:
+    print(f"  inventario stock: {e}")
+
 # ── Limpiar logo del config_ticket (foto de prueba) ────────────────────────
 try:
     with engine.connect() as conn:

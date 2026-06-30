@@ -38,6 +38,7 @@ CAT_MAP = {
     "pasteleria": CategoriaProductoEnum.pasteleria,
     "bebida":     CategoriaProductoEnum.bebida,
     "insumo":     CategoriaProductoEnum.insumo,
+    "porciones":  CategoriaProductoEnum.porciones,
 }
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), "menu_venta.json")

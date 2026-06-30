@@ -12,13 +12,14 @@ interface Producto {
   precio_venta?: number
 }
 
-const CATEGORIAS = ['pasteleria', 'bebida', 'insumo'] as const
+const CATEGORIAS = ['pasteleria', 'bebida', 'porciones', 'insumo'] as const
 type Cat = typeof CATEGORIAS[number]
 
-const CAT_LABEL: Record<Cat, string> = { pasteleria: 'Pastelería', bebida: 'Bebidas / Café', insumo: 'Insumos / Desechables' }
+const CAT_LABEL: Record<Cat, string> = { pasteleria: 'Pastelería', bebida: 'Bebidas / Café', porciones: 'Porciones', insumo: 'Insumos / Desechables' }
 const CAT_COLOR: Record<Cat, { bg: string; text: string }> = {
   pasteleria: { bg: 'oklch(96% 0.015 60)',  text: 'oklch(40% 0.12 55)' },
   bebida:     { bg: 'oklch(95% 0.015 155)', text: 'oklch(30% 0.10 155)' },
+  porciones:  { bg: 'oklch(95% 0.02 300)',  text: 'oklch(35% 0.13 300)' },
   insumo:     { bg: 'oklch(95% 0.015 245)', text: 'oklch(30% 0.12 245)' },
 }
 

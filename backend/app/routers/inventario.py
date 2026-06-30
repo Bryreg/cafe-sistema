@@ -56,7 +56,8 @@ def crear_producto(data: ProductoCreate, db: Session = Depends(get_db),
                    user: Usuario = Depends(require_admin)):
     cat_map = {"pasteleria": CategoriaProductoEnum.pasteleria,
                "bebida": CategoriaProductoEnum.bebida,
-               "insumo": CategoriaProductoEnum.insumo}
+               "insumo": CategoriaProductoEnum.insumo,
+               "porciones": CategoriaProductoEnum.porciones}
     if data.categoria not in cat_map:
         raise HTTPException(400, "Categoría inválida")
     p = Producto(nombre=data.nombre, categoria=cat_map[data.categoria],
@@ -78,7 +79,8 @@ def editar_producto(producto_id: int, data: ProductoUpdate, db: Session = Depend
         raise HTTPException(404, "Producto no encontrado")
     cat_map = {"pasteleria": CategoriaProductoEnum.pasteleria,
                "bebida": CategoriaProductoEnum.bebida,
-               "insumo": CategoriaProductoEnum.insumo}
+               "insumo": CategoriaProductoEnum.insumo,
+               "porciones": CategoriaProductoEnum.porciones}
     if data.nombre is not None: p.nombre = data.nombre
     if data.categoria is not None:
         if data.categoria not in cat_map: raise HTTPException(400, "Categoría inválida")

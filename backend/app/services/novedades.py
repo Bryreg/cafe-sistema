@@ -62,4 +62,4 @@ def listar(db: Session, tienda_id: int, dia_operativo_id: int | None = None):
     q = db.query(Novedad).filter(Novedad.tienda_id == tienda_id)
     if dia_operativo_id:
         q = q.filter(Novedad.dia_operativo_id == dia_operativo_id)
-    return q.order_by(Novedad.fecha.desc()).limit(100).all()
+    return q.order_by(Novedad.fecha.desc()).all()

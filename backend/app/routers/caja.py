@@ -156,7 +156,7 @@ def historial(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Dep
     ensure_tienda_access(user, tienda_id)
     turnos = db.query(CajaTurno).filter(
         CajaTurno.tienda_id == tienda_id
-    ).order_by(CajaTurno.fecha_apertura.desc()).limit(60).all()
+    ).order_by(CajaTurno.fecha_apertura.desc()).all()
 
     if not turnos:
         return []

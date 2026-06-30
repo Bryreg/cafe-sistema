@@ -68,7 +68,7 @@ def rechazar_pedido(db: Session, solicitud_id: int, usuario_id: int):
 def get_pedidos_tienda(db: Session, tienda_id: int):
     return db.query(SolicitudPedido).filter(
         SolicitudPedido.tienda_id == tienda_id
-    ).order_by(SolicitudPedido.fecha_solicitud.desc()).limit(30).all()
+    ).order_by(SolicitudPedido.fecha_solicitud.desc()).all()
 
 
 def crear_sencilla(db: Session, tienda_id: int, monto_solicitado: float,
@@ -126,7 +126,7 @@ def rechazar_sencilla(db: Session, solicitud_id: int, usuario_id: int):
 def get_sencillas_tienda(db: Session, tienda_id: int):
     return db.query(SolicitudSencilla).filter(
         SolicitudSencilla.tienda_id == tienda_id
-    ).order_by(SolicitudSencilla.fecha_solicitud.desc()).limit(30).all()
+    ).order_by(SolicitudSencilla.fecha_solicitud.desc()).all()
 
 
 def get_pedidos_todas(db: Session):

@@ -8,13 +8,11 @@ from app.models.models import (Consignacion, EstadoConsignacionEnum,
 
 def _turno_pendiente_mas_antiguo(db: Session, tienda_id: int) -> int | None:
     """Devuelve el id del turno cerrado más antiguo que aún tiene consignación pendiente."""
-    cutoff = datetime.utcnow() - timedelta(days=7)
     turnos = (
         db.query(CajaTurno)
         .filter(
             CajaTurno.tienda_id == tienda_id,
             CajaTurno.estado == EstadoTurnoEnum.cerrado,
-            CajaTurno.fecha_cierre >= cutoff,
         )
         .order_by(CajaTurno.fecha_cierre.asc())
         .all()
@@ -163,13 +161,11 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
 
 
 def get_pendiente(db: Session, tienda_id: int):
-    cutoff = datetime.utcnow() - timedelta(days=7)
     turnos = (
         db.query(CajaTurno)
         .filter(
             CajaTurno.tienda_id == tienda_id,
             CajaTurno.estado == EstadoTurnoEnum.cerrado,
-            CajaTurno.fecha_cierre >= cutoff,
         )
         .order_by(CajaTurno.fecha_cierre.desc())
         .all()

@@ -351,7 +351,7 @@ def get_entregas_turno(db: Session, turno_id: int):
     ).order_by(EntregaTurno.fecha_hora.desc()).all()
 
 
-def get_entregas_tienda(db: Session, tienda_id: int, limit: int = 20, solo_hoy: bool = True):
+def get_entregas_tienda(db: Session, tienda_id: int, limit: int | None = None, solo_hoy: bool = True):
     q = db.query(EntregaTurno).filter(EntregaTurno.tienda_id == tienda_id)
     if solo_hoy:
         hoy = datetime.utcnow().date()

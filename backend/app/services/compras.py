@@ -132,6 +132,7 @@ def _serializar(c: ConteoCompras) -> dict:
     return {
         "id": c.id,
         "tienda_id": c.tienda_id,
+        "tienda_nombre": c.tienda.nombre if c.tienda else None,
         "fecha_conteo": c.fecha_conteo,
         "ajustado": c.ajustado,
         "fecha_ajuste": c.fecha_ajuste,

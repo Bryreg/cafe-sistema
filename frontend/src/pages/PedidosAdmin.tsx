@@ -57,6 +57,7 @@ interface ConteoItem {
 interface Conteo {
   id: number
   tienda_id: number
+  tienda_nombre: string | null
   fecha_conteo: string
   ajustado: boolean
   nota: string | null
@@ -441,7 +442,7 @@ function TabConteos() {
           >
             <div className="text-left">
               <p className="text-sm font-semibold text-gray-800">
-                Conteo #{c.id} — Tienda {c.tienda_id}
+                Conteo #{c.id} — {c.tienda_nombre ?? `Tienda ${c.tienda_id}`}
               </p>
               <p className="text-xs text-gray-400">
                 {new Date(c.fecha_conteo).toLocaleDateString('es-CO', {

@@ -25,7 +25,8 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
             raise HTTPException(400, "Debes indicar la sede destino para un traslado")
         if tienda_destino_id == tienda_id:
             raise HTTPException(400, "La sede destino debe ser diferente a la sede origen")
-        if not db.query(Tienda).filter_by(id=tienda_destino_id).first():
+        tienda_destino = db.query(Tienda).filter_by(id=tienda_destino_id).first()
+        if not tienda_destino:
             raise HTTPException(404, "Sede destino no encontrada")
 
     # Verify product exists and check stock before attempting atomic update
@@ -51,11 +52,12 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
     db.add(merma)
     db.flush()   # obtener merma.id para referenciarlo en la auditoría
 
-    mov_motivo = {
-        "consumo":  f"Consumo: {motivo}",
-        "daño":     f"Daño: {motivo}",
-        "traslado": f"Traslado a tienda {tienda_destino_id}: {motivo}",
-    }[tipo]
+    if tipo == "consumo":
+        mov_motivo = f"Consumo: {motivo}"
+    elif tipo == "daño":
+        mov_motivo = f"Daño: {motivo}"
+    else:  # traslado — usar el nombre de la sede destino, no el id
+        mov_motivo = f"Traslado a {tienda_destino.nombre}: {motivo}"
 
     mov = MovimientoInventario(
         producto_id=producto_id,
@@ -126,13 +128,15 @@ def recibir_traslado(db: Session, merma_id: int, tienda_destino_id: int, usuario
         )
         db.add(inv)
 
+    origen = db.query(Tienda).filter_by(id=merma.tienda_id).first()
+    origen_nombre = origen.nombre if origen else f"tienda {merma.tienda_id}"
     mov = MovimientoInventario(
         producto_id=merma.producto_id,
         tienda_id=tienda_destino_id,
         tipo=TipoMovInvEnum.entrada,
         cantidad=merma.cantidad,
         usuario_id=usuario_id,
-        motivo=f"Recibo traslado desde tienda {merma.tienda_id}",
+        motivo=f"Recibo traslado desde {origen_nombre}",
     )
     db.add(mov)
 

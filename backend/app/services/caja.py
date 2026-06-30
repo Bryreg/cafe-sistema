@@ -299,7 +299,10 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
     ).first()
     if not turno:
         raise HTTPException(status_code=404, detail="No hay turno activo")
-    if not turno.tiene_conteo_apertura:
+    # Los turnos intermedio/cierre NO repiten el conteo de apertura: heredan la línea base
+    # del día. Validar contra el día (no contra el flag del turno individual) para no bloquear
+    # ni el cierre ni la entrada-con-cuadre de esos turnos.
+    if not _hay_conteo_apertura_en_dia(db, turno):
         raise HTTPException(status_code=400, detail="Debes completar el conteo de apertura antes de registrar una entrega")
     if efectivo_real < 0 or ventas_tarjeta_bold < 0:
         raise HTTPException(status_code=400, detail="Los valores numéricos no pueden ser negativos")

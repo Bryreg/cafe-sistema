@@ -182,7 +182,9 @@ def get_pendiente(db: Session, tienda_id: int):
         total_consignado = sum(c.valor for c in consigs)
         pendiente = max(0, round(esperado - total_consignado, 2))
 
-        if esperado > 0:
+        # Solo turnos con saldo pendiente real (antes `esperado > 0` colaba turnos ya saldados
+        # como filas fantasma de $0 e inflaba el conteo de turnos pendientes).
+        if pendiente > 0:
             items.append({
                 "turno_id": t.id,
                 "fecha_apertura": t.fecha_apertura,

@@ -154,7 +154,9 @@ def get_estado_turno(db: Session, tienda_id: int):
         last = q.order_by(RutinaEvento.fecha.desc()).first()
         minutes_ago = None
         status = None
-        if last:
+        # Solo calcular antigüedad/estado con turno activo: entre turnos el último evento
+        # puede ser de hace días y marcaría todo en "alert" sin sentido.
+        if last and turno:
             diff = now - last.fecha
             minutes_ago = int(diff.total_seconds() / 60)
             if defn["track"] and defn["every"]:

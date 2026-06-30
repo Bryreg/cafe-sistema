@@ -85,7 +85,8 @@ def push_test(
     ensure_tienda_access(user, tienda_id)
     n = push.enviar(db, tienda_id, "Prueba",
                     "Notificacion de prueba de Sistema Cafe", "/dashboard")
-    return {"ok": True, "enviados": n}
+    # push_habilitado distingue "0 porque no hay suscriptores" de "0 porque falta VAPID_PRIVATE_KEY".
+    return {"ok": True, "enviados": n, "push_habilitado": push.esta_configurado()}
 
 
 @router.get("/{tienda_id}")

@@ -273,6 +273,10 @@ class MovimientoInventario(Base):
     fecha = Column(DateTime, default=datetime.utcnow, index=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
     motivo = Column(String(200), nullable=True)
+    # Actor real en kiosko compartido (≠ usuario_id del dispositivo). Plano, sin FK,
+    # para no introducir un segundo ForeignKey a usuarios (AmbiguousForeignKeysError).
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
     producto = relationship("Producto", back_populates="movimientos_inv")
     tienda = relationship("Tienda", back_populates="movimientos_inv")
     usuario = relationship("Usuario", back_populates="movimientos_inv")
@@ -753,7 +757,7 @@ class FacturaCompra(Base):
     proveedor = Column(String(150), nullable=False)
     numero_factura = Column(String(100), nullable=True)
     numero_lote = Column(String(100), nullable=True)
-    fecha_recibido = Column(DateTime, nullable=False)
+    fecha_recibido = Column(DateTime, nullable=True)
     valor_total = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     tipo_pago = Column(SAEnum(TipoPagoEnum), nullable=False)
     imagen_url = Column(String(300), nullable=True)
@@ -1146,3 +1150,11 @@ class InventarioMensualItem(Base):
     valor_diferencia = Column(Numeric(12, 2, asdecimal=False), default=0)
     inventario = relationship("InventarioMensual", back_populates="items")
     producto = relationship("Producto")
+
+
+class Configuracion(Base):
+    """Ajustes globales editables en runtime (key-value). Ej: 'kiosk_pin'."""
+    __tablename__ = "configuracion"
+    id = Column(Integer, primary_key=True)
+    clave = Column(String(50), unique=True, nullable=False, index=True)
+    valor = Column(String(255), nullable=True)

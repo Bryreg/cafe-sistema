@@ -149,7 +149,11 @@ export default function NotificacionesConfig() {
     setPushError(null)
     try {
       const { data } = await api.post(`/notificaciones/push/test/${tiendaId}`)
-      setPruebaMsg(`Prueba enviada · ${data.enviados ?? 0} dispositivo(s)`)
+      if (data.push_habilitado === false) {
+        setPushError('Push no configurado en el servidor (falta VAPID_PRIVATE_KEY).')
+      } else {
+        setPruebaMsg(`Prueba enviada · ${data.enviados ?? 0} dispositivo(s)`)
+      }
     } catch {
       setPushError('No se pudo enviar la prueba.')
     } finally {

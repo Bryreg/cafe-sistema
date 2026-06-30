@@ -30,7 +30,7 @@ export default function InventarioMensual() {
   const [msg, setMsg] = useState('')
 
   useEffect(() => {
-    if (!user?.tienda_id) return
+    if (!user?.tienda_id) { setLoading(false); setMsg('No se pudo determinar la sede'); return }
     api.post<Inv>('/inventario-mensual/iniciar', null, { params: { tienda_id: user.tienda_id, anio: now.getFullYear(), mes: now.getMonth() + 1 } })
       .then(r => {
         setInv(r.data)

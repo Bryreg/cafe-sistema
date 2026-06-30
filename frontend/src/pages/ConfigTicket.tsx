@@ -27,7 +27,9 @@ const EMPTY: Config = {
 
 export default function ConfigTicketPage() {
   const { user } = useAuth()
-  const tiendaId = user?.tienda_id ?? 1
+  // No defaultear a la tienda 1: un admin sin sede asignada estaría leyendo/sobrescribiendo
+  // en silencio la config de otra tienda. Mejor null + guard explícito.
+  const tiendaId = user?.tienda_id ?? null
   const fileRef  = useRef<HTMLInputElement>(null)
 
   const [cfg,          setCfg]          = useState<Config>(EMPTY)
@@ -39,6 +41,11 @@ export default function ConfigTicketPage() {
   const [error,        setError]        = useState('')
 
   useEffect(() => {
+    if (!tiendaId) {
+      setError('Tu cuenta de admin no tiene una sede asignada. Asigná una sede en Usuarios para configurar el ticket.')
+      setLoading(false)
+      return
+    }
     setLoading(true)
     api.get(`/config-ticket/${tiendaId}`)
       .then(({ data }) => {
@@ -65,6 +72,7 @@ export default function ConfigTicketPage() {
   }
 
   const handleSave = async () => {
+    if (!tiendaId) return
     setSaving(true); setError('')
     try {
       await api.put(`/config-ticket/${tiendaId}`, {
@@ -88,7 +96,7 @@ export default function ConfigTicketPage() {
 
   const handleLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file) return
+    if (!file || !tiendaId) return
     setUploadingLogo(true); setError('')
     try {
       const form = new FormData()
@@ -105,6 +113,7 @@ export default function ConfigTicketPage() {
   }
 
   const handleRemoveLogo = async () => {
+    if (!tiendaId) return
     setUploadingLogo(true)
     try {
       await api.delete(`/config-ticket/${tiendaId}/logo`)

@@ -17,7 +17,6 @@ interface AuthContextType {
   login: (data: AuthUser) => void
   logout: () => void
   initKiosk: (pin: string, tiendaId: number) => Promise<void>
-  loginBarista: (userId: number, pin: string) => Promise<void>
   resetKiosk: () => void
 }
 
@@ -59,7 +58,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('tienda_id')
     localStorage.removeItem('user_id')
     localStorage.removeItem('kiosk')
-    localStorage.removeItem('barista_activa_id')
+    // Limpia la barista activa global Y la persistida por tienda (barista_activa_{id}),
+    // si no, la barista anterior se re-selecciona sola en el próximo turno (atribución cruzada).
+    Object.keys(localStorage)
+      .filter(k => k.startsWith('barista_activa'))
+      .forEach(k => localStorage.removeItem(k))
     setUser(null)
   }
 
@@ -76,27 +79,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
   }
 
-  // Login individual de barista (celular): entra como ella misma. kiosk=false → el
-  // interceptor NO manda X-Barista-Id, así el backend la atribuye por su usuario real.
-  const loginBarista = async (userId: number, pin: string) => {
-    const { data } = await api.post('/auth/login-pin', { user_id: userId, pin })
-    login({
-      token: data.access_token,
-      rol: data.rol,
-      nombre: data.nombre,
-      tienda_id: data.tienda_id,
-      user_id: data.user_id,
-      kiosk: false,
-    })
-  }
-
   const resetKiosk = () => logout()
 
   const tiendaId = user?.tienda_id ?? null
   const isKiosk = user?.kiosk ?? false
 
   return (
-    <AuthContext.Provider value={{ user, tiendaId, isKiosk, login, logout, initKiosk, loginBarista, resetKiosk }}>
+    <AuthContext.Provider value={{ user, tiendaId, isKiosk, login, logout, initKiosk, resetKiosk }}>
       {children}
     </AuthContext.Provider>
   )

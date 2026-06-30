@@ -1,20 +1,37 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import api from '../api/client'
 import { Lock, Wifi, AlertTriangle } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
+
+interface Tienda { id: number; nombre: string }
 
 export default function KioskSetup() {
   const { initKiosk } = useAuth()
   const [pin, setPin] = useState('')
-  const [tiendaId, setTiendaId] = useState('1')
+  const [tiendas, setTiendas] = useState<Tienda[]>([])
+  const [tiendaId, setTiendaId] = useState(() => localStorage.getItem('ultima_sede') ?? '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  useEffect(() => {
+    api.get<Tienda[]>('/auth/tiendas')
+      .then(({ data }) => {
+        setTiendas(data)
+        // Si no hay sede recordada, preseleccionar la primera para que el flujo sea de un toque.
+        setTiendaId(prev => prev || (data[0] ? String(data[0].id) : ''))
+      })
+      .catch(() => setError('No se pudo cargar la lista de sedes'))
+  }, [])
+
   const activarKiosk = async () => {
-    if (!pin.trim()) return
+    if (!pin.trim() || !tiendaId) return
     setLoading(true); setError('')
-    try { await initKiosk(pin, Number(tiendaId)) }
+    try {
+      await initKiosk(pin, Number(tiendaId))
+      localStorage.setItem('ultima_sede', tiendaId)
+    }
     catch (e: any) { setError(e.response?.data?.detail || 'PIN incorrecto') }
     finally { setLoading(false) }
   }
@@ -30,7 +47,7 @@ export default function KioskSetup() {
           </div>
           <h1 className="text-xl font-bold" style={{ color: dark.ink }}>Activar caja</h1>
           <p className="text-sm mt-1" style={{ color: dark.inkMuted }}>
-            Ingresá la sede y el PIN del sistema
+            Elegí la sede y poné el PIN del sistema
           </p>
         </div>
 
@@ -38,11 +55,16 @@ export default function KioskSetup() {
           style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
           <div>
             <label className="text-xs font-bold uppercase tracking-widest block mb-2" style={{ color: dark.amber }}>
-              Sede (ID)
+              Sede
             </label>
-            <input type="number" value={tiendaId} onChange={e => setTiendaId(e.target.value)}
-              className="w-full rounded-xl px-4 py-3 text-sm font-mono bg-transparent border outline-none"
-              style={{ borderColor: dark.border, color: dark.ink }} />
+            <select value={tiendaId} onChange={e => setTiendaId(e.target.value)}
+              className="w-full rounded-xl px-4 py-3 text-sm bg-transparent border outline-none"
+              style={{ borderColor: dark.border, color: dark.ink }}>
+              {tiendas.length === 0 && <option value="">Cargando sedes…</option>}
+              {tiendas.map(t => (
+                <option key={t.id} value={t.id} style={{ color: '#111' }}>{t.nombre}</option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="text-xs font-bold uppercase tracking-widest block mb-2" style={{ color: dark.amber }}>
@@ -61,7 +83,7 @@ export default function KioskSetup() {
             </div>
           )}
 
-          <button onClick={activarKiosk} disabled={!pin.trim() || loading}
+          <button onClick={activarKiosk} disabled={!pin.trim() || !tiendaId || loading}
             className="w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all disabled:opacity-40"
             style={{ background: 'oklch(62% 0.18 50)', color: 'white' }}>
             <Lock size={15} /> {loading ? 'Activando...' : 'Activar dispositivo'}

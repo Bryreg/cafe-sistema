@@ -79,7 +79,7 @@ export function TurnoProvider({ children }: { children: ReactNode }) {
 
     const interval = setInterval(() => fetchTurno(true), POLL_INTERVAL)
     return () => clearInterval(interval)
-  }, [tiendaId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tiendaId, user?.kiosk]) // eslint-disable-line react-hooks/exhaustive-deps  (rebinde al cambiar kiosk: el endpoint pub/protegido depende de él)
 
   return (
     <TurnoContext.Provider value={{ turno, loading, refresh }}>

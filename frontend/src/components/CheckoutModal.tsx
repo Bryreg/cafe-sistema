@@ -85,10 +85,11 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
     if (loading) return false
     if (metodo === 'efectivo') return numRecibido >= totalEstimado
     if (metodo === 'tarjeta') return true
-    // mixto: los dos montos deben sumar el total
+    // mixto: los dos montos deben sumar el total. Tolerancia para evitar que un
+    // redondeo IEEE-754 (ej. auto-fill de la resta) deshabilite el botón sin explicación.
     const ef = Number(montoEfectivo) || 0
     const tar = Number(montoTarjeta) || 0
-    return ef + tar === totalEstimado && ef > 0 && tar > 0
+    return Math.abs(ef + tar - totalEstimado) < 0.01 && ef > 0 && tar > 0
   })()
 
   const confirmar = async () => {
@@ -107,7 +108,8 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
       }
 
       const { data } = await api.post<TicketData>('/pos/ticket', body)
-      setTicket(data)
+      // El backend deja cambio=null para tarjeta/mixto; normalizar para no romper el recibo.
+      setTicket({ ...data, cambio: data.cambio ?? 0 })
       setConfirmed(true)
       setCambioFinal(metodo === 'efectivo' ? numRecibido - totalEstimado : 0)
 
@@ -260,10 +262,11 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
                   const suma = (Number(montoEfectivo) || 0) + (Number(montoTarjeta) || 0)
                   const diff = suma - totalEstimado
                   if (suma === 0) return null
+                  const cuadra = Math.abs(diff) < 0.01
                   return (
-                    <div className={`rounded-xl p-3 flex items-center justify-between text-sm font-semibold border ${diff === 0 ? 'bg-success-50 border-success-200 text-success-700' : 'bg-danger-50 border-danger-200 text-danger-700'}`}>
-                      <span>{diff === 0 ? 'Suma correcta' : diff > 0 ? 'Suma de más' : 'Falta'}</span>
-                      {diff !== 0 && (
+                    <div className={`rounded-xl p-3 flex items-center justify-between text-sm font-semibold border ${cuadra ? 'bg-success-50 border-success-200 text-success-700' : 'bg-danger-50 border-danger-200 text-danger-700'}`}>
+                      <span>{cuadra ? 'Suma correcta' : diff > 0 ? 'Suma de más' : 'Falta'}</span>
+                      {!cuadra && (
                         <span className="font-mono tabular-nums">{fmtCO(Math.abs(diff))}</span>
                       )}
                     </div>

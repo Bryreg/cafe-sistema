@@ -114,7 +114,11 @@ function InventarioAdmin() {
       setCantidad(''); setMotivo(''); setSelected(null)
       load()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Error')
+      // El detail de un 422 es un array de objetos {loc,msg,type}; renderizarlo crudo
+      // muestra "[object Object]". Extraer el mensaje legible (igual que el handler de barista).
+      const raw = e.response?.data?.detail
+      const detail = Array.isArray(raw) ? (raw[0]?.msg ?? 'Error de validación') : (raw || '')
+      setError(detail || 'Error al conectar con el servidor')
     } finally { setSaving(false) }
   }
 
@@ -125,7 +129,7 @@ function InventarioAdmin() {
     try {
       await api.patch(`/inventario/productos/${editandoId}`, editForm)
       setEditandoId(null); load()
-    } catch (e: any) { setCatError(e.response?.data?.detail || 'Error') }
+    } catch (e: any) { const raw = e.response?.data?.detail; setCatError((Array.isArray(raw) ? raw[0]?.msg : raw) || 'Error de validación') }
     finally { setCatSaving(false) }
   }
 
@@ -136,7 +140,7 @@ function InventarioAdmin() {
       setMostrarNuevo(false)
       setNuevoForm({ nombre: '', categoria: 'insumo', unidad_medida: 'und', controla_stock: true })
       load()
-    } catch (e: any) { setCatError(e.response?.data?.detail || 'Error') }
+    } catch (e: any) { const raw = e.response?.data?.detail; setCatError((Array.isArray(raw) ? raw[0]?.msg : raw) || 'Error de validación') }
     finally { setCatSaving(false) }
   }
 
@@ -147,7 +151,7 @@ function InventarioAdmin() {
         stock_minimo: Number(minimoEditing.valor)
       })
       setMinimoEditing(null); load()
-    } catch (e: any) { setCatError(e.response?.data?.detail || 'Error') }
+    } catch (e: any) { const raw = e.response?.data?.detail; setCatError((Array.isArray(raw) ? raw[0]?.msg : raw) || 'Error de validación') }
   }
 
   if (loading) return <div className="flex justify-center py-16"><p className="text-sm text-gray-400">Cargando...</p></div>
@@ -589,9 +593,14 @@ function InventarioBarista() {
                 ))}
               </div>
               <input type="number" step="1" min="0" value={cantidad} onChange={e => setCantidad(e.target.value)}
-                placeholder={`Cantidad (${selected.unidad_medida})`}
+                placeholder={tipo === 'ajuste'
+                  ? `Stock final (${selected.unidad_medida}) — reemplaza el actual`
+                  : `Cantidad (${selected.unidad_medida})`}
                 className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-lg font-bold focus:outline-none focus:border-amber-400"
                 autoFocus />
+              {tipo === 'ajuste' && (
+                <p className="text-xs text-blue-600 -mt-1">El ajuste FIJA el stock a este valor (no suma ni resta).</p>
+              )}
               <input value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Motivo (opcional)"
                 className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-amber-400" />
               <button onClick={registrar} disabled={!cantidad || saving}

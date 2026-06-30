@@ -34,17 +34,19 @@ export default function ConteoFisico() {
 
   const load = async () => {
     if (!tienda_id) return
+    // Cargas separadas: si falla SOLO el inventario, no anular el turno (antes un try
+    // único ponía turno=null y mostraba "no hay turno abierto" con el turno abierto).
     try {
-      const [turnoRes, invRes] = await Promise.all([
-        api.get(`/caja/activo/${tienda_id}`),
-        api.get(`/inventario/tienda/${tienda_id}`),
-      ])
+      const turnoRes = await api.get(`/caja/activo/${tienda_id}`)
       setTurno(turnoRes.data)
-      setItems(invRes.data)
       // Determinar tipo de conteo automáticamente
       if (!turnoRes.data?.tiene_conteo_apertura) setTipo('apertura')
       else if (!turnoRes.data?.tiene_conteo_cierre) setTipo('cierre')
     } catch { setTurno(null) }
+    try {
+      const invRes = await api.get(`/inventario/tienda/${tienda_id}`)
+      setItems(invRes.data)
+    } catch { setError('No se pudo cargar el inventario. Reintentá.') }
     finally { setLoading(false) }
   }
 

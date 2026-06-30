@@ -52,6 +52,9 @@ export default function ConteoInventario({ tipo }: Props) {
   const getDiff = (id: number, ref: number) => getVal(id, ref) - ref
 
   const todoOk = () => {
+    // Confirmación explícita: este atajo fija todo al stock del sistema y permite cerrar
+    // sin contar físicamente, lo que oculta diferencias reales si se usa a la ligera.
+    if (!window.confirm('¿Confirmás que contaste físicamente y todo coincide con el sistema?')) return
     const filled: Record<number, string> = {}
     items.forEach(i => { filled[i.producto_id] = String(i.stock_actual) })
     setConteos(filled)

@@ -95,7 +95,13 @@ export default function ConciliacionInventario() {
         </div>
       )}
 
-      {!loading && data && (
+      {!loading && data && data.estado !== 'cerrado' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800">
+          Conteo <strong>en proceso</strong> — cerrá el conteo del mes para ver la conciliación con las diferencias reales. Los valores aún no están calculados.
+        </div>
+      )}
+
+      {!loading && data && data.estado === 'cerrado' && (
         <>
           {/* KPIs */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

@@ -5,10 +5,6 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-class LoginPinRequest(BaseModel):
-    user_id: int
-    pin: str
-
 class UsuarioPublic(BaseModel):
     id: int
     nombre: str
@@ -41,7 +37,6 @@ class UsuarioAdmin(BaseModel):
     tienda_nombre: Optional[str]
     activo: bool
     ultimo_acceso: Optional[str]
-    tiene_pin: bool
     class Config: from_attributes = True
 
 class ActualizarUsuario(BaseModel):
@@ -50,5 +45,8 @@ class ActualizarUsuario(BaseModel):
     tienda_id: Optional[int] = None
     activo: Optional[bool] = None
 
-class SetPinRequest(BaseModel):
+class SetPasswordRequest(BaseModel):
+    password: str
+
+class KioskPinRequest(BaseModel):
     pin: str

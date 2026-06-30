@@ -35,7 +35,7 @@ export default function CumplimientoAdmin() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!tiendaId) return
+    if (!tiendaId) { setLoading(false); setError('Tu cuenta no tiene una sede asignada.'); return }
     setLoading(true)
     api
       .get<Data>('/rutinas/cumplimiento-semana', { params: { tienda_id: tiendaId } })

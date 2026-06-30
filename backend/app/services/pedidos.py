@@ -1,7 +1,7 @@
 import math
 from collections import defaultdict
 from datetime import datetime, timedelta
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.models.models import (
     Inventario, MovimientoInventario, TipoMovInvEnum,
     SolicitudPedido, SolicitudPedidoItem, EstadoSolicitudEnum,
@@ -66,6 +66,7 @@ def sugerencia_pedido(db: Session, tienda_id: int) -> dict:
 
     inventarios = (
         db.query(Inventario)
+        .options(joinedload(Inventario.producto))   # evita N+1 al leer inv.producto en el loop
         .filter(Inventario.tienda_id == tienda_id)
         .all()
     )

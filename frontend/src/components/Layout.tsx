@@ -133,7 +133,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
 
-  const handleLogout = () => { logout(); navigate('/login') }
+  const handleLogout = () => { logout(); navigate('/admin-login') }
 
   return (
     <div className="min-h-screen bg-warm-50 flex flex-col lg:flex-row">

@@ -29,7 +29,11 @@ api.interceptors.response.use(
       localStorage.removeItem('tienda_id')
       localStorage.removeItem('user_id')
       localStorage.removeItem('kiosk')
-      localStorage.removeItem('barista_activa_id')
+      // Limpia barista activa global Y por tienda (barista_activa_{id}) para no re-atribuir
+      // a la barista anterior al volver a entrar.
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('barista_activa'))
+        .forEach(k => localStorage.removeItem(k))
       window.location.href = '/'
     }
     return Promise.reject(error)

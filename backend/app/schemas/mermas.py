@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional
 
@@ -7,7 +7,7 @@ class RegistrarMermaRequest(BaseModel):
     tienda_id: int
     producto_id: int
     cantidad: float
-    motivo: str
+    motivo: str = Field(..., min_length=1)   # rechazar motivo vacío (registro sin razón)
     tipo: str = "consumo"                    # consumo | traslado | daño
     tienda_destino_id: Optional[int] = None  # solo para traslado
 

@@ -52,7 +52,8 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
                           fecha_vencimiento: datetime | None = None, commit: bool = True,
                           allow_negative: bool = False,
                           numero_lote: str | None = None, proveedor: str | None = None,
-                          fecha_fabricacion: datetime | None = None, factura_id: int | None = None):
+                          fecha_fabricacion: datetime | None = None, factura_id: int | None = None,
+                          barista_id: int | None = None, barista_nombre: str | None = None):
     if tipo not in {"entrada", "salida", "ajuste"}:
         raise HTTPException(status_code=400, detail="tipo debe ser entrada, salida o ajuste")
     if tipo in {"entrada", "salida"} and cantidad <= 0:
@@ -132,6 +133,7 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
     mov = MovimientoInventario(
         producto_id=producto_id, tienda_id=tienda_id, tipo=tipo,
         cantidad=cantidad, usuario_id=usuario_id, motivo=motivo,
+        barista_id=barista_id, barista_nombre=barista_nombre,
     )
     db.add(mov)
 

@@ -160,7 +160,9 @@ function PasteleriaBarista() {
 
   const loadRegistros = async () => {
     if (!user?.tienda_id) return
-    const { data } = await api.get(`/pasteleria/tienda/${user.tienda_id}`)
+    // /activos filtra activo==True (y trae campos de rotación); el endpoint sin /activos
+    // ignora el flag, así que un lote recién cerrado reaparecía al recargar.
+    const { data } = await api.get(`/pasteleria/tienda/${user.tienda_id}/activos`)
     setRegistros(data)
   }
 

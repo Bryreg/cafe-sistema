@@ -48,6 +48,7 @@ export default function PagosProveedores() {
   const [formaPago, setFormaPago] = useState('transferencia')
   const [soporte, setSoporte] = useState<File | null>(null)
   const [guardando, setGuardando] = useState(false)
+  const [pagoError, setPagoError] = useState('')
 
   useEffect(() => {
     api.get<Tienda[]>('/auth/tiendas').then(r => setTiendas(r.data)).catch(() => {})
@@ -80,7 +81,7 @@ export default function PagosProveedores() {
 
   const registrarPago = async () => {
     if (!pagoFactura || !monto || Number(monto) <= 0) return
-    setGuardando(true)
+    setGuardando(true); setPagoError('')
     try {
       const fd = new FormData()
       fd.append('monto', monto)
@@ -89,7 +90,10 @@ export default function PagosProveedores() {
       await api.patch(`/facturas/${pagoFactura.id}/pago`, fd)
       setPagoFactura(null); setMonto(''); setSoporte(null)
       cargar()
-    } catch { /* noop */ } finally { setGuardando(false) }
+    } catch (e: any) {
+      // Antes el error se tragaba: el modal quedaba abierto sin feedback (manejo de dinero).
+      setPagoError(e.response?.data?.detail || 'No se pudo registrar el pago. Reintentá.')
+    } finally { setGuardando(false) }
   }
 
   return (
@@ -258,7 +262,7 @@ export default function PagosProveedores() {
                       <span className="text-xs text-gray-300">Sin soporte de pago</span>
                     )}
                     {f.estado_pago !== 'pagado' && (
-                      <button onClick={() => { setPagoFactura(f); setMonto(String(f.saldo)) }}
+                      <button onClick={() => { setPagoFactura(f); setMonto(String(f.saldo)); setPagoError('') }}
                         className="ml-auto flex items-center gap-1.5 text-xs font-bold text-white bg-forest hover:bg-forest-700 px-3 py-1.5 rounded-lg">
                         <Wallet size={13} /> Registrar pago
                       </button>
@@ -312,6 +316,9 @@ export default function PagosProveedores() {
                   onChange={e => setSoporte(e.target.files?.[0] ?? null)} />
               </label>
             </div>
+            {pagoError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{pagoError}</p>
+            )}
             <button onClick={registrarPago} disabled={guardando || !monto || Number(monto) <= 0}
               className="w-full bg-forest hover:bg-forest-700 disabled:opacity-40 text-white font-bold py-3 rounded-xl text-sm">
               {guardando ? 'Guardando...' : 'Confirmar pago'}

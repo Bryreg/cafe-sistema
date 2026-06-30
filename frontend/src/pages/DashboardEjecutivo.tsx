@@ -289,16 +289,23 @@ export default function DashboardEjecutivo() {
         por_proveedor: r.data?.por_proveedor ?? [],
       })).catch(() => null),
       api.get('/inventario/lotes-trazabilidad', { params: { estado: 'por_vencer', ...(sedeId !== null ? { tienda_id: sedeId } : {}) } }).then(r => setLotesVencer((r.data ?? []).slice(0, 10))).catch(() => null),
-      api.get('/informes/mermas', { params }).then(r => setMermas((r.data?.items ?? r.data ?? []).slice(0, 8))).catch(() => null),
     ]
 
-    // Alertas stock: solo si hay sede seleccionada
+    // Alertas y mermas: solo si hay sede (ambos requieren tienda_id, que `params` ya incluye cuando sedeId !== null)
     if (sedeId !== null) {
       calls.push(
-        api.get(`/inventario/alertas/${sedeId}`).then(r => setAlertas(r.data ?? [])).catch(() => null)
+        api.get(`/inventario/alertas/${sedeId}`).then(r => setAlertas(r.data ?? [])).catch(() => null),
+        // El backend devuelve {filas, totales}; mapear filas (producto/total_cantidad/unidad)
+        // a la forma MermaItem {producto, cantidad, tipo} que renderiza el widget.
+        api.get('/informes/mermas', { params }).then(r =>
+          setMermas(((r.data?.filas ?? []) as any[])
+            .map(f => ({ producto: f.producto, cantidad: f.total_cantidad ?? 0, tipo: f.unidad ?? '' }))
+            .slice(0, 8))
+        ).catch(() => null)
       )
     } else {
       setAlertas([])
+      setMermas([])
     }
 
     // Conciliación inventario: solo si hay sede seleccionada (requiere tienda_id)

@@ -29,6 +29,12 @@ VAPID_PRIVATE = os.getenv("VAPID_PRIVATE_KEY")  # secreta, sin default
 VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:bmgpersonal99@gmail.com")
 
 
+def esta_configurado() -> bool:
+    """True si el push web está realmente operativo (clave privada + librería disponible).
+    Permite distinguir '0 enviados porque no hay suscriptores' de '0 porque falta VAPID'."""
+    return VAPID_PRIVATE is not None and _PUSH_AVAILABLE
+
+
 def public_key() -> str:
     """Clave pública VAPID — la consume el frontend para suscribir el dispositivo."""
     return VAPID_PUBLIC

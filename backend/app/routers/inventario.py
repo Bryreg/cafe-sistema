@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
-from app.core.deps import ensure_tienda_access, get_current_user, require_admin
+from app.core.deps import ensure_tienda_access, get_current_user, require_admin, get_barista_actor
 from app.models.models import Usuario, Producto, Inventario, Tienda, CategoriaProductoEnum, LoteInventario
 from app.schemas.inventario import (
     MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate, UmbralesStockUpdate,
@@ -19,9 +19,11 @@ def get_inventario(tienda_id: int, db: Session = Depends(get_db), user: Usuario 
     return svc.get_inventario_tienda(db, tienda_id)
 
 @router.post("/movimiento")
-def movimiento(data: MovimientoInvRequest, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+def movimiento(data: MovimientoInvRequest, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user),
+               barista: tuple = Depends(get_barista_actor)):
     ensure_tienda_access(user, data.tienda_id)
-    return svc.registrar_movimiento(db, data.producto_id, data.tienda_id, data.tipo, data.cantidad, data.motivo, user.id)
+    return svc.registrar_movimiento(db, data.producto_id, data.tienda_id, data.tipo, data.cantidad, data.motivo, user.id,
+                                    barista_id=barista[0], barista_nombre=barista[1])
 
 @router.get("/alertas/{tienda_id}")
 def alertas(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
@@ -115,9 +117,11 @@ def actualizar_umbrales(tienda_id: int, producto_id: int, data: UmbralesStockUpd
         inv.stock_ideal = data.stock_ideal
     if data.stock_critico is not None:
         inv.stock_critico = data.stock_critico
-    if inv.stock_critico and inv.stock_minimo and inv.stock_critico > inv.stock_minimo:
+    # Usar `is not None` (no truthiness): un umbral legítimamente en 0 es falsy y
+    # antes saltaba la validación de coherencia.
+    if inv.stock_critico is not None and inv.stock_minimo is not None and inv.stock_critico > inv.stock_minimo:
         raise HTTPException(400, "stock_critico no puede ser mayor que stock_minimo")
-    if inv.stock_ideal and inv.stock_minimo and inv.stock_ideal < inv.stock_minimo:
+    if inv.stock_ideal is not None and inv.stock_minimo is not None and inv.stock_ideal < inv.stock_minimo:
         raise HTTPException(400, "stock_ideal no puede ser menor que stock_minimo")
     db.commit()
     return {

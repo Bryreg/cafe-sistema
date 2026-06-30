@@ -49,6 +49,7 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
         barista_nombre=barista_nombre,
     )
     db.add(merma)
+    db.flush()   # obtener merma.id para referenciarlo en la auditoría
 
     mov_motivo = {
         "consumo":  f"Consumo: {motivo}",
@@ -82,7 +83,7 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
 
     audit.registrar(
         db, accion="registro_merma", tabla="mermas",
-        registro_id=None, usuario_id=usuario_id, tienda_id=tienda_id,
+        registro_id=merma.id, usuario_id=usuario_id, tienda_id=tienda_id,
         datos_despues={"producto_id": producto_id, "cantidad": cantidad,
                        "motivo": motivo, "tipo": tipo,
                        "tienda_destino_id": tienda_destino_id},
@@ -134,6 +135,11 @@ def recibir_traslado(db: Session, merma_id: int, tienda_destino_id: int, usuario
         motivo=f"Recibo traslado desde tienda {merma.tienda_id}",
     )
     db.add(mov)
+
+    # Crear el lote FIFO en la sede destino. Sin esto el stock sube pero consumir_fifo
+    # no encuentra lotes y sub-drena en silencio (la trazabilidad/vencimientos divergen).
+    from app.services.inventario import agregar_lote
+    agregar_lote(db, merma.producto_id, tienda_destino_id, merma.cantidad, usuario_id)
 
     merma.recibido = True
     merma.fecha_recibido = datetime.utcnow()

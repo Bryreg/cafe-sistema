@@ -171,7 +171,9 @@ def actualizar_auditoria_limp(db: Session, auditoria_id: int, tienda_id: int,
     for item in a.items:
         upd = items_map.get(item.tarea_key, {})
         item.realizado = upd.get("realizado", item.realizado)
-        item.realizado_por = upd.get("realizado_por") or item.realizado_por
+        # Respetar el null explícito: `or` dejaba el nombre viejo cuando se vaciaba el campo.
+        if "realizado_por" in upd:
+            item.realizado_por = upd["realizado_por"] or None
     db.commit(); db.refresh(a)
     return _serial_limp(a)
 

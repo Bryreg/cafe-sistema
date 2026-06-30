@@ -57,7 +57,7 @@ export default function TickerNoticias() {
         next.push({
           id: `com-${c.id}`,
           tipo: 'comunicado',
-          label: c.mensaje ? `${c.titulo}: ${c.mensaje}` : c.titulo,
+          label: c.titulo ? `${c.titulo}: ${c.mensaje}` : c.mensaje,
           urgente: c.urgente ?? false,
         })
       }

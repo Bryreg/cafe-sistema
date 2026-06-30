@@ -2,34 +2,23 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime, timedelta
-from collections import defaultdict
-from time import time
 import secrets
 from app.database import get_db
-from app.schemas.auth import LoginRequest, LoginPinRequest, RegisterRequest, TokenResponse, UsuarioPublic, UsuarioAdmin, ActualizarUsuario, SetPinRequest
-from app.models.models import Usuario, Tienda, RolEnum
+from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UsuarioPublic, UsuarioAdmin, ActualizarUsuario, SetPasswordRequest, KioskPinRequest
+from app.models.models import Usuario, Tienda, RolEnum, Configuracion
 from app.core.security import verify_password, hash_password, create_access_token
 from app.core.deps import require_admin, get_current_user
 from app.config import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# ─── PIN brute-force protection (in-memory, resets on restart) ────────────────
-_pin_attempts: dict[int, list[float]] = defaultdict(list)
-MAX_ATTEMPTS = 5
-WINDOW_SECONDS = 900  # 15 minutes
 
-
-def _check_rate_limit(user_id: int) -> None:
-    now = time()
-    attempts = [t for t in _pin_attempts[user_id] if now - t < WINDOW_SECONDS]
-    _pin_attempts[user_id] = attempts
-    if len(attempts) >= MAX_ATTEMPTS:
-        raise HTTPException(
-            status_code=429,
-            detail="Demasiados intentos. Intentá en 15 minutos.",
-        )
-    _pin_attempts[user_id].append(now)
+def _get_kiosk_pin(db: Session) -> str:
+    """PIN de kiosko vigente: la fila en `configuracion` manda; si no existe, cae al env var KIOSK_PIN."""
+    row = db.query(Configuracion).filter(Configuracion.clave == "kiosk_pin").first()
+    if row and row.valor:
+        return row.valor
+    return settings.KIOSK_PIN or ""
 
 
 @router.post("/seleccionar-sede", response_model=TokenResponse)
@@ -72,20 +61,6 @@ def listar_baristas(db: Session = Depends(get_db), user: Usuario = Depends(get_c
     ).order_by(Usuario.nombre).all()
 
 
-@router.get("/baristas-login")
-def baristas_para_login(db: Session = Depends(get_db)):
-    """Público: lista mínima (id + nombre) de baristas activas para la pantalla de
-    login individual por PIN en el celular. No expone datos sensibles; el PIN se valida
-    en /login-pin con rate-limit. La tienda de cada barista sale de su propio registro
-    al loguearse, así que no hace falta filtrar por sede (las baristas rotan)."""
-    baristas = db.query(Usuario).filter(
-        Usuario.activo == True,
-        Usuario.rol == RolEnum.barista,
-        ~Usuario.email.like("kiosk@%"),
-    ).order_by(Usuario.nombre).all()
-    return [{"id": b.id, "nombre": b.nombre} for b in baristas]
-
-
 @router.post("/login", response_model=TokenResponse)
 def login(data: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(Usuario).filter(Usuario.email == data.email, Usuario.activo == True).first()
@@ -94,26 +69,6 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     user.ultimo_acceso = datetime.utcnow()
     db.commit()
     token = create_access_token({"sub": str(user.id)})
-    return TokenResponse(
-        access_token=token, rol=user.rol.value,
-        nombre=user.nombre, tienda_id=user.tienda_id, user_id=user.id
-    )
-
-
-@router.post("/login-pin", response_model=TokenResponse)
-def login_pin(data: LoginPinRequest, db: Session = Depends(get_db)):
-    user = db.query(Usuario).filter(Usuario.id == data.user_id, Usuario.activo == True).first()
-    if not user or not user.pin_hash:
-        raise HTTPException(status_code=401, detail="PIN no configurado")
-    _check_rate_limit(user.id)
-    if not verify_password(data.pin, user.pin_hash):
-        raise HTTPException(status_code=401, detail="PIN incorrecto")
-    # Successful login: clear failed attempts
-    _pin_attempts[user.id] = []
-    user.ultimo_acceso = datetime.utcnow()
-    db.commit()
-    # 12h: dura un turno largo sin expirar a mitad (login individual de barista en su celular)
-    token = create_access_token({"sub": str(user.id)}, expires_delta=timedelta(hours=12))
     return TokenResponse(
         access_token=token, rol=user.rol.value,
         nombre=user.nombre, tienda_id=user.tienda_id, user_id=user.id
@@ -163,7 +118,6 @@ def listar_usuarios_admin(db: Session = Depends(get_db), _: Usuario = Depends(re
             tienda_id=u.tienda_id, tienda_nombre=tienda.nombre if tienda else None,
             activo=u.activo,
             ultimo_acceso=u.ultimo_acceso.isoformat() if u.ultimo_acceso else None,
-            tiene_pin=bool(u.pin_hash),
         ))
     return result
 
@@ -187,23 +141,45 @@ def actualizar_usuario(user_id: int, data: ActualizarUsuario, db: Session = Depe
     return {"id": user.id, "nombre": user.nombre, "activo": user.activo}
 
 
-@router.post("/usuarios/{user_id}/set-pin")
-def set_pin(user_id: int, data: SetPinRequest, db: Session = Depends(get_db), _: Usuario = Depends(require_admin)):
-    """Establece o resetea el PIN de 4 dígitos de un usuario."""
-    if not data.pin.isdigit() or len(data.pin) != 4:
-        raise HTTPException(status_code=400, detail="El PIN debe ser exactamente 4 dígitos")
+@router.post("/usuarios/{user_id}/set-password")
+def set_password(user_id: int, data: SetPasswordRequest, db: Session = Depends(get_db), _: Usuario = Depends(require_admin)):
+    """Establece o resetea la contraseña de un usuario (típicamente un admin)."""
+    if len(data.password) < 6:
+        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 6 caracteres")
     user = db.query(Usuario).filter(Usuario.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    user.pin_hash = hash_password(data.pin)
+    user.password_hash = hash_password(data.password)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/config/kiosk-pin")
+def get_kiosk_pin(db: Session = Depends(get_db), _: Usuario = Depends(require_admin)):
+    """PIN de kiosko vigente, para que el admin lo consulte/comparta. Solo admin."""
+    return {"pin": _get_kiosk_pin(db)}
+
+
+@router.put("/config/kiosk-pin")
+def set_kiosk_pin(data: KioskPinRequest, db: Session = Depends(get_db), _: Usuario = Depends(require_admin)):
+    """Cambia el PIN de kiosko (se guarda en la DB; pisa al env var). Solo admin."""
+    pin = data.pin.strip()
+    if len(pin) < 4:
+        raise HTTPException(status_code=400, detail="El PIN debe tener al menos 4 caracteres")
+    row = db.query(Configuracion).filter(Configuracion.clave == "kiosk_pin").first()
+    if row:
+        row.valor = pin
+    else:
+        db.add(Configuracion(clave="kiosk_pin", valor=pin))
     db.commit()
     return {"ok": True}
 
 
 @router.post("/kiosk-init", response_model=TokenResponse)
 def kiosk_init(tienda_id: int, kiosk_pin: str, db: Session = Depends(get_db)):
-    """Activa modo kiosco para un dispositivo. Requiere KIOSK_PIN configurado en el servidor."""
-    if not settings.KIOSK_PIN or kiosk_pin != settings.KIOSK_PIN:
+    """Activa modo kiosco para un dispositivo. El PIN sale de `configuracion` (o del env var de respaldo)."""
+    pin_vigente = _get_kiosk_pin(db)
+    if not pin_vigente or kiosk_pin != pin_vigente:
         raise HTTPException(status_code=401, detail="PIN de kiosco incorrecto")
     tienda = db.query(Tienda).filter(Tienda.id == tienda_id, Tienda.activa == True).first()
     if not tienda:

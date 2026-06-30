@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import api from '../api/client'
-import { Check, KeyRound, Pencil, Plus, UserCheck, UserX, X } from 'lucide-react'
+import { Check, KeyRound, Lock, Pencil, Plus, UserCheck, UserX, X } from 'lucide-react'
 
 interface Tienda { id: number; nombre: string }
 interface Usuario {
   id: number; nombre: string; email: string; rol: string
   tienda_id: number | null; tienda_nombre: string | null
-  activo: boolean; ultimo_acceso: string | null; tiene_pin: boolean
+  activo: boolean; ultimo_acceso: string | null
 }
 
 const TINTS = [
@@ -30,6 +30,75 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
         </div>
         <div className="p-5">{children}</div>
       </div>
+    </div>
+  )
+}
+
+// ── Tarjeta: PIN de kiosko (acceso de dispositivo) ─────────────────────────────
+function KioskPinCard() {
+  const [pinActual, setPinActual] = useState<string>('')
+  const [editando, setEditando] = useState(false)
+  const [nuevo, setNuevo] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [ok, setOk] = useState(false)
+  const [error, setError] = useState('')
+
+  const cargar = () => {
+    api.get('/auth/config/kiosk-pin').then(r => setPinActual(r.data.pin ?? '')).catch(() => {})
+  }
+  useEffect(() => { cargar() }, [])
+
+  const guardar = async () => {
+    if (nuevo.trim().length < 4) { setError('El PIN debe tener al menos 4 caracteres'); return }
+    setSaving(true); setError('')
+    try {
+      await api.put('/auth/config/kiosk-pin', { pin: nuevo.trim() })
+      setOk(true); setEditando(false); setNuevo(''); cargar()
+      setTimeout(() => setOk(false), 1800)
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'No se pudo guardar el PIN')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="bg-white border border-gray-100 rounded-2xl px-4 py-3.5 shadow-sm mb-4">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-white"
+          style={{ background: 'oklch(62% 0.18 50)' }}>
+          <Lock size={17} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-gray-800">PIN de kiosko</p>
+          <p className="text-xs text-gray-400">Se usa para activar la caja en cada dispositivo</p>
+        </div>
+        {!editando && (
+          <div className="flex items-center gap-3 shrink-0">
+            <span className="text-base font-bold font-mono tracking-widest text-gray-700">{pinActual || '—'}</span>
+            <button onClick={() => { setEditando(true); setNuevo('') }}
+              className="text-xs font-semibold text-amber-600 hover:text-amber-700">Cambiar</button>
+          </div>
+        )}
+      </div>
+
+      {editando && (
+        <div className="mt-3 flex items-center gap-2">
+          <input
+            value={nuevo} onChange={e => setNuevo(e.target.value)}
+            type="text" inputMode="numeric" placeholder="Nuevo PIN"
+            className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm font-mono tracking-widest outline-none focus:border-amber-400"
+          />
+          <button onClick={guardar} disabled={saving}
+            className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-bold px-4 py-2.5 rounded-xl text-sm">
+            {saving ? '...' : 'Guardar'}
+          </button>
+          <button onClick={() => { setEditando(false); setError('') }}
+            className="text-gray-400 hover:text-gray-600 px-2"><X size={18} /></button>
+        </div>
+      )}
+      {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
+      {ok && <p className="text-xs text-green-600 mt-2 flex items-center gap-1"><Check size={13} /> PIN actualizado</p>}
     </div>
   )
 }
@@ -124,24 +193,22 @@ function FormUsuario({
   )
 }
 
-// ── Modal PIN ─────────────────────────────────────────────────────────────────
-function ModalPin({ usuario, onClose, onGuardar }: { usuario: Usuario; onClose: () => void; onGuardar: () => void }) {
-  const [pin, setPin]     = useState('')
+// ── Modal contraseña (acceso de admin) ─────────────────────────────────────────
+function ModalPassword({ usuario, onClose, onGuardar }: { usuario: Usuario; onClose: () => void; onGuardar: () => void }) {
+  const [pass, setPass]     = useState('')
   const [saving, setSaving] = useState(false)
-  const [ok, setOk]       = useState(false)
-  const [error, setError] = useState('')
+  const [ok, setOk]         = useState(false)
+  const [error, setError]   = useState('')
 
   const guardar = async () => {
-    if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
-      setError('El PIN debe ser 4 dígitos'); return
-    }
+    if (pass.length < 6) { setError('La contraseña debe tener al menos 6 caracteres'); return }
     setSaving(true); setError('')
     try {
-      await api.post(`/auth/usuarios/${usuario.id}/set-pin`, { pin })
+      await api.post(`/auth/usuarios/${usuario.id}/set-password`, { password: pass })
       setOk(true)
       setTimeout(() => { onGuardar() }, 1000)
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Error al guardar PIN')
+      setError(e.response?.data?.detail || 'Error al guardar la contraseña')
     } finally {
       setSaving(false)
     }
@@ -150,27 +217,27 @@ function ModalPin({ usuario, onClose, onGuardar }: { usuario: Usuario; onClose: 
   return (
     <div className="space-y-4">
       <p className="text-sm text-gray-500">
-        Establece el PIN de 4 dígitos para <span className="font-semibold text-gray-800">{usuario.nombre}</span>.
-        Este PIN se usará para iniciar sesión desde el celular.
+        Nueva contraseña para <span className="font-semibold text-gray-800">{usuario.nombre}</span>.
+        Se usará para iniciar sesión en el panel de administración.
       </p>
       <div>
-        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">PIN de 4 dígitos</label>
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Contraseña</label>
         <input
-          value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
-          type="text" inputMode="numeric" maxLength={4}
-          placeholder="0000"
-          className="w-full border border-gray-200 rounded-xl px-3 py-3 text-2xl font-bold font-mono text-center tracking-[0.5em] outline-none focus:border-amber-400"
+          value={pass} onChange={e => setPass(e.target.value)}
+          type="text" autoComplete="new-password"
+          placeholder="Mínimo 6 caracteres"
+          className="w-full border border-gray-200 rounded-xl px-3 py-3 text-sm outline-none focus:border-amber-400"
         />
       </div>
       {error && <p className="text-xs text-red-500">{error}</p>}
       {ok && (
         <div className="flex items-center gap-2 text-green-600 text-sm">
-          <Check size={14} /> PIN guardado correctamente
+          <Check size={14} /> Contraseña actualizada
         </div>
       )}
-      <button onClick={guardar} disabled={saving || ok || pin.length !== 4}
+      <button onClick={guardar} disabled={saving || ok || pass.length < 6}
         className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl text-sm transition-colors">
-        {saving ? 'Guardando...' : 'Establecer PIN'}
+        {saving ? 'Guardando...' : 'Cambiar contraseña'}
       </button>
     </div>
   )
@@ -180,7 +247,7 @@ function ModalPin({ usuario, onClose, onGuardar }: { usuario: Usuario; onClose: 
 export default function Usuarios() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [tiendas, setTiendas]   = useState<Tienda[]>([])
-  const [modal, setModal]       = useState<'crear' | 'editar' | 'pin' | null>(null)
+  const [modal, setModal]       = useState<'crear' | 'editar' | 'password' | null>(null)
   const [seleccionado, setSeleccionado] = useState<Usuario | null>(null)
   const [loading, setLoading]   = useState(true)
 
@@ -222,6 +289,8 @@ export default function Usuarios() {
         </button>
       </div>
 
+      <KioskPinCard />
+
       {loading ? (
         <p className="text-sm text-gray-400 text-center py-10">Cargando...</p>
       ) : (
@@ -244,21 +313,19 @@ export default function Usuarios() {
                   {u.tienda_nombre && (
                     <span className="text-[11px] text-gray-500">{u.tienda_nombre}</span>
                   )}
-                  <span className={`text-[11px] flex items-center gap-1 ${u.tiene_pin ? 'text-green-600' : 'text-red-400'}`}>
-                    <KeyRound size={10} />
-                    {u.tiene_pin ? 'PIN configurado' : 'Sin PIN'}
-                  </span>
                   <span className="text-[11px] text-gray-400">Acceso: {fmtFecha(u.ultimo_acceso)}</span>
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                <button
-                  onClick={() => { setSeleccionado(u); setModal('pin') }}
-                  title="Establecer PIN"
-                  className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-amber-50 text-amber-500 transition-colors"
-                >
-                  <KeyRound size={15} />
-                </button>
+                {u.rol === 'admin' && (
+                  <button
+                    onClick={() => { setSeleccionado(u); setModal('password') }}
+                    title="Cambiar contraseña"
+                    className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-amber-50 text-amber-500 transition-colors"
+                  >
+                    <KeyRound size={15} />
+                  </button>
+                )}
                 <button
                   onClick={() => { setSeleccionado(u); setModal('editar') }}
                   title="Editar"
@@ -316,9 +383,9 @@ export default function Usuarios() {
           <FormUsuario inicial={seleccionado} tiendas={tiendas} onGuardar={onGuardar} onClose={() => setModal(null)} />
         </Modal>
       )}
-      {modal === 'pin' && seleccionado && (
-        <Modal title="Configurar PIN" onClose={() => setModal(null)}>
-          <ModalPin usuario={seleccionado} onClose={() => setModal(null)} onGuardar={onGuardar} />
+      {modal === 'password' && seleccionado && (
+        <Modal title="Cambiar contraseña" onClose={() => setModal(null)}>
+          <ModalPassword usuario={seleccionado} onClose={() => setModal(null)} onGuardar={onGuardar} />
         </Modal>
       )}
     </div>

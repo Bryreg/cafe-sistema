@@ -400,7 +400,10 @@ function TabConteos() {
     try {
       const { data } = await api.get<Conteo[]>('/compras/conteo/pendientes')
       setConteos(data)
-    } catch { /* silencioso */ }
+      setError('')
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'No se pudieron cargar los conteos pendientes')
+    }
   }, [])
 
   useEffect(() => { cargar() }, [cargar])

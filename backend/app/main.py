@@ -50,6 +50,9 @@ with engine.connect() as _conn:
         "ALTER TABLE caja_turnos ADD COLUMN ts_conteo_cierre TIMESTAMP",
         # Etapa 9: último acceso de usuario
         "ALTER TABLE usuarios ADD COLUMN ultimo_acceso TIMESTAMP",
+        # pin_hash sigue mapeado en el modelo Usuario → toda query SELECT-ea esta columna.
+        # Si falta en una DB preexistente, CUALQUIER consulta a usuarios (login incluido) da 500.
+        "ALTER TABLE usuarios ADD COLUMN pin_hash VARCHAR(255)",
         # Mermas: tipo, traslado y seguimiento
         "ALTER TABLE mermas ADD COLUMN tipo VARCHAR(20) DEFAULT 'consumo'",
         "ALTER TABLE mermas ADD COLUMN tienda_destino_id INTEGER",
@@ -109,6 +112,12 @@ with engine.connect() as _conn:
         "ALTER TABLE movimientos_caja ADD COLUMN barista_nombre VARCHAR(100)",
         "ALTER TABLE rutina_eventos ADD COLUMN barista_id INTEGER",
         "ALTER TABLE rutina_eventos ADD COLUMN barista_nombre VARCHAR(100)",
+        # Inventario mensual: atribución de barista (el modelo las declara e inserta).
+        "ALTER TABLE inventarios_mensuales ADD COLUMN barista_id INTEGER",
+        "ALTER TABLE inventarios_mensuales ADD COLUMN barista_nombre VARCHAR(100)",
+        # Movimientos de inventario: atribución de barista en kiosko compartido (plano, sin FK).
+        "ALTER TABLE movimientos_inventario ADD COLUMN barista_id INTEGER",
+        "ALTER TABLE movimientos_inventario ADD COLUMN barista_nombre VARCHAR(100)",
         # Pagos a proveedores: valor pagado, forma de pago real y foto del soporte de pago.
         "ALTER TABLE facturas_compra ADD COLUMN valor_pagado NUMERIC(12,2) DEFAULT 0",
         "ALTER TABLE facturas_compra ADD COLUMN forma_pago_real VARCHAR(40)",
@@ -147,6 +156,26 @@ with engine.connect() as _conn:
             logger.warning("Migration skipped (already applied or error): %s", e)  # columna ya existe
 
 Base.metadata.create_all(bind=engine)
+
+# ─── PIN de kiosko: sembrar fila en `configuracion` si no existe ───────────
+# Migra el PIN del env var KIOSK_PIN a la DB para que el admin lo edite desde el hub.
+# Idempotente: solo inserta si la clave no está. Fallback "2026" si el env var está vacío.
+def _seed_kiosk_pin():
+    from app.models.models import Configuracion
+    db = SessionLocal()
+    try:
+        existe = db.query(Configuracion).filter(Configuracion.clave == "kiosk_pin").first()
+        if not existe:
+            db.add(Configuracion(clave="kiosk_pin", valor=settings.KIOSK_PIN or "2026"))
+            db.commit()
+            logger.info("Configuracion.kiosk_pin sembrada en DB")
+    except Exception as e:
+        db.rollback()
+        logger.warning("No se pudo sembrar kiosk_pin: %s", e)
+    finally:
+        db.close()
+
+_seed_kiosk_pin()
 
 # ─── Seed automático (solo si la base está vacía) ──────────────────────────
 def _seed_if_empty():

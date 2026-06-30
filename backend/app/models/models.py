@@ -219,6 +219,7 @@ class Producto(Base):
     categoria = Column(SAEnum(CategoriaProductoEnum), nullable=False)
     unidad_medida = Column(String(30), nullable=False)
     controla_stock = Column(Boolean, default=True)
+    incluir_en_conteo = Column(Boolean, default=True, server_default="true")
     proveedor = Column(String(100), nullable=True)
     lead_time_dias = Column(Integer, default=2, server_default="2")
     precio_venta = Column(Numeric(12, 2, asdecimal=False), nullable=False, server_default="0")

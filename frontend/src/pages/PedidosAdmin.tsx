@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
   ShoppingCart, AlertTriangle, Clock, CheckCircle2, CheckCircle,
-  Copy, ChevronDown, ChevronUp, Phone, ClipboardList,
+  Copy, ChevronDown, ChevronUp, Phone, ClipboardList, Settings2, Check,
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -502,13 +502,139 @@ function TabConteos() {
   )
 }
 
+// ─── TabProveedores ───────────────────────────────────────────────────────────
+
+interface ProdFlat { id: number; nombre: string; categoria: string; proveedor: string }
+
+function TabProveedores({ tiendaId }: { tiendaId: number | null }) {
+  const [productos, setProductos]   = useState<ProdFlat[]>([])
+  const [editores, setEditores]     = useState<Record<number, string>>({})
+  const [saving, setSaving]         = useState<Record<number, boolean>>({})
+  const [saved, setSaved]           = useState<Record<number, boolean>>({})
+  const [loading, setLoading]       = useState(false)
+
+  const cargar = useCallback(() => {
+    if (!tiendaId) return
+    setLoading(true)
+    api.get('/pedidos/sugerencia', { params: { tienda_id: tiendaId } })
+      .then(r => {
+        const all: ProdFlat[] = [
+          ...r.data.grupos_fijos.flatMap((g: GrupoProveedor) =>
+            g.productos.map((p: ProductoSugerido) => ({
+              id: p.producto_id, nombre: p.nombre, categoria: p.categoria, proveedor: g.proveedor,
+            }))
+          ),
+          ...r.data.insumos_generales.map((p: ProductoSugerido) => ({
+            id: p.producto_id, nombre: p.nombre, categoria: p.categoria, proveedor: '',
+          })),
+        ]
+        all.sort((a, b) => a.proveedor.localeCompare(b.proveedor) || a.nombre.localeCompare(b.nombre))
+        setProductos(all)
+        const init: Record<number, string> = {}
+        for (const p of all) init[p.id] = p.proveedor
+        setEditores(init)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [tiendaId])
+
+  useEffect(() => { cargar() }, [cargar])
+
+  const proveedoresExistentes = [...new Set(productos.map(p => p.proveedor).filter(Boolean))].sort()
+
+  const guardar = async (id: number) => {
+    setSaving(prev => ({ ...prev, [id]: true }))
+    try {
+      await api.patch(`/inventario/productos/${id}`, { proveedor: editores[id]?.trim() ?? '' })
+      setSaved(prev => ({ ...prev, [id]: true }))
+      setTimeout(() => { setSaved(prev => ({ ...prev, [id]: false })); cargar() }, 900)
+    } catch { alert('Error al guardar') }
+    finally { setSaving(prev => ({ ...prev, [id]: false })) }
+  }
+
+  // Agrupar por proveedor actual (en editores)
+  const grupos: Record<string, ProdFlat[]> = {}
+  for (const p of productos) {
+    const key = p.proveedor || '__sin__'
+    if (!grupos[key]) grupos[key] = []
+    grupos[key].push(p)
+  }
+  const gruposOrdenados: [string, ProdFlat[]][] = [
+    ...Object.entries(grupos).filter(([k]) => k !== '__sin__').sort(([a], [b]) => a.localeCompare(b)),
+    ...(grupos['__sin__'] ? [['__sin__', grupos['__sin__']] as [string, ProdFlat[]]] : []),
+  ]
+
+  const listId = 'proveedores-list'
+
+  if (loading) return <p className="text-sm text-gray-400 text-center py-8 animate-pulse">Cargando…</p>
+
+  return (
+    <div className="space-y-4">
+      <datalist id={listId}>
+        {proveedoresExistentes.map(p => <option key={p} value={p} />)}
+      </datalist>
+
+      <p className="text-xs text-gray-400">
+        Asigná un proveedor a cada producto para que aparezca agrupado en la sugerencia de pedido.
+        Dejá el campo vacío para moverlo a "Insumos generales".
+      </p>
+
+      {gruposOrdenados.map(([key, items]) => (
+        <div key={key} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
+            <Phone size={13} className="text-gray-400" />
+            <p className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+              {key === '__sin__' ? 'Sin proveedor — insumos generales' : key}
+            </p>
+            <span className="ml-auto text-xs text-gray-400">{items.length} productos</span>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {items.map(p => {
+              const val = editores[p.id] ?? p.proveedor
+              const dirty = val.trim() !== p.proveedor
+              return (
+                <div key={p.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
+                    <p className="text-xs text-gray-400">{p.categoria}</p>
+                  </div>
+                  <input
+                    type="text"
+                    list={listId}
+                    value={val}
+                    onChange={e => setEditores(prev => ({ ...prev, [p.id]: e.target.value }))}
+                    placeholder="Nombre del proveedor…"
+                    className="w-44 border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300 text-gray-700 placeholder:text-gray-300"
+                  />
+                  <button
+                    onClick={() => guardar(p.id)}
+                    disabled={!dirty || saving[p.id] || saved[p.id]}
+                    className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-lg transition-all ${
+                      saved[p.id]  ? 'bg-green-100 text-green-600' :
+                      dirty        ? 'bg-amber-500 text-white hover:bg-amber-600' :
+                      'bg-gray-100 text-gray-300'
+                    }`}
+                    title="Guardar"
+                  >
+                    {saved[p.id] ? <Check size={14} /> : saving[p.id] ? '…' : <Check size={14} />}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PedidosAdmin() {
   const { user } = useAuth()
   const [sedes, setSedes]         = useState<Sede[]>([])
   const [tiendaId, setTiendaId]   = useState<number | null>(user?.tienda_id ?? null)
-  const [tab, setTab]             = useState<'pedidos' | 'conteos'>('pedidos')
+  const [tab, setTab]             = useState<'pedidos' | 'conteos' | 'proveedores'>('pedidos')
   const [nConteos, setNConteos]   = useState(0)
 
   useEffect(() => {
@@ -568,12 +694,21 @@ export default function PedidosAdmin() {
                 </span>
               )}
             </button>
+            <button
+              onClick={() => setTab('proveedores')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                tab === 'proveedores' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Settings2 size={13} /> Proveedores
+            </button>
           </div>
         </div>
       </div>
 
-      {tab === 'pedidos' && <TabPedidos tiendaId={tiendaId} />}
-      {tab === 'conteos' && <TabConteos />}
+      {tab === 'pedidos'     && <TabPedidos     tiendaId={tiendaId} />}
+      {tab === 'conteos'     && <TabConteos />}
+      {tab === 'proveedores' && <TabProveedores tiendaId={tiendaId} />}
     </div>
   )
 }

@@ -302,8 +302,8 @@ export default function PagosProveedores() {
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Forma de pago</label>
               <select value={formaPago} onChange={e => setFormaPago(e.target.value)}
                 className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm bg-white">
-                <option value="transferencia">Transferencia</option>
-                <option value="efectivo">Efectivo</option>
+                <option value="efectivo">Efectivo (sale del cajón)</option>
+                <option value="transferencia">Bancos</option>
                 <option value="cheque">Cheque</option>
                 <option value="otro">Otro</option>
               </select>

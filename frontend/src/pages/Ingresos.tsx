@@ -461,9 +461,9 @@ export default function Ingresos() {
                   <label className="text-[10px] font-bold uppercase tracking-wide text-warm-400">Tipo de pago</label>
                   <select value={tipoPago} onChange={e => setTipoPago(e.target.value as typeof tipoPago)}
                     className="w-full mt-1 border-2 border-warm-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-amber-400 bg-white">
-                    <option value="contado">Contado</option>
+                    <option value="contado">Contado (efectivo)</option>
                     <option value="credito">Crédito</option>
-                    <option value="transferencia">Transferencia</option>
+                    <option value="transferencia">Bancos</option>
                   </select>
                 </div>
                 <div>

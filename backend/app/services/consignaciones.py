@@ -6,8 +6,14 @@ from app.models.models import (Consignacion, EstadoConsignacionEnum,
                                 CajaTurno, MovimientoCaja, Tienda, EstadoTurnoEnum)
 
 
-def _turno_pendiente_mas_antiguo(db: Session, tienda_id: int) -> int | None:
-    """Devuelve el id del turno cerrado más antiguo que aún tiene consignación pendiente."""
+def _saldos_consignacion(db: Session, tienda_id: int) -> list[dict]:
+    """Saldo pendiente por consignar por turno cerrado, con CASCADA hacia días anteriores.
+
+    Por turno: esperado = ventas en efectivo + ingresos de caja − egresos en efectivo (contado).
+    saldo = esperado − consignado. Si el saldo de un turno es negativo (p.ej. el pago a
+    proveedor de contado superó las ventas en efectivo del día), ese déficit consume el saldo
+    de los turnos ANTERIORES (más viejos primero). Solo el efectivo mueve esto: crédito y bancos
+    no crean egreso de caja, así que no entran. Devuelve la lista en orden cronológico (asc)."""
     turnos = (
         db.query(CajaTurno)
         .filter(
@@ -17,18 +23,36 @@ def _turno_pendiente_mas_antiguo(db: Session, tienda_id: int) -> int | None:
         .order_by(CajaTurno.fecha_cierre.asc())
         .all()
     )
+    saldos = []
     for t in turnos:
         movs = db.query(MovimientoCaja).filter(MovimientoCaja.caja_turno_id == t.id).all()
-        total_egresos = sum(m.valor for m in movs if m.tipo == "egreso")
-        total_ingresos_mov = sum(m.valor for m in movs if m.tipo == "ingreso")
-        esperado = (t.total_efectivo or 0) + total_ingresos_mov - total_egresos
-        if esperado <= 0:
-            continue
-        consignado = db.query(func.sum(Consignacion.valor)).filter(
-            Consignacion.caja_turno_id == t.id
-        ).scalar() or 0
-        if round(consignado, 2) < round(esperado, 2):
-            return t.id
+        egresos = sum(m.valor for m in movs if m.tipo == "egreso")
+        ingresos = sum(m.valor for m in movs if m.tipo == "ingreso")
+        esperado = (t.total_efectivo or 0) + ingresos - egresos
+        consignado = sum(c.valor for c in _consigs_del_turno(db, t))
+        saldos.append({"turno": t, "esperado": esperado, "consignado": consignado,
+                       "saldo": esperado - consignado})
+
+    # Cascada: el déficit de un turno (saldo<0) consume el saldo de turnos anteriores (más viejos primero).
+    for i in range(len(saldos)):
+        if saldos[i]["saldo"] < 0:
+            deficit = -saldos[i]["saldo"]
+            saldos[i]["saldo"] = 0.0
+            for j in range(i):
+                if deficit <= 0:
+                    break
+                take = min(saldos[j]["saldo"], deficit)
+                saldos[j]["saldo"] -= take
+                deficit -= take
+            # déficit remanente sin saldo viejo que consumir = sobrepago histórico; se ignora.
+    return saldos
+
+
+def _turno_pendiente_mas_antiguo(db: Session, tienda_id: int) -> int | None:
+    """Id del turno cerrado más antiguo que aún tiene saldo pendiente (tras la cascada)."""
+    for s in _saldos_consignacion(db, tienda_id):   # ya viene en orden cronológico asc
+        if round(s["saldo"], 2) > 0:
+            return s["turno"].id
     return None
 
 
@@ -161,39 +185,23 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
 
 
 def get_pendiente(db: Session, tienda_id: int):
-    turnos = (
-        db.query(CajaTurno)
-        .filter(
-            CajaTurno.tienda_id == tienda_id,
-            CajaTurno.estado == EstadoTurnoEnum.cerrado,
-        )
-        .order_by(CajaTurno.fecha_cierre.desc())
-        .all()
-    )
-
+    # Saldo con cascada FIFO: un egreso en efectivo que supera el día baja el pendiente
+    # de turnos anteriores. Solo se listan turnos con saldo > 0 tras la cascada.
+    saldos = _saldos_consignacion(db, tienda_id)
     items = []
-    for t in turnos:
-        movs = db.query(MovimientoCaja).filter(MovimientoCaja.caja_turno_id == t.id).all()
-        total_egresos = sum(m.valor for m in movs if m.tipo == "egreso")
-        total_ingresos_mov = sum(m.valor for m in movs if m.tipo == "ingreso")
-        esperado = (t.total_efectivo or 0) + total_ingresos_mov - total_egresos
-
-        consigs = _consigs_del_turno(db, t)
-        total_consignado = sum(c.valor for c in consigs)
-        pendiente = max(0, round(esperado - total_consignado, 2))
-
-        # Solo turnos con saldo pendiente real (antes `esperado > 0` colaba turnos ya saldados
-        # como filas fantasma de $0 e inflaba el conteo de turnos pendientes).
+    for s in saldos:                    # orden cronológico asc
+        pendiente = round(s["saldo"], 2)
         if pendiente > 0:
+            t = s["turno"]
             items.append({
                 "turno_id": t.id,
                 "fecha_apertura": t.fecha_apertura,
                 "fecha_cierre": t.fecha_cierre,
-                "esperado": round(esperado, 2),
-                "consignado": round(total_consignado, 2),
+                "esperado": round(s["esperado"], 2),
+                "consignado": round(s["consignado"], 2),
                 "pendiente": pendiente,
             })
-
+    items.reverse()                     # más reciente primero para la UI
     return {
         "items": items,
         "total_pendiente": round(sum(i["pendiente"] for i in items), 2),

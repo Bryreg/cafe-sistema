@@ -207,6 +207,40 @@ def _seed_if_empty():
 _seed_if_empty()
 
 
+def _seed_tareas_limpieza():
+    """Crea el catálogo de 13 tareas de limpieza para cada tienda que aún no lo tenga."""
+    from app.models.models import Tienda, TareaLimpieza
+    DEFAULTS = [
+        {"key": "pisos_puntos_ciegos", "label": "Aseo general pisos y puntos ciegos"},
+        {"key": "computador_caja",     "label": "Limpieza del computador, cajón monedero, impresora, teléfono, datafono"},
+        {"key": "congelador_helado",   "label": "Lavar congelador de helado"},
+        {"key": "nevera_pasteleria",   "label": "Lavar nevera de pastelería"},
+        {"key": "nevera_leche",        "label": "Lavar nevera de leche"},
+        {"key": "trampa_grasas",       "label": "Lavar trampa de grasas"},
+        {"key": "gabinetes_cajones",   "label": "Asear y organizar gabinetes, puertas, cajones y materias primas por fecha"},
+        {"key": "maquinas",            "label": "Aseo de máquinas (licuadoras, hornos y molinos)"},
+        {"key": "recipientes",         "label": "Limpieza de recipientes (Milo, Oreo, granizado, café descafeinado, azúcar)"},
+        {"key": "loza",                "label": "Limpieza y desmanchado de loza (tazas, platos y copas)"},
+        {"key": "utensilios",          "label": "Desinfección de utensilios (jarras, espresso, cucharas, jigger, cuchillos)"},
+        {"key": "avisos_pop",          "label": "Limpieza de avisos y material POP"},
+        {"key": "sillas_mesas_barra",  "label": "Sillas, mesas y barra (aseo general patas y por debajo)"},
+    ]
+    db = SessionLocal()
+    try:
+        for tienda in db.query(Tienda).all():
+            if db.query(TareaLimpieza).filter_by(tienda_id=tienda.id).count() == 0:
+                for i, t in enumerate(DEFAULTS):
+                    db.add(TareaLimpieza(tienda_id=tienda.id, key=t["key"], label=t["label"], orden=i))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("Seed tareas_limpieza error: %s", e)
+    finally:
+        db.close()
+
+_seed_tareas_limpieza()
+
+
 # ─── Migración de productos reales (idempotente) ───────────────────────────
 def _migrate_productos_reales():
     """

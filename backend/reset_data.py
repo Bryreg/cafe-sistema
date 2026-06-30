@@ -7,7 +7,7 @@ Ejecutar desde Render Shell:
     cd /app && python reset_data.py
 """
 import os, sys
-sys.path.insert(0, "/app")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.database import SessionLocal, engine
 from sqlalchemy import text

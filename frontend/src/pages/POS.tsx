@@ -23,6 +23,7 @@ import Inventario from './Inventario'
 import SolicitudPedido from './SolicitudPedido'
 import SolicitudSencilla from './SolicitudSencilla'
 import Consignaciones from './Consignaciones'
+import TickerNoticias from '../components/TickerNoticias'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -282,6 +283,9 @@ export default function POS() {
           <span className="hidden sm:inline">Reimprimir</span>
         </button>
       </header>
+
+      {/* ── Ticker de alertas operativas ── */}
+      <TickerNoticias />
 
       {/* ── Cuerpo: POS + panel inline (se reparten el ancho sin solaparse) ── */}
       <div className="flex-1 flex min-h-0 overflow-hidden">

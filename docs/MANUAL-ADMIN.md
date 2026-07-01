@@ -807,10 +807,11 @@ La pantalla incluye una **vista previa del encabezado** que se actualiza a medid
 
 1. En **Mensaje de cierre**, escriba el texto del pie del ticket (por ejemplo, "¡Gracias por tu compra!"). Aparece centrado al final.
 
-### Cómo elegir el ancho del papel y el tamaño de letra
+### Cómo elegir el ancho del papel, el margen y el tamaño de letra
 
 1. En **Dimensiones de impresión**, elija el **Ancho del papel térmico**: **58 / 72 / 80 mm** (el más común es 80 mm; si el ticket sale cortado, pruebe 58 mm).
-2. Elija el **Tamaño de letra**: **Pequeño / Normal / Grande** (si el ticket sale muy pequeño, use Grande; funciona mejor en Chrome).
+2. Elija el **Margen lateral (mm)**: de **0 a 5 mm**. Es el espacio en blanco a los lados del ticket. **Si el contenido se sale del borde del papel, súbalo a 2 o 3 mm** hasta que quede dentro del recuadro.
+3. Elija el **Tamaño de letra**: **Pequeño / Normal / Grande** (si el ticket sale muy pequeño, use Grande; funciona mejor en Chrome).
 
 ### Cómo guardar
 

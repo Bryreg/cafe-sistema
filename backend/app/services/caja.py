@@ -221,6 +221,41 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
     return get_turno_activo(db, tienda_id)
 
 
+def ajustar_apertura(db: Session, turno_id: int, base_real: float,
+                     caja_fuerte: float | None, usuario_id: int, motivo: str | None = None):
+    """Corrección admin de la apertura de un turno: ajusta la base real de la registradora
+    y la caja fuerte, y recalcula la diferencia de apertura. Con auditoría. Sirve para
+    corregir errores como meter la caja fuerte dentro de la base."""
+    turno = db.query(CajaTurno).filter(CajaTurno.id == turno_id).first()
+    if not turno:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+    if base_real < 0 or (caja_fuerte is not None and caja_fuerte < 0):
+        raise HTTPException(status_code=400, detail="Los valores no pueden ser negativos")
+
+    antes = {
+        "base_real": float(turno.base_real or 0),
+        "caja_fuerte": float(turno.caja_fuerte or 0),
+        "diferencia_apertura": float(turno.diferencia_apertura or 0),
+    }
+    turno.base_real = base_real
+    if caja_fuerte is not None:
+        turno.caja_fuerte = caja_fuerte
+    turno.diferencia_apertura = base_real - (turno.base_sistema or 0)
+
+    audit.registrar(
+        db, accion="ajuste_apertura", tabla="caja_turnos",
+        registro_id=turno.id, usuario_id=usuario_id, tienda_id=turno.tienda_id,
+        datos_antes=antes,
+        datos_despues={"base_real": base_real, "caja_fuerte": caja_fuerte,
+                       "diferencia_apertura": turno.diferencia_apertura, "motivo": motivo},
+    )
+    db.commit()
+    if turno.estado == EstadoTurnoEnum.abierto:
+        return get_turno_activo(db, turno.tienda_id)
+    db.refresh(turno)
+    return turno
+
+
 def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
                 justificacion: str | None, usuario_id: int,
                 datafono_real: float | None = None):

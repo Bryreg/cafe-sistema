@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.core.deps import ensure_tienda_access, ensure_turno_access, get_current_user, get_barista_actor
+from app.core.deps import ensure_tienda_access, ensure_turno_access, get_current_user, get_barista_actor, require_admin
 from app.models.models import Usuario, CajaTurno, TurnoBarista, EntregaTurno
-from app.schemas.caja import AbrirCajaRequest, CerrarCajaRequest, MovimientoCajaRequest, TurnoOut, EntregaTurnoOut, FlujoCajaOut, TurnoHistorialItem
+from app.schemas.caja import AbrirCajaRequest, AjustarAperturaRequest, CerrarCajaRequest, MovimientoCajaRequest, TurnoOut, EntregaTurnoOut, FlujoCajaOut, TurnoHistorialItem
 from app.services import caja as svc
 from app.core.storage import upload_imagen
 from typing import List, Optional
@@ -46,6 +46,12 @@ def get_flujo(turno_id: int, db: Session = Depends(get_db), user: Usuario = Depe
 def cerrar(turno_id: int, data: CerrarCajaRequest, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     ensure_turno_access(db, user, turno_id)
     return svc.cerrar_caja(db, turno_id, data.efectivo_final_real, data.justificacion_cierre, user.id, data.datafono_real)
+
+@router.post("/{turno_id}/ajustar-apertura", response_model=TurnoOut)
+def ajustar_apertura(turno_id: int, data: AjustarAperturaRequest, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    """Corrección admin: ajusta base real de la registradora y caja fuerte de un turno (con auditoría)."""
+    ensure_turno_access(db, user, turno_id)
+    return svc.ajustar_apertura(db, turno_id, data.base_real, data.caja_fuerte, user.id, data.motivo)
 
 @router.post("/{turno_id}/movimiento")
 async def movimiento(

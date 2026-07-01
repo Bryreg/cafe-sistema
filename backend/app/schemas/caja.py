@@ -12,6 +12,12 @@ class AbrirCajaRequest(BaseModel):
     barista_ids: Optional[List[int]] = None
 
 
+class AjustarAperturaRequest(BaseModel):
+    base_real: float                      # efectivo real de la registradora al abrir
+    caja_fuerte: Optional[float] = None   # reserva fija aparte
+    motivo: Optional[str] = None
+
+
 class CerrarCajaRequest(BaseModel):
     efectivo_final_real: float          # total contado en caja (base + ventas efectivo)
     datafono_real: Optional[float] = None  # total datáfono Bold

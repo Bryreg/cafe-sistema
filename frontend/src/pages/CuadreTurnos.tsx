@@ -140,9 +140,67 @@ function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
   )
 }
 
+// ── Ajuste de apertura (admin) ────────────────────────────────────────────────
+
+function AjusteApertura({ turno, onDone }: { turno: TurnoItem; onDone: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [baseReal, setBaseReal] = useState('')
+  const [cajaFuerte, setCajaFuerte] = useState('')
+  const [motivo, setMotivo] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const inp: React.CSSProperties = {
+    fontSize: 14, padding: '8px 10px', borderRadius: 8,
+    border: '1.5px solid oklch(88% 0.006 75)', background: '#fff', fontFamily: 'inherit', width: '100%',
+  }
+
+  const guardar = async () => {
+    if (baseReal.trim() === '') { setError('Ingresá la base real de la registradora'); return }
+    setSaving(true); setError('')
+    try {
+      await api.post(`/caja/${turno.id}/ajustar-apertura`, {
+        base_real: Number(baseReal) || 0,
+        caja_fuerte: cajaFuerte.trim() === '' ? null : Number(cajaFuerte) || 0,
+        motivo: motivo || null,
+      })
+      onDone()
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'No se pudo ajustar'); setSaving(false)
+    }
+  }
+
+  return (
+    <div style={{ background: '#fff', borderRadius: 16, border: '1px solid oklch(90% 0.05 55)', overflow: 'hidden' }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', background: 'oklch(97% 0.03 55)', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'oklch(45% 0.12 50)' }}>Ajustar apertura (admin)</span>
+        <span style={{ fontSize: 11, color: 'oklch(50% 0.05 55)' }}>base actual {fmt(turno.base_real)} · {open ? 'cerrar' : 'abrir'}</span>
+      </button>
+      {open && (
+        <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <p style={{ margin: 0, fontSize: 11.5, color: 'oklch(50% 0.01 60)' }}>
+            Corregí si la caja fuerte quedó dentro de la base. La base debe ser SOLO el efectivo de la registradora.
+          </p>
+          <label style={{ fontSize: 11, color: 'oklch(50% 0.01 60)', fontWeight: 600 }}>Efectivo real de la registradora</label>
+          <input type="number" inputMode="numeric" value={baseReal} onChange={e => setBaseReal(e.target.value)} placeholder={`Actual: ${fmt(turno.base_real)}`} style={inp} />
+          <label style={{ fontSize: 11, color: 'oklch(50% 0.01 60)', fontWeight: 600 }}>Caja fuerte (reserva aparte)</label>
+          <input type="number" inputMode="numeric" value={cajaFuerte} onChange={e => setCajaFuerte(e.target.value)} placeholder="$0" style={inp} />
+          <input value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Motivo (opcional)" style={inp} />
+          {error && <p style={{ margin: 0, fontSize: 12, color: 'oklch(42% 0.18 30)' }}>{error}</p>}
+          <button onClick={guardar} disabled={saving}
+            style={{ marginTop: 4, padding: '10px', borderRadius: 10, border: 'none', background: 'oklch(48% 0.15 155)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', opacity: saving ? 0.6 : 1, fontFamily: 'inherit' }}>
+            {saving ? 'Guardando...' : 'Guardar corrección'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Turno detail view ─────────────────────────────────────────────────────────
 
-function TurnoDetalle({ turno, onBack, onFoto }: { turno: TurnoItem; onBack: () => void; onFoto: (url: string) => void }) {
+function TurnoDetalle({ turno, onBack, onFoto, isAdmin, onAdjusted }: { turno: TurnoItem; onBack: () => void; onFoto: (url: string) => void; isAdmin: boolean; onAdjusted: () => void }) {
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [loadingMovs, setLoadingMovs] = useState(true)
   const cerrado = turno.estado === 'cerrado'
@@ -187,6 +245,8 @@ function TurnoDetalle({ turno, onBack, onFoto }: { turno: TurnoItem; onBack: () 
       </div>
 
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '12px 16px 40px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+        {isAdmin && <AjusteApertura turno={turno} onDone={onAdjusted} />}
 
         {turno.baristas.length > 0 && (
           <div style={{ background: '#fff', borderRadius: 16, padding: '12px 14px', border: '1px solid oklch(92% 0.008 75)', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -696,7 +756,12 @@ export default function CuadreTurnos() {
   if (selected) {
     return (
       <>
-        <TurnoDetalle turno={selected} onBack={() => setSelected(null)} onFoto={setFotoUrl} />
+        <TurnoDetalle turno={selected} onBack={() => setSelected(null)} onFoto={setFotoUrl}
+          isAdmin={isAdmin}
+          onAdjusted={() => {
+            setSelected(null)
+            api.get(`/caja/historial/${tiendaId}`).then(r => setTurnos(r.data)).catch(() => null)
+          }} />
         {fotoUrl && <Lightbox url={fotoUrl} onClose={() => setFotoUrl(null)} />}
       </>
     )

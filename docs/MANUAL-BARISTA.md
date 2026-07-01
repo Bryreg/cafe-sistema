@@ -23,6 +23,7 @@ Este es el manual de uso del sistema de la cafetería (**cafe-sistema**) para el
 
 ## Tabla de contenido
 
+- [Antes de empezar: instalar la app en el celular](#antes-de-empezar-instalar-la-app-en-el-celular)
 1. [El día a día de un/a barista](#1-el-dia-a-dia-de-una-barista)
 2. [El modelo de kiosko: dispositivo compartido y barista activa](#2-el-modelo-de-kiosko-dispositivo-compartido-y-barista-activa)
 3. [Activar caja (activar el dispositivo)](#3-activar-caja-activar-el-dispositivo)
@@ -51,6 +52,43 @@ Este es el manual de uso del sistema de la cafetería (**cafe-sistema**) para el
 26. [Salida de efectivo (cierre en kiosko)](#26-salida-de-efectivo-cierre-en-kiosko)
 27. [Preguntas frecuentes](#27-preguntas-frecuentes)
 28. [Glosario](#28-glosario)
+
+---
+
+## Antes de empezar: instalar la app en el celular
+
+**Para qué sirve:** cafe-sistema es una aplicación web (una PWA). **No se descarga de Play Store ni de App Store**: se instala una sola vez desde el navegador del celular o la tablet. Una vez instalada aparece con su ícono (**"Café"**) en la pantalla de inicio, abre en pantalla completa como cualquier app y se actualiza sola.
+
+**Qué necesita:**
+- El celular o la tablet con conexión a internet.
+- La dirección web del sistema: **https://cafe-sistema.pages.dev** (o la que le indique el administrador).
+
+### Instalar en Android (con Chrome)
+1. Abra **Chrome** e ingrese a la dirección del sistema.
+2. Toque el menú **⋮** (los tres puntos, arriba a la derecha).
+3. Toque **Instalar aplicación** (en algunos equipos aparece como **Agregar a la pantalla de inicio**).
+4. Confirme tocando **Instalar**.
+5. Listo: el ícono **Café** queda en la pantalla de inicio.
+
+> Consejo: si al entrar aparece abajo un aviso o un botón **"Instalar"**, puede tocarlo directamente y saltear los pasos.
+
+### Instalar en iPhone o iPad (con Safari)
+> **Importante:** en iPhone y iPad la instalación **solo funciona desde Safari** (no desde Chrome ni otro navegador).
+1. Abra **Safari** e ingrese a la dirección del sistema.
+2. Toque el botón **Compartir** (el cuadrado con una flecha hacia arriba, en la barra de abajo).
+3. Deslice la lista hacia abajo y toque **Agregar a inicio** (*Add to Home Screen*).
+4. Toque **Agregar**, arriba a la derecha.
+5. Listo: el ícono **Café** queda en la pantalla de inicio.
+
+### Después de instalar
+1. Abra la app **siempre desde el ícono "Café"** (no desde el navegador): así funciona en pantalla completa, como una app normal.
+2. La primera vez le pedirá la **sede** y el **PIN de sistema** — vea [Activar caja](#3-activar-caja-activar-el-dispositivo).
+3. La app **se actualiza automáticamente**: cuando el administrador publica cambios, se aplican solos la próxima vez que la abra con internet.
+
+**Consejos / notas:**
+- Deje el dispositivo con la app instalada y la caja activada; el modo kiosko mantiene la sesión abierta durante el turno.
+- Para recibir avisos en el celular (stock, consignaciones), el administrador debe activar las notificaciones y usted debe **permitirlas** cuando el teléfono se lo pregunte.
+- Si después de instalar no ve el ícono, verifique que usó el navegador correcto (**Chrome** en Android, **Safari** en iPhone) y que tenía internet.
 
 ---
 

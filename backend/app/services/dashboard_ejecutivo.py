@@ -15,17 +15,15 @@ from app.models.models import (
     Ticket, TicketItem, Tienda, Inventario, Producto, CategoriaProductoEnum,
     FacturaCompraItem,
 )
+from app.core.tz import rango_col_utc
 
 
 def _rango(fecha_desde: date | None, fecha_hasta: date | None) -> tuple[datetime, datetime]:
-    """Normaliza rango de fechas. Default = hoy. Compat SQLite + PostgreSQL."""
-    hoy = date.today()
-    desde = fecha_desde or hoy
-    hasta = fecha_hasta or hoy
-    return (
-        datetime.combine(desde, datetime.min.time()),
-        datetime.combine(hasta, datetime.max.time()),
-    )
+    """Normaliza rango a UTC cubriendo días Colombia (UTC-5). Default = hoy Colombia.
+
+    Compat SQLite + PostgreSQL (sin funciones de fecha SQL-específicas).
+    """
+    return rango_col_utc(fecha_desde, fecha_hasta)
 
 
 def ventas_por_sede(

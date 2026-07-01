@@ -4,11 +4,16 @@ from datetime import datetime, timedelta
 from app.models.models import (CajaTurno, Inventario, Consignacion, ChecklistDiario,
                                  Tienda, Producto, SolicitudPedido, SolicitudSencilla,
                                  EstadoTurnoEnum, EstadoConsignacionEnum)
+from app.core.tz import hoy_col, inicio_dia_col_utc, fin_dia_col_utc, hora_col
 
 def get_dashboard(db: Session, tienda_id: int):
     tienda = db.query(Tienda).filter(Tienda.id == tienda_id).first()
-    hoy = datetime.utcnow().date()
+    hoy = hoy_col()
     ayer = hoy - timedelta(days=1)
+    # Rangos UTC que cubren el día Colombia (los timestamps se guardan en UTC).
+    # Reemplazan func.date(col) == fecha, que comparaba contra la fecha UTC.
+    hoy_desde, hoy_hasta = inicio_dia_col_utc(hoy), fin_dia_col_utc(hoy)
+    ayer_desde, ayer_hasta = inicio_dia_col_utc(ayer), fin_dia_col_utc(ayer)
 
     # Turno activo
     turno = db.query(CajaTurno).filter(
@@ -20,7 +25,8 @@ def get_dashboard(db: Session, tienda_id: int):
     # mantiene estos totales en cada venta). No depende de Siigo.
     turnos_hoy = db.query(CajaTurno).filter(
         CajaTurno.tienda_id == tienda_id,
-        func.date(CajaTurno.fecha_apertura) == hoy,
+        CajaTurno.fecha_apertura >= hoy_desde,
+        CajaTurno.fecha_apertura <= hoy_hasta,
     ).all()
     ventas_dia   = sum(t.total_ventas   or 0 for t in turnos_hoy)
     efectivo_dia = sum(t.total_efectivo or 0 for t in turnos_hoy)
@@ -30,7 +36,8 @@ def get_dashboard(db: Session, tienda_id: int):
     turnos_ayer = db.query(CajaTurno).filter(
         CajaTurno.tienda_id == tienda_id,
         CajaTurno.estado == EstadoTurnoEnum.cerrado,
-        func.date(CajaTurno.fecha_apertura) == ayer,
+        CajaTurno.fecha_apertura >= ayer_desde,
+        CajaTurno.fecha_apertura <= ayer_hasta,
     ).all()
     ventas_ayer = sum(t.total_ventas or 0 for t in turnos_ayer)
     if turno:
@@ -88,7 +95,8 @@ def get_dashboard(db: Session, tienda_id: int):
     # Checklist
     checklist = db.query(ChecklistDiario).filter(
         ChecklistDiario.tienda_id == tienda_id,
-        func.date(ChecklistDiario.fecha) == hoy
+        ChecklistDiario.fecha >= hoy_desde,
+        ChecklistDiario.fecha <= hoy_hasta,
     ).first()
 
     cumplimiento = 0.0
@@ -108,7 +116,7 @@ def get_dashboard(db: Session, tienda_id: int):
         alertas.append({"tipo": "consignacion", "mensaje": f"{cons_pendientes} consignación(es) pendiente(s)", "nivel": "advertencia"})
     if solicitudes_pendientes > 0:
         alertas.append({"tipo": "solicitud", "mensaje": f"{solicitudes_pendientes} solicitud(es) sin atender", "nivel": "advertencia"})
-    if checklist and not checklist.pasteleria_check and datetime.utcnow().hour >= 11:
+    if checklist and not checklist.pasteleria_check and hora_col(datetime.utcnow()) >= 11:
         alertas.append({"tipo": "pasteleria", "mensaje": "Registro de pastelería pendiente", "nivel": "critico"})
 
     # Alertas inteligentes: patrones anómalos (mermas, baristas con diferencias, caída de ventas…)
@@ -150,8 +158,10 @@ def get_admin_resumen(db: Session, tienda_id: int):
         FacturaCompra, MovimientoCaja, TipoMovCajaEnum, CajaTurno,
     )
 
-    ahora = datetime.utcnow()
-    inicio_mes = ahora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    hoy = hoy_col()
+    # inicio_mes = instante UTC del 1° del mes Colombia a las 00:00 (los timestamps
+    # se guardan en UTC; sin el offset el corte de mes caería 5h antes).
+    inicio_mes = inicio_dia_col_utc(hoy.replace(day=1))
 
     # ── 1. Ventas acumuladas del mes ──────────────────────────────────────────
     ventas_mes = (
@@ -260,8 +270,8 @@ def get_admin_resumen(db: Session, tienda_id: int):
     return {
         "tienda_id": tienda_id,
         "periodo": {
-            "desde": inicio_mes.date().isoformat(),
-            "hasta": ahora.date().isoformat(),
+            "desde": hoy.replace(day=1).isoformat(),
+            "hasta": hoy.isoformat(),
         },
         "ventas_mes": round(ventas_mes, 0),
         "consignaciones": {
@@ -285,10 +295,11 @@ def actualizar_checklist_manual(db: Session, tienda_id: int, campo: str, valor: 
     if campo not in campos_permitidos:
         return None  # caller raises 400
 
-    hoy = datetime.utcnow().date()
+    hoy = hoy_col()
     checklist = db.query(ChecklistDiario).filter(
         ChecklistDiario.tienda_id == tienda_id,
-        func.date(ChecklistDiario.fecha) == hoy
+        ChecklistDiario.fecha >= inicio_dia_col_utc(hoy),
+        ChecklistDiario.fecha <= fin_dia_col_utc(hoy),
     ).first()
     if not checklist:
         checklist = ChecklistDiario(tienda_id=tienda_id, fecha=datetime.utcnow())

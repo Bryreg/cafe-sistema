@@ -13,7 +13,7 @@ router = APIRouter(prefix="/caja", tags=["caja"])
 @router.post("/abrir", response_model=TurnoOut)
 def abrir(data: AbrirCajaRequest, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     ensure_tienda_access(user, data.tienda_id)
-    return svc.abrir_caja(db, data.tienda_id, data.base_real, data.justificacion_apertura, user.id, data.barista_ids, data.tipo_turno)
+    return svc.abrir_caja(db, data.tienda_id, data.base_real, data.justificacion_apertura, user.id, data.barista_ids, data.tipo_turno, caja_fuerte=data.caja_fuerte)
 
 
 @router.get("/activo-pub/{tienda_id}")

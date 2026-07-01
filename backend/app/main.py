@@ -161,6 +161,9 @@ with engine.connect() as _conn:
         "ALTER TABLE entregas_turno ADD COLUMN ventas_efectivo_snapshot NUMERIC(12,2)",
         "ALTER TABLE entregas_turno ADD COLUMN ingresos_snapshot NUMERIC(12,2)",
         "ALTER TABLE entregas_turno ADD COLUMN egresos_snapshot NUMERIC(12,2)",
+        # Caja fuerte: reserva fija guardada aparte de la registradora. Se registra para
+        # control pero NO entra en efectivo_esperado. La base es solo el efectivo operativo.
+        "ALTER TABLE caja_turnos ADD COLUMN caja_fuerte NUMERIC(12,2) DEFAULT 0",
     ]:
         try:
             _conn.execute(_text(_sql))

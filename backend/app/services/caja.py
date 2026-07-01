@@ -115,9 +115,11 @@ def get_turno_activo(db: Session, tienda_id: int):
     return turno
 
 
-def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str | None, usuario_id: int, barista_ids: list[int] | None = None, tipo_turno: str | None = None):
+def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str | None, usuario_id: int, barista_ids: list[int] | None = None, tipo_turno: str | None = None, caja_fuerte: float | None = None):
     if base_real < 0:
         raise HTTPException(status_code=400, detail="base_real no puede ser negativa")
+    if caja_fuerte is not None and caja_fuerte < 0:
+        raise HTTPException(status_code=400, detail="caja_fuerte no puede ser negativa")
     if tipo_turno is not None and tipo_turno not in (e.value for e in TipoTurnoEnum):
         raise HTTPException(status_code=400, detail="tipo_turno inválido")
     if get_turno_activo(db, tienda_id):
@@ -148,6 +150,7 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
         usuario_apertura_id=usuario_id,
         base_sistema=base_sistema,
         base_real=base_real,
+        caja_fuerte=caja_fuerte or 0.0,
         diferencia_apertura=diferencia,
         justificacion_apertura=justificacion,
         tipo_turno=tipo_turno,
@@ -487,6 +490,9 @@ def get_entrega_desglose(db: Session, entrega_id: int) -> dict | None:
         MovimientoCaja.fecha <= e.fecha_hora,
     ).order_by(MovimientoCaja.fecha.asc()).all()
 
+    turno = db.query(CajaTurno).filter(CajaTurno.id == e.turno_id).first()
+    caja_fuerte = float(turno.caja_fuerte) if turno and turno.caja_fuerte is not None else 0.0
+
     tiene_snapshot = e.base_snapshot is not None
     if tiene_snapshot:
         base = float(e.base_snapshot or 0)
@@ -496,7 +502,6 @@ def get_entrega_desglose(db: Session, entrega_id: int) -> dict | None:
     else:
         # Cuadre viejo: reconstruir lo posible sin romper. base del turno; ingresos/egresos
         # hasta la hora del cuadre; ventas_efectivo se despeja del esperado ya guardado.
-        turno = db.query(CajaTurno).filter(CajaTurno.id == e.turno_id).first()
         base = float(turno.base_real or 0) if turno else 0.0
         ingresos = sum(float(m.valor) for m in movimientos if _mov_tipo(m) == "ingreso")
         egresos = sum(float(m.valor) for m in movimientos if _mov_tipo(m) == "egreso")
@@ -514,6 +519,7 @@ def get_entrega_desglose(db: Session, entrega_id: int) -> dict | None:
         "ventas_efectivo": round(ventas_efectivo, 2),
         "ingresos": round(ingresos, 2),
         "egresos": round(egresos, 2),
+        "caja_fuerte": round(caja_fuerte, 2),
         "efectivo_esperado": round(esperado, 2),
         "efectivo_real": float(e.efectivo_real or 0),
         "diferencia_efectivo": float(e.diferencia_efectivo or 0),

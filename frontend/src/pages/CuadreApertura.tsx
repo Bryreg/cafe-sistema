@@ -69,6 +69,7 @@ export default function CuadreApertura() {
           ingresos={turno.ingresos_movimientos ?? 0}
           egresos={turno.egresos_movimientos ?? 0}
           esperado={turno.efectivo_esperado_actual ?? 0}
+          cajaFuerte={turno.caja_fuerte ?? 0}
           movimientos={movimientos}
         />
         <div className="flex items-center justify-between px-1 -mt-1">

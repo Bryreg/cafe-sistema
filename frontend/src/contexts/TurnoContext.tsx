@@ -7,6 +7,7 @@ export interface Turno {
   tienda_id: number
   base_sistema: number
   base_real: number
+  caja_fuerte?: number
   diferencia_apertura: number
   total_ventas: number
   total_efectivo: number

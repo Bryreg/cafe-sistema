@@ -22,6 +22,8 @@ interface Props {
   egresos: number
   /** Resultado: lo que debería haber en caja. Autoritativo (viene del backend). */
   esperado: number
+  /** Reserva de caja fuerte, guardada aparte. Se muestra como nota, NO entra en el cálculo. */
+  cajaFuerte?: number
   /** Movimientos de caja para itemizar salidas/ingresos. Opcional. */
   movimientos?: MovimientoDesglose[]
 }
@@ -50,6 +52,7 @@ export default function DesgloseEfectivo({
   ingresos,
   egresos,
   esperado,
+  cajaFuerte = 0,
   movimientos = [],
 }: Props) {
   const [openSalidas, setOpenSalidas] = useState(false)
@@ -129,6 +132,16 @@ export default function DesgloseEfectivo({
           <span className="text-[19px] font-bold font-mono tabular-nums" style={{ color: dark.ink }}>{fmt(esperado)}</span>
         </div>
       </div>
+
+      {/* Caja fuerte — aparte, no cuenta en el cuadre de la registradora */}
+      {cajaFuerte > 0 && (
+        <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: `1px dashed ${dark.border}` }}>
+          <span className="text-[11px]" style={{ color: dark.inkSubtle }}>
+            Caja fuerte (aparte, no cuenta acá)
+          </span>
+          <span className="text-[12px] font-semibold font-mono tabular-nums" style={{ color: dark.inkMuted }}>{fmt(cajaFuerte)}</span>
+        </div>
+      )}
     </div>
   )
 }

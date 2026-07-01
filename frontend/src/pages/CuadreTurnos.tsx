@@ -425,6 +425,7 @@ interface DesgloseCuadre {
   ventas_efectivo: number
   ingresos: number
   egresos: number
+  caja_fuerte: number
   efectivo_esperado: number
   efectivo_real: number
   diferencia_efectivo: number
@@ -484,6 +485,12 @@ function CuadreDesglose({ entregaId }: { entregaId: number }) {
       {line('Diferencia',
         Math.round(d.diferencia_efectivo) === 0 ? '✓ cuadra' : fmtDiff(d.diferencia_efectivo),
         Math.round(d.diferencia_efectivo) === 0 ? 'oklch(35% 0.13 145)' : 'oklch(42% 0.18 30)', true)}
+      {d.caja_fuerte > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, paddingTop: 6, borderTop: '1px dashed oklch(92% 0.008 75)' }}>
+          <span style={{ fontSize: 11.5, color: 'oklch(55% 0.01 60)' }}>Caja fuerte (aparte, no cuenta)</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'oklch(45% 0.01 60)', fontVariantNumeric: 'tabular-nums' }}>{fmt(d.caja_fuerte)}</span>
+        </div>
+      )}
       {!d.tiene_snapshot && (
         <p style={{ margin: '6px 0 0', fontSize: 10.5, color: 'oklch(60% 0.01 60)', fontStyle: 'italic' }}>
           Cuadre previo a esta función — desglose reconstruido, puede no ser exacto.

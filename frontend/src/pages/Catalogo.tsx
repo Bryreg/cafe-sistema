@@ -52,16 +52,23 @@ export default function Catalogo() {
   const [saving, setSaving] = useState(false)
 
   // Agrupa productos que son EL MISMO escrito distinto. La clave normaliza fuerte:
-  // quita acentos/mayúsculas/puntuación, descarta palabras vacías ("de", "con") y de
-  // unidad (oz/gr/ml), y ordena los tokens. Así caza "Cappuccino Vainilla" vs
-  // "Vainilla Cappuccino", "Torta de Chocolate" vs "Torta Chocolate", "Almojábanas"
-  // vs "Almojabanas", "Café 12oz" vs "Café 12 Onzas", etc.
+  // quita acentos/mayúsculas/puntuación, separa número de unidad ("9oz"->"9 oz"),
+  // normaliza ceros ("04"->"4") y plurales ("Vasos"->"Vaso"), descarta palabras vacías
+  // ("de","con","o") / de unidad (oz/gr/ml/gramos) / empaque ("botella"), y ordena los
+  // tokens. Caza "Vaso Cartón 9oz" vs "VASO CARTON 9 OZ", "Torta de Chocolate" vs "Torta
+  // Chocolate", "Almojábanas" vs "Almojabanas". Los tamaños distintos (12oz vs 16oz) NO
+  // se agrupan porque el número cambia.
   const gruposDuplicados = (() => {
-    const STOP = new Set(['de', 'la', 'el', 'los', 'las', 'con', 'y', 'x', 'und', 'unidad', 'unidades', 'para'])
-    const UNITS = new Set(['oz', 'onz', 'onza', 'onzas', 'gr', 'g', 'ml', 'cc', 'lt', 'litro', 'litros', 'kg'])
+    const STOP = new Set(['de', 'la', 'el', 'los', 'las', 'con', 'y', 'x', 'und', 'unidad', 'unidades', 'para', 'o', 'a', 'botella'])
+    const UNITS = new Set(['oz', 'onz', 'onza', 'onzas', 'gr', 'g', 'gramos', 'ml', 'cc', 'lt', 'litro', 'litros', 'kg'])
     const claveNorm = (s: string) =>
       s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+        .replace(/(\d)\s*([a-z])/g, '$1 $2')
+        .replace(/([a-z])\s*(\d)/g, '$1 $2')
         .replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
+        .filter(t => t && !STOP.has(t) && !UNITS.has(t))
+        .map(t => (t.endsWith('s') && t.length > 4 ? t.slice(0, -1) : t))
+        .map(t => (/^\d+$/.test(t) ? String(parseInt(t, 10)) : t))
         .filter(t => t && !STOP.has(t) && !UNITS.has(t))
         .sort().join(' ')
     const map = new Map<string, Producto[]>()

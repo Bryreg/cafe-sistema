@@ -13,16 +13,26 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from app.database import SessionLocal
 from app.models.models import Producto, Inventario, Tienda
 
-STOP  = {"de", "la", "el", "los", "las", "con", "y", "x", "und", "unidad", "unidades", "para"}
-UNITS = {"oz", "onz", "onza", "onzas", "gr", "g", "ml", "cc", "lt", "litro", "litros", "kg"}
+STOP  = {"de", "la", "el", "los", "las", "con", "y", "x", "und", "unidad", "unidades", "para", "o", "a", "botella"}
+UNITS = {"oz", "onz", "onza", "onzas", "gr", "g", "gramos", "ml", "cc", "lt", "litro", "litros", "kg"}
 
 
 def _sa(s: str) -> str:
     return unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower()
 
 def _tokens(s: str):
-    s = re.sub(r"[^a-z0-9 ]", " ", _sa(s))
-    return [t for t in s.split() if t and t not in STOP and t not in UNITS]
+    s = _sa(s)
+    s = re.sub(r"(\d)\s*([a-z])", r"\1 \2", s)   # 9oz -> 9 oz ; 2500g -> 2500 g
+    s = re.sub(r"([a-z])\s*(\d)", r"\1 \2", s)   # x2500 -> x 2500
+    s = re.sub(r"[^a-z0-9 ]", " ", s)
+    out = []
+    for t in s.split():
+        if t in STOP or t in UNITS: continue
+        if t.endswith("s") and len(t) > 4: t = t[:-1]   # plural -> singular
+        if t.isdigit(): t = str(int(t))                 # 04 -> 4
+        if t and t not in STOP and t not in UNITS:
+            out.append(t)
+    return out
 
 def strongkey(s: str) -> str:
     return " ".join(sorted(_tokens(s)))

@@ -26,7 +26,6 @@ import SolicitudSencilla from './pages/SolicitudSencilla'
 import Limpieza from './pages/Limpieza'
 import Ingresos from './pages/Ingresos'
 import ConteoCompras from './pages/ConteoCompras'
-import CuadreApertura from './pages/CuadreApertura'
 import HistorialVentas from './pages/HistorialVentas'
 import POS from './pages/POS'
 
@@ -139,7 +138,6 @@ function AppRoutes() {
           : <KioskSetup />
       } />
       <Route path="/conteo-compras"  element={hasSession ? <ConteoCompras />    : <KioskSetup />} />
-      <Route path="/cuadre-apertura" element={hasSession ? <CuadreApertura /> : <KioskSetup />} />
       <Route path="/ventas-hoy"     element={hasSession ? <VentasHoy />      : <KioskSetup />} />
       <Route path="/limpieza"       element={
         hasSession

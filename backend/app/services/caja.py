@@ -174,10 +174,27 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
         )
 
     # Registrar baristas del turno (responsabilidad compartida)
+    nombres_baristas = None
     if barista_ids:
         usuarios = db.query(Usuario).filter(Usuario.id.in_(barista_ids), Usuario.activo == True).all()
         for u in usuarios:
             db.add(TurnoBarista(turno_id=turno.id, usuario_id=u.id, nombre_snapshot=u.nombre))
+        nombres_baristas = ", ".join(u.nombre for u in usuarios) or None
+
+    # Cuadre de apertura UNIFICADO: el conteo del efectivo de inicio ES el cuadre, se registra
+    # una vez y atribuido a las baristas elegidas. No hay segundo conteo redundante al abrir
+    # (no hay ventas todavía). Esperado = lo que dejó el cierre anterior (base_sistema); contado =
+    # base_real; snapshot con ventas/ingresos/egresos en cero. La caja fuerte NO entra acá.
+    db.add(EntregaTurno(
+        turno_id=turno.id, tienda_id=tienda_id, usuario_id=usuario_id,
+        efectivo_real=base_real, efectivo_esperado=base_sistema,
+        base_snapshot=base_sistema, ventas_efectivo_snapshot=0.0,
+        ingresos_snapshot=0.0, egresos_snapshot=0.0,
+        ventas_efectivo_siigo=0.0, ventas_tarjeta_bold=0.0,
+        diferencia_efectivo=diferencia, diferencia_tarjeta=0.0,
+        imagen_url=None, tipo="apertura",
+        barista_id=None, barista_nombre=nombres_baristas,
+    ))
 
     # Fase 1: enlazar el turno al día operativo (continuidad entre turnos)
     dia = get_or_create_dia(db, tienda_id, usuario_id)

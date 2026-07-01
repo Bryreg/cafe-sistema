@@ -120,7 +120,7 @@ export default function TicketRecibo({
   const totalDescuento = ticket.items.reduce((s, i) => s + (i.descuento || 0), 0)
 
   const row = (label: string, value: string, bold = false, small = false) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: small ? '9px' : '10px', fontWeight: bold ? 'bold' : 'normal', margin: '4px 0' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: small ? '9px' : '10px', fontWeight: 'bold', margin: '4px 0' }}>
       <span>{label}</span>
       <span>{value}</span>
     </div>
@@ -136,6 +136,7 @@ export default function TicketRecibo({
           display: 'none',
           fontFamily: '"Courier New", Courier, monospace',
           fontSize: '11px',
+          fontWeight: 'bold',
           lineHeight: '1.9',
           width: '80mm',
           padding: '4mm 4mm 8mm',
@@ -157,8 +158,8 @@ export default function TicketRecibo({
           </div>
           {nit      && <div style={{ fontSize: '10px', marginTop: '1px' }}>NIT: {nit}</div>}
           {telefono && <div style={{ fontSize: '10px', marginTop: '1px' }}>Tel: {telefono}</div>}
-          {direccion && <div style={{ fontSize: '9px', marginTop: '1px', color: '#444' }}>{direccion}</div>}
-          <div style={{ fontSize: '9px', color: '#555', marginTop: '2px' }}>
+          {direccion && <div style={{ fontSize: '9px', marginTop: '1px', color: '#000' }}>{direccion}</div>}
+          <div style={{ fontSize: '9px', color: '#000', marginTop: '2px' }}>
             Documento de Ingreso — NO reemplaza la factura
           </div>
         </div>
@@ -193,12 +194,12 @@ export default function TicketRecibo({
                 <span style={{ flex: 1, paddingRight: '4px', wordBreak: 'break-word' }}>{item.nombre_producto}</span>
                 <span style={{ width: '24px', textAlign: 'right', flexShrink: 0 }}>{item.cantidad}</span>
                 <span style={{ width: '58px', textAlign: 'right', flexShrink: 0 }}>{fmtCO(item.precio_unitario)}</span>
-                <span style={{ width: '62px', textAlign: 'right', flexShrink: 0, fontWeight: desc > 0 ? 'normal' : 'bold' }}>
+                <span style={{ width: '62px', textAlign: 'right', flexShrink: 0, fontWeight: 'bold' }}>
                   {fmtCO(bruto)}
                 </span>
               </div>
               {desc > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#555', paddingLeft: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#000', paddingLeft: '8px' }}>
                   <span>Descuento ({Math.round(desc / bruto * 100)}%)</span>
                   <span style={{ fontWeight: 'bold', color: '#000' }}>−{fmtCO(desc)}</span>
                 </div>
@@ -248,7 +249,7 @@ export default function TicketRecibo({
         <div style={{ borderBottom: '1px dashed #000', margin: '9px 0' }} />
 
         {/* Footer */}
-        <div style={{ textAlign: 'center', fontSize: '9px', color: '#444', marginTop: '4px' }}>
+        <div style={{ textAlign: 'center', fontSize: '9px', color: '#000', marginTop: '4px' }}>
           {mensajeFooter && <div style={{ fontWeight: 'bold' }}>{mensajeFooter}</div>}
           <div style={{ marginTop: '4px' }}>{'- '.repeat(16)}</div>
         </div>

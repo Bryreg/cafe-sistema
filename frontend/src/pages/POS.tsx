@@ -325,7 +325,7 @@ export default function POS() {
 
             {/* Panel derecho: cuenta */}
             <aside className="hidden lg:block lg:sticky lg:top-[88px]">
-              <div className="bg-white rounded-2xl border border-warm-200 p-4 flex flex-col h-[calc(100dvh-170px)]">
+              <div className="bg-white rounded-2xl border border-warm-200 p-4 flex flex-col max-h-[calc(100dvh-290px)]">
                 <Cart
                   items={cart}
                   onInc={incItem}
@@ -402,7 +402,7 @@ export default function POS() {
           </span>
         }
       >
-        <div className="h-[65svh] flex flex-col min-h-0 pb-2">
+        <div className="max-h-[70svh] flex flex-col min-h-0 pb-2">
           <div className="flex justify-end pb-2">
             {cart.length > 0 && (
               <button

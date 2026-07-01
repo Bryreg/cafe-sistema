@@ -31,6 +31,20 @@ def alertas(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depen
     return svc.get_alertas(db, tienda_id)
 
 
+@router.get("/alertas")
+def alertas_consolidadas(
+    tienda_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(require_admin),
+):
+    """Alertas de stock consolidadas (solo admin). Sin tienda_id agrega todas las
+    sedes activas; con tienda_id filtra esa sede. No colisiona con /alertas/{tienda_id}
+    (distinta cantidad de segmentos)."""
+    if tienda_id is not None:
+        ensure_tienda_access(user, tienda_id)
+    return svc.get_alertas_consolidadas(db, tienda_id)
+
+
 @router.get("/lotes-trazabilidad")
 def lotes_trazabilidad(
     tienda_id: Optional[int] = Query(None),

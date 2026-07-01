@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import update as sa_update
 from fastapi import HTTPException
-from app.models.models import Inventario, MovimientoInventario, LoteInventario, Producto
+from app.models.models import Inventario, MovimientoInventario, LoteInventario, Producto, Tienda
 from datetime import datetime
 from app.services import audit
 
@@ -302,6 +302,57 @@ def get_alertas(db: Session, tienda_id: int):
             "nivel": "agotado" if estado == "agotado" else "bajo",  # COMPAT AdminHub actual
             "cantidad_sugerida": max(1, round(objetivo - i.stock_actual)),
         })
+    return out
+
+
+def get_alertas_consolidadas(db: Session, tienda_id: int | None = None):
+    """Alertas de stock consolidadas. Si se pasa tienda_id, delega a get_alertas
+    (una sola sede). Si no, agrega las alertas de TODAS las sedes activas, incluyendo
+    tienda_id/tienda_nombre en cada fila para que el frontend sepa de qué sede es.
+    Mantiene exactamente la misma forma de fila que get_alertas."""
+    if tienda_id is not None:
+        return get_alertas(db, tienda_id)
+
+    tiendas = db.query(Tienda).filter_by(activa=True).all()
+    nombres = {t.id: t.nombre for t in tiendas}
+    tienda_ids = list(nombres.keys())
+    if not tienda_ids:
+        return []
+
+    items = (
+        db.query(Inventario)
+        .options(joinedload(Inventario.producto))
+        .filter(
+            Inventario.tienda_id.in_(tienda_ids),
+            Inventario.stock_actual <= Inventario.stock_minimo,
+        )
+        .order_by(Inventario.stock_actual.asc())
+        .all()
+    )
+    # Orden estable: primero por estado (agotado < critico < bajo), luego stock asc.
+    orden_estado = {"agotado": 0, "critico": 1, "bajo": 2, "normal": 3}
+    out = []
+    for i in items:
+        estado = clasificar_estado(
+            i.stock_actual, i.stock_minimo,
+            i.stock_critico or 0.0, i.stock_ideal or 0.0,
+        )
+        objetivo = i.stock_ideal if (i.stock_ideal and i.stock_ideal > 0) else (i.stock_minimo * 2)
+        out.append({
+            "producto_id": i.producto_id,
+            "producto": i.producto.nombre,
+            "unidad": i.producto.unidad_medida,
+            "stock_actual": round(i.stock_actual),
+            "stock_minimo": round(i.stock_minimo),
+            "stock_critico": round(i.stock_critico or 0),
+            "stock_ideal": round(i.stock_ideal or 0),
+            "estado": estado,
+            "nivel": "agotado" if estado == "agotado" else "bajo",
+            "cantidad_sugerida": max(1, round(objetivo - i.stock_actual)),
+            "tienda_id": i.tienda_id,
+            "tienda_nombre": nombres.get(i.tienda_id, ""),
+        })
+    out.sort(key=lambda o: (orden_estado.get(o["estado"], 9), o["stock_actual"]))
     return out
 
 

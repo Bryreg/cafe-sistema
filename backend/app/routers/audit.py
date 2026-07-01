@@ -6,6 +6,7 @@ from typing import Optional
 from app.database import get_db
 from app.core.deps import require_admin, ensure_tienda_access
 from app.models.models import Usuario, AuditLog
+from app.core.tz import inicio_dia_col_utc, fin_dia_col_utc
 
 router = APIRouter(prefix="/audit-log", tags=["audit"])
 
@@ -25,9 +26,9 @@ def get_audit_log(
     ensure_tienda_access(user, tienda_id)
     q = db.query(AuditLog).filter(AuditLog.tienda_id == tienda_id)
     if fecha_desde:
-        q = q.filter(AuditLog.fecha >= datetime.combine(fecha_desde, datetime.min.time()))
+        q = q.filter(AuditLog.fecha >= inicio_dia_col_utc(fecha_desde))
     if fecha_hasta:
-        q = q.filter(AuditLog.fecha <= datetime.combine(fecha_hasta, datetime.max.time()))
+        q = q.filter(AuditLog.fecha <= fin_dia_col_utc(fecha_hasta))
     if usuario_id:
         q = q.filter(AuditLog.usuario_id == usuario_id)
     if tabla:

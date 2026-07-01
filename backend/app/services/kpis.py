@@ -3,11 +3,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, date
 from app.models.models import CajaTurno, VentaDiaria, Merma, EstadoTurnoEnum, Tienda
+from app.core.tz import inicio_dia_col_utc, fin_dia_col_utc
 
 
 def get_kpis(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date) -> dict:
-    desde = datetime.combine(fecha_desde, datetime.min.time())
-    hasta = datetime.combine(fecha_hasta, datetime.max.time())
+    desde = inicio_dia_col_utc(fecha_desde)
+    hasta = fin_dia_col_utc(fecha_hasta)
 
     turnos = db.query(CajaTurno).filter(
         CajaTurno.tienda_id == tienda_id,

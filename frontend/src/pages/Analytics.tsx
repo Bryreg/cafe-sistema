@@ -468,7 +468,3 @@ export function AnaliticaContenido() {
     </div>
   )
 }
-
-export default function Analytics() {
-  return <AnaliticaContenido />
-}

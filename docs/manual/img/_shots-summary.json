@@ -1,0 +1,270 @@
+[
+  {
+    "name": "admin-login",
+    "route": "/admin-login",
+    "finalPath": "/admin-login",
+    "redirected": false
+  },
+  {
+    "name": "admin-dashboard",
+    "route": "/dashboard",
+    "finalPath": "/dashboard",
+    "redirected": false
+  },
+  {
+    "name": "admin-informe-contador",
+    "route": "/informe-contador",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-informes",
+    "route": "/informes",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-notas-credito",
+    "route": "/notas-credito",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-control-inventario",
+    "route": "/control-inventario",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-lotes",
+    "route": "/lotes",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-conciliacion",
+    "route": "/conciliacion-inventario",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-catalogo",
+    "route": "/catalogo",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-inventario",
+    "route": "/inventario",
+    "finalPath": "/inventario",
+    "redirected": false
+  },
+  {
+    "name": "admin-pedidos",
+    "route": "/pedidos-admin",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-pagos-proveedores",
+    "route": "/pagos-proveedores",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-cuadres",
+    "route": "/cuadre-turnos",
+    "finalPath": "/cuadre-turnos",
+    "redirected": false
+  },
+  {
+    "name": "admin-consignaciones",
+    "route": "/consignaciones",
+    "finalPath": "/consignaciones",
+    "redirected": false
+  },
+  {
+    "name": "admin-mantenimientos",
+    "route": "/mantenimientos",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-auditorias",
+    "route": "/auditorias",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-cumplimiento",
+    "route": "/cumplimiento",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-comunicados",
+    "route": "/comunicados",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-bandeja",
+    "route": "/bandeja",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-notificaciones",
+    "route": "/notificaciones-config",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-historial",
+    "route": "/audit-log",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-usuarios",
+    "route": "/usuarios",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-config-ticket",
+    "route": "/config-ticket",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "admin-pasteleria",
+    "route": "/pasteleria",
+    "finalPath": "/pasteleria",
+    "redirected": false
+  },
+  {
+    "name": "admin-limpieza",
+    "route": "/limpieza",
+    "finalPath": "/limpieza",
+    "redirected": false
+  },
+  {
+    "name": "admin-ventas-emergencia",
+    "route": "/ventas",
+    "finalPath": "/dashboard",
+    "redirected": true
+  },
+  {
+    "name": "barista-gestion-turno",
+    "route": "/gestion-turno",
+    "finalPath": "/gestion-turno",
+    "redirected": false
+  },
+  {
+    "name": "barista-historial-ventas",
+    "route": "/historial-ventas",
+    "finalPath": "/historial-ventas",
+    "redirected": false
+  },
+  {
+    "name": "barista-ventas-hoy",
+    "route": "/ventas-hoy",
+    "finalPath": "/ventas-hoy",
+    "redirected": false
+  },
+  {
+    "name": "barista-ingresos",
+    "route": "/ingresos",
+    "finalPath": "/ingresos",
+    "redirected": false
+  },
+  {
+    "name": "barista-mermas",
+    "route": "/mermas",
+    "finalPath": "/mermas",
+    "redirected": false
+  },
+  {
+    "name": "barista-inventario",
+    "route": "/inventario",
+    "finalPath": "/inventario",
+    "redirected": false
+  },
+  {
+    "name": "barista-inventario-mensual",
+    "route": "/inventario-mensual",
+    "finalPath": "/inventario-mensual",
+    "redirected": false
+  },
+  {
+    "name": "barista-conteo-compras",
+    "route": "/conteo-compras",
+    "finalPath": "/conteo-compras",
+    "redirected": false
+  },
+  {
+    "name": "barista-pedido",
+    "route": "/pedido",
+    "finalPath": "/pedido",
+    "redirected": false
+  },
+  {
+    "name": "barista-sencilla",
+    "route": "/sencilla",
+    "finalPath": "/sencilla",
+    "redirected": false
+  },
+  {
+    "name": "barista-consignaciones",
+    "route": "/consignaciones",
+    "finalPath": "/consignaciones",
+    "redirected": false
+  },
+  {
+    "name": "barista-pasteleria",
+    "route": "/pasteleria",
+    "finalPath": "/pasteleria",
+    "redirected": false
+  },
+  {
+    "name": "barista-limpieza",
+    "route": "/limpieza",
+    "finalPath": "/limpieza",
+    "redirected": false
+  },
+  {
+    "name": "barista-cuadre-apertura",
+    "route": "/cuadre-apertura",
+    "finalPath": "/cuadre-apertura",
+    "redirected": false
+  },
+  {
+    "name": "barista-entrega",
+    "route": "/entrega",
+    "finalPath": "/entrega",
+    "redirected": false
+  },
+  {
+    "name": "barista-conteo-apertura",
+    "route": "/conteo-apertura",
+    "finalPath": "/conteo-apertura",
+    "redirected": false
+  },
+  {
+    "name": "barista-conteo-cierre",
+    "route": "/conteo-cierre",
+    "finalPath": "/conteo-cierre",
+    "redirected": false
+  },
+  {
+    "name": "barista-pos",
+    "finalPath": "/pos"
+  },
+  {
+    "name": "barista-salida-efectivo",
+    "route": "/salida-efectivo",
+    "finalPath": "/salida-efectivo",
+    "redirected": false
+  }
+]

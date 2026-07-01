@@ -70,7 +70,7 @@ function GuardShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-warm-50 flex flex-col">
       <header className="bg-white border-b border-warm-200 px-4 pb-3 header-safe flex items-center gap-3 sticky top-0 z-10">
         <button
-          onClick={() => navigate('/hub')}
+          onClick={() => navigate('/')}
           className="p-2 rounded-xl text-warm-400 hover:text-warm-700 hover:bg-warm-100 transition-colors -ml-1"
         >
           <ArrowLeft size={18} />

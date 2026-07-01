@@ -22,7 +22,7 @@ interface Props {
 export default function BaristaLayout({
   children,
   title,
-  backTo = '/hub',
+  backTo = '/',
   rightAction,
   width = 'form',
 }: Props) {

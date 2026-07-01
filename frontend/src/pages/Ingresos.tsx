@@ -206,7 +206,7 @@ export default function Ingresos() {
         <div className="flex items-center gap-3 max-w-lg mx-auto">
           {!embedded && (
             <button
-              onClick={() => navigate('/hub')}
+              onClick={() => navigate('/')}
               className="p-2 -ml-1 rounded-xl text-warm-400 hover:text-warm-700 hover:bg-warm-100 transition-colors"
             >
               <ArrowLeft size={18} />

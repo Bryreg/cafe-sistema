@@ -1,0 +1,116 @@
+[
+  {
+    "name": "admin-informe-contador",
+    "route": "/informe-contador",
+    "finalPath": "/informe-contador",
+    "ok": true
+  },
+  {
+    "name": "admin-informes",
+    "route": "/informes",
+    "finalPath": "/informes",
+    "ok": true
+  },
+  {
+    "name": "admin-notas-credito",
+    "route": "/notas-credito",
+    "finalPath": "/notas-credito",
+    "ok": true
+  },
+  {
+    "name": "admin-control-inventario",
+    "route": "/control-inventario",
+    "finalPath": "/control-inventario",
+    "ok": true
+  },
+  {
+    "name": "admin-lotes",
+    "route": "/lotes",
+    "finalPath": "/lotes",
+    "ok": true
+  },
+  {
+    "name": "admin-conciliacion",
+    "route": "/conciliacion-inventario",
+    "finalPath": "/conciliacion-inventario",
+    "ok": true
+  },
+  {
+    "name": "admin-catalogo",
+    "route": "/catalogo",
+    "finalPath": "/catalogo",
+    "ok": true
+  },
+  {
+    "name": "admin-pedidos",
+    "route": "/pedidos-admin",
+    "finalPath": "/pedidos-admin",
+    "ok": true
+  },
+  {
+    "name": "admin-pagos-proveedores",
+    "route": "/pagos-proveedores",
+    "finalPath": "/pagos-proveedores",
+    "ok": true
+  },
+  {
+    "name": "admin-mantenimientos",
+    "route": "/mantenimientos",
+    "finalPath": "/mantenimientos",
+    "ok": true
+  },
+  {
+    "name": "admin-auditorias",
+    "route": "/auditorias",
+    "finalPath": "/auditorias",
+    "ok": true
+  },
+  {
+    "name": "admin-cumplimiento",
+    "route": "/cumplimiento",
+    "finalPath": "/cumplimiento",
+    "ok": true
+  },
+  {
+    "name": "admin-comunicados",
+    "route": "/comunicados",
+    "finalPath": "/comunicados",
+    "ok": true
+  },
+  {
+    "name": "admin-bandeja",
+    "route": "/bandeja",
+    "finalPath": "/bandeja",
+    "ok": true
+  },
+  {
+    "name": "admin-notificaciones",
+    "route": "/notificaciones-config",
+    "finalPath": "/notificaciones-config",
+    "ok": true
+  },
+  {
+    "name": "admin-historial",
+    "route": "/audit-log",
+    "finalPath": "/audit-log",
+    "ok": true
+  },
+  {
+    "name": "admin-usuarios",
+    "route": "/usuarios",
+    "finalPath": "/usuarios",
+    "ok": true
+  },
+  {
+    "name": "admin-config-ticket",
+    "route": "/config-ticket",
+    "finalPath": "/config-ticket",
+    "ok": true
+  },
+  {
+    "name": "admin-ventas-emergencia",
+    "route": "/ventas",
+    "finalPath": "/ventas",
+    "ok": true
+  }
+]

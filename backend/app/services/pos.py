@@ -514,9 +514,13 @@ def get_analytics_ventas_por_hora(db: Session, fecha_desde: date | None = None,
         .with_entities(Ticket.fecha, Ticket.total)
         .all()
     )
+    # Los tickets se guardan en UTC, pero el negocio opera en Colombia (UTC-5, sin
+    # horario de verano). Sin este ajuste, una venta de la mañana aparece 5 horas
+    # más tarde (p. ej. 9am -> 2pm).
+    OFFSET_COL = timedelta(hours=5)
     buckets = {h: {"n_tickets": 0, "total": 0.0} for h in range(24)}
     for fecha, total in rows:
-        b = buckets[fecha.hour]
+        b = buckets[(fecha - OFFSET_COL).hour]
         b["n_tickets"] += 1
         b["total"] += float(total or 0.0)
     return [

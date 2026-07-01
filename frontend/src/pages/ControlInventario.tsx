@@ -5,6 +5,7 @@ import {
   AlertTriangle, CheckCircle2, ChevronDown, Layers,
   Search, RotateCcw, Download, Check, Package,
 } from 'lucide-react'
+import NivelEnvase from '../components/NivelEnvase'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,8 @@ interface ProductoInventario {
   estado: 'agotado' | 'urgente' | 'pronto' | 'bajo' | 'ok'
   cantidad_sugerida: number
   barista_alerto: boolean
+  fraccionable?: boolean
+  envase?: 'bolsa' | 'botella' | null
 }
 
 interface Sugerencia {
@@ -194,6 +197,12 @@ function ProductRow({ p, tiendaId, onSaved }: {
             </p>
           </div>
 
+          {p.fraccionable && (
+            <div className="shrink-0" title={`Nivel de la ${p.envase || 'bolsa'} en uso`}>
+              <NivelEnvase readOnly envase={p.envase === 'botella' ? 'botella' : 'bolsa'}
+                nivel={p.stock_actual <= 0 ? 0 : (p.stock_actual % 1 === 0 ? 1 : p.stock_actual % 1)} />
+            </div>
+          )}
           <div className="shrink-0 text-right hidden sm:block">
             <p className="text-sm font-bold text-gray-800">
               {p.stock_actual} <span className="font-normal text-gray-400 text-xs">{p.unidad}</span>

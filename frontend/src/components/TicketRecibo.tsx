@@ -120,7 +120,7 @@ export default function TicketRecibo({
   const totalDescuento = ticket.items.reduce((s, i) => s + (i.descuento || 0), 0)
 
   const row = (label: string, value: string, bold = false, small = false) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: small ? '9px' : '10px', fontWeight: bold ? 'bold' : 'normal', margin: '1px 0' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: small ? '9px' : '10px', fontWeight: bold ? 'bold' : 'normal', margin: '4px 0' }}>
       <span>{label}</span>
       <span>{value}</span>
     </div>
@@ -136,7 +136,7 @@ export default function TicketRecibo({
           display: 'none',
           fontFamily: '"Courier New", Courier, monospace',
           fontSize: '11px',
-          lineHeight: '1.4',
+          lineHeight: '1.9',
           width: '80mm',
           padding: '4mm 4mm 8mm',
           color: '#000',
@@ -144,7 +144,7 @@ export default function TicketRecibo({
         }}
       >
         {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: '6px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '10px' }}>
           {logoUrl && (
             <img
               src={logoUrl}
@@ -163,7 +163,7 @@ export default function TicketRecibo({
           </div>
         </div>
 
-        <div style={{ borderBottom: '1px dashed #000', margin: '5px 0' }} />
+        <div style={{ borderBottom: '1px dashed #000', margin: '9px 0' }} />
 
         {/* Date / ticket / client */}
         <div style={{ fontSize: '10px', display: 'flex', justifyContent: 'space-between' }}>
@@ -173,7 +173,7 @@ export default function TicketRecibo({
         <div style={{ fontSize: '10px' }}>No. Ticket: #{String(ticket.id).padStart(6, '0')}</div>
         <div style={{ fontSize: '10px' }}>Cliente: Consumidor Final</div>
 
-        <div style={{ borderBottom: '1px dashed #000', margin: '5px 0' }} />
+        <div style={{ borderBottom: '1px dashed #000', margin: '9px 0' }} />
 
         {/* Column headers */}
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '3px' }}>
@@ -188,7 +188,7 @@ export default function TicketRecibo({
           const bruto = item.precio_unitario * item.cantidad
           const desc = item.descuento || 0
           return (
-            <div key={i} style={{ marginBottom: desc > 0 ? '4px' : '2px' }}>
+            <div key={i} style={{ marginBottom: desc > 0 ? '8px' : '6px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
                 <span style={{ flex: 1, paddingRight: '4px', wordBreak: 'break-word' }}>{item.nombre_producto}</span>
                 <span style={{ width: '24px', textAlign: 'right', flexShrink: 0 }}>{item.cantidad}</span>
@@ -207,7 +207,7 @@ export default function TicketRecibo({
           )
         })}
 
-        <div style={{ borderBottom: '1px solid #000', margin: '5px 0' }} />
+        <div style={{ borderBottom: '1px solid #000', margin: '9px 0' }} />
 
         {/* Totals section */}
         {totalDescuento > 0 ? (
@@ -223,7 +223,7 @@ export default function TicketRecibo({
           <span>{fmtCO(ticket.total)}</span>
         </div>
 
-        <div style={{ borderBottom: '1px dashed #000', margin: '5px 0' }} />
+        <div style={{ borderBottom: '1px dashed #000', margin: '9px 0' }} />
 
         {/* Payment info */}
         <div style={{ fontSize: '10px', margin: '2px 0' }}>
@@ -245,7 +245,7 @@ export default function TicketRecibo({
           )}
         </div>
 
-        <div style={{ borderBottom: '1px dashed #000', margin: '5px 0' }} />
+        <div style={{ borderBottom: '1px dashed #000', margin: '9px 0' }} />
 
         {/* Footer */}
         <div style={{ textAlign: 'center', fontSize: '9px', color: '#444', marginTop: '4px' }}>

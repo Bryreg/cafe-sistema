@@ -49,7 +49,7 @@ export default function Cart({
   const vacio = items.length === 0
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0">
       {/* ── Header ── */}
       {!hideHeader && (
         <div className="flex items-center justify-between px-1 pb-3 shrink-0">

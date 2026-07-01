@@ -414,6 +414,85 @@ function HistorialTurnos({ tiendaId, desde, hasta }: { tiendaId: number; desde: 
   )
 }
 
+// ── Desglose de un cuadre (expandible) ────────────────────────────────────────
+
+interface DesgloseCuadre {
+  entrega_id: number
+  tipo: string
+  fecha_hora: string | null
+  barista: string | null
+  base: number
+  ventas_efectivo: number
+  ingresos: number
+  egresos: number
+  efectivo_esperado: number
+  efectivo_real: number
+  diferencia_efectivo: number
+  tiene_snapshot: boolean
+  movimientos: { tipo: string; concepto: string; valor: number; fecha: string | null }[]
+}
+
+function CuadreDesglose({ entregaId }: { entregaId: number }) {
+  const [d, setD] = useState<DesgloseCuadre | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    api.get(`/caja/entrega/${entregaId}/desglose`)
+      .then(r => setD(r.data))
+      .catch(() => setD(null))
+      .finally(() => setLoading(false))
+  }, [entregaId])
+
+  const box: React.CSSProperties = { background: 'oklch(98% 0.004 75)', borderTop: '1px solid oklch(94% 0.006 75)', padding: '12px 16px' }
+  if (loading) return <div style={box}><p style={{ margin: 0, fontSize: 12, color: 'oklch(60% 0.01 60)' }}>Cargando desglose…</p></div>
+  if (!d) return <div style={box}><p style={{ margin: 0, fontSize: 12, color: 'oklch(60% 0.01 60)' }}>No se pudo cargar el desglose.</p></div>
+
+  const salidas = d.movimientos.filter(m => m.tipo === 'egreso')
+  const line = (label: string, value: string, color = 'oklch(28% 0.02 60)', bold = false) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0' }}>
+      <span style={{ fontSize: 12.5, color: bold ? 'oklch(22% 0.02 60)' : 'oklch(45% 0.01 60)', fontWeight: bold ? 700 : 500 }}>{label}</span>
+      <span style={{ fontSize: bold ? 15 : 13, fontWeight: bold ? 700 : 600, color, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+    </div>
+  )
+
+  return (
+    <div style={box}>
+      <p style={{ margin: '0 0 6px', fontSize: 10, fontWeight: 700, color: 'oklch(55% 0.01 60)', letterSpacing: '.08em', textTransform: 'uppercase' }}>
+        Desglose al momento del cuadre{d.fecha_hora ? ` · ${fmtTime(d.fecha_hora)}` : ''}
+      </p>
+      {line('Con lo que empezó (base)', fmt(d.base))}
+      {line('+ Ventas en efectivo', fmt(d.ventas_efectivo), 'oklch(35% 0.13 145)')}
+      {d.ingresos > 0 && line('+ Otros ingresos', fmt(d.ingresos), 'oklch(35% 0.13 145)')}
+      {line('− Salidas de efectivo', `−${fmt(d.egresos)}`, 'oklch(42% 0.18 30)')}
+      {salidas.length > 0 && (
+        <div style={{ margin: '2px 0 4px', paddingLeft: 12, borderLeft: '2px solid oklch(92% 0.008 75)' }}>
+          {salidas.map((m, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '2px 0' }}>
+              <span style={{ fontSize: 11.5, color: 'oklch(55% 0.01 60)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {m.concepto}{m.fecha ? ` · ${fmtTime(m.fecha)}` : ''}
+              </span>
+              <span style={{ fontSize: 11.5, color: 'oklch(42% 0.18 30)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>−{fmt(m.valor)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ borderTop: '1px solid oklch(92% 0.008 75)', marginTop: 4, paddingTop: 4 }}>
+        {line('= Debería haber en caja', fmt(d.efectivo_esperado), 'oklch(22% 0.02 60)', true)}
+      </div>
+      {line('Contó la barista', fmt(d.efectivo_real))}
+      {line('Diferencia',
+        Math.round(d.diferencia_efectivo) === 0 ? '✓ cuadra' : fmtDiff(d.diferencia_efectivo),
+        Math.round(d.diferencia_efectivo) === 0 ? 'oklch(35% 0.13 145)' : 'oklch(42% 0.18 30)', true)}
+      {!d.tiene_snapshot && (
+        <p style={{ margin: '6px 0 0', fontSize: 10.5, color: 'oklch(60% 0.01 60)', fontStyle: 'italic' }}>
+          Cuadre previo a esta función — desglose reconstruido, puede no ser exacto.
+        </p>
+      )}
+    </div>
+  )
+}
+
 // ── Historial: Baristas ───────────────────────────────────────────────────────
 
 function HistorialBaristas({ tiendaId, desde, hasta }: { tiendaId: number; desde: string; hasta: string }) {
@@ -421,6 +500,7 @@ function HistorialBaristas({ tiendaId, desde, hasta }: { tiendaId: number; desde
   const [cuadresTotales, setCuadresTotales] = useState<TotalesEntrega | null>(null)
   const [baristasFilas, setBaristasFilas]   = useState<FilaBarista[] | null>(null)
   const [loading, setLoading] = useState(false)
+  const [expandido, setExpandido] = useState<number | null>(null)
 
   const cargar = async () => {
     setLoading(true)
@@ -519,27 +599,32 @@ function HistorialBaristas({ tiendaId, desde, hasta }: { tiendaId: number; desde
         <div className="bg-white rounded-xl border border-gray-200">
           <div className="divide-y divide-gray-50">
             {cuadresFilas.map(f => (
-              <div key={f.id} className="px-4 py-3 flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-400">{f.fecha_hora}</p>
-                  <p className="text-sm font-semibold text-gray-700">{f.usuario}</p>
-                  <p className="text-xs text-gray-500">
-                    Real: <span className="font-semibold text-gray-800">{fmt(f.efectivo_real)}</span>
-                    {' · '}esp: {fmt(f.efectivo_esperado)}
-                  </p>
+              <div key={f.id}>
+                <div onClick={() => setExpandido(expandido === f.id ? null : f.id)}
+                  className="px-4 py-3 flex items-start justify-between gap-3 cursor-pointer hover:bg-gray-50">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-gray-400">{f.fecha_hora}</p>
+                    <p className="text-sm font-semibold text-gray-700">{f.usuario}</p>
+                    <p className="text-xs text-gray-500">
+                      Real: <span className="font-semibold text-gray-800">{fmt(f.efectivo_real)}</span>
+                      {' · '}esp: {fmt(f.efectivo_esperado)}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${Math.round(f.diferencia_efectivo) === 0 ? 'text-green-700 bg-green-50' : 'text-red-700 bg-red-50'}`}>
+                      {Math.round(f.diferencia_efectivo) === 0 ? '✓' : fmtDiff(f.diferencia_efectivo)}
+                    </span>
+                    {Math.round(f.diferencia_tarjeta) !== 0 && (
+                      <span className="text-xs text-red-600 font-semibold">Bold Δ{fmtDiff(f.diferencia_tarjeta)}</span>
+                    )}
+                    {f.imagen_url && (
+                      <a href={f.imagen_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                        className="text-xs text-blue-500 hover:underline">foto</a>
+                    )}
+                    <span className="text-[10px] text-gray-400">{expandido === f.id ? 'ocultar ▲' : 'ver desglose ▼'}</span>
+                  </div>
                 </div>
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${Math.round(f.diferencia_efectivo) === 0 ? 'text-green-700 bg-green-50' : 'text-red-700 bg-red-50'}`}>
-                    {Math.round(f.diferencia_efectivo) === 0 ? '✓' : fmtDiff(f.diferencia_efectivo)}
-                  </span>
-                  {Math.round(f.diferencia_tarjeta) !== 0 && (
-                    <span className="text-xs text-red-600 font-semibold">Bold Δ{fmtDiff(f.diferencia_tarjeta)}</span>
-                  )}
-                  {f.imagen_url && (
-                    <a href={f.imagen_url} target="_blank" rel="noreferrer"
-                      className="text-xs text-blue-500 hover:underline">foto</a>
-                  )}
-                </div>
+                {expandido === f.id && <CuadreDesglose entregaId={f.id} />}
               </div>
             ))}
           </div>

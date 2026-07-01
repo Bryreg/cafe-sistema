@@ -327,6 +327,10 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
         usuario_id=usuario_id,
         efectivo_real=efectivo_real,
         efectivo_esperado=efectivo_esperado,
+        base_snapshot=turno.base_real,
+        ventas_efectivo_snapshot=turno.total_efectivo,
+        ingresos_snapshot=ingresos,
+        egresos_snapshot=egresos,
         ventas_efectivo_siigo=0.0,  # remanente dormido: el esperado ya sale del POS (turno.total_efectivo)
         ventas_tarjeta_bold=ventas_tarjeta_bold,
         diferencia_efectivo=diferencia_efectivo,
@@ -430,6 +434,10 @@ def registrar_cuadre_llegada(db: Session, turno_id: int, usuario_id: int,
         usuario_id=usuario_id,
         efectivo_real=efectivo_real,
         efectivo_esperado=efectivo_esperado,
+        base_snapshot=turno.base_real,
+        ventas_efectivo_snapshot=turno.total_efectivo,
+        ingresos_snapshot=ingresos,
+        egresos_snapshot=egresos,
         ventas_efectivo_siigo=0.0,
         ventas_tarjeta_bold=0.0,
         diferencia_efectivo=diferencia,
@@ -456,6 +464,70 @@ def get_movimientos(db: Session, turno_id: int):
     return db.query(MovimientoCaja).filter(
         MovimientoCaja.caja_turno_id == turno_id
     ).order_by(MovimientoCaja.fecha.desc()).all()
+
+
+def _mov_tipo(m) -> str:
+    return str(m.tipo.value if hasattr(m.tipo, "value") else m.tipo)
+
+
+def get_entrega_desglose(db: Session, entrega_id: int) -> dict | None:
+    """Desglose del efectivo esperado de UN cuadre puntual (transparencia + histórico).
+
+    Usa el snapshot congelado al momento del cuadre (base/ventas_efectivo/ingresos/egresos).
+    Para cuadres previos a esta feature (sin snapshot), reconstruye best-effort desde el turno
+    y los movimientos hasta la hora del cuadre. Incluye la lista de movimientos de caja
+    (ingresos/egresos) registrados hasta ese instante, para que se vea de dónde sale el número.
+    """
+    e = db.query(EntregaTurno).filter(EntregaTurno.id == entrega_id).first()
+    if not e:
+        return None
+
+    movimientos = db.query(MovimientoCaja).filter(
+        MovimientoCaja.caja_turno_id == e.turno_id,
+        MovimientoCaja.fecha <= e.fecha_hora,
+    ).order_by(MovimientoCaja.fecha.asc()).all()
+
+    tiene_snapshot = e.base_snapshot is not None
+    if tiene_snapshot:
+        base = float(e.base_snapshot or 0)
+        ventas_efectivo = float(e.ventas_efectivo_snapshot or 0)
+        ingresos = float(e.ingresos_snapshot or 0)
+        egresos = float(e.egresos_snapshot or 0)
+    else:
+        # Cuadre viejo: reconstruir lo posible sin romper. base del turno; ingresos/egresos
+        # hasta la hora del cuadre; ventas_efectivo se despeja del esperado ya guardado.
+        turno = db.query(CajaTurno).filter(CajaTurno.id == e.turno_id).first()
+        base = float(turno.base_real or 0) if turno else 0.0
+        ingresos = sum(float(m.valor) for m in movimientos if _mov_tipo(m) == "ingreso")
+        egresos = sum(float(m.valor) for m in movimientos if _mov_tipo(m) == "egreso")
+        ventas_efectivo = float(e.efectivo_esperado or 0) - base - ingresos + egresos
+
+    esperado = base + ventas_efectivo + ingresos - egresos
+
+    return {
+        "entrega_id": e.id,
+        "turno_id": e.turno_id,
+        "tipo": e.tipo,
+        "fecha_hora": e.fecha_hora.isoformat() if e.fecha_hora else None,
+        "barista": e.barista_nombre or (e.usuario.nombre if e.usuario else None),
+        "base": round(base, 2),
+        "ventas_efectivo": round(ventas_efectivo, 2),
+        "ingresos": round(ingresos, 2),
+        "egresos": round(egresos, 2),
+        "efectivo_esperado": round(esperado, 2),
+        "efectivo_real": float(e.efectivo_real or 0),
+        "diferencia_efectivo": float(e.diferencia_efectivo or 0),
+        "tiene_snapshot": tiene_snapshot,
+        "movimientos": [
+            {
+                "tipo": _mov_tipo(m),
+                "concepto": m.concepto,
+                "valor": float(m.valor),
+                "fecha": m.fecha.isoformat() if m.fecha else None,
+            }
+            for m in movimientos
+        ],
+    }
 
 
 def get_efectivo_inicio_esperado(db: Session, tienda_id: int):
@@ -611,6 +683,8 @@ def registrar_entrada_barista(
     db.add(EntregaTurno(
         turno_id=turno_id, tienda_id=turno.tienda_id, usuario_id=usuario_id,
         efectivo_esperado=efectivo_esperado, efectivo_real=efectivo_esperado,
+        base_snapshot=turno.base_real, ventas_efectivo_snapshot=turno.total_efectivo,
+        ingresos_snapshot=ingresos, egresos_snapshot=egresos,
         ventas_efectivo_siigo=0.0, ventas_tarjeta_bold=turno.total_tarjeta,
         diferencia_efectivo=0.0, diferencia_tarjeta=0.0,
         imagen_url=imagen_url, barista_id=barista_id, barista_nombre=barista.nombre,
@@ -686,6 +760,8 @@ def cerrar_turno_rapido(
         db.add(EntregaTurno(
             turno_id=turno_id, tienda_id=turno.tienda_id, usuario_id=usuario_id,
             efectivo_esperado=efectivo_esperado, efectivo_real=efectivo_final_real,
+            base_snapshot=turno.base_real, ventas_efectivo_snapshot=turno.total_efectivo,
+            ingresos_snapshot=ingresos, egresos_snapshot=egresos,
             ventas_efectivo_siigo=0.0, ventas_tarjeta_bold=datafono_real,
             diferencia_efectivo=round(efectivo_final_real - efectivo_esperado, 2),
             diferencia_tarjeta=round(datafono_real - turno.total_tarjeta, 2),

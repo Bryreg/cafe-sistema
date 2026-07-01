@@ -154,6 +154,13 @@ with engine.connect() as _conn:
         # Inventario a granel: unidades selladas + nivel de la abierta (dibujo bolsa/botella).
         "ALTER TABLE productos ADD COLUMN fraccionable BOOLEAN DEFAULT FALSE",
         "ALTER TABLE productos ADD COLUMN envase VARCHAR(10)",
+        # Desglose del efectivo esperado congelado al momento de cada cuadre (transparencia para
+        # la barista y trazabilidad histórica en el hub admin). esperado = base + ventas_efectivo
+        # + ingresos - egresos, todos capturados en el instante del cuadre (no recalculados).
+        "ALTER TABLE entregas_turno ADD COLUMN base_snapshot NUMERIC(12,2)",
+        "ALTER TABLE entregas_turno ADD COLUMN ventas_efectivo_snapshot NUMERIC(12,2)",
+        "ALTER TABLE entregas_turno ADD COLUMN ingresos_snapshot NUMERIC(12,2)",
+        "ALTER TABLE entregas_turno ADD COLUMN egresos_snapshot NUMERIC(12,2)",
     ]:
         try:
             _conn.execute(_text(_sql))

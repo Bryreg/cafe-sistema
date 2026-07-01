@@ -447,6 +447,12 @@ class EntregaTurno(Base):
     ventas_tarjeta_bold = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     diferencia_efectivo = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     diferencia_tarjeta = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    # Desglose del efectivo esperado, congelado al momento del cuadre (nullable: cuadres
+    # anteriores a esta feature no lo tienen). esperado = base + ventas_efectivo + ingresos - egresos.
+    base_snapshot = Column(Numeric(12, 2, asdecimal=False), nullable=True)
+    ventas_efectivo_snapshot = Column(Numeric(12, 2, asdecimal=False), nullable=True)
+    ingresos_snapshot = Column(Numeric(12, 2, asdecimal=False), nullable=True)
+    egresos_snapshot = Column(Numeric(12, 2, asdecimal=False), nullable=True)
     imagen_url = Column(String(300), nullable=True)
     tipo = Column(String(20), default="entrega", nullable=False, server_default="entrega")
     # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.

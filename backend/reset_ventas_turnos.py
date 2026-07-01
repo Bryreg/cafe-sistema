@@ -90,6 +90,21 @@ TABLES = [
     "dias_operativos",
 ]
 
+# Desvincular referencias RESTRICT que NO son "ventas ni turnos": a las rutinas solo
+# se les quita el vínculo al turno (se conservan), y se rompe la auto-referencia
+# turno->turno_anterior. Sin esto PostgreSQL RECHAZA borrar caja_turnos (SQLite no
+# valida FK, por eso la prueba local no lo detectó).
+with engine.connect() as conn:
+    for sql in [
+        "UPDATE rutina_eventos SET turno_id = NULL WHERE turno_id IS NOT NULL",
+        "UPDATE caja_turnos SET turno_anterior_id = NULL WHERE turno_anterior_id IS NOT NULL",
+    ]:
+        try:
+            r = conn.execute(text(sql)); conn.commit()
+            print(f"  desvinculado: {sql.split(' SET ')[0].replace('UPDATE ', '')} ({r.rowcount})")
+        except Exception as e:
+            conn.rollback(); print(f"  (skip desvinculo) {str(e)[:70]}")
+
 with engine.connect() as conn:
     total = 0
     for table in TABLES:

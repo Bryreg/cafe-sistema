@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from app.models.models import (CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum,
                                EntregaTurno, Consignacion, EstadoConsignacionEnum, TurnoBarista,
                                Usuario, DiaOperativo, EstadoDiaEnum, TipoTurnoEnum)
+from app.core.tz import hoy_col, inicio_dia_col_utc, fin_dia_col_utc
 
 # Colombia (UTC-5). Fase posterior: configurable por sede (ConfiguracionSede.timezone).
 TZ_OFFSET_HORAS = -5
@@ -357,10 +358,9 @@ def get_entregas_turno(db: Session, turno_id: int):
 def get_entregas_tienda(db: Session, tienda_id: int, limit: int | None = None, solo_hoy: bool = True):
     q = db.query(EntregaTurno).filter(EntregaTurno.tienda_id == tienda_id)
     if solo_hoy:
-        hoy = datetime.utcnow().date()
-        desde = datetime.combine(hoy, datetime.min.time())
-        hasta = datetime.combine(hoy, datetime.max.time())
-        q = q.filter(EntregaTurno.fecha_hora >= desde, EntregaTurno.fecha_hora <= hasta)
+        hoy = hoy_col()
+        q = q.filter(EntregaTurno.fecha_hora >= inicio_dia_col_utc(hoy),
+                     EntregaTurno.fecha_hora <= fin_dia_col_utc(hoy))
     return q.order_by(EntregaTurno.fecha_hora.desc()).limit(limit).all()
 
 
@@ -704,10 +704,11 @@ def cerrar_turno_rapido(
 
 def _tick_checklist(db: Session, tienda_id: int, **kwargs):
     """Actualiza el checklist del día como efecto secundario — idempotente."""
-    hoy = datetime.utcnow().date()
+    hoy = hoy_col()
     checklist = db.query(ChecklistDiario).filter(
         ChecklistDiario.tienda_id == tienda_id,
-        func.date(ChecklistDiario.fecha) == hoy
+        ChecklistDiario.fecha >= inicio_dia_col_utc(hoy),
+        ChecklistDiario.fecha <= fin_dia_col_utc(hoy),
     ).first()
     if not checklist:
         checklist = ChecklistDiario(tienda_id=tienda_id, fecha=datetime.utcnow())

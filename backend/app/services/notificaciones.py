@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.models.models import Notificacion
+from app.core.tz import hoy_col, inicio_dia_col_utc, fin_dia_col_utc
 
 logger = logging.getLogger(__name__)
 
@@ -100,11 +101,12 @@ def _ya_disparo_hoy(db: Session, tienda_id: int, tipo: str,
                     referencia_id: int | None = None) -> bool:
     """True si ya existe una notificación de ese tipo HOY (dedupe diario).
     Si se pasa referencia_id, restringe a esa referencia."""
-    hoy = datetime.utcnow().date()
+    inicio, fin = inicio_dia_col_utc(hoy_col()), fin_dia_col_utc(hoy_col())
     q = db.query(Notificacion).filter(
         Notificacion.tienda_id == tienda_id,
         Notificacion.tipo == tipo,
-        func.date(Notificacion.fecha) == hoy,
+        Notificacion.fecha >= inicio,
+        Notificacion.fecha <= fin,
     )
     if referencia_id is not None:
         q = q.filter(Notificacion.referencia_id == referencia_id)

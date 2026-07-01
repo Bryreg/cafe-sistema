@@ -27,6 +27,7 @@ interface Props {
   logoUrl?: string | null
   mensajeFooter?: string
   anchoPapelMm?: number
+  margenMm?: number
   escalaFuente?: 'small' | 'normal' | 'large'
 }
 
@@ -48,10 +49,14 @@ export default function TicketRecibo({
   logoUrl,
   mensajeFooter = '¡Gracias por tu compra!',
   anchoPapelMm = 80,
+  margenMm = 2,
   escalaFuente = 'normal',
 }: Props) {
   const zoom = ESCALA[escalaFuente] ?? 1.0
   const anchoBase = Math.round(anchoPapelMm / zoom)
+  // Margen lateral configurable (compensado por el zoom). El extra abajo deja aire para el corte.
+  const padH = +(margenMm / zoom).toFixed(2)
+  const padBottom = +((margenMm + 4) / zoom).toFixed(2)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Inyecta CSS de impresión — se actualiza si cambian anchoPapelMm o escalaFuente
@@ -89,7 +94,9 @@ export default function TicketRecibo({
           position: absolute;
           left: 0;
           top: 0;
+          box-sizing: border-box !important;
           width: ${anchoBase}mm;
+          padding: ${padH}mm ${padH}mm ${padBottom}mm !important;
           zoom: ${zoom};
         }
       }
@@ -98,7 +105,7 @@ export default function TicketRecibo({
       const el = document.getElementById(styleId)
       if (el) el.remove()
     }
-  }, [anchoPapelMm, anchoBase, zoom])
+  }, [anchoPapelMm, anchoBase, zoom, margenMm, padH, padBottom])
 
   const fecha = parseTicketDate(ticket.fecha)
   const fechaStr = fecha.toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' })

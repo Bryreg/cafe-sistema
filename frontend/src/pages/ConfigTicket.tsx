@@ -11,6 +11,7 @@ interface Config {
   logo_url:       string | null
   mensaje_footer: string
   ancho_papel_mm: number
+  margen_mm:      number
   escala_fuente:  'small' | 'normal' | 'large'
 }
 
@@ -22,6 +23,7 @@ const EMPTY: Config = {
   logo_url:       null,
   mensaje_footer: '',
   ancho_papel_mm: 80,
+  margen_mm:      2,
   escala_fuente:  'normal',
 }
 
@@ -57,6 +59,7 @@ export default function ConfigTicketPage() {
           logo_url:       data.logo_url       ?? null,
           mensaje_footer: data.mensaje_footer ?? '',
           ancho_papel_mm: data.ancho_papel_mm ?? 80,
+          margen_mm:      data.margen_mm      ?? 2,
           escala_fuente:  data.escala_fuente  ?? 'normal',
         }
         setCfg(loaded)
@@ -82,6 +85,7 @@ export default function ConfigTicketPage() {
         direccion:      cfg.direccion      || null,
         mensaje_footer: cfg.mensaje_footer || null,
         ancho_papel_mm: cfg.ancho_papel_mm,
+        margen_mm:      cfg.margen_mm,
         escala_fuente:  cfg.escala_fuente,
       })
       setOriginal(cfg)
@@ -304,6 +308,32 @@ export default function ConfigTicketPage() {
             </div>
             <p className="text-warm-400 mt-1.5" style={{ fontSize: 10.5 }}>
               El más común es <strong>80 mm</strong>. Si el ticket se ve cortado, probá 58 mm.
+            </p>
+          </div>
+
+          {/* Margen lateral */}
+          <div className="px-4 py-3">
+            <label className="block text-warm-500 mb-2" style={{ fontSize: 11, fontWeight: 600 }}>
+              Margen lateral (mm)
+            </label>
+            <div className="flex gap-2">
+              {([0, 1, 2, 3, 4, 5] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => { setCfg(prev => ({ ...prev, margen_mm: m })); setSaved(false) }}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold border-2 transition-all"
+                  style={{
+                    borderColor: cfg.margen_mm === m ? 'oklch(48% 0.12 155)' : 'oklch(90% 0.008 75)',
+                    background:  cfg.margen_mm === m ? 'oklch(96% 0.025 155)' : 'transparent',
+                    color:       cfg.margen_mm === m ? 'oklch(35% 0.10 155)' : 'oklch(58% 0.01 60)',
+                  }}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+            <p className="text-warm-400 mt-1.5" style={{ fontSize: 10.5 }}>
+              Espacio en blanco a los lados del ticket. Si el contenido <strong>se sale del borde</strong>, subí el margen a <strong>2</strong> o <strong>3 mm</strong>.
             </p>
           </div>
 

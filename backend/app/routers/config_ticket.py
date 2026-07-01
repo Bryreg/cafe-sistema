@@ -26,6 +26,7 @@ def _get_or_create(db: Session, tienda_id: int) -> ConfigTicket:
         mensaje_footer="¡Gracias por tu compra!",
         ancho_papel_mm=80,
         escala_fuente="normal",
+        margen_mm=2,
     )
     db.add(cfg)
     db.commit()
@@ -44,6 +45,7 @@ def _serialize(cfg: ConfigTicket) -> dict:
         "mensaje_footer": cfg.mensaje_footer,
         "ancho_papel_mm": cfg.ancho_papel_mm or 80,
         "escala_fuente":  cfg.escala_fuente  or "normal",
+        "margen_mm":      cfg.margen_mm if cfg.margen_mm is not None else 2,
     }
 
 
@@ -65,6 +67,7 @@ class ConfigTicketUpdate(BaseModel):
     mensaje_footer: Optional[str] = None
     ancho_papel_mm: Optional[int] = None
     escala_fuente:  Optional[str] = None
+    margen_mm:      Optional[int] = None
 
 
 @router.put("/{tienda_id}")
@@ -86,6 +89,8 @@ def update_config(
         cfg.ancho_papel_mm = body.ancho_papel_mm
     if body.escala_fuente  is not None and body.escala_fuente in ("small", "normal", "large"):
         cfg.escala_fuente  = body.escala_fuente
+    if body.margen_mm      is not None and 0 <= body.margen_mm <= 10:
+        cfg.margen_mm      = body.margen_mm
     db.commit()
     return _serialize(cfg)
 

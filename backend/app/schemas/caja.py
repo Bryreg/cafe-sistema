@@ -44,6 +44,10 @@ class EntregaTurnoOut(BaseModel):
     ventas_tarjeta_bold: float
     diferencia_efectivo: float
     diferencia_tarjeta: float
+    base_snapshot: Optional[float] = None
+    ventas_efectivo_snapshot: Optional[float] = None
+    ingresos_snapshot: Optional[float] = None
+    egresos_snapshot: Optional[float] = None
     imagen_url: Optional[str]
     tipo: str = "entrega"
     class Config: from_attributes = True

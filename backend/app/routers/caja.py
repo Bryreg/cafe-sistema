@@ -68,6 +68,15 @@ def get_movimientos(turno_id: int, db: Session = Depends(get_db), user: Usuario 
     ensure_turno_access(db, user, turno_id)
     return svc.get_movimientos(db, turno_id)
 
+@router.get("/entrega/{entrega_id}/desglose")
+def entrega_desglose(entrega_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    """Desglose del efectivo esperado de un cuadre puntual + movimientos hasta ese instante."""
+    e = db.query(EntregaTurno).filter(EntregaTurno.id == entrega_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Cuadre no encontrado")
+    ensure_tienda_access(user, e.tienda_id)
+    return svc.get_entrega_desglose(db, entrega_id)
+
 @router.get("/activo/{tienda_id}")
 def turno_activo(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     ensure_tienda_access(user, tienda_id)

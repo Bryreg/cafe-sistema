@@ -4,6 +4,8 @@ import { dark } from '../constants/darkTheme'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
 import ContadorEfectivo from './ContadorEfectivo'
+import DesgloseEfectivo, { MovimientoDesglose } from './DesgloseEfectivo'
+import DiferenciaCaja from './DiferenciaCaja'
 
 interface Barista { id: number; nombre: string }
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
@@ -20,6 +22,7 @@ export default function PanelEntrada({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const [movimientos, setMovimientos] = useState<MovimientoDesglose[]>([])
 
   useEffect(() => {
     api.get<Barista[]>('/auth/baristas').then(({ data }) => {
@@ -27,6 +30,13 @@ export default function PanelEntrada({ onClose }: { onClose: () => void }) {
       setBaristas(data.filter(b => !enTurno.has(b.nombre)))
     }).catch(() => {})
   }, [turno])
+
+  useEffect(() => {
+    if (!turno) return
+    api.get(`/caja/${turno.id}/movimientos`)
+      .then(r => setMovimientos((r.data ?? []).map((m: any) => ({ tipo: m.tipo, concepto: m.concepto, valor: m.valor, fecha: m.fecha }))))
+      .catch(() => setMovimientos([]))
+  }, [turno?.id])
 
   const confirmar = async () => {
     if (!turno || selected === null) return
@@ -128,24 +138,22 @@ export default function PanelEntrada({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      <div className="rounded-2xl p-4" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-        <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{ color: dark.inkSubtle }}>Estado esperado</p>
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { l: 'Ventas del día',      v: fmt(turno.total_ventas ?? 0) },
-            { l: 'Efectivo esperado',   v: fmt(turno.efectivo_esperado_actual ?? 0) },
-            { l: 'Tarjeta',             v: fmt(turno.total_tarjeta ?? 0) },
-            { l: 'Efectivo ventas',     v: fmt(turno.total_efectivo ?? 0) },
-          ].map(r => (
-            <div key={r.l}>
-              <p className="text-[10px]" style={{ color: dark.inkSubtle }}>{r.l}</p>
-              <p className="text-[14px] font-semibold font-mono mt-0.5" style={{ color: dark.ink }}>{r.v}</p>
-            </div>
-          ))}
-        </div>
+      <DesgloseEfectivo
+        base={turno.base_real ?? 0}
+        ventasEfectivo={turno.total_efectivo ?? 0}
+        ingresos={turno.ingresos_movimientos ?? 0}
+        egresos={turno.egresos_movimientos ?? 0}
+        esperado={turno.efectivo_esperado_actual ?? 0}
+        movimientos={movimientos}
+      />
+      <div className="flex items-center justify-between px-1 -mt-1">
+        <span className="text-[11px]" style={{ color: dark.inkSubtle }}>Ventas del día {fmt(turno.total_ventas ?? 0)}</span>
+        <span className="text-[11px]" style={{ color: dark.inkSubtle }}>Tarjeta esperada {fmt(turno.total_tarjeta ?? 0)}</span>
       </div>
 
       <ContadorEfectivo onTotal={setEfectivoReal} />
+
+      <DiferenciaCaja contado={efectivoReal} esperado={turno.efectivo_esperado_actual ?? 0} />
 
       <div className="rounded-2xl p-4 space-y-2" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
         <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.inkSubtle }}>Ventas tarjeta Bold</p>

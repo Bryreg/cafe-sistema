@@ -210,7 +210,7 @@
     "precio": 5900
   },
   {
-    "nombre": "Croisant",
+    "nombre": "Croissant Queso",
     "categoria": "pasteleria",
     "precio": 7900
   },
@@ -225,7 +225,7 @@
     "precio": 6900
   },
   {
-    "nombre": "Croisant Chocolate",
+    "nombre": "Croissant de Chocolate",
     "categoria": "pasteleria",
     "precio": 10900
   },
@@ -315,7 +315,7 @@
     "precio": 13900
   },
   {
-    "nombre": "Omelet Huevo",
+    "nombre": "Omelette",
     "categoria": "pasteleria",
     "precio": 14900
   },
@@ -325,7 +325,7 @@
     "precio": 12900
   },
   {
-    "nombre": "Omelet Jamon y Queso",
+    "nombre": "Omelette de Jamón y Queso",
     "categoria": "pasteleria",
     "precio": 16900
   },
@@ -475,7 +475,7 @@
     "precio": 15900
   },
   {
-    "nombre": "Porcion Leche Condensada",
+    "nombre": "Porción Leche Condensada",
     "categoria": "porciones",
     "precio": 5900
   },

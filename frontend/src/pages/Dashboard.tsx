@@ -221,54 +221,44 @@ function BarHorizontal({ label, value, max, color }: { label: string; value: num
 type Severity = 'danger' | 'warning' | 'neutral'
 
 function AlertCard({
-  icon: Icon, label, value, hint, severity, ctaLabel, to,
+  icon: Icon, primary, label, severity, ctaLabel, to,
 }: {
   icon: React.ElementType
+  primary: string
   label: string
-  value: string
-  hint?: string
   severity: Severity
   ctaLabel: string
   to: string
 }) {
   const navigate = useNavigate()
   const c = severity === 'danger'
-    ? { fg: '#991b1b', border: '#fca5a5', bg: '#fff5f5', btn: '#b91c1c' }
+    ? { fg: '#b91c1c', border: '#f2cccc', bg: '#fdf4f4' }
     : severity === 'warning'
-    ? { fg: '#b45309', border: '#fcd34d', bg: '#fffbeb', btn: '#d97706' }
-    : { fg: '#4a5568', border: '#d6cec2', bg: '#f7f4ef', btn: '#5c7a4e' }
+    ? { fg: '#b45309', border: '#f4d9a3', bg: '#fffaef' }
+    : { fg: '#556072', border: '#ddd5c8', bg: '#f8f5f0' }
   return (
-    <div style={{
-      background: c.bg,
-      border: `1px solid ${c.border}`,
-      borderRadius: 16,
-      padding: '12px 14px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12,
-    }}>
-      <div style={{
-        width: 34, height: 34, borderRadius: 11, flexShrink: 0,
-        background: '#fff', border: `1px solid ${c.border}`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <Icon size={16} style={{ color: c.fg }} />
+    <div
+      role="button"
+      onClick={() => navigate(to)}
+      style={{
+        background: c.bg,
+        border: `1px solid ${c.border}`,
+        borderRadius: 14,
+        padding: '13px 15px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 5,
+        cursor: 'pointer',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+        <Icon size={17} style={{ color: c.fg, flexShrink: 0 }} />
+        <span style={{ fontSize: 20, fontWeight: 700, color: c.fg, lineHeight: 1.1 }}>{primary}</span>
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ margin: 0, fontSize: 10, fontWeight: 700, color: '#8b7d6b', letterSpacing: '.06em', textTransform: 'uppercase' }}>{label}</p>
-        <p style={{ margin: '2px 0 0', fontSize: 14, fontWeight: 700, color: '#2d1f0f' }}>{value}</p>
-        {hint && <p style={{ margin: '1px 0 0', fontSize: 11, color: '#8b7d6b' }}>{hint}</p>}
-      </div>
-      <button
-        onClick={() => navigate(to)}
-        style={{
-          flexShrink: 0, display: 'flex', alignItems: 'center', gap: 3,
-          background: c.btn, color: '#fff', border: 'none', borderRadius: 10,
-          padding: '6px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-        }}
-      >
-        {ctaLabel} <ChevronRight size={12} />
-      </button>
+      <p style={{ margin: 0, fontSize: 12.5, color: c.fg, lineHeight: 1.3 }}>{label}</p>
+      <span style={{ marginTop: 3, display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 12, fontWeight: 700, color: c.fg }}>
+        {ctaLabel} <ChevronRight size={13} />
+      </span>
     </div>
   )
 }
@@ -700,12 +690,12 @@ export default function Dashboard() {
       {/* ══ BANDA 2 · Requiere tu atención ══ */}
       <BandLabel label="Requiere tu atención" />
       {hayAlgo ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 22 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(178px, 1fr))', gap: 10, marginBottom: 22 }}>
           {hayStock && (
             <AlertCard
               icon={AlertTriangle}
-              label="Stock"
-              value={`${agotadosN} agotados · ${criticosN} críticos`}
+              primary={`${agotadosN}`}
+              label={`agotados · ${criticosN} críticos`}
               severity="danger"
               ctaLabel="Pedir"
               to="/pedidos-admin"
@@ -714,9 +704,8 @@ export default function Dashboard() {
           {hayConsign && (
             <AlertCard
               icon={Banknote}
-              label="Consignaciones"
-              value={`${fmt(consignPend!.monto)} sin consignar`}
-              hint={`${consignPend!.n} turno${consignPend!.n !== 1 ? 's' : ''}`}
+              primary={fmt(consignPend!.monto)}
+              label={`sin consignar · ${consignPend!.n} turno${consignPend!.n !== 1 ? 's' : ''}`}
               severity="warning"
               ctaLabel="Ver"
               to="/consignaciones"
@@ -725,9 +714,8 @@ export default function Dashboard() {
           {hayPagos && (
             <AlertCard
               icon={ShoppingCart}
-              label="Pagos proveedores"
-              value={fmt(comprasPend!.total_pendiente)}
-              hint="Pendiente de pago"
+              primary={fmt(comprasPend!.total_pendiente)}
+              label="pagos a proveedores"
               severity="warning"
               ctaLabel="Pagar"
               to="/pagos-proveedores"
@@ -736,9 +724,8 @@ export default function Dashboard() {
           {hayDescuadres && (
             <AlertCard
               icon={Wallet}
-              label="Descuadres de caja"
-              value={`${descuadres!.con_diferencia} turno${descuadres!.con_diferencia !== 1 ? 's' : ''} con diferencia`}
-              hint={`Del mes en curso · ${descuadres!.n_turnos} turnos`}
+              primary={`${descuadres!.con_diferencia}`}
+              label="descuadres de caja · mes en curso"
               severity="neutral"
               ctaLabel="Revisar"
               to="/informes"
@@ -747,9 +734,8 @@ export default function Dashboard() {
           {hayLotes && (
             <AlertCard
               icon={Package}
-              label="Lotes por vencer"
-              value={`${lotesVencer.length} lote${lotesVencer.length !== 1 ? 's' : ''}`}
-              hint="Próximos a vencer"
+              primary={`${lotesVencer.length}`}
+              label={`lote${lotesVencer.length !== 1 ? 's' : ''} por vencer`}
               severity="neutral"
               ctaLabel="Ver"
               to="/lotes"
@@ -786,7 +772,7 @@ export default function Dashboard() {
         <KpiCard
           label="Inventario valorizado"
           value={fmt(invValorizado?.total ?? 0)}
-          sub="a precio de venta"
+          sub="a costo de compra"
           color="#2d5a9a"
         />
       </div>
@@ -800,27 +786,33 @@ export default function Dashboard() {
           {ventasPorHora.length === 0 ? (
             <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Sin datos en el período</p>
           ) : (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 80, paddingBottom: 4 }}>
-              {ventasPorHora.map(h => {
-                const pct = maxVentaHora > 0 ? (h.total / maxVentaHora) : 0
-                const isPico = pct >= 0.8
-                return (
-                  <div key={h.hora} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                    <div
-                      title={`${h.hora}h — ${fmt(h.total)}`}
-                      style={{
-                        width: '100%', height: `${Math.max(pct * 60, 2)}px`,
-                        background: isPico ? '#5c7a4e' : '#c8dbbf',
-                        borderRadius: '3px 3px 0 0',
-                        minHeight: 2,
-                      }}
-                    />
-                    {[6, 9, 12, 15, 18, 21].includes(h.hora) && (
-                      <span style={{ fontSize: 9, color: '#8b7d6b', whiteSpace: 'nowrap' }}>{h.hora}h</span>
-                    )}
-                  </div>
-                )
-              })}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 120 }}>
+                {ventasPorHora.map(h => {
+                  const pct = maxVentaHora > 0 ? (h.total / maxVentaHora) : 0
+                  const isPico = pct >= 0.8
+                  return (
+                    <div key={h.hora} style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'flex-end', height: '100%' }}>
+                      <div
+                        title={`${h.hora}h — ${fmt(h.total)}`}
+                        style={{
+                          width: '100%', maxWidth: 13,
+                          height: `${Math.max(pct * 100, h.total > 0 ? 4 : 1)}%`,
+                          background: isPico ? '#1a6b3a' : '#63b98c',
+                          borderRadius: '3px 3px 0 0',
+                        }}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+              <div style={{ display: 'flex', gap: 3, marginTop: 5 }}>
+                {ventasPorHora.map(h => (
+                  <span key={h.hora} style={{ flex: 1, textAlign: 'center', fontSize: 9, color: '#8b7d6b', whiteSpace: 'nowrap' }}>
+                    {[6, 9, 12, 15, 18, 21].includes(h.hora) ? `${h.hora}h` : ''}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
         </div>

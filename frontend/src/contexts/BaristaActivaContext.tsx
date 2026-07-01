@@ -43,16 +43,19 @@ export function BaristaActivaProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true }
   }, [tiendaId])
 
-  // Baristas del turno con id: cruza turno.baristas (solo nombres) contra el roster.
+  // Baristas ACTIVAS del turno con id: cruza turno.baristas (solo nombres) contra el roster,
+  // excluyendo a las que ya registraron salida (turno.baristas_salidas). Sin este filtro, una
+  // barista que marcó salida seguía figurando como activa en el selector del header.
   const baristasTurno = useMemo<BaristaRef[]>(() => {
-    const nombres = turno?.baristas ?? []
+    const salidas = new Set(turno?.baristas_salidas ?? [])
+    const nombres = (turno?.baristas ?? []).filter(nombre => !salidas.has(nombre))
     return nombres
       .map(nombre => {
         const match = roster.find(b => b.nombre === nombre)
         return match ? { id: match.id, nombre: match.nombre } : null
       })
       .filter((b): b is BaristaRef => b !== null)
-  }, [turno?.baristas, roster])
+  }, [turno?.baristas, turno?.baristas_salidas, roster])
 
   const persist = useCallback((b: BaristaRef | null) => {
     if (b) {

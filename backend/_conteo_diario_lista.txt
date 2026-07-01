@@ -1,0 +1,48 @@
+# Productos que las baristas cuentan en el CONTEO DIARIO (apertura/cierre).
+# → incluir_en_conteo = True. Todo lo demás + equipos → solo fin de mes (incluir_en_conteo=False).
+# Nombres tal como vinieron en la lista del usuario (2026-06-30). Requieren reconciliación
+# con los nombres del Excel de inventario mensual al cargar (ver notas a la derecha).
+
+CAFÉ x2500 gr            # INSUMO: bolsa 2500g para surtir la tolva (café a granel). controla_stock, conteo diario, NO se vende.
+CAFÉ X500 gr             # VENTA: la LIBRA (= "Libra Medium Café Exportación", $49900 del menú). controla_stock=True + precio_venta=49900 + conteo diario. Producto distinto de la bolsa x2500.
+ALMOJABANAS
+T CHOCOLATE              # = Torta Chocolate
+T NARANJA                # = Torta Naranja
+T ZANAHORIA              # = Torta Zanahoria
+T RED VELVET             # = Torta Red Velvet
+PASTEL POLLO
+PALITO DE QUESO
+OMELETTE
+OMELETTE JAMON Y QUESO
+CROISSANT DE QUESO
+CROISSANT DE CHOCOLATE
+MASA DE PANDEBONO
+TE CHAI                  # = Chai
+AGUA MEDIUM
+AGUA GAS                 # = Agua Medium con Gas
+LICOR BAILEYS X700ML
+LICOR BAILEYS X1000ML
+LICOR WHISKY X700ML
+LICOR WHISKY X1000ML
+LICOR AMARETTO X750ML
+VELINO VAINILLA          # = Saborizante Vainilla (Velino = marca)
+VELINO CANELA            # = Saborizante Canela
+VELINO MACADAMIA         # = Saborizante Macadamia
+VELINO FRUTOS AMARILLOS  # = Saborizante Frutos Amarillos
+VELINO KIWI FRESA        # = Saborizante Kiwi Fresa
+PULPAS JUGO              # En el SISTEMA: 4 pulpas SEPARADAS (lulo/mango/mora/limón), las 4 con conteo diario. La barista las cuenta juntas en papel, pero el sistema las tiene por separado.
+LECHE DESLACTOSADA
+LECHE ENTERA
+LECHE CONDENSADA (300GR)
+SOUR CREAM X 400GR
+LECHE EN POLVO (GRAMOS)
+SALSA CHOCOLATE
+SALSA CARAMELO
+SALSA FRUTOS ROJOS MIMOS
+SALSA MARACUYA
+CHANTILLY                # = Crema Chantilly
+AZUCAR TUBIPACK          # = Azúcar Blanca Tubos
+AZUCAR X 2.5 KG          # = Azúcar a Granel x2500
+MILO GRAMOS              # = Milo
+GALLETA OREO GRAMOS      # = Galleta Oreo
+BATI CREMA               # consumible (NO es equipo) — corrige mi categorización previa

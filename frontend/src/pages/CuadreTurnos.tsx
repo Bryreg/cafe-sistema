@@ -79,6 +79,12 @@ const fmtDateTime = (s: string) => {
   const d = parseUTC(s)
   return `${d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })} ${d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}`
 }
+// Fecha-hora local completa y ordenable (para exports Excel): YYYY-MM-DD HH:MM en hora local.
+const fmtLocalDT = (s: string) => {
+  const d = parseUTC(s)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
 const today = () => new Date().toISOString().slice(0, 10)
 const firstOfMonth = () => {
   const d = new Date()
@@ -399,7 +405,7 @@ function HistorialTurnos({ tiendaId, desde, hasta }: { tiendaId: number; desde: 
     if (!filas) return
     exportarExcel(`turnos_${desde}_${hasta}`,
       ['Apertura', 'Cierre', 'Abrió', 'Cerró', 'Base real', 'Total ventas', 'Efectivo', 'Tarjeta', 'Diff. cierre', 'Diff. Bold', 'Justificación'],
-      filas.map(f => [f.fecha_apertura, f.fecha_cierre, f.usuario_apertura, f.usuario_cierre,
+      filas.map(f => [fmtLocalDT(f.fecha_apertura), fmtLocalDT(f.fecha_cierre), f.usuario_apertura, f.usuario_cierre,
         f.base_real, f.total_ventas, f.total_efectivo, f.total_tarjeta,
         f.diferencia_cierre, f.diferencia_tarjeta, f.justificacion_cierre ?? '']))
   }
@@ -439,7 +445,7 @@ function HistorialTurnos({ tiendaId, desde, hasta }: { tiendaId: number; desde: 
               <button onClick={() => toggle(f.id)}
                 className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left">
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-400">{f.fecha_apertura} → {f.fecha_cierre}</p>
+                  <p className="text-xs text-gray-400">{fmtDateTime(f.fecha_apertura)} → {fmtDateTime(f.fecha_cierre)}</p>
                   <p className="text-sm font-semibold text-gray-700 truncate">{f.usuario_apertura}</p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -589,7 +595,7 @@ function HistorialBaristas({ tiendaId, desde, hasta }: { tiendaId: number; desde
     if (!cuadresFilas) return
     exportarExcel(`cuadres_${desde}_${hasta}`,
       ['Fecha/Hora', 'Barista', 'Efectivo esperado', 'Efectivo real', 'Diferencia efectivo', 'Total Bold', 'Diferencia Bold'],
-      cuadresFilas.map(f => [f.fecha_hora, f.usuario, f.efectivo_esperado, f.efectivo_real, f.diferencia_efectivo, f.ventas_tarjeta_bold, f.diferencia_tarjeta]))
+      cuadresFilas.map(f => [fmtLocalDT(f.fecha_hora), f.usuario, f.efectivo_esperado, f.efectivo_real, f.diferencia_efectivo, f.ventas_tarjeta_bold, f.diferencia_tarjeta]))
   }
 
   const totalCuadres = (f: FilaBarista) => f.n_recibos + f.n_cierres
@@ -616,7 +622,7 @@ function HistorialBaristas({ tiendaId, desde, hasta }: { tiendaId: number; desde
                   <p className="text-sm font-semibold text-gray-800">{f.nombre}</p>
                   <p className="text-xs text-gray-400">
                     {f.n_recibos} llegadas · {f.n_cierres} cierres
-                    {f.ultimo_cuadre && <span> · último {f.ultimo_cuadre}</span>}
+                    {f.ultimo_cuadre && <span> · último {fmtDateTime(f.ultimo_cuadre)}</span>}
                   </p>
                 </div>
                 <div className="flex flex-col items-end gap-1 shrink-0">
@@ -670,7 +676,7 @@ function HistorialBaristas({ tiendaId, desde, hasta }: { tiendaId: number; desde
                 <div onClick={() => setExpandido(expandido === f.id ? null : f.id)}
                   className="px-4 py-3 flex items-start justify-between gap-3 cursor-pointer hover:bg-gray-50">
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-400">{f.fecha_hora}</p>
+                    <p className="text-xs text-gray-400">{fmtDateTime(f.fecha_hora)}</p>
                     <p className="text-sm font-semibold text-gray-700">{f.usuario}</p>
                     <p className="text-xs text-gray-500">
                       Real: <span className="font-semibold text-gray-800">{fmt(f.efectivo_real)}</span>

@@ -175,6 +175,10 @@ class CajaTurno(Base):
     fecha_cierre = Column(DateTime, nullable=True)
     base_sistema = Column(Numeric(12, 2, asdecimal=False), default=0.0)
     base_real = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    # Reserva de caja fuerte: efectivo fijo guardado APARTE de la registradora (por si pasa
+    # algo extraordinario). Se registra para control pero NO entra en efectivo_esperado ni en
+    # el cuadre de la registradora. La base es SOLO el efectivo operativo de la caja.
+    caja_fuerte = Column(Numeric(12, 2, asdecimal=False), nullable=True, default=0.0)
     diferencia_apertura = Column(Numeric(12, 2, asdecimal=False), default=0.0)
     justificacion_apertura = Column(Text, nullable=True)
     # Totales calculados automáticamente desde VentaDiaria

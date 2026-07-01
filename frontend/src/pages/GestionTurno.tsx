@@ -43,6 +43,7 @@ export default function GestionTurno() {
   const [selected, setSelected] = useState<number[]>([])
   const [tipoTurno, setTipoTurno] = useState<TipoTurno | null>(null)
   const [baseReal, setBaseReal] = useState('')
+  const [cajaFuerte, setCajaFuerte] = useState('')
   const [esperadoInicio, setEsperadoInicio] = useState<number | null>(null)
   const [justificacion, setJustificacion] = useState('')
   const [saving, setSaving] = useState(false)
@@ -78,7 +79,7 @@ export default function GestionTurno() {
 
   const cancelar = () => {
     setStep(null); setTipoTurno(null)
-    setSelected([]); setBaseReal(''); setJustificacion(''); setError('')
+    setSelected([]); setBaseReal(''); setCajaFuerte(''); setJustificacion(''); setError('')
   }
 
   const abrirTurno = async () => {
@@ -89,6 +90,7 @@ export default function GestionTurno() {
         tienda_id: tiendaId,
         tipo_turno: tipoTurno,
         base_real: Number(baseReal) || 0,
+        caja_fuerte: Number(cajaFuerte) || 0,
         justificacion_apertura: justificacion || null,
         barista_ids: selected.length > 0 ? selected : null,
       })
@@ -398,11 +400,14 @@ export default function GestionTurno() {
               )}
             </div>
 
-            {/* Contá el efectivo de inicio por denominaciones (= cuadre de llegada unificado) */}
+            {/* Contá el efectivo de la caja registradora (= base operativa, cuadre de llegada) */}
             <div className="space-y-2">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.inkSubtle }}>
-                  Contá el efectivo de inicio
+                  Efectivo de la caja registradora
+                </p>
+                <p className="text-[11px] mt-0.5" style={{ color: dark.inkSubtle }}>
+                  Solo el efectivo con el que abrís la caja para operar. <strong>NO</strong> incluyas la caja fuerte.
                 </p>
                 {esperadoInicio !== null && (
                   <p className="text-[11px] mt-0.5" style={{ color: dark.inkSubtle }}>
@@ -418,6 +423,25 @@ export default function GestionTurno() {
                   Diferencia: {(Number(baseReal) - esperadoInicio) > 0 ? '+' : ''}{fmt(Number(baseReal) - esperadoInicio)} — registrá el motivo abajo
                 </p>
               )}
+
+              {/* Caja fuerte — reserva fija aparte, NO entra en el cuadre de la registradora */}
+              <div className="rounded-2xl p-4 space-y-1.5 mt-2" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
+                <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.inkSubtle }}>
+                  Caja fuerte / reserva (opcional)
+                </p>
+                <p className="text-[11px]" style={{ color: dark.inkSubtle }}>
+                  Efectivo que se guarda aparte, por si pasa algo extraordinario. Se registra pero
+                  <strong> no</strong> cuenta en “debería haber en caja”.
+                </p>
+                <input
+                  type="number" min="0" step="1000" inputMode="numeric"
+                  value={cajaFuerte}
+                  onChange={e => setCajaFuerte(e.target.value)}
+                  placeholder="$0"
+                  className="w-full bg-transparent text-[18px] font-mono font-semibold outline-none pt-1"
+                  style={{ color: dark.ink }}
+                />
+              </div>
             </div>
 
             </div>

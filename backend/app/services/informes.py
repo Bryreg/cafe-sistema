@@ -5,6 +5,7 @@ from app.models.models import (
     CajaTurno, EstadoTurnoEnum, EntregaTurno, Inventario, Producto, Usuario
 )
 from app.services.filtros import InformeFilter
+from app.core.tz import inicio_dia_col_utc, fin_dia_col_utc
 from datetime import datetime, date
 from collections import defaultdict
 from typing import Optional
@@ -12,8 +13,8 @@ from typing import Optional
 
 def reporte_ventas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Ventas agrupadas por día."""
-    desde = datetime.combine(fecha_desde, datetime.min.time())
-    hasta = datetime.combine(fecha_hasta, datetime.max.time())
+    desde = inicio_dia_col_utc(fecha_desde)
+    hasta = fin_dia_col_utc(fecha_hasta)
 
     q = (
         db.query(VentaDiaria)
@@ -67,8 +68,8 @@ def reporte_ventas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
 
 def reporte_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Mermas agrupadas por producto."""
-    desde = datetime.combine(fecha_desde, datetime.min.time())
-    hasta = datetime.combine(fecha_hasta, datetime.max.time())
+    desde = inicio_dia_col_utc(fecha_desde)
+    hasta = fin_dia_col_utc(fecha_hasta)
 
     q = (
         db.query(Merma)
@@ -125,8 +126,8 @@ def reporte_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
 
 def reporte_inventario_consumido(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Movimientos de salida agrupados por producto (consumo de inventario)."""
-    desde = datetime.combine(fecha_desde, datetime.min.time())
-    hasta = datetime.combine(fecha_hasta, datetime.max.time())
+    desde = inicio_dia_col_utc(fecha_desde)
+    hasta = fin_dia_col_utc(fecha_hasta)
 
     q = (
         db.query(MovimientoInventario)
@@ -183,8 +184,8 @@ def reporte_inventario_consumido(db: Session, tienda_id: int, fecha_desde: date,
 
 def reporte_entregas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Cuadres de llegada en el período."""
-    desde = datetime.combine(fecha_desde, datetime.min.time())
-    hasta = datetime.combine(fecha_hasta, datetime.max.time())
+    desde = inicio_dia_col_utc(fecha_desde)
+    hasta = fin_dia_col_utc(fecha_hasta)
 
     q = (
         db.query(EntregaTurno)
@@ -229,8 +230,8 @@ def reporte_entregas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
 
 def kpi_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """KPI mermas: total por tipo, comparado con ventas del período."""
-    desde = datetime.combine(fecha_desde, datetime.min.time())
-    hasta = datetime.combine(fecha_hasta, datetime.max.time())
+    desde = inicio_dia_col_utc(fecha_desde)
+    hasta = fin_dia_col_utc(fecha_hasta)
 
     mermas = (
         db.query(Merma)
@@ -279,8 +280,8 @@ def kpi_mermas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date
 
 def reporte_rotacion(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Rotación de inventario por producto en el período."""
-    desde = datetime.combine(fecha_desde, datetime.min.time())
-    hasta = datetime.combine(fecha_hasta, datetime.max.time())
+    desde = inicio_dia_col_utc(fecha_desde)
+    hasta = fin_dia_col_utc(fecha_hasta)
 
     inventarios = (
         db.query(Inventario)
@@ -369,8 +370,8 @@ def reporte_rotacion(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
 
 def reporte_turnos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Historial de turnos cerrados en el período."""
-    desde = datetime.combine(fecha_desde, datetime.min.time())
-    hasta = datetime.combine(fecha_hasta, datetime.max.time())
+    desde = inicio_dia_col_utc(fecha_desde)
+    hasta = fin_dia_col_utc(fecha_hasta)
 
     q = (
         db.query(CajaTurno)
@@ -417,8 +418,8 @@ def reporte_turnos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: 
 
 def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Timeline unificado: entradas, ajustes, mermas y salidas de pastelería."""
-    desde = datetime.combine(fecha_desde, datetime.min.time())
-    hasta = datetime.combine(fecha_hasta, datetime.max.time())
+    desde = inicio_dia_col_utc(fecha_desde)
+    hasta = fin_dia_col_utc(fecha_hasta)
 
     resultados = []
 
@@ -530,8 +531,8 @@ def reporte_movimientos(db: Session, tienda_id: int, fecha_desde: date, fecha_ha
 
 def reporte_baristas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta: date, filtro: Optional[InformeFilter] = None):
     """Ranking de baristas: cuadres de llegada y cierres con sus diferencias."""
-    desde = datetime.combine(fecha_desde, datetime.min.time())
-    hasta = datetime.combine(fecha_hasta, datetime.max.time())
+    desde = inicio_dia_col_utc(fecha_desde)
+    hasta = fin_dia_col_utc(fecha_hasta)
 
     q = (
         db.query(EntregaTurno)

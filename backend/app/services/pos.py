@@ -16,6 +16,9 @@ from fastapi import HTTPException
 from app.models.models import Producto, Ticket, TicketItem, CajaTurno, Usuario
 from app.services.caja import get_turno_activo
 from app.services import inventario as inv_svc, audit
+from app.core.tz import (
+    hoy_col, inicio_dia_col_utc, dia_col, hora_col, rango_col_utc,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -229,9 +232,9 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
         # Rango [hoy 00:00, mañana 00:00) en vez de func.date(fecha)==hoy: una
         # función sobre la columna anula el índice ix_tickets_tienda_fecha; el
         # rango sí lo usa (esto corre en CADA venta).
-        hoy = datetime.utcnow().date()
-        desde_hoy = datetime(hoy.year, hoy.month, hoy.day)
-        manana = desde_hoy + timedelta(days=1)
+        hoy = hoy_col()
+        desde_hoy = inicio_dia_col_utc(hoy)
+        manana = inicio_dia_col_utc(hoy + timedelta(days=1))
         total_dia = db.query(func.coalesce(func.sum(Ticket.total), 0.0)).filter(
             Ticket.tienda_id == tienda_id,
             Ticket.fecha >= desde_hoy,
@@ -314,18 +317,13 @@ def set_precio(db: Session, producto_id: int, precio_venta: float):
 # ---------------------------------------------------------------------------
 
 def _rango_fechas(fecha_desde: date | None, fecha_hasta: date | None) -> tuple[datetime, datetime]:
-    """Normaliza el rango. Default = hoy (00:00:00 → 23:59:59.999999).
+    """Normaliza el rango a UTC cubriendo días Colombia. Default = hoy Colombia.
 
-    Sigue la convención del resto de informes: datetime.combine con min/max time,
+    Los tickets se guardan en UTC pero el negocio opera en Colombia (UTC-5). El
+    rango devuelto en UTC corresponde a los días calendario Colombia pedidos,
     compatible con SQLite y PostgreSQL sin funciones de fecha SQL-específicas.
     """
-    hoy = date.today()
-    desde = fecha_desde or hoy
-    hasta = fecha_hasta or hoy
-    return (
-        datetime.combine(desde, datetime.min.time()),
-        datetime.combine(hasta, datetime.max.time()),
-    )
+    return rango_col_utc(fecha_desde, fecha_hasta)
 
 
 def _base_tickets_query(db: Session, fecha_desde: date | None, fecha_hasta: date | None,
@@ -404,7 +402,7 @@ def get_informe_contador(db: Session, anio: int, mes: int, tienda_id: int | None
 
     por_dia: dict = defaultdict(lambda: {"efectivo": 0.0, "tarjeta": 0.0, "transferencia": 0.0, "otros": 0.0, "total": 0.0, "facturas": 0})
     for fecha, total, ef, tar in filas:
-        d = fecha.date().isoformat()
+        d = dia_col(fecha).isoformat()
         por_dia[d]["efectivo"] += float(ef or 0)
         por_dia[d]["tarjeta"] += float(tar or 0)
         por_dia[d]["total"] += float(total or 0)
@@ -516,11 +514,10 @@ def get_analytics_ventas_por_hora(db: Session, fecha_desde: date | None = None,
     )
     # Los tickets se guardan en UTC, pero el negocio opera en Colombia (UTC-5, sin
     # horario de verano). Sin este ajuste, una venta de la mañana aparece 5 horas
-    # más tarde (p. ej. 9am -> 2pm).
-    OFFSET_COL = timedelta(hours=5)
+    # más tarde (p. ej. 9am -> 2pm). hora_col() centraliza esa conversión.
     buckets = {h: {"n_tickets": 0, "total": 0.0} for h in range(24)}
     for fecha, total in rows:
-        b = buckets[(fecha - OFFSET_COL).hour]
+        b = buckets[hora_col(fecha)]
         b["n_tickets"] += 1
         b["total"] += float(total or 0.0)
     return [

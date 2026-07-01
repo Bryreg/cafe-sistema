@@ -9,6 +9,7 @@ from app.models.models import Usuario
 from app.schemas.facturas import FacturaCreate
 from app.services import facturas as svc
 from app.core.storage import upload_imagen
+from app.core.tz import inicio_dia_col_utc, fin_dia_col_utc
 
 router = APIRouter(prefix="/facturas", tags=["facturas"])
 
@@ -64,8 +65,8 @@ def dashboard_pagos(
     user: Usuario = Depends(require_admin),
 ):
     """Pagos a proveedores: totales, ranking por proveedor, por mes, por sede + facturas."""
-    d = datetime.combine(desde, time.min) if desde else None
-    h = datetime.combine(hasta, time.max) if hasta else None
+    d = inicio_dia_col_utc(desde) if desde else None
+    h = fin_dia_col_utc(hasta) if hasta else None
     return svc.get_dashboard_pagos(db, tienda_id, d, h)
 
 

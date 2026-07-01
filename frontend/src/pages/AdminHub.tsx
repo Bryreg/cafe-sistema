@@ -102,7 +102,8 @@ export default function AdminHub() {
   const navigate = useNavigate()
   const location = useLocation()
 
-  const tiendaId = user?.tienda_id ?? 1
+  const [sedes, setSedes] = useState<{ id: number; nombre: string }[]>([])
+  const [tiendaId, setTiendaId] = useState<number>(user?.tienda_id ?? 1)
 
   const [time, setTime] = useState(hora())
   const [dash, setDash] = useState<DashData | null>(null)
@@ -120,6 +121,14 @@ export default function AdminHub() {
   useEffect(() => {
     const t = setInterval(() => setTime(hora()), 30000)
     return () => clearInterval(t)
+  }, [])
+
+  // Sedes (para el selector — el resumen es POR sede, no general)
+  useEffect(() => {
+    api.get('/auth/tiendas').then(r => {
+      setSedes(r.data)
+      if (r.data.length && !r.data.some((t: { id: number }) => t.id === tiendaId)) setTiendaId(r.data[0].id)
+    }).catch(() => null)
   }, [])
 
   // Datos base
@@ -191,11 +200,14 @@ export default function AdminHub() {
             <span style={{ fontSize: 9.5, fontWeight: 700, color: 'oklch(72% 0.05 155)', letterSpacing: '.1em', textTransform: 'uppercase' }}>
               Ventas del día
             </span>
-            {dash && (
-              <span style={{ fontSize: 10, fontWeight: 600, color: 'oklch(72% 0.05 155)', fontVariantNumeric: 'tabular-nums' }}>
-                {/* transacciones not available yet */}
-              </span>
-            )}
+            {sedes.length > 1 ? (
+              <select value={tiendaId} onChange={e => setTiendaId(Number(e.target.value))}
+                style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: 'oklch(30% 0.04 155 / 0.7)', border: '1px solid oklch(52% 0.05 155 / 0.5)', borderRadius: 8, padding: '3px 8px', cursor: 'pointer' }}>
+                {sedes.map(s => <option key={s.id} value={s.id} style={{ color: '#111' }}>{s.nombre}</option>)}
+              </select>
+            ) : sedes.length === 1 ? (
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'oklch(80% 0.05 155)' }}>{sedes[0].nombre}</span>
+            ) : null}
           </div>
 
           {/* Big number */}

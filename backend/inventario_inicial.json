@@ -1,0 +1,1112 @@
+[
+ {
+  "nombre": "AGUA MEDIUM BOTELLA",
+  "categoria": "bebida",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 47.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "AGUA MEDIUM CON GAS BOTELLA",
+  "categoria": "bebida",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 10.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "ALCOHOL GLICERINADO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "ALMOJABANAS",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 3900,
+  "sellado": 5.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "AROMATICA",
+  "categoria": "bebida",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 110.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "Azucar a Granel",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": true,
+  "precio": 0,
+  "sellado": 2.0,
+  "abierto_g": 1940.0
+ },
+ {
+  "nombre": "AZUCAR BLANCA TUBOS",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 3.0,
+  "abierto_g": 1039.0
+ },
+ {
+  "nombre": "BLANQUEADOR",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "BOLSA #4 PAPEL",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 12.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "BOLSA BASURA",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 4.0,
+  "abierto_g": 168.0
+ },
+ {
+  "nombre": "BOLSA DOMICILIO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 58.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "BOLSA MEDIUM KRAFT",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 8.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "Cafe Alta Tostion (granel)",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": true,
+  "precio": 0,
+  "sellado": 6,
+  "abierto_g": 2542.0
+ },
+ {
+  "nombre": "CAFÉ DESCAFEINADO NEW COLONY",
+  "categoria": "bebida",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 270.0
+ },
+ {
+  "nombre": "CAFÉ LIBRA MEDIUM CAFÉ EXPORTACION",
+  "categoria": "bebida",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 2.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CAJA HAMBURGUESA",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 136.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CANELA MOLIDA",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 164.0
+ },
+ {
+  "nombre": "CHAI",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0,
+  "abierto_g": 130.0
+ },
+ {
+  "nombre": "CHAI LATTE",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CITRONELA",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "COCOA",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 59.0
+ },
+ {
+  "nombre": "COPA CAPPUCCINO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 10.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "COPA HELADO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 5.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "COPA MALTEADA",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 4.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CREMA CHANTILLY",
+  "categoria": "bebida",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 10.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CROISSANT DE CHOCOLATE",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CROISSANT QUESO",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CUCAHRA LARGA",
+  "categoria": "bebida",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CUCHARA COCTELERA",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CUCHARA DESECHABLE",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 300.0,
+  "abierto_g": 32.0
+ },
+ {
+  "nombre": "CUCHARA PARA HELADO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CUCHARA POSTRERA",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 15.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CUCHILLO  HELADO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CUCHILLO OMELETTE",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "CUCHILLO TORTAS  SIERRA",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "DETERGENTE EN POLVO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 2.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "ENDULZANTE DIET O STEVIA",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 366.0
+ },
+ {
+  "nombre": "ESCOBA",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 2.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "ESPONJILLA BOMBRIL",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 4.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "ESPRESSOS FRIOS",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": false,
+  "precio": 0,
+  "sellado": 0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "FILTRO CIEGO MAQ ESPRESSO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "GALLETA OREO",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 458.0
+ },
+ {
+  "nombre": "GUANTE BIOFIT TRANSP *100",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "GUANTE MONOCOLOR (PAR)",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "Helado Chocolate",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0.0
+ },
+ {
+  "nombre": "Helado Vainilla",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 0.0
+ },
+ {
+  "nombre": "JABON DE MANOS",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "JABON LOZA",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 2.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "JARRA ACERO ESPRESSO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "LECHE CONDENSADA",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": true,
+  "precio": 0,
+  "sellado": 5,
+  "abierto_g": 133.0
+ },
+ {
+  "nombre": "LECHE EN POLVO",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0,
+  "abierto_g": 109.0
+ },
+ {
+  "nombre": "LECHE ENTERA Y DESLACTOSADA",
+  "categoria": "bebida",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 41.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "Licor Amaretto x750ml",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 868.0
+ },
+ {
+  "nombre": "Licor Baileys x1000ml",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0.0
+ },
+ {
+  "nombre": "Licor Baileys x700ml",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0.0
+ },
+ {
+  "nombre": "Licor Whisky Black & White x1000ml",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 569.0
+ },
+ {
+  "nombre": "Licor Whisky Black & White x700ml",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0.0
+ },
+ {
+  "nombre": "LIMPIAPISOS",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "LIMPIAVIDRIOS",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "MALLA SUAVE",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 4.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "MASA DE PANDEBONO X 25GRAMOS",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 92.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "Matcha",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0.0
+ },
+ {
+  "nombre": "MEZCLADOR ECO BAMBU",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 2.0,
+  "abierto_g": 59.0
+ },
+ {
+  "nombre": "MEZCLA GRANIZADO",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": false,
+  "precio": 0,
+  "sellado": 0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "MILO",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0.0
+ },
+ {
+  "nombre": "OMELETTE",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 3.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "OMELETTE DE JAMON Y QUESO",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 6.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "PALITO DE QUESO",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 4.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "PANELA",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "bolsa",
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0.0
+ },
+ {
+  "nombre": "PAÑO WYPALL",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 938.0
+ },
+ {
+  "nombre": "PAPEL EXTENSIBLE O VINILPEL",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "PASTEL DE POLLO",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 9900,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "PITILLOS",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 600.0,
+  "abierto_g": 194.0
+ },
+ {
+  "nombre": "PLATO AMERICANO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 14.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "PLATO BROWNIE",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 5.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "PLATO ESPRESSO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 2.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "PLATOS MEDIUM CARTON",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 175.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "PULPA DE LIMÓN",
+  "categoria": "bebida",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 9.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "PULPA DE LULO",
+  "categoria": "bebida",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 25.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "PULPA DE MANGO",
+  "categoria": "bebida",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 15.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "PULPA DE MORA",
+  "categoria": "bebida",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 0,
+  "sellado": 22.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "RECOGEDOR",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "ROLLO IMPRESORA",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 13.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "Saborizante Canela",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 128.0
+ },
+ {
+  "nombre": "SABORIZANTE FRUTOS AMARILLOS",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "Saborizante Kiwi Fresa",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 143.0
+ },
+ {
+  "nombre": "SABORIZANTE MACADAMIA",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0.0
+ },
+ {
+  "nombre": "SABORIZANTE MARACUYA",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": false,
+  "precio": 0,
+  "sellado": 0,
+  "abierto_g": 632.0
+ },
+ {
+  "nombre": "SABORIZANTE VAINILLA",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0.0
+ },
+ {
+  "nombre": "Salsa Caramelo",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 818.0
+ },
+ {
+  "nombre": "Salsa Chocolate",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 1454.0
+ },
+ {
+  "nombre": "Salsa Frutos Rojos",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 409.0
+ },
+ {
+  "nombre": "SALSA MARACUYA",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 900.0
+ },
+ {
+  "nombre": "SERVILLETAS",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 4.0,
+  "abierto_g": 39.0
+ },
+ {
+  "nombre": "SOUR CREAM",
+  "categoria": "bebida",
+  "fraccionable": true,
+  "envase": "botella",
+  "diario": true,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "TAPA PITILLERA 16 OZ",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 99.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "TAPA VIAJERA 12 OZ",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 215.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "TAZA AMERICANO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 7.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "TAZA ESPRESSO",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 4.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "TAZA  LATTE",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 7.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "TENEDOR OMELETTE",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 4.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "TORTA CHOCOLATE",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 13900,
+  "sellado": 14.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "TORTA NARANJA",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 12900,
+  "sellado": 19.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "TORTA RED VELVET",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 12900,
+  "sellado": 13.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "TORTA ZANAHORIA",
+  "categoria": "pasteleria",
+  "fraccionable": false,
+  "envase": null,
+  "diario": true,
+  "precio": 12900,
+  "sellado": 15.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "TRAPEADOR",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 1.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "Vaso Carton 12oz",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 249.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "Vaso Carton 16oz",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 174.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "VASO CARTON 9 OZ",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 392.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "VASOS CARTON 04 OZ",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ },
+ {
+  "nombre": "VASOS PLASTICOS 07 OZ",
+  "categoria": "insumo",
+  "fraccionable": false,
+  "envase": null,
+  "diario": false,
+  "precio": 0,
+  "sellado": 0.0,
+  "abierto_g": 0
+ }
+]

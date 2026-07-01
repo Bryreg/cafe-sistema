@@ -5,6 +5,7 @@ import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
 import { CheckCircle2, Circle, ArrowLeft, ArrowRight, AlertTriangle, ClipboardCheck } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
+import NivelEnvase from './NivelEnvase'
 
 interface InvItem {
   producto_id: number
@@ -12,6 +13,8 @@ interface InvItem {
   unidad_medida: string
   stock_actual: number
   categoria?: string
+  fraccionable?: boolean
+  envase?: 'bolsa' | 'botella' | null
 }
 
 interface Props {
@@ -218,6 +221,7 @@ export default function ConteoInventario({ tipo }: Props) {
                         Sistema: {item.stock_actual} {item.unidad_medida}
                       </p>
                     </div>
+                    {!item.fraccionable && (
                     <div className="flex items-center gap-2 shrink-0">
                       <input
                         id={`conteo-${item.producto_id}`}
@@ -245,7 +249,22 @@ export default function ConteoInventario({ tipo }: Props) {
                         {item.unidad_medida}
                       </span>
                     </div>
+                    )}
                   </div>
+                  {item.fraccionable && (
+                    <div className="mt-2.5 ml-7">
+                      <NivelEnvase
+                        envase={item.envase === 'botella' ? 'botella' : 'bolsa'}
+                        unidad={item.unidad_medida}
+                        selladas={Math.floor(Number(val ?? 0))}
+                        nivel={Number(val ?? 0) - Math.floor(Number(val ?? 0))}
+                        onChange={(s, n) => {
+                          setConteos(prev => ({ ...prev, [item.producto_id]: String(s + n) }))
+                          setIsDirty(true)
+                        }}
+                      />
+                    </div>
+                  )}
                   {diff !== null && diff !== 0 && (
                     <p className="text-xs font-medium mt-1 ml-7" style={{ color: dark.danger }}>
                       Diferencia: {diff > 0 ? '+' : ''}{diff} {item.unidad_medida}

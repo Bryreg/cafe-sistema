@@ -241,6 +241,9 @@ class Producto(Base):
     proveedor = Column(String(100), nullable=True)
     lead_time_dias = Column(Integer, default=2, server_default="2")
     precio_venta = Column(Numeric(12, 2, asdecimal=False), nullable=False, server_default="0")
+    # A granel: se cuenta en unidades selladas + nivel de la abierta (dibujo). envase: bolsa | botella.
+    fraccionable = Column(Boolean, default=False, server_default="false")
+    envase = Column(String(10), nullable=True)   # 'bolsa' (sólidos) | 'botella' (líquidos)
     inventarios = relationship("Inventario", back_populates="producto")
     movimientos_inv = relationship("MovimientoInventario", back_populates="producto")
     pastelerias = relationship("PasteleriaDiaria", back_populates="producto")

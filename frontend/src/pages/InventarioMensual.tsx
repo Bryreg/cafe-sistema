@@ -3,10 +3,12 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import { Boxes, Check, Save, AlertTriangle, Lock } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
+import NivelEnvase from '../components/NivelEnvase'
 
 interface Item {
   id: number; producto_id: number; producto_nombre: string
   categoria: string; unidad_medida: string
+  fraccionable?: boolean; envase?: 'bolsa' | 'botella' | null
   cantidad_sistema: number; cantidad_real: number | null
   diferencia: number; valor_unitario: number; valor_diferencia: number
 }
@@ -120,8 +122,16 @@ export default function InventarioMensual() {
                         </div>
                         {cerrado ? (
                           <div className="text-right">
-                            <p className="text-sm font-bold text-gray-800 font-mono">{Math.round(it.cantidad_real ?? 0)}</p>
+                            <p className="text-sm font-bold text-gray-800 font-mono">{Math.round((it.cantidad_real ?? 0) * 100) / 100}</p>
                           </div>
+                        ) : it.fraccionable ? (
+                          <NivelEnvase
+                            envase={it.envase === 'botella' ? 'botella' : 'bolsa'}
+                            unidad={it.unidad_medida}
+                            selladas={Math.floor(Number(valores[it.id] ?? 0))}
+                            nivel={Number(valores[it.id] ?? 0) - Math.floor(Number(valores[it.id] ?? 0))}
+                            onChange={(s, n) => setValores(p => ({ ...p, [it.id]: String(s + n) }))}
+                          />
                         ) : (
                           <input type="number" inputMode="numeric" value={valores[it.id] ?? ''}
                             onChange={e => setValores(p => ({ ...p, [it.id]: e.target.value }))}

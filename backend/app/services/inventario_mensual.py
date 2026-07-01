@@ -39,6 +39,8 @@ def _serializar(inv: InventarioMensual) -> dict:
             "id": it.id, "producto_id": it.producto_id,
             "producto_nombre": it.producto.nombre if it.producto else "",
             "categoria": it.categoria, "unidad_medida": it.unidad_medida,
+            "fraccionable": bool(it.producto.fraccionable) if it.producto else False,
+            "envase": it.producto.envase if it.producto else None,
             "cantidad_sistema": it.cantidad_sistema,
             "cantidad_real": it.cantidad_real,
             "diferencia": it.diferencia,

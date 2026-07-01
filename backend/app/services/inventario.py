@@ -37,11 +37,14 @@ def get_inventario_tienda(db: Session, tienda_id: int):
             "id": item.id,
             "producto_id": item.producto_id,
             "tienda_id": item.tienda_id,
-            "stock_actual": round(item.stock_actual),
-            "stock_minimo": round(item.stock_minimo),
+            # 2 decimales: los fraccionables pueden tener stock 3.5 (selladas + nivel abierta).
+            "stock_actual": round(item.stock_actual or 0, 2),
+            "stock_minimo": round(item.stock_minimo or 0, 2),
             "producto_nombre": item.producto.nombre,
             "categoria": item.producto.categoria.value,
             "unidad_medida": item.producto.unidad_medida,
+            "fraccionable": bool(item.producto.fraccionable),
+            "envase": item.producto.envase,
             "alerta": item.stock_actual <= item.stock_minimo,
         })
     return result

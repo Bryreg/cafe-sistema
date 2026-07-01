@@ -150,6 +150,9 @@ with engine.connect() as _conn:
         # Categoría nueva "porciones" en el enum nativo de Postgres (en SQLite el ALTER TYPE
         # falla y se ignora; el enum allí es varchar). PG 12+ permite ADD VALUE en transacción.
         "ALTER TYPE categoriaproductoenum ADD VALUE IF NOT EXISTS 'porciones'",
+        # Inventario a granel: unidades selladas + nivel de la abierta (dibujo bolsa/botella).
+        "ALTER TABLE productos ADD COLUMN fraccionable BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE productos ADD COLUMN envase VARCHAR(10)",
     ]:
         try:
             _conn.execute(_text(_sql))

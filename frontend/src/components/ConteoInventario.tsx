@@ -35,14 +35,16 @@ export default function ConteoInventario({ tipo }: Props) {
   const [searchParams] = useSearchParams()
   const isKioskClose = searchParams.get('kiosk') === '1'
   const isApertura = tipo === 'apertura'
-  const paso = isApertura ? 'Paso 2 de 5' : 'Paso 4 de 5'
+  const paso = isApertura ? 'Último paso' : 'Paso 4 de 5'
   const titulo = isApertura ? 'Conteo de apertura' : 'Conteo de cierre'
   const subtitulo = isApertura
     ? 'Verifica el stock físico contra el sistema.'
     : 'Verifica el stock físico al finalizar el turno.'
-  const ctaLabel = isApertura ? 'Confirmar conteo de apertura' : 'Confirmar y continuar al cierre'
+  const ctaLabel = isApertura ? 'Confirmar apertura y empezar a vender' : 'Confirmar y continuar al cierre'
   const backPath = isApertura ? '/gestion-turno' : '/'
-  const nextPath = isApertura ? '/cuadre-apertura' : (isKioskClose ? '/salida-efectivo' : '/cierre')
+  // Apertura: el cuadre ya se hizo al contar el efectivo de inicio (base). Sin segundo conteo
+  // redundante — directo al POS. El cuadre de apertura queda registrado en abrir_caja.
+  const nextPath = isApertura ? '/pos' : (isKioskClose ? '/salida-efectivo' : '/cierre')
 
   useEffect(() => {
     if (!user?.tienda_id) return

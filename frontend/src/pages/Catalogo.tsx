@@ -51,11 +51,23 @@ export default function Catalogo() {
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
-  // Groups of products sharing the same normalized name
+  // Agrupa productos que son EL MISMO escrito distinto. La clave normaliza fuerte:
+  // quita acentos/mayúsculas/puntuación, descarta palabras vacías ("de", "con") y de
+  // unidad (oz/gr/ml), y ordena los tokens. Así caza "Cappuccino Vainilla" vs
+  // "Vainilla Cappuccino", "Torta de Chocolate" vs "Torta Chocolate", "Almojábanas"
+  // vs "Almojabanas", "Café 12oz" vs "Café 12 Onzas", etc.
   const gruposDuplicados = (() => {
+    const STOP = new Set(['de', 'la', 'el', 'los', 'las', 'con', 'y', 'x', 'und', 'unidad', 'unidades', 'para'])
+    const UNITS = new Set(['oz', 'onz', 'onza', 'onzas', 'gr', 'g', 'ml', 'cc', 'lt', 'litro', 'litros', 'kg'])
+    const claveNorm = (s: string) =>
+      s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+        .replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
+        .filter(t => t && !STOP.has(t) && !UNITS.has(t))
+        .sort().join(' ')
     const map = new Map<string, Producto[]>()
     for (const p of productos) {
-      const key = p.nombre.trim().toLowerCase()
+      const key = claveNorm(p.nombre)
+      if (!key) continue
       map.set(key, [...(map.get(key) ?? []), p])
     }
     return [...map.values()].filter(g => g.length > 1)

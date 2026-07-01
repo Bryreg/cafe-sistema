@@ -111,6 +111,8 @@ def sugerencia_pedido(db: Session, tienda_id: int) -> dict:
             "estado": estado,
             "cantidad_sugerida": cantidad_sugerida,
             "barista_alerto": p.id in barista_alerto,
+            "fraccionable": bool(p.fraccionable),
+            "envase": p.envase,
         })
 
     # Orden global: agotado → urgente → pronto → bajo → ok, luego alfabético

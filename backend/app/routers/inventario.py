@@ -170,6 +170,8 @@ def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require
             "controla_stock": p.controla_stock,
             "incluir_en_conteo": p.incluir_en_conteo if p.incluir_en_conteo is not None else True,
             "precio_venta": p.precio_venta or 0.0,
+            "fraccionable": bool(p.fraccionable),
+            "envase": p.envase,
             "stocks": stocks,
         })
     return {"tiendas": [{"id": t.id, "nombre": t.nombre} for t in tiendas], "productos": result}

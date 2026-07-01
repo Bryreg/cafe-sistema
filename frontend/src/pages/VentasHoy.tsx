@@ -64,7 +64,7 @@ function SinTurno() {
         No hay turno activo. Abrí un turno para ver tus ventas.
       </p>
       <button
-        onClick={() => navigate('/hub')}
+        onClick={() => navigate('/')}
         className="px-4 py-2 rounded-xl bg-forest text-white text-sm font-semibold"
       >
         Ir al inicio

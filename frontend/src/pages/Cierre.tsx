@@ -92,7 +92,7 @@ export default function Cierre() {
   // (nueva referencia de objeto) y podría sacar al barista de la página si
   // hubiera un error de red momentáneo que pusiera turno en null.
   useEffect(() => {
-    if (!turno) { navigate('/hub', { replace: true }); return }
+    if (!turno) { navigate('/', { replace: true }); return }
     if (!turno.tiene_conteo_cierre) navigate('/conteo-cierre', { replace: true })
   }, [turno?.id, turno?.tiene_conteo_cierre, navigate])
 
@@ -151,7 +151,7 @@ export default function Cierre() {
       {/* Header */}
       <header className="flex items-center gap-2.5 px-4 pb-2.5 pt-3 shrink-0" style={{ background: dark.bg }}>
         <button
-          onClick={() => navigate('/hub')}
+          onClick={() => navigate('/')}
           className="w-7 h-7 rounded-lg flex items-center justify-center"
           style={{ background: dark.surfaceAlt, color: dark.inkMuted }}
           aria-label="Volver"
@@ -417,7 +417,7 @@ export default function Cierre() {
         )}
 
         <button
-          onClick={() => navigate('/hub')}
+          onClick={() => navigate('/')}
           className="w-full text-sm py-2 transition-colors"
           style={{ color: dark.inkSubtle }}
         >

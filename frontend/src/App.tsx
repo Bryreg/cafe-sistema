@@ -23,7 +23,6 @@ import Consignaciones from './pages/Consignaciones'
 import ConsignacionesAdmin from './pages/ConsignacionesAdmin'
 import SolicitudPedido from './pages/SolicitudPedido'
 import SolicitudSencilla from './pages/SolicitudSencilla'
-import ConteoFisico from './pages/ConteoFisico'
 import Limpieza from './pages/Limpieza'
 import Ingresos from './pages/Ingresos'
 import ConteoCompras from './pages/ConteoCompras'
@@ -131,7 +130,6 @@ function AppRoutes() {
       <Route path="/pasteleria"     element={hasSession ? <Pasteleria />     : <KioskSetup />} />
       <Route path="/pedido"         element={hasSession ? <SolicitudPedido />: <KioskSetup />} />
       <Route path="/sencilla"       element={hasSession ? <SolicitudSencilla /> : <KioskSetup />} />
-      <Route path="/conteos"        element={hasSession ? <ConteoFisico />   : <KioskSetup />} />
       <Route path="/inventario-mensual" element={hasSession ? <InventarioMensual /> : <KioskSetup />} />
       <Route path="/ingresos"       element={hasSession ? <Ingresos />       : <KioskSetup />} />
       <Route path="/historial-ventas" element={hasSession ? <HistorialVentas /> : <KioskSetup />} />

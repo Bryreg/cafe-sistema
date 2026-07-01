@@ -336,7 +336,7 @@ export default function Limpieza() {
   if (isAdmin) return content
 
   return (
-    <BaristaLayout title="Limpieza semanal" backTo="/hub">
+    <BaristaLayout title="Limpieza semanal" backTo="/">
       {content}
     </BaristaLayout>
   )

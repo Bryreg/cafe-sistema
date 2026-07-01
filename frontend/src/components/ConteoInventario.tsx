@@ -41,7 +41,7 @@ export default function ConteoInventario({ tipo }: Props) {
     ? 'Verifica el stock físico contra el sistema.'
     : 'Verifica el stock físico al finalizar el turno.'
   const ctaLabel = isApertura ? 'Confirmar conteo de apertura' : 'Confirmar y continuar al cierre'
-  const backPath = isApertura ? '/gestion-turno' : '/hub'
+  const backPath = isApertura ? '/gestion-turno' : '/'
   const nextPath = isApertura ? '/cuadre-apertura' : (isKioskClose ? '/salida-efectivo' : '/cierre')
 
   useEffect(() => {

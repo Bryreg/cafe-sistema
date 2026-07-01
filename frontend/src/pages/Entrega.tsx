@@ -81,7 +81,7 @@ export default function Entrega() {
       if (imagen) fd.append('imagen', imagen)
       await api.post(`/caja/${turno.id}/entrega`, fd)
       await refresh()
-      navigate('/hub')
+      navigate('/')
     } catch (e: any) {
       setError(e.response?.data?.detail || 'Error al registrar')
     } finally {
@@ -95,7 +95,7 @@ export default function Entrega() {
       {/* Header */}
       <header className="flex items-center gap-2.5 px-4 pb-2.5 pt-3 shrink-0" style={{ background: dark.bg }}>
         <button
-          onClick={() => navigate('/hub')}
+          onClick={() => navigate('/')}
           className="w-7 h-7 rounded-lg flex items-center justify-center"
           style={{ background: dark.surfaceAlt, color: dark.inkMuted }}
         >

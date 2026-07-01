@@ -113,6 +113,7 @@ class ConfigTicket(Base):
     # Dimensiones de impresión
     ancho_papel_mm  = Column(Integer, nullable=False, server_default="80")
     escala_fuente   = Column(String(10), nullable=False, server_default="normal")  # small | normal | large
+    margen_mm       = Column(Integer, nullable=False, server_default="2")          # margen lateral en mm (0-10)
     tienda          = relationship("Tienda", foreign_keys=[tienda_id])
 
 

@@ -49,6 +49,7 @@ interface TicketConfig {
   logo_url:       string | null
   mensaje_footer: string | null
   ancho_papel_mm: number
+  margen_mm:      number
   escala_fuente:  'small' | 'normal' | 'large'
 }
 
@@ -315,6 +316,7 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
           logoUrl={ticketCfg?.logo_url ?? undefined}
           mensajeFooter={ticketCfg?.mensaje_footer ?? undefined}
           anchoPapelMm={ticketCfg?.ancho_papel_mm ?? 80}
+          margenMm={ticketCfg?.margen_mm ?? 2}
           escalaFuente={ticketCfg?.escala_fuente ?? 'normal'}
         />
       )}

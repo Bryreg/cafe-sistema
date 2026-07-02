@@ -23,13 +23,24 @@ def _registrar_consumo_turno(
     la parte del consumo que no fue registrada explícitamente (mermas, etc.).
     También reconcilia stock_actual con el conteo físico real.
     """
+    def _reconciliar(pid: int, cierre_real: float) -> None:
+        inv = db.query(Inventario).filter_by(
+            producto_id=pid, tienda_id=tienda_id
+        ).first()
+        if inv:
+            inv.stock_actual = cierre_real
+
     apertura = (
         db.query(ConteoFisico)
         .filter_by(turno_id=turno_id, tipo=TipoConteoEnum.apertura)
         .first()
     )
     if not apertura:
-        return  # Sin conteo de apertura no hay baseline
+        # Sin conteo de apertura no hay baseline para derivar consumo, pero el
+        # stock SÍ se reconcilia con lo contado (el conteo físico es la verdad).
+        for cierre_item in items_cierre:
+            _reconciliar(cierre_item["producto_id"], float(cierre_item["cantidad_real"]))
+        return
 
     apertura_map: dict[int, float] = {
         item.producto_id: item.cantidad_real for item in apertura.items
@@ -43,7 +54,11 @@ def _registrar_consumo_turno(
         apertura_real = apertura_map.get(pid)
 
         if apertura_real is None:
-            continue  # Producto no contado en apertura → no se puede calcular
+            # Producto sin baseline (creado durante el día): no se puede derivar
+            # consumo, pero el stock igual se reconcilia — antes se salteaba y el
+            # conteo de cierre quedaba sin aplicar (bug detectado el 1-jul).
+            _reconciliar(pid, cierre_real)
+            continue
 
         # Movimientos registrados durante el turno (entre apertura y ahora)
         movimientos = (

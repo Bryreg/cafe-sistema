@@ -52,3 +52,10 @@ def resumen_admin(
 @router.patch("/{consignacion_id}/confirmar")
 def confirmar(consignacion_id: int, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
     return svc.confirmar(db, consignacion_id)
+
+
+@router.delete("/{consignacion_id}")
+def eliminar(consignacion_id: int, db: Session = Depends(get_db),
+             user: Usuario = Depends(require_admin)):
+    """Revierte una consignación registrada por error."""
+    return svc.eliminar(db, consignacion_id, user.id)

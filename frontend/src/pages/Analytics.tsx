@@ -115,7 +115,7 @@ function BarrasHoras({ datos }: { datos: VentaHora[] }) {
                 </span>
               )}
               <div
-                className={`w-full rounded-t ${esPico ? 'bg-forest-600' : d.total > 0 ? 'bg-forest-400' : 'bg-warm-100'}`}
+                className={`w-full rounded-t ${esPico ? 'bg-forest' : d.total > 0 ? 'bg-forest-400' : 'bg-warm-100'}`}
                 style={{ height: h }}
               />
               <span className="text-[8px] text-warm-400 tabular-nums h-3">
@@ -326,7 +326,7 @@ function metodoPagoLabel(m: string) {
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
-export function AnaliticaContenido() {
+export function AnaliticaContenido({ tiendaId }: { tiendaId?: number | null }) {
   const [rango, setRango] = useState<Rango>('hoy')
   const [custom, setCustom] = useState(() => {
     const d = new Date()
@@ -349,7 +349,8 @@ export function AnaliticaContenido() {
     setLoading(true)
     setError(null)
     try {
-      const params = { fecha_desde: desde, fecha_hasta: hasta }
+      const params: Record<string, string | number> = { fecha_desde: desde, fecha_hasta: hasta }
+      if (tiendaId != null) params.tienda_id = tiendaId
       const [resR, prodR, horasR, baristaR, metodoR] = await Promise.all([
         api.get<Resumen>('/pos/analytics/resumen', { params }),
         api.get<ProductoTop[]>('/pos/analytics/productos-top', { params }),
@@ -376,7 +377,7 @@ export function AnaliticaContenido() {
     } finally {
       setLoading(false)
     }
-  }, [desde, hasta])
+  }, [desde, hasta, tiendaId])
 
   useEffect(() => { cargar() }, [cargar])
 

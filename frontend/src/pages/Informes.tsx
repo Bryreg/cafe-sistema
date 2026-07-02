@@ -463,7 +463,7 @@ function InformesContent({
       {tab !== 'analitica' && <FilterBar />}
 
       {/* Tab content */}
-      {tab === 'analitica'   && <AnaliticaContenido />}
+      {tab === 'analitica'   && <AnaliticaContenido tiendaId={tiendaId} />}
       {tab === 'ventas'      && <TabVentas />}
       {tab === 'movimientos' && <TabMovimientos tiendaId={tiendaId} />}
     </div>

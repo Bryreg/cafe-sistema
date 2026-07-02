@@ -260,6 +260,11 @@ const MOV_CFG: Record<string, { label: string; bg: string; text: string; sign: s
   pasteleria: { label: 'Pastelería', bg: '#f3e8ff', text: '#7c3aed', sign: '−' },
 }
 const MOV_SUBTIPO: Record<string, string> = { consumo: 'Consumo', traslado: 'Traslado', 'daño': 'Daño' }
+
+/** El backend envia fecha UTC naive ("YYYY-MM-DD HH:MM"); mostrarla en hora local. */
+const fechaMovLocal = (f: string) =>
+  new Date(f.replace(' ', 'T') + ':00Z').toLocaleString('es-CO',
+    { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 const FILTROS_MOV = [
   { key: 'todos',      label: 'Todos'      },
   { key: 'entrada',    label: 'Entradas'   },
@@ -361,7 +366,7 @@ function TabMovimientos({ tiendaId, sedes }: { tiendaId: number | null; sedes: S
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-gray-800">{m.producto}</p>
-                  <p className="text-xs text-gray-400">{m.fecha} · {m.usuario}</p>
+                  <p className="text-xs text-gray-400">{fechaMovLocal(m.fecha)} · {m.usuario}</p>
                   {m.motivo && <p className="text-xs text-gray-500 truncate">{m.motivo}</p>}
                 </div>
                 <span className="text-sm font-bold font-mono shrink-0" style={{ color: cfg.text }}>

@@ -84,68 +84,55 @@ function getRangoDates(rango: Rango, custom: { desde: string; hasta: string }) {
 // Escala: 0 = warm-100 (vacío), 1-20% = forest-50, 20-40 = forest-100,
 //         40-60 = forest-400, 60-80 = forest-500, 80-100 = forest (DEFAULT).
 
-function heatClass(valor: number, maxValor: number): string {
-  if (maxValor === 0 || valor === 0) return 'bg-warm-100 text-warm-400'
-  const pct = valor / maxValor
-  if (pct < 0.15) return 'bg-forest-50 text-forest-700'
-  if (pct < 0.30) return 'bg-forest-100 text-forest-700'
-  if (pct < 0.50) return 'bg-forest-400 text-white'
-  if (pct < 0.75) return 'bg-forest-500 text-white'
-  return 'bg-forest text-white'
-}
-
-function MapaCalorHoras({ datos }: { datos: VentaHora[] }) {
-  const maxTotal = Math.max(...datos.map(d => d.total), 1)
+/** Barras por hora con los NÚMEROS visibles (plata arriba, tickets abajo), solo el
+ *  rango horario con ventas y el pico resaltado. Reemplaza el mapa de calor de
+ *  colores, que obligaba a pasar el mouse celda por celda para ver algo. */
+function BarrasHoras({ datos }: { datos: VentaHora[] }) {
+  const conVentas = datos.filter(d => d.total > 0)
+  if (conVentas.length === 0) return null
+  const desde = Math.min(...conVentas.map(d => d.hora))
+  const hasta = Math.max(...conVentas.map(d => d.hora))
+  const rango = datos.filter(d => d.hora >= desde && d.hora <= hasta)
+  const maxTotal = Math.max(...rango.map(d => d.total), 1)
+  const pico = rango.reduce((a, b) => (b.total > a.total ? b : a), rango[0])
+  const fmtK = (v: number) =>
+    v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}M`
+    : v >= 1_000 ? `$${Math.round(v / 1_000)}k`
+    : `$${Math.round(v)}`
 
   return (
-    <div className="overflow-x-auto">
-      <div className="min-w-[600px]">
-        {/* Etiquetas de horas */}
-        <div className="grid grid-cols-24 gap-0.5 mb-1" style={{ gridTemplateColumns: 'repeat(24, minmax(0, 1fr))' }}>
-          {datos.map(d => (
-            <div key={d.hora} className="text-center text-[9px] font-bold text-warm-400 tabular-nums">
-              {String(d.hora).padStart(2, '0')}
+    <div>
+      <div className="flex items-end gap-1 sm:gap-1.5" style={{ height: 170 }}>
+        {rango.map(d => {
+          const esPico = d.hora === pico.hora && d.total > 0
+          const h = d.total > 0 ? Math.max(10, Math.round((d.total / maxTotal) * 110)) : 3
+          return (
+            <div key={d.hora} className="flex-1 flex flex-col items-center justify-end gap-0.5 min-w-0"
+              title={`${String(d.hora).padStart(2, '0')}:00 — ${fmt(d.total)} · ${d.n_tickets} ticket${d.n_tickets !== 1 ? 's' : ''}`}>
+              {d.total > 0 && (
+                <span className={`text-[9px] font-bold font-mono tabular-nums whitespace-nowrap ${esPico ? 'text-forest-700' : 'text-warm-500'}`}>
+                  {fmtK(d.total)}
+                </span>
+              )}
+              <div
+                className={`w-full rounded-t ${esPico ? 'bg-forest-600' : d.total > 0 ? 'bg-forest-400' : 'bg-warm-100'}`}
+                style={{ height: h }}
+              />
+              <span className="text-[8px] text-warm-400 tabular-nums h-3">
+                {d.total > 0 ? `${d.n_tickets}t` : ''}
+              </span>
+              <span className={`text-[9px] font-bold tabular-nums ${esPico ? 'text-forest-700' : 'text-warm-400'}`}>
+                {String(d.hora).padStart(2, '0')}
+              </span>
             </div>
-          ))}
-        </div>
-
-        {/* Celdas de calor */}
-        <div className="grid gap-0.5" style={{ gridTemplateColumns: 'repeat(24, minmax(0, 1fr))' }}>
-          {datos.map(d => (
-            <div
-              key={d.hora}
-              title={`${String(d.hora).padStart(2, '0')}:00 — ${fmt(d.total)} (${d.n_tickets} tickets)`}
-              className={`
-                relative group rounded-md aspect-square flex items-center justify-center
-                transition-opacity cursor-default
-                ${heatClass(d.total, maxTotal)}
-              `}
-            >
-              {/* Tooltip on hover */}
-              <div className="
-                absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5
-                hidden group-hover:flex flex-col items-center
-                z-10 pointer-events-none
-              ">
-                <div className="bg-bark-900 text-white text-[10px] font-semibold rounded-lg px-2 py-1.5 whitespace-nowrap shadow-lg">
-                  <div className="font-mono tabular-nums">{fmt(d.total)}</div>
-                  <div className="text-warm-300">{d.n_tickets} ticket{d.n_tickets !== 1 ? 's' : ''}</div>
-                </div>
-                <div className="w-1.5 h-1.5 bg-bark-900 rotate-45 -mt-1" />
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Leyenda */}
-        <div className="flex items-center gap-2 mt-3 justify-end">
-          <span className="text-[10px] text-warm-400">Sin ventas</span>
-          {(['bg-forest-50', 'bg-forest-100', 'bg-forest-400', 'bg-forest-500', 'bg-forest'] as const).map(c => (
-            <div key={c} className={`w-3.5 h-3.5 rounded ${c} border border-warm-200`} />
-          ))}
-          <span className="text-[10px] text-warm-400">Máximo</span>
-        </div>
+          )
+        })}
       </div>
+      <p className="text-[10px] text-warm-400 mt-2">
+        Hora pico: <strong className="text-warm-600">{String(pico.hora).padStart(2, '0')}:00</strong> con{' '}
+        <strong className="text-warm-600 font-mono">{fmt(pico.total)}</strong> en {pico.n_tickets} tickets.
+        Cada barra: plata arriba, tickets abajo.
+      </p>
     </div>
   )
 }
@@ -545,7 +532,7 @@ export function AnaliticaContenido() {
                 <p className="text-xs text-warm-400">Sin ventas en el período seleccionado</p>
               </div>
             ) : (
-              <MapaCalorHoras datos={data.ventasPorHora} />
+              <BarrasHoras datos={data.ventasPorHora} />
             )}
           </Card>
 

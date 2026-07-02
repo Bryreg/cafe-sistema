@@ -70,6 +70,13 @@ def dashboard_pagos(
     return svc.get_dashboard_pagos(db, tienda_id, d, h)
 
 
+@router.delete("/{factura_id}")
+def eliminar(factura_id: int, db: Session = Depends(get_db),
+             user: Usuario = Depends(require_admin)):
+    """Elimina una factura errónea/de prueba revirtiendo inventario, lotes y egresos de caja."""
+    return svc.eliminar_factura(db, factura_id, user.id)
+
+
 @router.patch("/{factura_id}/pago")
 async def registrar_pago(
     factura_id: int,

@@ -3,9 +3,93 @@ from sqlalchemy import func
 from fastapi import HTTPException
 from datetime import datetime
 from app.models.models import (FacturaCompra, FacturaCompraItem, TipoPagoEnum,
-                               CajaTurno, MovimientoCaja, EstadoTurnoEnum)
+                               CajaTurno, MovimientoCaja, EstadoTurnoEnum,
+                               LoteInventario)
 from app.services import inventario as inv_svc
 from app.services import audit
+
+
+def eliminar_factura(db: Session, factura_id: int, usuario_id: int) -> dict:
+    """Elimina una factura recibida REVIRTIENDO todos sus efectos (solo admin).
+    Pensada para recepciones erróneas o de prueba:
+      1. Salida de inventario por cada item (revierte la entrada).
+      2. Lotes creados por la factura → a cero y desvinculados.
+      3. Egresos de caja del pago en efectivo/contado: se borran si su turno sigue
+         abierto; si ya cerró (el cuadre histórico es intocable) se compensan con un
+         ingreso en el turno activo. El total revertido se limita a lo realmente
+         pagado, para no tocar egresos de otra factura del mismo proveedor.
+      4. Borra los items y la factura, con auditoría."""
+    f = db.query(FacturaCompra).filter(FacturaCompra.id == factura_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+    items = db.query(FacturaCompraItem).filter(FacturaCompraItem.factura_id == factura_id).all()
+
+    # 1) Revertir inventario
+    for it in items:
+        inv_svc.registrar_movimiento(
+            db, producto_id=it.producto_id, tienda_id=f.tienda_id,
+            tipo="salida", cantidad=float(it.cantidad),
+            motivo=f"Eliminación factura #{f.numero_factura or f.id} — {f.proveedor}",
+            usuario_id=usuario_id, commit=False, allow_negative=True,
+        )
+
+    # 2) Lotes propios a cero
+    for lote in db.query(LoteInventario).filter(LoteInventario.factura_id == factura_id).all():
+        lote.cantidad_restante = 0
+        lote.fecha_agotado = datetime.utcnow()
+        lote.factura_id = None
+
+    # 3) Egresos de caja de esta factura (concepto exacto que escriben crear/pago)
+    concepto = f"Pago proveedor: {f.proveedor}"
+    if f.numero_factura:
+        concepto += f" — Fact. {f.numero_factura}"
+    movs = (
+        db.query(MovimientoCaja)
+        .join(CajaTurno, CajaTurno.id == MovimientoCaja.caja_turno_id)
+        .filter(MovimientoCaja.tipo == "egreso",
+                MovimientoCaja.concepto == concepto,
+                CajaTurno.tienda_id == f.tienda_id)
+        .order_by(MovimientoCaja.fecha.desc())
+        .all()
+    )
+    restante = float(f.valor_pagado or 0)
+    revertidos = 0.0
+    for mov in movs:
+        if restante <= 0.01:
+            break
+        if float(mov.valor) > restante + 0.01:
+            continue
+        restante -= float(mov.valor)
+        revertidos += float(mov.valor)
+        turno_mov = db.query(CajaTurno).filter(CajaTurno.id == mov.caja_turno_id).first()
+        estado = getattr(turno_mov.estado, "value", turno_mov.estado) if turno_mov else None
+        if estado == "abierto":
+            db.delete(mov)
+        else:
+            activo = db.query(CajaTurno).filter(
+                CajaTurno.tienda_id == f.tienda_id,
+                CajaTurno.estado == EstadoTurnoEnum.abierto,
+            ).first()
+            if activo:
+                db.add(MovimientoCaja(
+                    caja_turno_id=activo.id, tipo="ingreso",
+                    concepto=f"Reverso {concepto}", valor=mov.valor,
+                    usuario_id=usuario_id,
+                ))
+
+    audit.registrar(
+        db, accion="eliminar_factura", tabla="facturas_compra",
+        registro_id=factura_id, usuario_id=usuario_id, tienda_id=f.tienda_id,
+        datos_antes={"proveedor": f.proveedor, "numero_factura": f.numero_factura,
+                     "valor_total": float(f.valor_total or 0),
+                     "valor_pagado": float(f.valor_pagado or 0),
+                     "items": len(items), "egresos_revertidos": revertidos},
+    )
+    for it in items:
+        db.delete(it)
+    db.delete(f)
+    db.commit()
+    return {"ok": True, "items_revertidos": len(items), "egresos_revertidos": revertidos}
 
 
 def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,

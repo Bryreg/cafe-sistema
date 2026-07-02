@@ -26,6 +26,7 @@ interface ResumenDia {
   base_real: number
   total_egresos: number
   total_ingresos_mov: number
+  diferencia_cierre?: number
   esperado_consignar: number
   total_consignado: number
   diferencia: number
@@ -718,6 +719,13 @@ export default function ConsignacionesAdmin() {
                         <span className="text-xs font-semibold">{fmt(m.valor)}</span>
                       </div>
                     ))}
+
+                    {Math.round(dia.diferencia_cierre ?? 0) !== 0 && (
+                      <div className={`flex justify-between ${(dia.diferencia_cierre ?? 0) > 0 ? 'text-green-700' : 'text-red-600'}`}>
+                        <span className="text-xs pl-3">{(dia.diferencia_cierre ?? 0) > 0 ? '+' : '−'} Diferencia del cierre</span>
+                        <span className="text-xs font-semibold">{fmt(Math.abs(dia.diferencia_cierre ?? 0))}</span>
+                      </div>
+                    )}
 
                     <div className="border-t border-gray-200 pt-2 flex justify-between font-bold">
                       <span className="text-gray-700">Debe consignarse</span>

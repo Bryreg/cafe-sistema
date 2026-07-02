@@ -9,7 +9,10 @@ from app.models.models import (Consignacion, EstadoConsignacionEnum,
 def _saldos_consignacion(db: Session, tienda_id: int) -> list[dict]:
     """Saldo pendiente por consignar por turno cerrado, con CASCADA hacia días anteriores.
 
-    Por turno: esperado = ventas en efectivo + ingresos de caja − egresos en efectivo (contado).
+    Por turno: esperado = ventas en efectivo + ingresos de caja − egresos en efectivo (contado)
+    + diferencia del cierre. Incluir la diferencia hace que "por consignar" del turno sea
+    EXACTAMENTE la base con la que arranca el día siguiente (efectivo_final − base_real):
+    la plata física que queda en caja es la que viaja al banco.
     saldo = esperado − consignado. Si el saldo de un turno es negativo (p.ej. el pago a
     proveedor de contado superó las ventas en efectivo del día), ese déficit consume el saldo
     de los turnos ANTERIORES (más viejos primero). Solo el efectivo mueve esto: crédito y bancos
@@ -28,7 +31,7 @@ def _saldos_consignacion(db: Session, tienda_id: int) -> list[dict]:
         movs = db.query(MovimientoCaja).filter(MovimientoCaja.caja_turno_id == t.id).all()
         egresos = sum(m.valor for m in movs if m.tipo == "egreso")
         ingresos = sum(m.valor for m in movs if m.tipo == "ingreso")
-        esperado = (t.total_efectivo or 0) + ingresos - egresos
+        esperado = (t.total_efectivo or 0) + ingresos - egresos + (t.diferencia_cierre or 0)
         consignado = sum(c.valor for c in _consigs_del_turno(db, t))
         saldos.append({"turno": t, "esperado": esperado, "consignado": consignado,
                        "saldo": esperado - consignado})
@@ -145,8 +148,9 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
         consigs = sorted(_consigs_del_turno(db, t), key=lambda c: c.fecha)
         total_consignado = sum(c.valor for c in consigs)
 
-        # Fórmula: lo que se vendió en cash ± movimientos = lo que debe consignarse
-        esperado = (t.total_efectivo or 0) + total_ingresos_mov - total_egresos
+        # Fórmula: cash vendido ± movimientos + diferencia del cierre = lo que debe
+        # consignarse (= la base con la que arranca el día siguiente).
+        esperado = (t.total_efectivo or 0) + total_ingresos_mov - total_egresos + (t.diferencia_cierre or 0)
         diferencia = total_consignado - esperado
 
         result.append({
@@ -160,6 +164,7 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
             "base_real": t.base_real or 0,
             "total_egresos": total_egresos,
             "total_ingresos_mov": total_ingresos_mov,
+            "diferencia_cierre": round(float(t.diferencia_cierre or 0), 2),
             "esperado_consignar": round(esperado, 2),
             "total_consignado": round(total_consignado, 2),
             "diferencia": round(diferencia, 2),

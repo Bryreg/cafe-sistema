@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from app.models.models import (CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum,
                                EntregaTurno, Consignacion, EstadoConsignacionEnum, TurnoBarista,
                                Usuario, DiaOperativo, EstadoDiaEnum, TipoTurnoEnum)
-from app.core.tz import hoy_col, inicio_dia_col_utc, fin_dia_col_utc
+from app.core.tz import hoy_col, inicio_dia_col_utc, fin_dia_col_utc, dia_col
 
 # Colombia (UTC-5). Fase posterior: configurable por sede (ConfiguracionSede.timezone).
 TZ_OFFSET_HORAS = -5
@@ -115,6 +115,23 @@ def get_turno_activo(db: Session, tienda_id: int):
     return turno
 
 
+def _base_desde_ultimo_cierre(ultimo, consigs_deducidas: float) -> float:
+    """Base esperada del turno nuevo según el último cierre. Dos casos:
+
+    - RELEVO DEL MISMO DÍA (turno intermedio/cierre tras un cierre de hoy): la caja
+      no se vacía entre relevos — queda todo el efectivo del cierre menos lo ya
+      consignado.
+    - DÍA NUEVO: la base es SOLO las ventas en efectivo del día anterior más la
+      diferencia del cierre. La plata de días previos NO forma parte del cuadre
+      inicial: sale de la registradora para consignar o pagar proveedores de
+      contado (regla del negocio, definida por el dueño el 2-jul)."""
+    if ultimo is None:
+        return 0.0
+    if ultimo.fecha_cierre and dia_col(ultimo.fecha_cierre) == _fecha_operativa():
+        return (ultimo.efectivo_final_real or 0.0) - consigs_deducidas
+    return (ultimo.total_efectivo or 0.0) + (ultimo.diferencia_cierre or 0.0)
+
+
 def abrir_caja(db: Session, tienda_id: int, base_real: float | None, justificacion: str | None, usuario_id: int, barista_ids: list[int] | None = None, tipo_turno: str | None = None, caja_fuerte: float | None = None):
     # Dos modos:
     #  - base_real=None (flujo actual): cuadre DIFERIDO — el turno abre solo con baristas,
@@ -142,7 +159,7 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float | None, justificaci
             Consignacion.caja_turno_id == ultimo.id,
             Consignacion.estado == EstadoConsignacionEnum.realizada,
         ).scalar() or 0.0
-    base_sistema = (ultimo.efectivo_final_real or 0.0) - consigs_deducidas if ultimo else 0.0
+    base_sistema = _base_desde_ultimo_cierre(ultimo, consigs_deducidas)
     diferencia = (base_real - base_sistema) if cuadre_unificado else 0.0
 
     if cuadre_unificado and round(diferencia, 2) != 0 and not justificacion:
@@ -656,11 +673,10 @@ def get_entrega_desglose(db: Session, entrega_id: int) -> dict | None:
 
 
 def get_efectivo_inicio_esperado(db: Session, tienda_id: int):
-    """Efectivo de inicio esperado = lo que quedó en caja al último cierre, menos lo consignado.
-
-    Es la 'bolsa' de efectivo que corre entre días (pendiente de consignar). Coincide con el
-    base_sistema que calcula abrir_caja. Sirve para que el barista cuente el efectivo de inicio
-    contra esta expectativa al abrir el turno (cuadre unificado)."""
+    """Efectivo esperado para el cuadre inicial. Coincide con el base_sistema que calcula
+    abrir_caja (_base_desde_ultimo_cierre): en día nuevo = ventas en efectivo del día
+    anterior + diferencia del cierre (la plata vieja va a consignación/proveedores); en
+    relevo del mismo día = todo el efectivo del cierre menos lo consignado."""
     ultimo = db.query(CajaTurno).filter(
         CajaTurno.tienda_id == tienda_id,
         CajaTurno.estado == EstadoTurnoEnum.cerrado,
@@ -671,11 +687,15 @@ def get_efectivo_inicio_esperado(db: Session, tienda_id: int):
         Consignacion.caja_turno_id == ultimo.id,
         Consignacion.estado == EstadoConsignacionEnum.realizada,
     ).scalar() or 0.0
-    esperado = (ultimo.efectivo_final_real or 0.0) - consigs
+    esperado = _base_desde_ultimo_cierre(ultimo, consigs)
+    mismo_dia = bool(ultimo.fecha_cierre and dia_col(ultimo.fecha_cierre) == _fecha_operativa())
     return {
         "esperado": round(esperado, 2),
         "hay_cierre_previo": True,
         "fecha_ultimo_cierre": ultimo.fecha_cierre.isoformat() if ultimo.fecha_cierre else None,
+        "mismo_dia": mismo_dia,
+        "ventas_efectivo_anterior": round(float(ultimo.total_efectivo or 0.0), 2),
+        "diferencia_cierre_anterior": round(float(ultimo.diferencia_cierre or 0.0), 2),
     }
 
 

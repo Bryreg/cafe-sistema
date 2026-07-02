@@ -10,7 +10,14 @@ interface Producto {
   incluir_en_conteo: boolean
   stocks: Record<string, StockInfo>
   precio_venta?: number
+  fraccionable?: boolean
+  envase?: 'bolsa' | 'botella' | null
 }
+
+// Archivado = fuera de POS, conteo y stock: duplicados fusionados o productos retirados.
+// Se ocultan del catálogo por defecto (la DB los conserva por el historial de conteos).
+const esArchivado = (p: Producto) =>
+  !p.controla_stock && p.incluir_en_conteo === false && !(p.precio_venta && p.precio_venta > 0)
 
 const CATEGORIAS = ['pasteleria', 'bebida', 'porciones', 'insumo'] as const
 type Cat = typeof CATEGORIAS[number]
@@ -142,7 +149,8 @@ export default function Catalogo() {
   const [catFiltro, setCatFiltro] = useState<Cat | 'todas'>('todas')
   const [busqueda, setBusqueda] = useState('')
   const [editandoId, setEditandoId] = useState<number | null>(null)
-  const [editForm, setEditForm] = useState({ nombre: '', categoria: '', unidad_medida: '', controla_stock: true })
+  const [editForm, setEditForm] = useState({ nombre: '', categoria: '', unidad_medida: '', controla_stock: true, envase: '' as '' | 'bolsa' | 'botella' })
+  const [verArchivados, setVerArchivados] = useState(false)
   const [nuevoForm, setNuevoForm] = useState({ nombre: '', categoria: 'insumo', unidad_medida: 'und', controla_stock: true })
   const [mostrarNuevo, setMostrarNuevo] = useState(false)
   const [minimoEditing, setMinimoEditing] = useState<{ productoId: number; tiendaId: number; valor: string } | null>(null)
@@ -190,17 +198,19 @@ export default function Catalogo() {
 
   useEffect(() => { load() }, [])
 
+  const nArchivados = productos.filter(esArchivado).length
   const productosFiltrados = productos.filter(p => {
     const matchCat = catFiltro === 'todas' || p.categoria === catFiltro
     const matchBusq = p.nombre.toLowerCase().includes(busqueda.toLowerCase())
-    return matchCat && matchBusq
+    const matchArch = verArchivados || !esArchivado(p)
+    return matchCat && matchBusq && matchArch
   })
 
   const guardarEdicion = async () => {
     if (!editandoId) return
     setSaving(true)
     try {
-      await api.patch(`/inventario/productos/${editandoId}`, editForm)
+      await api.patch(`/inventario/productos/${editandoId}`, { ...editForm, fraccionable: editForm.envase !== '' })
       setEditandoId(null)
       load()
     } catch (e: any) { setError(e.response?.data?.detail || 'Error') }
@@ -335,6 +345,15 @@ export default function Catalogo() {
           className="ml-auto px-3 py-1.5 rounded-xl border-2 text-xs outline-none"
           style={{ borderColor: 'oklch(88% 0.006 75)' }}
         />
+        {nArchivados > 0 && (
+          <button onClick={() => setVerArchivados(v => !v)}
+            className="px-3 py-1.5 rounded-xl border-2 text-xs font-semibold transition-colors"
+            style={verArchivados
+              ? { borderColor: 'oklch(60% 0.05 60)', background: 'oklch(94% 0.01 60)', color: 'oklch(40% 0.02 60)' }
+              : { borderColor: 'oklch(88% 0.006 75)', color: 'oklch(55% 0.01 60)' }}>
+            {verArchivados ? 'Ocultar archivados' : `Archivados (${nArchivados})`}
+          </button>
+        )}
       </div>
 
       {/* Formulario nuevo producto */}
@@ -514,10 +533,20 @@ export default function Catalogo() {
                               className="w-full border-2 border-gray-200 rounded-lg px-2 py-1 text-sm" autoFocus />
                           </td>
                           <td className="px-4 py-2">
-                            <select value={editForm.unidad_medida} onChange={e => setEditForm(f => ({ ...f, unidad_medida: e.target.value }))}
-                              className="border-2 border-gray-200 rounded-lg px-2 py-1 text-xs">
-                              {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
-                            </select>
+                            <div className="flex flex-col gap-1">
+                              <select value={editForm.unidad_medida} onChange={e => setEditForm(f => ({ ...f, unidad_medida: e.target.value }))}
+                                className="border-2 border-gray-200 rounded-lg px-2 py-1 text-xs">
+                                {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
+                              </select>
+                              <select value={editForm.envase}
+                                onChange={e => setEditForm(f => ({ ...f, envase: e.target.value as '' | 'bolsa' | 'botella' }))}
+                                title="Conteo fraccionado: se cuenta por unidades selladas + nivel de la abierta"
+                                className="border-2 border-gray-200 rounded-lg px-2 py-1 text-xs">
+                                <option value="">Conteo normal</option>
+                                <option value="bolsa">Por bolsa (con dibujo)</option>
+                                <option value="botella">Por botella (con dibujo)</option>
+                              </select>
+                            </div>
                           </td>
                           {tiendas.map(t => <td key={t.id} />)}
                           <td /><td />
@@ -624,7 +653,7 @@ export default function Catalogo() {
                           <td className="px-3 py-2">
                             <div className="flex items-center gap-1">
                               <button
-                                onClick={() => { setEditandoId(p.id); setEditForm({ nombre: p.nombre, categoria: p.categoria, unidad_medida: p.unidad_medida, controla_stock: p.controla_stock }) }}
+                                onClick={() => { setEditandoId(p.id); setEditForm({ nombre: p.nombre, categoria: p.categoria, unidad_medida: p.unidad_medida, controla_stock: p.controla_stock, envase: p.fraccionable ? (p.envase === 'botella' ? 'botella' : 'bolsa') : '' }) }}
                                 className="p-1.5 rounded-lg border-2 border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600 transition-colors">
                                 <Pencil size={12} />
                               </button>

@@ -105,10 +105,16 @@ def editar_producto(producto_id: int, data: ProductoUpdate, db: Session = Depend
     if data.lead_time_dias is not None: p.lead_time_dias = data.lead_time_dias
     if data.proveedor is not None: p.proveedor = data.proveedor if data.proveedor.strip() else None
     if data.incluir_en_conteo is not None: p.incluir_en_conteo = data.incluir_en_conteo
+    if data.fraccionable is not None: p.fraccionable = data.fraccionable
+    if data.envase is not None:
+        if data.envase not in ("", "bolsa", "botella"):
+            raise HTTPException(400, "envase debe ser bolsa o botella")
+        p.envase = data.envase or None
     db.commit()
     return {"id": p.id, "nombre": p.nombre, "categoria": p.categoria.value,
             "unidad_medida": p.unidad_medida, "controla_stock": p.controla_stock,
-            "incluir_en_conteo": p.incluir_en_conteo}
+            "incluir_en_conteo": p.incluir_en_conteo,
+            "fraccionable": p.fraccionable, "envase": p.envase}
 
 @router.get("/productos/{producto_id}/insumos")
 def get_insumos_producto(producto_id: int, db: Session = Depends(get_db),

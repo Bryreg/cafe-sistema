@@ -13,7 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from fastapi import HTTPException
 
-from app.models.models import Producto, Ticket, TicketItem, CajaTurno, Usuario
+from app.models.models import Producto, ProductoInsumo, Ticket, TicketItem, CajaTurno, Usuario
 from app.services.caja import get_turno_activo
 from app.services import inventario as inv_svc, audit
 from app.core.tz import (
@@ -199,6 +199,32 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
                 if e.status_code == 404:
                     # Sin registro de inventario — venta igual se procesa
                     logger.warning(f"Producto {prod.id} sin inventario, venta procesada de todas formas")
+                else:
+                    db.rollback()
+                    raise
+
+    # Insumos por receta (producto_insumos): productos compuestos descuentan sus
+    # ingredientes (ej. 1 waffle pandebono = 4 bolas de masa). SOLO movimiento de
+    # inventario — nunca como item del ticket, para no contaminar ventas/analytics.
+    prod_ids = [p.id for p, *_ in lineas]
+    receta_rows = db.query(ProductoInsumo).filter(
+        ProductoInsumo.producto_id.in_(prod_ids)
+    ).all() if prod_ids else []
+    insumos_por_prod: dict[int, list[ProductoInsumo]] = {}
+    for r in receta_rows:
+        insumos_por_prod.setdefault(r.producto_id, []).append(r)
+    for prod, cantidad, _, _, _ in lineas:
+        for r in insumos_por_prod.get(prod.id, []):
+            try:
+                inv_svc.registrar_movimiento(
+                    db, producto_id=r.insumo_id, tienda_id=tienda_id,
+                    tipo="salida", cantidad=r.cantidad * cantidad,
+                    motivo=f"Venta POS — insumo de {prod.nombre}",
+                    usuario_id=usuario_id, commit=False, allow_negative=True,
+                )
+            except HTTPException as e:
+                if e.status_code == 404:
+                    logger.warning(f"Insumo {r.insumo_id} sin inventario, venta procesada de todas formas")
                 else:
                     db.rollback()
                     raise
@@ -634,6 +660,28 @@ def anular_ticket(db: Session, ticket_id: int, usuario_id: int, motivo: str | No
                     tipo="entrada", cantidad=item.cantidad,
                     motivo="Anulación venta POS", usuario_id=usuario_id, commit=False,
                 )
+
+        # 1b) Reponer insumos consumidos por receta (producto_insumos) — espejo del
+        #     descuento de crear_ticket. Si el insumo no tiene inventario, se omite.
+        receta_rows = db.query(ProductoInsumo).filter(
+            ProductoInsumo.producto_id.in_(producto_ids)
+        ).all() if producto_ids else []
+        insumos_por_prod: dict[int, list[ProductoInsumo]] = {}
+        for r in receta_rows:
+            insumos_por_prod.setdefault(r.producto_id, []).append(r)
+        for item in ticket.items:
+            for r in insumos_por_prod.get(item.producto_id, []):
+                try:
+                    inv_svc.registrar_movimiento(
+                        db, producto_id=r.insumo_id, tienda_id=ticket.tienda_id,
+                        tipo="entrada", cantidad=r.cantidad * item.cantidad,
+                        motivo="Anulación venta POS — insumo", usuario_id=usuario_id, commit=False,
+                    )
+                except HTTPException as e:
+                    if e.status_code == 404:
+                        logger.warning(f"Insumo {r.insumo_id} sin inventario al anular; se omite")
+                    else:
+                        raise
 
         # 2) Revertir totales del turno (restar lo que el ticket había sumado).
         turno_db = db.query(CajaTurno).filter(CajaTurno.id == ticket.caja_turno_id).first()

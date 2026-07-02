@@ -679,6 +679,21 @@ class RecetaIngrediente(Base):
     producto   = relationship("Producto")
 
 
+class ProductoInsumo(Base):
+    """Receta de consumo del POS: por cada unidad vendida de producto_id se
+    descuentan `cantidad` unidades del insumo_id en inventario (y se reponen al
+    anular). Sin relationships: dos FKs a productos dispararían
+    AmbiguousForeignKeysError en el mapper; se consulta con joins explícitos."""
+    __tablename__ = "producto_insumos"
+    id          = Column(Integer, primary_key=True)
+    producto_id = Column(Integer, ForeignKey("productos.id", ondelete="CASCADE"), nullable=False, index=True)
+    insumo_id   = Column(Integer, ForeignKey("productos.id", ondelete="RESTRICT"), nullable=False)
+    cantidad    = Column(Float, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("producto_id", "insumo_id", name="uq_producto_insumo"),
+    )
+
+
 class Notificacion(Base):
     """Etapa 7: Notificaciones operativas internas para el admin."""
     __tablename__ = "notificaciones"

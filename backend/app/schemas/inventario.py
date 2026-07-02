@@ -25,6 +25,13 @@ class ProductoUpdate(BaseModel):
     proveedor: Optional[str] = None
     incluir_en_conteo: Optional[bool] = None
 
+class InsumoRecetaItem(BaseModel):
+    insumo_id: int
+    cantidad: float
+
+class InsumosProductoUpdate(BaseModel):
+    items: list[InsumoRecetaItem]
+
 class StockMinimoUpdate(BaseModel):
     stock_minimo: float
 

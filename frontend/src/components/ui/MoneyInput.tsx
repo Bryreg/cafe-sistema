@@ -1,3 +1,5 @@
+import { conMiles, soloDigitos } from '../../utils/plata'
+
 interface MoneyInputProps {
   /** Label en mayúsculas encima del input. Opcional: sin label, solo el campo. */
   label?: string
@@ -53,10 +55,10 @@ export default function MoneyInput({
         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-warm-300">$</span>
         <input
           ref={inputRef}
-          type="number"
+          type="text"
           inputMode="numeric"
-          value={value}
-          onChange={e => onChange(e.target.value)}
+          value={conMiles(value)}
+          onChange={e => onChange(soloDigitos(e.target.value))}
           placeholder={placeholder}
           autoFocus={autoFocus}
           className={`w-full pl-10 pr-4 ${py} ${textSize} font-bold font-mono tabular-nums text-bark-800 bg-white border-2 border-warm-200 rounded-xl outline-none transition-colors focus:border-clay-400 placeholder:text-warm-300`}

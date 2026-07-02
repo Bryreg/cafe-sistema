@@ -167,6 +167,88 @@ function AlertasStockTurno({ tiendaId }: { tiendaId: number }) {
   )
 }
 
+interface FacturaRecibida {
+  id: number
+  proveedor: string
+  numero_factura: string | null
+  valor_total: number
+  fecha_registro: string
+  barista_nombre: string
+  items: { id: number; producto_nombre: string; cantidad: number; unidad_medida: string }[]
+}
+
+/** Local YYYY-MM-DD of a backend UTC-naive timestamp. */
+function fechaLocalDe(iso: string): string {
+  const s = iso.replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1')
+  const d = new Date(s.endsWith('Z') ? s : s + 'Z')
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** Facturas ingresadas HOY: la barista revisa el valor y los productos del recibido. */
+function RecibidosHoy({ tiendaId }: { tiendaId: number }) {
+  const [facturas, setFacturas] = useState<FacturaRecibida[]>([])
+  const [abierta, setAbierta] = useState<number | null>(null)
+
+  useEffect(() => {
+    api.get(`/facturas/tienda/${tiendaId}`).then(r => {
+      const hoy = fechaLocalDe(new Date().toISOString())
+      setFacturas((r.data as FacturaRecibida[]).filter(
+        f => f.fecha_registro && fechaLocalDe(f.fecha_registro) === hoy,
+      ))
+    }).catch(() => {})
+  }, [tiendaId])
+
+  if (facturas.length === 0) return null
+  const plata = (v: number) => `$${Math.round(v).toLocaleString('es-CO')}`
+
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-2">
+        <p style={LBL}>Recibidos de hoy</p>
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'white', background: dark.green, borderRadius: 999, padding: '1px 7px' }}>
+          {facturas.length}
+        </span>
+      </div>
+      <div className="flex flex-col gap-2">
+        {facturas.map(f => (
+          <div key={f.id} className="rounded-2xl border" style={{ background: dark.surface, borderColor: dark.border }}>
+            <button
+              onClick={() => setAbierta(a => (a === f.id ? null : f.id))}
+              className="w-full flex items-center gap-3 text-left"
+              style={{ padding: '10px 12px', background: 'transparent', border: 'none', cursor: 'pointer' }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p className="m-0 font-bold truncate" style={{ fontSize: 12.5, color: dark.ink }}>
+                  {f.proveedor}{f.numero_factura ? ` · Fact. ${f.numero_factura}` : ''}
+                </p>
+                <p className="m-0 mt-0.5" style={{ fontSize: 10.5, color: dark.inkSubtle }}>
+                  {fmtHora(f.fecha_registro)} · {f.items.length} producto{f.items.length !== 1 ? 's' : ''}
+                  {f.barista_nombre ? ` · ${f.barista_nombre}` : ''}
+                </p>
+              </div>
+              <span className="font-bold font-mono tabular-nums" style={{ fontSize: 13, color: dark.green }}>
+                {plata(f.valor_total)}
+              </span>
+            </button>
+            {abierta === f.id && (
+              <div style={{ padding: '0 12px 10px', borderTop: `1px solid ${dark.border}` }}>
+                {f.items.map(i => (
+                  <div key={i.id} className="flex items-center justify-between" style={{ padding: '6px 0' }}>
+                    <span style={{ fontSize: 11.5, color: dark.inkMuted }}>{i.producto_nombre}</span>
+                    <span className="font-bold font-mono tabular-nums" style={{ fontSize: 11.5, color: dark.ink }}>
+                      {Math.round(i.cantidad)} {i.unidad_medida}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 const RUTINAS = [
   { k: 'limpieza', label: 'Limpieza',  Icon: Sparkles,   track: true },
   { k: 'surtido',  label: 'Surtido',   Icon: Package,    track: true },
@@ -277,6 +359,7 @@ export default function PanelTurno({ turno, estados, bitacora, onRegistrar, tien
           {/* Stock crítico (Módulo 6) */}
           <VerificacionesConteo tiendaId={tiendaId} />
           <AlertasStockTurno tiendaId={tiendaId} />
+          <RecibidosHoy tiendaId={tiendaId} />
 
           {/* Alertas */}
           {alerts.length > 0 && (

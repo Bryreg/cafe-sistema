@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
+import { conMiles, soloDigitos } from '../utils/plata'
 import { Banknote, Upload, AlertTriangle, Check, ImageIcon, ChevronDown, ChevronUp, X } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
 
@@ -201,9 +202,9 @@ export default function Consignaciones() {
             <div className="relative">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-warm-300">$</span>
               <input
-                type="number"
-                value={valor}
-                onChange={e => setValor(e.target.value)}
+                type="text"
+                value={conMiles(valor)}
+                onChange={e => setValor(soloDigitos(e.target.value))}
                 placeholder="0"
                 inputMode="numeric"
                 className="w-full pl-12 pr-4 py-4 text-3xl font-bold font-mono border-2 border-warm-200 rounded-xl focus:outline-none focus:border-amber-400 transition-colors text-warm-700"

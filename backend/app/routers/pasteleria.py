@@ -27,6 +27,12 @@ def activos(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depen
     ensure_tienda_access(user, tienda_id)
     return svc.get_activos(db, tienda_id)
 
+@router.get("/frescura/{tienda_id}")
+def frescura(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    """Lotes de pastelería/panadería por vencer (trazabilidad) — banda del POS."""
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_frescura(db, tienda_id)
+
 @router.patch("/{lote_id}/cerrar")
 def cerrar(lote_id: int, tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     ensure_tienda_access(user, tienda_id)

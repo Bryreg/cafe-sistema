@@ -27,27 +27,44 @@ export default function TickerNoticias() {
     if (!tiendaId) return
     const next: TickerItem[] = []
 
+    // Frescura de pastelería/panadería: dos fuentes que se deduplican por producto.
+    // 1) Lotes de trazabilidad (recepciones de proveedores: Wilenses, Delitas, Paola...)
+    // 2) Registros de "Pastelería diaria" (fuente original)
+    const hoy = new Date()
+    hoy.setHours(0, 0, 0, 0)
+    const vistos = new Set<string>()
+    const pushFrescura = (nombre: string, fechaVenc: string | null, extra?: string) => {
+      if (!fechaVenc || vistos.has(nombre)) return
+      const venc = new Date(fechaVenc)
+      venc.setHours(0, 0, 0, 0)
+      const diff = Math.round((venc.getTime() - hoy.getTime()) / 86_400_000)
+      if (diff > 2) return
+      vistos.add(nombre)
+      const quien = extra ? `${nombre} ${extra}` : nombre
+      next.push({
+        id: `past-${nombre}`,
+        tipo: 'pasteleria',
+        label: diff <= 0
+          ? `${quien} — vence HOY, impulsá la venta`
+          : diff === 1
+            ? `${quien} — vence mañana`
+            : `${quien} — vence en 2 días`,
+        urgente: diff <= 0,
+      })
+    }
+
+    try {
+      const { data } = await api.get(`/pasteleria/frescura/${tiendaId}`)
+      for (const l of data ?? []) {
+        const resto = l.cantidad_restante ? `×${Math.round(l.cantidad_restante)}` : ''
+        pushFrescura(l.producto_nombre, l.fecha_vencimiento, resto)
+      }
+    } catch {}
+
     try {
       const { data } = await api.get(`/pasteleria/tienda/${tiendaId}/activos`)
-      const hoy = new Date()
-      hoy.setHours(0, 0, 0, 0)
       for (const p of data ?? []) {
-        if (!p.fecha_vencimiento) continue
-        const venc = new Date(p.fecha_vencimiento)
-        venc.setHours(0, 0, 0, 0)
-        const diff = Math.round((venc.getTime() - hoy.getTime()) / 86_400_000)
-        if (diff <= 2) {
-          next.push({
-            id: `past-${p.producto_nombre}`,
-            tipo: 'pasteleria',
-            label: diff <= 0
-              ? `${p.producto_nombre} — vence HOY, impulsá la venta`
-              : diff === 1
-                ? `${p.producto_nombre} — vence mañana`
-                : `${p.producto_nombre} — vence en 2 días`,
-            urgente: diff <= 0,
-          })
-        }
+        pushFrescura(p.producto_nombre, p.fecha_vencimiento)
       }
     } catch {}
 

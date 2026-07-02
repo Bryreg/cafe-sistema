@@ -121,15 +121,16 @@ def _base_desde_ultimo_cierre(ultimo, consigs_deducidas: float) -> float:
     - RELEVO DEL MISMO DÍA (turno intermedio/cierre tras un cierre de hoy): la caja
       no se vacía entre relevos — queda todo el efectivo del cierre menos lo ya
       consignado.
-    - DÍA NUEVO: la base es SOLO las ventas en efectivo del día anterior más la
-      diferencia del cierre. La plata de días previos NO forma parte del cuadre
-      inicial: sale de la registradora para consignar o pagar proveedores de
-      contado (regla del negocio, definida por el dueño el 2-jul)."""
+    - DÍA NUEVO: la base de AYER se consigna COMPLETA (los pagos de contado del día
+      ya salieron de la venta del día, no cargan a esa consignación). Lo que queda
+      en la registradora = contado al cierre − base de ayer, que equivale a ventas
+      en efectivo + ingresos − egresos + diferencia del cierre. Regla del negocio
+      definida por el dueño el 2-jul."""
     if ultimo is None:
         return 0.0
     if ultimo.fecha_cierre and dia_col(ultimo.fecha_cierre) == _fecha_operativa():
         return (ultimo.efectivo_final_real or 0.0) - consigs_deducidas
-    return (ultimo.total_efectivo or 0.0) + (ultimo.diferencia_cierre or 0.0)
+    return max(0.0, (ultimo.efectivo_final_real or 0.0) - (ultimo.base_real or 0.0))
 
 
 def abrir_caja(db: Session, tienda_id: int, base_real: float | None, justificacion: str | None, usuario_id: int, barista_ids: list[int] | None = None, tipo_turno: str | None = None, caja_fuerte: float | None = None):
@@ -694,8 +695,8 @@ def get_efectivo_inicio_esperado(db: Session, tienda_id: int):
         "hay_cierre_previo": True,
         "fecha_ultimo_cierre": ultimo.fecha_cierre.isoformat() if ultimo.fecha_cierre else None,
         "mismo_dia": mismo_dia,
-        "ventas_efectivo_anterior": round(float(ultimo.total_efectivo or 0.0), 2),
-        "diferencia_cierre_anterior": round(float(ultimo.diferencia_cierre or 0.0), 2),
+        "efectivo_cierre_anterior": round(float(ultimo.efectivo_final_real or 0.0), 2),
+        "base_consignar_anterior": round(float(ultimo.base_real or 0.0), 2),
     }
 
 

@@ -74,7 +74,10 @@ def sugerencia_pedido(db: Session, tienda_id: int) -> dict:
     items = []
     for inv in inventarios:
         p = inv.producto
-        if not p.controla_stock:
+        # Solo inventario GESTIONADO: controla stock Y está en el conteo. Si no se
+        # cuenta, su stock no es confiable y sugerir pedidos/urgencias con él es ruido
+        # (84 filas viejas fuera del conteo inflaban la alarma de "urgente").
+        if not p.controla_stock or p.incluir_en_conteo is False:
             continue
 
         stock = inv.stock_actual

@@ -93,6 +93,13 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
             status_code=403,
             detail="El turno no está operativo: completá el cuadre de llegada y el conteo de apertura antes de vender.",
         )
+    # El conteo de cierre CONGELA el inventario del turno: vender después lo desfasaría
+    # (el consumo derivado ya se calculó y el stock ya se reconcilió al conteo).
+    if getattr(turno, "tiene_conteo_cierre", False):
+        raise HTTPException(
+            status_code=403,
+            detail="El conteo de cierre ya fue registrado — el turno está en cierre y no admite más ventas.",
+        )
 
     # Normalizar items: cantidad y descuento por producto (evita líneas duplicadas)
     pedidos: dict[int, int] = {}
@@ -643,6 +650,20 @@ def anular_ticket(db: Session, ticket_id: int, usuario_id: int, motivo: str | No
         raise HTTPException(status_code=404, detail="Ticket no encontrado")
     if ticket.estado == "anulado":
         raise HTTPException(status_code=400, detail="Ya anulado")
+    # Solo tickets del turno ABIERTO: anular tras el cierre (o tras un conteo posterior)
+    # repondría stock que el conteo ya fijó y corrompería totales de un turno cerrado.
+    turno_ticket = db.query(CajaTurno).filter(CajaTurno.id == ticket.caja_turno_id).first()
+    estado_turno = getattr(turno_ticket.estado, "value", turno_ticket.estado) if turno_ticket else None
+    if estado_turno != "abierto":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo se puede anular un ticket del turno abierto — este turno ya cerró y su cuadre e inventario quedaron fijados.",
+        )
+    if getattr(turno_ticket, "tiene_conteo_cierre", False):
+        raise HTTPException(
+            status_code=400,
+            detail="El conteo de cierre ya fue registrado — no se pueden anular ventas de un turno en cierre.",
+        )
 
     try:
         # 1) Reponer stock de los productos contables (atómico, sin commit).

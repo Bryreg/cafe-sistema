@@ -30,7 +30,10 @@ interface Ticket {
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 
 function fmtHora(iso: string) {
-  const d = new Date(iso)
+  // El backend manda datetimes UTC "naive" (sin Z): sin normalizar, el navegador
+  // los toma como hora local y las ventas aparecen corridas 5 horas.
+  const t = iso.replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1').replace('+00:00', 'Z')
+  const d = new Date(t.endsWith('Z') ? t : t + 'Z')
   return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 

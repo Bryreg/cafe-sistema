@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Check, AlertTriangle, Wallet } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { dark } from '../constants/darkTheme'
@@ -22,6 +22,9 @@ export default function CuadreInicial() {
   const [justificacion, setJustificacion] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // Candado síncrono contra doble click: el estado saving es async y deja una
+  // ventana en la que un segundo click dispararía otro POST.
+  const enviando = useRef(false)
 
   // Ya cuadrado (o sin turno): salir de acá
   useEffect(() => {
@@ -36,7 +39,8 @@ export default function CuadreInicial() {
   const necesitaJustificacion = contado > 0 && diff !== 0
 
   const confirmar = async () => {
-    if (contado <= 0) return
+    if (contado <= 0 || enviando.current) return
+    enviando.current = true
     setSaving(true); setError('')
     try {
       const fd = new FormData()
@@ -47,6 +51,7 @@ export default function CuadreInicial() {
       navigate(data?.es_operativo ? '/pos' : '/gestion-turno', { replace: true })
     } catch (e: any) {
       setError(e.response?.data?.detail || 'Error al registrar el cuadre')
+      enviando.current = false
       setSaving(false)
     }
   }

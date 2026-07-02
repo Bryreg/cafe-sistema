@@ -418,6 +418,10 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
     # ni el cierre ni la entrada-con-cuadre de esos turnos.
     if not _hay_conteo_apertura_en_dia(db, turno):
         raise HTTPException(status_code=400, detail="Debes completar el conteo de apertura antes de registrar una entrega")
+    # Sin cuadre inicial base_real=0: el esperado saldría sin la base y el snapshot
+    # persistido quedaría erróneo. El cuadre inicial va primero, siempre.
+    if not turno.tiene_cuadre_llegada:
+        raise HTTPException(status_code=400, detail="Falta el cuadre inicial de caja — completalo antes de registrar cuadres")
     if efectivo_real < 0 or ventas_tarjeta_bold < 0:
         raise HTTPException(status_code=400, detail="Los valores numéricos no pueden ser negativos")
 
@@ -490,6 +494,11 @@ def registrar_movimiento(db: Session, turno_id: int, tipo: str, concepto: str,
     ).first()
     if not turno:
         raise HTTPException(status_code=404, detail="No hay turno activo")
+    # Antes del cuadre inicial la caja no tiene base fijada: un movimiento acá
+    # desalinearía el esperado del propio cuadre inicial (que compara solo contra
+    # lo que dejó el cierre anterior).
+    if not turno.tiene_cuadre_llegada:
+        raise HTTPException(status_code=400, detail="Falta el cuadre inicial de caja — completalo antes de registrar movimientos")
     if tipo not in {"ingreso", "egreso"}:
         raise HTTPException(status_code=400, detail="tipo debe ser ingreso o egreso")
     if not concepto.strip():
@@ -778,6 +787,9 @@ def registrar_entrada_barista(
     ).first()
     if not barista:
         raise HTTPException(status_code=404, detail="Barista no encontrada")
+    # El snapshot de entrada usa base_real: sin cuadre inicial quedaría con base 0.
+    if not turno.tiene_cuadre_llegada:
+        raise HTTPException(status_code=400, detail="Falta el cuadre inicial de caja — completalo antes de registrar entradas")
 
     # Add to shift roster — ignore if already registered
     from sqlalchemy.exc import IntegrityError as _IE

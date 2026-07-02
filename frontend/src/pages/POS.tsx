@@ -128,7 +128,7 @@ export default function POS() {
     ),
   }
 
-  const turnoListo = !!turno && turno.tiene_conteo_apertura
+  const turnoListo = !!turno && turno.es_operativo
 
   useEffect(() => {
     if (!turnoListo) return
@@ -226,17 +226,27 @@ export default function POS() {
       </GuardShell>
     )
 
-  if (!turno.tiene_conteo_apertura)
+  if (!turno.es_operativo)
     return (
       <GuardShell>
-        <div className="bg-warm-100 border border-warm-200 rounded-2xl p-5 text-sm text-bark-700 text-center mt-8">
-          Completá el conteo de apertura primero.
-          <button
-            onClick={() => navigate('/conteo-apertura')}
-            className="block mx-auto mt-2 font-bold text-clay-600 underline"
-          >
-            Ir al conteo →
-          </button>
+        <div className="bg-warm-100 border border-warm-200 rounded-2xl p-5 text-sm text-bark-700 text-center mt-8 space-y-3">
+          <p className="font-bold">Completá la apertura para vender:</p>
+          {!turno.tiene_conteo_apertura && !turno.dia_tiene_conteo_apertura && (
+            <button
+              onClick={() => navigate('/conteo-apertura')}
+              className="block mx-auto font-bold text-clay-600 underline"
+            >
+              1. Conteo de inventario →
+            </button>
+          )}
+          {!turno.tiene_cuadre_llegada && (
+            <button
+              onClick={() => navigate('/cuadre-inicial')}
+              className="block mx-auto font-bold text-clay-600 underline"
+            >
+              {turno.tiene_conteo_apertura || turno.dia_tiene_conteo_apertura ? '' : '2. '}Cuadre inicial de caja →
+            </button>
+          )}
         </div>
       </GuardShell>
     )

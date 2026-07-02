@@ -12,7 +12,7 @@ import DiferenciaCaja from '../components/DiferenciaCaja'
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 
 export default function SalidaEfectivo() {
-  const { turno } = useTurno()
+  const { turno, refresh } = useTurno()
   const { resetKiosk } = useAuth()
   const navigate = useNavigate()
   const [efectivoContado, setEfectivoContado] = useState(0)
@@ -30,6 +30,14 @@ export default function SalidaEfectivo() {
       .then(r => setMovimientos((r.data ?? []).map((m: any) => ({ tipo: m.tipo, concepto: m.concepto, valor: m.valor, fecha: m.fecha }))))
       .catch(() => setMovimientos([]))
   }, [turno?.id])
+
+  // Mientras falte el conteo de cierre (se hace en el PC), refrescar el turno cada
+  // pocos segundos para que el botón se habilite solo cuando el PC lo registre.
+  useEffect(() => {
+    if (!turno || turno.tiene_conteo_cierre) return
+    const id = setInterval(() => refresh(), 8000)
+    return () => clearInterval(id)
+  }, [turno?.tiene_conteo_cierre, refresh]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!turno) return null
 

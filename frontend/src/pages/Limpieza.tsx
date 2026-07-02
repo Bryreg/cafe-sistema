@@ -84,9 +84,10 @@ export default function Limpieza() {
       const ahora    = new Date()
       const esHoy    = mes === ahora.getMonth() + 1 && anio === ahora.getFullYear() && semana === semanaDelMes(ahora)
       const dia      = (semana - 1) * 7 + 1
-      const fechaEnviar = esHoy
-        ? ahora.toISOString().split('T')[0]
-        : new Date(anio, mes - 1, dia).toISOString().split('T')[0]
+      // Fecha LOCAL: toISOString es UTC y despues de las 19:00 Colombia devuelve manana.
+      const isoLocal = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const fechaEnviar = esHoy ? isoLocal(ahora) : isoLocal(new Date(anio, mes - 1, dia))
       const { data } = await api.post(`/limpieza/${user.tienda_id}/semanal`, { tarea_key: key, fecha: fechaEnviar })
       setRegistros(prev => [...prev, data])
     } catch (e: any) {

@@ -85,10 +85,13 @@ const fmtLocalDT = (s: string) => {
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
-const today = () => new Date().toISOString().slice(0, 10)
+// Hora LOCAL: toISOString es UTC y despues de las 19:00 Colombia devuelve manana.
+const isoLocal = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const today = () => isoLocal(new Date())
 const firstOfMonth = () => {
   const d = new Date()
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10)
+  return isoLocal(new Date(d.getFullYear(), d.getMonth(), 1))
 }
 
 function cleanParams(params: Record<string, unknown>) {

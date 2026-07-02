@@ -18,7 +18,11 @@ interface Ticket {
 }
 
 const fmt = (v: number) => `$${(v ?? 0).toLocaleString('es-CO')}`
-const hoyISO = () => new Date().toISOString().slice(0, 10)
+// Hora LOCAL: toISOString es UTC y despues de las 19:00 Colombia devuelve manana.
+const hoyISO = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 function parseFecha(raw: string): Date {
   const t = raw.replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1').replace('+00:00', 'Z')

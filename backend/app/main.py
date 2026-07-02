@@ -504,6 +504,9 @@ def _migrate_proveedores():
                         inv_n.stock_actual += inv_v.stock_actual
                     inv_v.stock_actual = 0.0
                 p_viejo.controla_stock = False
+                # También fuera del conteo: la lista de conteo filtra por incluir_en_conteo,
+                # no por controla_stock — sin esto el duplicado viejo aparece repetido al contar.
+                p_viejo.incluir_en_conteo = False
                 logger.info("Duplicado fusionado: '%s' → '%s' (viejo oculto)", nombre_viejo, nombre_nuevo)
         db.flush()
 
@@ -519,8 +522,9 @@ def _migrate_proveedores():
             "Omelette Queso", "Pastel Pollo",
         }
         for p in db.query(Producto).filter(Producto.nombre.in_(DESACTIVAR)).all():
-            if p.controla_stock:
+            if p.controla_stock or p.incluir_en_conteo:
                 p.controla_stock = False
+                p.incluir_en_conteo = False  # fuera del conteo también (la lista filtra por este flag)
                 logger.info("Producto desactivado: %s", p.nombre)
         db.flush()
 

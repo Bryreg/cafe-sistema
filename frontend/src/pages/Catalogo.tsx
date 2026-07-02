@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import api from '../api/client'
-import { Plus, Pencil, Check, X, AlertTriangle, Package, Tag, Trash2, Copy } from 'lucide-react'
+import { Plus, Pencil, Check, X, AlertTriangle, Package, Tag, Trash2, Copy, ChefHat } from 'lucide-react'
 
 interface Tienda { id: number; nombre: string }
 interface StockInfo { stock_actual: number; stock_minimo: number; alerta: boolean }
@@ -25,6 +25,107 @@ const CAT_COLOR: Record<Cat, { bg: string; text: string }> = {
 
 const UNIDADES = ['und', 'g', 'kg', 'litro', 'ml', 'porción', 'paq']
 
+// ─── Editor de receta de consumo ─────────────────────────────────────────────
+// Insumos que el POS descuenta del inventario por cada unidad vendida del producto
+// (ej. 1 Waffle Pandebono = 4 bolas de masa). Guarda con PUT reemplazando la lista.
+
+function RecetaModal({ producto, productos, onClose }: {
+  producto: { id: number; nombre: string }
+  productos: Producto[]
+  onClose: () => void
+}) {
+  const [items, setItems] = useState<{ insumo_id: number; cantidad: string }[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    api.get(`/inventario/productos/${producto.id}/insumos`)
+      .then(r => setItems((r.data ?? []).map((x: any) => ({ insumo_id: x.insumo_id, cantidad: String(x.cantidad) }))))
+      .catch(() => setError('No se pudo cargar la receta'))
+      .finally(() => setLoading(false))
+  }, [producto.id])
+
+  const candidatos = productos.filter(p => p.id !== producto.id)
+
+  const guardar = async () => {
+    setSaving(true); setError('')
+    try {
+      const payload = items
+        .filter(i => i.insumo_id > 0 && Number(i.cantidad) > 0)
+        .map(i => ({ insumo_id: i.insumo_id, cantidad: Number(i.cantidad) }))
+      await api.put(`/inventario/productos/${producto.id}/insumos`, { items: payload })
+      onClose()
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'No se pudo guardar la receta')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+            <ChefHat size={15} style={{ color: 'oklch(48% 0.12 155)' }} /> Receta de consumo
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">
+          Insumos que se descuentan del inventario por cada <strong>{producto.nombre}</strong> vendido en el POS.
+        </p>
+        {loading ? (
+          <p className="text-xs text-gray-400 py-4 text-center">Cargando...</p>
+        ) : (
+          <>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {items.map((it, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <select
+                    value={it.insumo_id}
+                    onChange={e => setItems(arr => arr.map((x, i) => i === idx ? { ...x, insumo_id: Number(e.target.value) } : x))}
+                    className="flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-1.5 text-xs">
+                    <option value={0}>Elegir insumo…</option>
+                    {candidatos.map(c => (
+                      <option key={c.id} value={c.id}>{c.nombre} ({c.unidad_medida})</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number" min="0" step="0.5" inputMode="decimal"
+                    value={it.cantidad}
+                    onChange={e => setItems(arr => arr.map((x, i) => i === idx ? { ...x, cantidad: e.target.value } : x))}
+                    className="w-20 border border-gray-300 rounded-lg px-2 py-1.5 text-xs text-right"
+                    placeholder="Cant."
+                  />
+                  <button onClick={() => setItems(arr => arr.filter((_, i) => i !== idx))}
+                    className="text-red-400 hover:text-red-600 shrink-0"><Trash2 size={13} /></button>
+                </div>
+              ))}
+              {items.length === 0 && (
+                <p className="text-xs text-gray-400 text-center py-3">
+                  Sin insumos — vender este producto no descuenta ingredientes.
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => setItems(arr => [...arr, { insumo_id: 0, cantidad: '1' }])}
+              className="mt-2 text-xs font-semibold flex items-center gap-1"
+              style={{ color: 'oklch(45% 0.12 155)' }}>
+              <Plus size={12} /> Agregar insumo
+            </button>
+            {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
+            <button onClick={guardar} disabled={saving}
+              className="w-full mt-4 py-2.5 rounded-xl text-white text-sm font-bold disabled:opacity-50"
+              style={{ background: 'oklch(48% 0.15 155)' }}>
+              {saving ? 'Guardando…' : 'Guardar receta'}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function badge(cat: string) {
   const c = CAT_COLOR[cat as Cat] || { bg: 'oklch(93% 0.005 60)', text: 'oklch(40% 0.005 60)' }
   return (
@@ -47,6 +148,7 @@ export default function Catalogo() {
   const [minimoEditing, setMinimoEditing] = useState<{ productoId: number; tiendaId: number; valor: string } | null>(null)
   const [precioEditing, setPrecioEditing] = useState<{ productoId: number; valor: string } | null>(null)
   const [showDuplicados, setShowDuplicados] = useState(false)
+  const [recetaEditing, setRecetaEditing] = useState<{ id: number; nombre: string } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -520,11 +622,19 @@ export default function Catalogo() {
                             </button>
                           </td>
                           <td className="px-3 py-2">
-                            <button
-                              onClick={() => { setEditandoId(p.id); setEditForm({ nombre: p.nombre, categoria: p.categoria, unidad_medida: p.unidad_medida, controla_stock: p.controla_stock }) }}
-                              className="p-1.5 rounded-lg border-2 border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600 transition-colors">
-                              <Pencil size={12} />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => { setEditandoId(p.id); setEditForm({ nombre: p.nombre, categoria: p.categoria, unidad_medida: p.unidad_medida, controla_stock: p.controla_stock }) }}
+                                className="p-1.5 rounded-lg border-2 border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600 transition-colors">
+                                <Pencil size={12} />
+                              </button>
+                              <button
+                                onClick={() => setRecetaEditing({ id: p.id, nombre: p.nombre })}
+                                title="Receta de consumo (insumos que descuenta cada venta)"
+                                className="p-1.5 rounded-lg border-2 border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600 transition-colors">
+                                <ChefHat size={12} />
+                              </button>
+                            </div>
                           </td>
                         </>
                       )}
@@ -536,6 +646,14 @@ export default function Catalogo() {
           </div>
         )
       })}
+
+      {recetaEditing && (
+        <RecetaModal
+          producto={recetaEditing}
+          productos={productos}
+          onClose={() => setRecetaEditing(null)}
+        />
+      )}
     </div>
   )
 }

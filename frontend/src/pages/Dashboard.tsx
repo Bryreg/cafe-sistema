@@ -6,24 +6,13 @@ import {
   AlertTriangle, Download, RefreshCw, Layers, Store, Banknote,
   Wallet, Check, ChevronRight,
 } from 'lucide-react'
+// Hora LOCAL (Colombia): toISOString es UTC y despues de las 19:00 devuelve manana,
+// haciendo que el panel consulte un dia futuro y muestre todo en cero.
+import { hoyLocal as today, haceDiasLocal as daysAgo, inicioMesLocal as primerDiaDelMes } from '../utils/fechaLocal'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const fmt = (v: number) => `$${Math.round(v).toLocaleString('es-CO')}`
-
-// UTC-based, igual que Ejecutivo/AdminHub: mantiene "hoy" consistente con el resto de la app.
-function today() {
-  return new Date().toISOString().slice(0, 10)
-}
-function daysAgo(n: number) {
-  const d = new Date()
-  d.setDate(d.getDate() - n)
-  return d.toISOString().slice(0, 10)
-}
-function primerDiaDelMes() {
-  const d = new Date()
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10)
-}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

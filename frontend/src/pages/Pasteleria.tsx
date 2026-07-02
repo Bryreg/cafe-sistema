@@ -34,9 +34,10 @@ function fmtFecha(s: string | null) {
 }
 
 function defaultFechaVencimiento() {
+  // Fecha LOCAL: toISOString es UTC y despues de las 19:00 Colombia corre un dia de mas.
   const d = new Date()
   d.setDate(d.getDate() + 3)
-  return d.toISOString().slice(0, 10)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 // ─── Vista Admin ───────────────────────────────────────────────────────────────

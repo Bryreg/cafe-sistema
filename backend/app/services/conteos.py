@@ -160,6 +160,18 @@ def registrar_conteo(db: Session, tienda_id: int, tipo: str,
         turno.tiene_conteo_apertura = True
         turno.ts_conteo_apertura = datetime.utcnow()
         _tick_checklist(db, tienda_id, inventario_check=True)
+        # El conteo físico es la verdad TAMBIÉN al abrir: reconciliar el stock a lo
+        # contado. Cubre la primera operación de una sede (el conteo de apertura ES
+        # el inventario inicial — caso Palmetto 2-jul) y cualquier discrepancia
+        # matutina. La diferencia queda registrada en el item, visible en el monitor
+        # de Conteos y disputable vía verificación.
+        for item in items:
+            inv = db.query(Inventario).filter(
+                Inventario.producto_id == item["producto_id"],
+                Inventario.tienda_id == tienda_id,
+            ).first()
+            if inv:
+                inv.stock_actual = item["cantidad_real"]
     elif tipo == "cierre":
         turno.tiene_conteo_cierre = True
         turno.ts_conteo_cierre = datetime.utcnow()

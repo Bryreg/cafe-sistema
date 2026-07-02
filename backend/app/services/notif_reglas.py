@@ -69,6 +69,17 @@ DEFAULTS = [
         "canal_push": False,
         "nivel": "advertencia",
     },
+    {
+        "tipo": "solicitud_barista",
+        "label": "Solicitud de barista (pedido o sencilla)",
+        "descripcion": "Avisa cuando una barista envia una solicitud de reposicion o de sencilla desde el kiosko.",
+        "unidad": "",
+        "umbral": 0,
+        "activa": True,
+        "canal_bell": True,
+        "canal_push": True,
+        "nivel": "info",
+    },
 ]
 
 # Índice por tipo para mergear metadata estática rápido.

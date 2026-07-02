@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.models import (SolicitudPedido, SolicitudPedidoItem,
                                 SolicitudSencilla, EstadoSolicitudEnum)
+from app.services import notificaciones
 from datetime import datetime
 import logging
 
@@ -30,6 +31,18 @@ def crear_pedido(db: Session, tienda_id: int, nota: str | None,
             producto_id=item["producto_id"],
             cantidad_solicitada=item["cantidad_solicitada"],
         ))
+
+    # Avisar al admin (campana + push, regla solicitud_barista): sin esto la
+    # solicitud quedaba muda esperando que alguien abriera la Bandeja.
+    n = len(items)
+    msg = f"Pedido de reposición desde el kiosko: {n} producto{'s' if n != 1 else ''}"
+    if nota:
+        msg += f" — {nota[:80]}"
+    notificaciones.disparar(
+        db, tienda_id=tienda_id, tipo="solicitud_barista",
+        mensaje=msg, nivel="info", referencia_id=solicitud.id,
+        push_titulo="Solicitud de pedido", push_cuerpo=msg,
+    )
 
     db.commit()
     db.refresh(solicitud)
@@ -85,6 +98,13 @@ def crear_sencilla(db: Session, tienda_id: int, monto_solicitado: float,
         detalle=detalle,
     )
     db.add(s)
+    db.flush()
+    msg = f"Solicitud de sencilla: ${monto_solicitado:,.0f} — {motivo[:80]}"
+    notificaciones.disparar(
+        db, tienda_id=tienda_id, tipo="solicitud_barista",
+        mensaje=msg, nivel="info", referencia_id=s.id,
+        push_titulo="Solicitud de sencilla", push_cuerpo=msg,
+    )
     db.commit()
     db.refresh(s)
     return s

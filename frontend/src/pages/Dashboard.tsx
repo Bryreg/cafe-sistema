@@ -4,7 +4,7 @@ import api from '../api/client'
 import {
   BarChart3, TrendingUp, TrendingDown, ShoppingCart, Package,
   AlertTriangle, Download, RefreshCw, Layers, Store, Banknote,
-  Wallet, Check, ChevronRight,
+  Wallet, Check, ChevronRight, Inbox,
 } from 'lucide-react'
 // Hora LOCAL (Colombia): toISOString es UTC y despues de las 19:00 devuelve manana,
 // haciendo que el panel consulte un dia futuro y muestre todo en cero.
@@ -278,6 +278,7 @@ export default function Dashboard() {
   const [comprasPend, setComprasPend] = useState<DashCompras | null>(null)
   const [descuadres, setDescuadres] = useState<DescuadresResumen | null>(null)
   const [lotesVencer, setLotesVencer] = useState<LoteVencer[]>([])
+  const [solicitudesPend, setSolicitudesPend] = useState(0)
 
   // ── Banda 3 ──
   const [resumen, setResumen] = useState<Resumen | null>(null)
@@ -345,6 +346,18 @@ export default function Dashboard() {
         setConsignPend({ n: pendientes.length, monto })
       })
       .catch(() => setConsignPend(null))
+
+    // Solicitudes de baristas pendientes (pedido + sencilla) → Bandeja.
+    Promise.all([
+      api.get('/solicitudes/pedido/todas'),
+      api.get('/solicitudes/sencilla/todas'),
+    ])
+      .then(([p, s]) => {
+        const pend = (arr: any[]) => (arr ?? []).filter(x =>
+          x.estado === 'pendiente' && (sedeId === null || x.tienda_id === sedeId)).length
+        setSolicitudesPend(pend(p.data) + pend(s.data))
+      })
+      .catch(() => setSolicitudesPend(0))
 
     // Pagos proveedores: pendiente vigente (sin rango de fechas), scoped por sede.
     api.get('/facturas/dashboard', { params: paramsSede })
@@ -501,6 +514,7 @@ export default function Dashboard() {
   const hayStock = agotadosN + criticosN > 0
   const hayConsign = (consignPend?.n ?? 0) > 0
   const hayPagos = (comprasPend?.total_pendiente ?? 0) > 0
+  const haySolicitudes = solicitudesPend > 0
   const hayDescuadres = (descuadres?.con_diferencia ?? 0) > 0
   const hayLotes = lotesVencer.length > 0
   const hayAlgo = hayStock || hayConsign || hayPagos || hayDescuadres || hayLotes
@@ -708,6 +722,16 @@ export default function Dashboard() {
               severity="warning"
               ctaLabel="Pagar"
               to="/pagos-proveedores"
+            />
+          )}
+          {haySolicitudes && (
+            <AlertCard
+              icon={Inbox}
+              primary={`${solicitudesPend}`}
+              label={`solicitud${solicitudesPend !== 1 ? 'es' : ''} de baristas pendiente${solicitudesPend !== 1 ? 's' : ''}`}
+              severity="warning"
+              ctaLabel="Revisar"
+              to="/bandeja"
             />
           )}
           {hayDescuadres && (

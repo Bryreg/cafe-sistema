@@ -21,8 +21,10 @@ def get_frescura(db: Session, tienda_id: int, dias: int = 2) -> list[dict]:
     estos lotes — la fuente PasteleriaDiaria es aparte y se mantiene en /activos."""
     limite = datetime.utcnow() + timedelta(days=dias + 1)
     rows = (
-        db.query(LoteInventario, Producto)
+        db.query(LoteInventario, Producto, Inventario)
         .join(Producto, Producto.id == LoteInventario.producto_id)
+        .join(Inventario, (Inventario.producto_id == LoteInventario.producto_id)
+                          & (Inventario.tienda_id == LoteInventario.tienda_id))
         .filter(
             LoteInventario.tienda_id == tienda_id,
             LoteInventario.cantidad_restante > 0,
@@ -30,6 +32,9 @@ def get_frescura(db: Session, tienda_id: int, dias: int = 2) -> list[dict]:
             LoteInventario.fecha_vencimiento.isnot(None),
             LoteInventario.fecha_vencimiento <= limite,
             Producto.categoria == CategoriaProductoEnum.pasteleria,
+            # El STOCK es la verdad (el conteo lo reconcilia). Si el conteo dijo que
+            # no hay, no se anuncia aunque el lote haya quedado desfasado.
+            Inventario.stock_actual > 0,
         )
         .order_by(LoteInventario.fecha_vencimiento.asc())
         .all()
@@ -38,8 +43,9 @@ def get_frescura(db: Session, tienda_id: int, dias: int = 2) -> list[dict]:
         "producto_nombre": p.nombre,
         "proveedor": l.proveedor,
         "fecha_vencimiento": l.fecha_vencimiento.isoformat() if l.fecha_vencimiento else None,
-        "cantidad_restante": float(l.cantidad_restante or 0),
-    } for l, p in rows]
+        # Nunca anunciar más unidades de las que el stock real dice que hay.
+        "cantidad_restante": min(float(l.cantidad_restante or 0), float(i.stock_actual or 0)),
+    } for l, p, i in rows]
 
 
 def _fmt(r: PasteleriaDiaria) -> dict:

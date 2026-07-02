@@ -115,8 +115,14 @@ def get_turno_activo(db: Session, tienda_id: int):
     return turno
 
 
-def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str | None, usuario_id: int, barista_ids: list[int] | None = None, tipo_turno: str | None = None, caja_fuerte: float | None = None):
-    if base_real < 0:
+def abrir_caja(db: Session, tienda_id: int, base_real: float | None, justificacion: str | None, usuario_id: int, barista_ids: list[int] | None = None, tipo_turno: str | None = None, caja_fuerte: float | None = None):
+    # Dos modos:
+    #  - base_real=None (flujo actual): cuadre DIFERIDO — el turno abre solo con baristas,
+    #    tipo y caja fuerte; el efectivo se cuenta después del conteo de inventario vía
+    #    registrar_cuadre_inicial. El POS queda bloqueado hasta entonces.
+    #  - base_real con valor (legacy/tests): cuadre unificado al abrir, comportamiento previo.
+    cuadre_unificado = base_real is not None
+    if cuadre_unificado and base_real < 0:
         raise HTTPException(status_code=400, detail="base_real no puede ser negativa")
     if caja_fuerte is not None and caja_fuerte < 0:
         raise HTTPException(status_code=400, detail="caja_fuerte no puede ser negativa")
@@ -137,9 +143,9 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
             Consignacion.estado == EstadoConsignacionEnum.realizada,
         ).scalar() or 0.0
     base_sistema = (ultimo.efectivo_final_real or 0.0) - consigs_deducidas if ultimo else 0.0
-    diferencia = base_real - base_sistema
+    diferencia = (base_real - base_sistema) if cuadre_unificado else 0.0
 
-    if round(diferencia, 2) != 0 and not justificacion:
+    if cuadre_unificado and round(diferencia, 2) != 0 and not justificacion:
         raise HTTPException(
             status_code=400,
             detail=f"Diferencia de ${diferencia:,.0f} detectada. Se requiere justificación."
@@ -149,16 +155,17 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
         tienda_id=tienda_id,
         usuario_apertura_id=usuario_id,
         base_sistema=base_sistema,
-        base_real=base_real,
+        # Cuadre diferido: base_real queda en 0 hasta registrar_cuadre_inicial.
+        base_real=base_real if cuadre_unificado else 0.0,
         caja_fuerte=caja_fuerte or 0.0,
         diferencia_apertura=diferencia,
-        justificacion_apertura=justificacion,
+        justificacion_apertura=justificacion if cuadre_unificado else None,
         tipo_turno=tipo_turno,
         estado=EstadoTurnoEnum.abierto,
         tiene_conteo_apertura=False,
-        # Flujo unificado: contar el efectivo de inicio AL ABRIR es el cuadre de llegada.
-        # La base_real es el conteo; la diferencia vs base_sistema queda en diferencia_apertura.
-        tiene_cuadre_llegada=True,
+        # Unificado: contar el efectivo AL ABRIR es el cuadre de llegada.
+        # Diferido: el cuadre de llegada lo registra registrar_cuadre_inicial.
+        tiene_cuadre_llegada=cuadre_unificado,
         tiene_ventas=False,
         tiene_conteo_cierre=False,
         consignaciones_deducidas=consigs_deducidas,
@@ -181,20 +188,20 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
             db.add(TurnoBarista(turno_id=turno.id, usuario_id=u.id, nombre_snapshot=u.nombre))
         nombres_baristas = ", ".join(u.nombre for u in usuarios) or None
 
-    # Cuadre de apertura UNIFICADO: el conteo del efectivo de inicio ES el cuadre, se registra
-    # una vez y atribuido a las baristas elegidas. No hay segundo conteo redundante al abrir
-    # (no hay ventas todavía). Esperado = lo que dejó el cierre anterior (base_sistema); contado =
-    # base_real; snapshot con ventas/ingresos/egresos en cero. La caja fuerte NO entra acá.
-    db.add(EntregaTurno(
-        turno_id=turno.id, tienda_id=tienda_id, usuario_id=usuario_id,
-        efectivo_real=base_real, efectivo_esperado=base_sistema,
-        base_snapshot=base_sistema, ventas_efectivo_snapshot=0.0,
-        ingresos_snapshot=0.0, egresos_snapshot=0.0,
-        ventas_efectivo_siigo=0.0, ventas_tarjeta_bold=0.0,
-        diferencia_efectivo=diferencia, diferencia_tarjeta=0.0,
-        imagen_url=None, tipo="apertura",
-        barista_id=None, barista_nombre=nombres_baristas,
-    ))
+    # Cuadre de apertura unificado (solo modo legacy con base_real al abrir): el conteo del
+    # efectivo de inicio ES el cuadre, atribuido a las baristas elegidas, sin foto (no hay
+    # ventas todavía). En el flujo diferido este registro lo crea registrar_cuadre_inicial.
+    if cuadre_unificado:
+        db.add(EntregaTurno(
+            turno_id=turno.id, tienda_id=tienda_id, usuario_id=usuario_id,
+            efectivo_real=base_real, efectivo_esperado=base_sistema,
+            base_snapshot=base_sistema, ventas_efectivo_snapshot=0.0,
+            ingresos_snapshot=0.0, egresos_snapshot=0.0,
+            ventas_efectivo_siigo=0.0, ventas_tarjeta_bold=0.0,
+            diferencia_efectivo=diferencia, diferencia_tarjeta=0.0,
+            imagen_url=None, tipo="apertura",
+            barista_id=None, barista_nombre=nombres_baristas,
+        ))
 
     # Fase 1: enlazar el turno al día operativo (continuidad entre turnos)
     dia = get_or_create_dia(db, tienda_id, usuario_id)
@@ -219,6 +226,57 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float, justificacion: str
     logger.info(f"Turno {turno.id} abierto en tienda {tienda_id} por usuario {usuario_id}")
     # Devolver el turno COMPLETAMENTE enriquecido (es_operativo, totales, baristas, etc.)
     return get_turno_activo(db, tienda_id)
+
+
+def registrar_cuadre_inicial(db: Session, turno_id: int, usuario_id: int,
+                             efectivo_real: float, justificacion: str | None = None,
+                             barista_id: int | None = None, barista_nombre: str | None = None):
+    """Cuadre inicial de caja (flujo diferido): tras el conteo de inventario, se cuenta el
+    efectivo de la registradora contra lo que dejó el cierre anterior (base_sistema = ventas
+    en efectivo del día anterior pendientes de consignar). Sin foto: aún no hay ventas.
+    Fija base_real, marca el cuadre de llegada y desbloquea el POS (junto con el conteo)."""
+    turno = db.query(CajaTurno).filter(
+        CajaTurno.id == turno_id,
+        CajaTurno.estado == EstadoTurnoEnum.abierto
+    ).first()
+    if not turno:
+        raise HTTPException(status_code=404, detail="No hay turno activo")
+    if turno.tiene_cuadre_llegada:
+        raise HTTPException(status_code=400, detail="El cuadre inicial ya fue registrado")
+    if efectivo_real < 0:
+        raise HTTPException(status_code=400, detail="El valor no puede ser negativo")
+
+    esperado = turno.base_sistema or 0.0
+    diferencia = efectivo_real - esperado
+    if round(diferencia, 2) != 0 and not justificacion:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Diferencia de ${diferencia:,.0f} detectada. Se requiere justificación."
+        )
+
+    turno.base_real = efectivo_real
+    turno.diferencia_apertura = diferencia
+    turno.justificacion_apertura = justificacion
+    turno.tiene_cuadre_llegada = True
+
+    db.add(EntregaTurno(
+        turno_id=turno.id, tienda_id=turno.tienda_id, usuario_id=usuario_id,
+        efectivo_real=efectivo_real, efectivo_esperado=esperado,
+        base_snapshot=esperado, ventas_efectivo_snapshot=0.0,
+        ingresos_snapshot=0.0, egresos_snapshot=0.0,
+        ventas_efectivo_siigo=0.0, ventas_tarjeta_bold=0.0,
+        diferencia_efectivo=diferencia, diferencia_tarjeta=0.0,
+        imagen_url=None, tipo="apertura",
+        barista_id=barista_id, barista_nombre=barista_nombre,
+    ))
+    audit.registrar(
+        db, accion="cuadre_inicial", tabla="caja_turnos",
+        registro_id=turno.id, usuario_id=usuario_id, tienda_id=turno.tienda_id,
+        datos_despues={"efectivo_real": efectivo_real, "esperado": esperado,
+                       "diferencia": diferencia, "justificacion": justificacion},
+    )
+    db.commit()
+    return get_turno_activo(db, turno.tienda_id)
 
 
 def ajustar_apertura(db: Session, turno_id: int, base_real: float,
@@ -804,6 +862,13 @@ def cerrar_turno_rapido(
         raise HTTPException(status_code=400, detail="efectivo_final_real no puede ser negativo")
     if datafono_real < 0:
         raise HTTPException(status_code=400, detail="datafono_real no puede ser negativo")
+    # El conteo de cierre es INDEPENDIENTE del cuadre (se registra desde el PC).
+    # Se exige hecho ANTES de tocar nada — ya no se auto-marca desde el kiosko.
+    if not turno.tiene_conteo_cierre:
+        raise HTTPException(
+            status_code=400,
+            detail="Falta el conteo de cierre — se registra desde el PC en Gestión de turno",
+        )
 
     ingresos = db.query(func.sum(MovimientoCaja.valor)).filter(
         MovimientoCaja.caja_turno_id == turno_id, MovimientoCaja.tipo == "ingreso"
@@ -825,11 +890,6 @@ def cerrar_turno_rapido(
             diferencia_tarjeta=round(datafono_real - turno.total_tarjeta, 2),
             imagen_url=imagen_url, tipo="salida",
         ))
-
-    # Mark conteo_cierre satisfied before delegating to cerrar_caja
-    turno.tiene_conteo_cierre = True
-    turno.ts_conteo_cierre = datetime.utcnow()
-    db.flush()
 
     # Always provide justification so cerrar_caja doesn't 400 on diffs
     justificacion = "Salida desde kiosco — efectivo contado por barista"

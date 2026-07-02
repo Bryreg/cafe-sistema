@@ -108,6 +108,20 @@ async def registrar_entrega(
     return svc.registrar_entrega(db, turno_id, user.id, efectivo_real, ventas_tarjeta_bold, imagen_url,
                                  barista_id=barista[0], barista_nombre=barista[1])
 
+@router.post("/{turno_id}/cuadre-inicial", response_model=TurnoOut)
+async def cuadre_inicial(
+    turno_id: int,
+    efectivo_real: float = Form(...),
+    justificacion: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+    barista: tuple = Depends(get_barista_actor),
+):
+    """Cuadre inicial de caja del flujo de apertura (post-conteo, sin foto)."""
+    ensure_turno_access(db, user, turno_id)
+    return svc.registrar_cuadre_inicial(db, turno_id, user.id, efectivo_real, justificacion,
+                                        barista_id=barista[0], barista_nombre=barista[1])
+
 @router.post("/{turno_id}/cuadre-llegada", response_model=EntregaTurnoOut)
 async def cuadre_llegada(
     turno_id: int,

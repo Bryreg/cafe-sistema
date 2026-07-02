@@ -35,16 +35,17 @@ export default function ConteoInventario({ tipo }: Props) {
   const [searchParams] = useSearchParams()
   const isKioskClose = searchParams.get('kiosk') === '1'
   const isApertura = tipo === 'apertura'
-  const paso = isApertura ? 'Último paso' : 'Paso 4 de 5'
+  const paso = isApertura ? 'Paso 2 de 3' : 'Conteo de cierre'
   const titulo = isApertura ? 'Conteo de apertura' : 'Conteo de cierre'
   const subtitulo = isApertura
     ? 'Verifica el stock físico contra el sistema.'
-    : 'Verifica el stock físico al finalizar el turno.'
-  const ctaLabel = isApertura ? 'Confirmar apertura y empezar a vender' : 'Confirmar y continuar al cierre'
-  const backPath = isApertura ? '/gestion-turno' : '/'
-  // Apertura: el cuadre ya se hizo al contar el efectivo de inicio (base). Sin segundo conteo
-  // redundante — directo al POS. El cuadre de apertura queda registrado en abrir_caja.
-  const nextPath = isApertura ? '/pos' : (isKioskClose ? '/salida-efectivo' : '/cierre')
+    : 'Independiente del cuadre de caja: el cuadre con foto se hace desde el celular.'
+  const ctaLabel = isApertura ? 'Confirmar conteo — seguir al cuadre de caja' : 'Confirmar conteo de cierre'
+  const backPath = isApertura ? '/gestion-turno' : '/gestion-turno'
+  // Apertura: baristas → conteo → cuadre inicial (efectivo del día anterior, sin foto).
+  // Cierre: el conteo es INDEPENDIENTE del cuadre — se hace en PC y vuelve a gestión;
+  // el cuadre con foto y el cierre del turno se hacen desde el celular (Salida).
+  const nextPath = isApertura ? '/cuadre-inicial' : (isKioskClose ? '/salida-efectivo' : '/gestion-turno')
 
   useEffect(() => {
     if (!user?.tienda_id) return

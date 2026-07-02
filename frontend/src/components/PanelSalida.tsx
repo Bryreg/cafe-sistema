@@ -42,7 +42,9 @@ export default function PanelSalida() {
 
   const handleNext = () => {
     if (isLast) {
-      navigate('/conteo-cierre?kiosk=1')
+      // Cierre desacoplado: acá solo el cuadre de caja con foto; el conteo de
+      // inventario de cierre se registra aparte (desde el PC, Gestión de turno).
+      navigate('/salida-efectivo')
     } else {
       setStep('cuadre')
     }
@@ -133,7 +135,7 @@ export default function PanelSalida() {
           <div className="rounded-2xl p-4" style={{ background: dark.amberTint, border: `1px solid ${dark.amberDim}` }}>
             <p className="text-[12px]" style={{ color: dark.amber }}>
               {isLast
-                ? 'Última(s) barista(s) del turno — se hará conteo de inventario y cuadre de caja antes de cerrar.'
+                ? 'Última(s) barista(s) del turno — sigue el cuadre de caja con foto para cerrar. El conteo de cierre se registra aparte, desde el PC.'
                 : (() => {
                     const stays = remaining.filter(b => !selected.includes(b))
                     return `${stays.join(' y ')} continuará${stays.length > 1 ? 'n' : ''} con el turno.`

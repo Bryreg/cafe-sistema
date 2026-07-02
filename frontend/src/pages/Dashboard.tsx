@@ -717,7 +717,7 @@ export default function Dashboard() {
               label="descuadres de caja · mes en curso"
               severity="neutral"
               ctaLabel="Revisar"
-              to="/informes"
+              to="/cuadre-turnos"
             />
           )}
           {hayLotes && (

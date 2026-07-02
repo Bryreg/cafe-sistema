@@ -3,7 +3,8 @@ import React, { createContext, useContext, useState } from 'react'
 export interface InformeFiltro {
   desde: string
   hasta: string
-  tiendaId: number
+  /** null = todas las sedes */
+  tiendaId: number | null
   categoria: string | null
   turnoId: number | null
   productoSearch: string | null
@@ -28,7 +29,7 @@ function firstOfMonthStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
 }
 
-export const FiltroProvider: React.FC<{ children: React.ReactNode; tiendaId: number }> = ({ children, tiendaId }) => {
+export const FiltroProvider: React.FC<{ children: React.ReactNode; tiendaId: number | null }> = ({ children, tiendaId }) => {
   const [filtro, setFiltro] = useState<InformeFiltro>({
     desde: firstOfMonthStr(),
     hasta: todayStr(),

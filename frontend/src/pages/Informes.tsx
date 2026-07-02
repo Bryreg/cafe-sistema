@@ -59,7 +59,7 @@ interface TicketFull {
   }[]
 }
 
-function TabVentas() {
+function TabVentas({ sedes }: { sedes: Sede[] }) {
   const { filtro } = useFiltro()
   const [tickets, setTickets] = useState<TicketHist[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -71,10 +71,17 @@ function TabVentas() {
   const cargar = async () => {
     setLoading(true)
     try {
-      const { data } = await api.get('/pos/tickets/historial', {
-        params: cleanParams({ tienda_id: filtro.tiendaId, fecha_desde: filtro.desde, fecha_hasta: filtro.hasta }),
+      // El endpoint exige tienda_id: con "Ambas" se consulta cada sede y se fusiona.
+      const fetchSede = (tid: number) => api.get<TicketHist[]>('/pos/tickets/historial', {
+        params: cleanParams({ tienda_id: tid, fecha_desde: filtro.desde, fecha_hasta: filtro.hasta }),
       })
-      setTickets(data)
+      if (filtro.tiendaId != null) {
+        const { data } = await fetchSede(filtro.tiendaId)
+        setTickets(data)
+      } else {
+        const rs = await Promise.all(sedes.map(s => fetchSede(s.id)))
+        setTickets(rs.flatMap(r => r.data).sort((a, b) => b.id - a.id))
+      }
       setExpandido(null)
     } finally { setLoading(false) }
   }
@@ -261,7 +268,7 @@ const FILTROS_MOV = [
   { key: 'pasteleria', label: 'Pastelería' },
 ]
 
-function TabMovimientos({ tiendaId }: { tiendaId: number }) {
+function TabMovimientos({ tiendaId, sedes }: { tiendaId: number | null; sedes: Sede[] }) {
   const { filtro } = useFiltro()
   const [movimientos, setMovimientos] = useState<Movimiento[] | null>(null)
   const [conteos, setConteos] = useState<Record<string, number>>({})
@@ -271,15 +278,32 @@ function TabMovimientos({ tiendaId }: { tiendaId: number }) {
   const cargar = async () => {
     setLoading(true)
     try {
-      const params = cleanParams({
-        tienda_id: tiendaId,
-        fecha_desde: filtro.desde,
-        fecha_hasta: filtro.hasta,
-        producto_search: filtro.productoSearch,
+      // El endpoint exige tienda_id: con "Ambas" se consulta cada sede y se fusiona.
+      const fetchSede = (tid: number) => api.get('/informes/movimientos', {
+        params: cleanParams({
+          tienda_id: tid,
+          fecha_desde: filtro.desde,
+          fecha_hasta: filtro.hasta,
+          producto_search: filtro.productoSearch,
+        }),
       })
-      const { data } = await api.get('/informes/movimientos', { params })
-      setMovimientos(data.movimientos)
-      setConteos(data.conteos)
+      if (tiendaId != null) {
+        const { data } = await fetchSede(tiendaId)
+        setMovimientos(data.movimientos)
+        setConteos(data.conteos)
+      } else {
+        const rs = await Promise.all(sedes.map(s => fetchSede(s.id)))
+        setMovimientos(rs
+          .flatMap(r => r.data.movimientos as Movimiento[])
+          .sort((a, b) => b.fecha.localeCompare(a.fecha)))
+        const cts: Record<string, number> = {}
+        for (const r of rs) {
+          for (const [k, v] of Object.entries(r.data.conteos as Record<string, number>)) {
+            cts[k] = (cts[k] ?? 0) + v
+          }
+        }
+        setConteos(cts)
+      }
       setTipoFiltro('todos')
     } finally { setLoading(false) }
   }
@@ -366,14 +390,13 @@ export default function Informes() {
 
   useEffect(() => {
     if (isAdmin) {
-      api.get('/auth/tiendas').then(({ data }) => {
-        setSedes(data)
-        if (!tiendaId && data.length > 0) setTiendaId(data[0].id)
-      }).catch(() => {})
+      api.get('/auth/tiendas').then(({ data }) => setSedes(data)).catch(() => {})
     }
   }, [isAdmin])
 
-  if (!tiendaId) return (
+  // Admin arranca en "Ambas" (tiendaId null) pero necesita la lista de sedes para
+  // poder consultar cada una; no-admin queda scopeado a su propia tienda.
+  if (isAdmin ? sedes.length === 0 : tiendaId == null) return (
     <div className="text-center py-12 text-sm text-gray-400">Cargando sedes…</div>
   )
 
@@ -408,8 +431,8 @@ function InformesContent({
   setTab,
   tabs,
 }: {
-  tiendaId: number
-  setTiendaId: (id: number) => void
+  tiendaId: number | null
+  setTiendaId: (id: number | null) => void
   sedes: Sede[]
   isAdmin: boolean
   tab: Tab
@@ -431,6 +454,14 @@ function InformesContent({
         {/* Selector de sede (solo admin) */}
         {isAdmin && sedes.length > 1 && (
           <div className="flex gap-1.5">
+            <button onClick={() => setTiendaId(null)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                tiendaId === null
+                  ? 'bg-amber-600 text-white border-amber-600'
+                  : 'bg-white text-gray-600 border-gray-200 hover:border-amber-400'
+              }`}>
+              Ambas
+            </button>
             {sedes.map(s => (
               <button key={s.id} onClick={() => setTiendaId(s.id)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
@@ -464,8 +495,8 @@ function InformesContent({
 
       {/* Tab content */}
       {tab === 'analitica'   && <AnaliticaContenido tiendaId={tiendaId} />}
-      {tab === 'ventas'      && <TabVentas />}
-      {tab === 'movimientos' && <TabMovimientos tiendaId={tiendaId} />}
+      {tab === 'ventas'      && <TabVentas sedes={sedes} />}
+      {tab === 'movimientos' && <TabMovimientos tiendaId={tiendaId} sedes={sedes} />}
     </div>
   )
 }

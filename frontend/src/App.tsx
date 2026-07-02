@@ -49,6 +49,7 @@ import InformeContador from './pages/InformeContador'
 import PagosProveedores from './pages/PagosProveedores'
 import InventarioMensual from './pages/InventarioMensual'
 import ConciliacionInventario from './pages/ConciliacionInventario'
+import ConteosAdmin from './pages/ConteosAdmin'
 import LotesTrazabilidad from './pages/LotesTrazabilidad'
 import NotificacionesConfig from './pages/NotificacionesConfig'
 import CuadreTurnos from './pages/CuadreTurnos'
@@ -169,6 +170,7 @@ function AppRoutes() {
       <Route path="/informe-contador" element={<RequireAdmin><Layout><InformeContador /></Layout></RequireAdmin>} />
       <Route path="/pagos-proveedores" element={<RequireAdmin><Layout><PagosProveedores /></Layout></RequireAdmin>} />
       <Route path="/conciliacion-inventario" element={<RequireAdmin><Layout><ConciliacionInventario /></Layout></RequireAdmin>} />
+      <Route path="/conteos-admin"    element={<RequireAdmin><Layout><ConteosAdmin /></Layout></RequireAdmin>} />
       <Route path="/lotes"            element={<RequireAdmin><Layout><LotesTrazabilidad /></Layout></RequireAdmin>} />
       <Route path="/comunicados"      element={<RequireAdmin><Layout><Comunicados /></Layout></RequireAdmin>} />
       <Route path="/usuarios"         element={<RequireAdmin><Layout><Usuarios /></Layout></RequireAdmin>} />

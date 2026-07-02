@@ -2,7 +2,7 @@ import {
   LayoutDashboard, Layers, ClipboardList,
   Banknote, Wrench, ClipboardCheck, Activity,
   Bell, Inbox, BarChart2, Users, Tag, RotateCcw, Calculator, Truck, Scale, Boxes, Wallet,
-  Receipt, ShieldCheck,
+  Receipt, ShieldCheck, ListChecks,
 } from 'lucide-react'
 
 export interface NavItem { to: string; label: string; icon: typeof Layers }
@@ -25,6 +25,7 @@ export const NAV_GROUPS: NavGroup[] = [
   ]},
   { label: 'Inventario', items: [
     { to: '/control-inventario',      label: 'Inventario',     icon: Layers          },
+    { to: '/conteos-admin',           label: 'Conteos',        icon: ListChecks      },
     { to: '/lotes',                   label: 'Lotes',          icon: Boxes           },
     { to: '/conciliacion-inventario', label: 'Conciliación',   icon: Scale           },
     { to: '/catalogo',                label: 'Catálogo',       icon: Tag             },

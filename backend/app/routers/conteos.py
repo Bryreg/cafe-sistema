@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from datetime import date
 from app.database import get_db
 from app.core.deps import ensure_turno_access, ensure_tienda_access, get_current_user, get_barista_actor
 from app.models.models import Usuario
 from app.schemas.conteos import RegistrarConteoRequest, ConteoFisicoOut
 from app.services import conteos as svc
-from typing import List
+from typing import List, Optional
 
 router = APIRouter(prefix="/conteos", tags=["conteos"])
 
@@ -26,3 +27,14 @@ def conteos_turno(turno_id: int, db: Session = Depends(get_db),
                   user: Usuario = Depends(get_current_user)):
     ensure_turno_access(db, user, turno_id)
     return svc.get_conteos_turno(db, turno_id)
+
+
+@router.get("/tienda/{tienda_id}")
+def conteos_tienda(tienda_id: int,
+                   fecha_desde: Optional[date] = Query(None),
+                   fecha_hasta: Optional[date] = Query(None),
+                   db: Session = Depends(get_db),
+                   user: Usuario = Depends(get_current_user)):
+    """Monitor de conteos físicos (hub admin): rango de días Colombia, items con diferencias."""
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_conteos_tienda(db, tienda_id, fecha_desde, fecha_hasta)

@@ -22,7 +22,7 @@ export default function CuadreInicial() {
   const [justificacion, setJustificacion] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [desglose, setDesglose] = useState<{ ventas: number; dif: number; mismoDia: boolean } | null>(null)
+  const [desglose, setDesglose] = useState<{ cierre: number; baseAyer: number; mismoDia: boolean } | null>(null)
   // Candado síncrono contra doble click: el estado saving es async y deja una
   // ventana en la que un segundo click dispararía otro POST.
   const enviando = useRef(false)
@@ -31,8 +31,8 @@ export default function CuadreInicial() {
     if (!turno) return
     api.get(`/caja/efectivo-inicio/${turno.tienda_id}`)
       .then(r => setDesglose({
-        ventas: r.data?.ventas_efectivo_anterior ?? 0,
-        dif: r.data?.diferencia_cierre_anterior ?? 0,
+        cierre: r.data?.efectivo_cierre_anterior ?? 0,
+        baseAyer: r.data?.base_consignar_anterior ?? 0,
         mismoDia: !!r.data?.mismo_dia,
       }))
       .catch(() => setDesglose(null))
@@ -90,9 +90,9 @@ export default function CuadreInicial() {
           </p>
           {desglose && !desglose.mismoDia ? (
             <p className="text-[11px] mt-2" style={{ color: dark.inkSubtle }}>
-              Ventas en efectivo de ayer ({fmt(desglose.ventas)})
-              {Math.round(desglose.dif) !== 0 && <> {desglose.dif > 0 ? '+' : '−'} diferencia del cierre ({fmt(Math.abs(desglose.dif))})</>}.
-              La plata de días anteriores no se cuenta acá: va a consignación o pagos a proveedores.
+              Efectivo del cierre de ayer ({fmt(desglose.cierre)}) menos la base de ayer que se
+              consigna completa ({fmt(desglose.baseAyer)}). Los pagos de contado de ayer ya
+              salieron de la venta de ayer.
             </p>
           ) : desglose?.mismoDia ? (
             <p className="text-[11px] mt-2" style={{ color: dark.inkSubtle }}>

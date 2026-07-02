@@ -24,6 +24,8 @@ class ProductoUpdate(BaseModel):
     lead_time_dias: Optional[int] = None
     proveedor: Optional[str] = None
     incluir_en_conteo: Optional[bool] = None
+    fraccionable: Optional[bool] = None
+    envase: Optional[str] = None  # "" (quitar) | "bolsa" | "botella"
 
 class InsumoRecetaItem(BaseModel):
     insumo_id: int

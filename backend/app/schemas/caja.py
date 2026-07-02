@@ -5,7 +5,9 @@ from datetime import datetime
 
 class AbrirCajaRequest(BaseModel):
     tienda_id: int
-    base_real: float
+    # None = cuadre diferido (flujo actual): el efectivo se cuenta después del conteo
+    # de inventario vía POST /caja/{id}/cuadre-inicial. Con valor = cuadre al abrir (legacy).
+    base_real: Optional[float] = None
     caja_fuerte: Optional[float] = None  # reserva fija aparte, no entra en el cuadre
     tipo_turno: Optional[str] = None
     justificacion_apertura: Optional[str] = None

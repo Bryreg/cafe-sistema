@@ -1,11 +1,13 @@
-import { useRef, useState } from 'react'
-import { AlertTriangle, Camera, Check } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { AlertTriangle, Camera, Check, Monitor } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { dark } from '../constants/darkTheme'
 import { useTurno } from '../contexts/TurnoContext'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import ContadorEfectivo from '../components/ContadorEfectivo'
+import DesgloseEfectivo, { MovimientoDesglose } from '../components/DesgloseEfectivo'
+import DiferenciaCaja from '../components/DiferenciaCaja'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 
@@ -20,9 +22,18 @@ export default function SalidaEfectivo() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
+  const [movimientos, setMovimientos] = useState<MovimientoDesglose[]>([])
+
+  useEffect(() => {
+    if (!turno) return
+    api.get(`/caja/${turno.id}/movimientos`)
+      .then(r => setMovimientos((r.data ?? []).map((m: any) => ({ tipo: m.tipo, concepto: m.concepto, valor: m.valor, fecha: m.fecha }))))
+      .catch(() => setMovimientos([]))
+  }, [turno?.id])
 
   if (!turno) return null
 
+  const conteoHecho = !!turno.tiene_conteo_cierre
   const efectivoEsperado = turno.efectivo_esperado_actual ?? 0
   const datafonoVal = Number(datafono) || 0
   const diffEfectivo = Math.round((efectivoContado - efectivoEsperado) * 100) / 100
@@ -125,38 +136,42 @@ export default function SalidaEfectivo() {
       <div className="flex flex-col px-4 pt-14 pb-6 gap-5 max-w-md mx-auto w-full">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.danger }}>
-            Cierre de turno — Paso 2 de 2
+            Cierre de turno — Cuadre de caja
           </p>
           <p className="text-[18px] font-bold mt-0.5" style={{ color: dark.ink }}>
-            Cuadre de caja
+            Verificá la caja para cerrar
           </p>
         </div>
 
-        <div className="rounded-2xl p-4" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              { l: 'Total ventas', v: fmt(turno.total_ventas ?? 0) },
-              { l: 'Efectivo esperado', v: fmt(efectivoEsperado) },
-            ].map(r => (
-              <div key={r.l}>
-                <p className="text-[10px]" style={{ color: dark.inkSubtle }}>{r.l}</p>
-                <p className="text-[14px] font-semibold font-mono mt-0.5" style={{ color: dark.ink }}>{r.v}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
-            Conteo de efectivo en caja
-          </p>
-          <ContadorEfectivo onTotal={setEfectivoContado} />
-          {efectivoContado > 0 && diffEfectivo !== 0 && (
-            <p className="text-[12px] font-semibold mt-2 pl-1" style={{ color: dark.danger }}>
-              Diferencia: {diffEfectivo > 0 ? '+' : ''}{fmt(diffEfectivo)} vs sistema
+        {!conteoHecho && (
+          <div className="rounded-2xl p-3.5 flex items-start gap-2.5"
+            style={{ background: dark.amberTint, border: `1px solid ${dark.amberDim}` }}>
+            <Monitor size={15} className="shrink-0 mt-0.5" style={{ color: dark.amber }} />
+            <p className="text-[12px]" style={{ color: dark.amber }}>
+              <strong>Falta el conteo de cierre</strong> — se registra desde el PC
+              (Gestión de turno → Conteo de cierre). Podés contar el efectivo mientras tanto;
+              el turno se cierra cuando el conteo esté hecho.
             </p>
-          )}
+          </div>
+        )}
+
+        <DesgloseEfectivo
+          base={turno.base_real ?? 0}
+          ventasEfectivo={turno.total_efectivo ?? 0}
+          ingresos={turno.ingresos_movimientos ?? 0}
+          egresos={turno.egresos_movimientos ?? 0}
+          esperado={efectivoEsperado}
+          cajaFuerte={turno.caja_fuerte ?? 0}
+          movimientos={movimientos}
+        />
+        <div className="flex items-center justify-between px-1 -mt-1">
+          <span className="text-[11px]" style={{ color: dark.inkSubtle }}>Ventas del día {fmt(turno.total_ventas ?? 0)}</span>
+          <span className="text-[11px]" style={{ color: dark.inkSubtle }}>Tarjeta esperada {fmt(turno.total_tarjeta ?? 0)}</span>
         </div>
+
+        <ContadorEfectivo onTotal={setEfectivoContado} />
+
+        <DiferenciaCaja contado={efectivoContado} esperado={efectivoEsperado} />
 
         <div>
           <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: dark.inkSubtle }}>
@@ -199,11 +214,14 @@ export default function SalidaEfectivo() {
 
         <button
           onClick={() => setConfirming(true)}
-          disabled={efectivoContado === 0 || imagen === null}
+          disabled={efectivoContado === 0 || imagen === null || !conteoHecho}
           className="w-full py-4 rounded-2xl font-bold text-[15px] text-white disabled:opacity-40"
           style={{ background: dark.danger }}
         >
-          {efectivoContado === 0 ? 'Contá el efectivo primero' : imagen === null ? 'Falta la foto obligatoria' : 'Revisar y cerrar turno'}
+          {!conteoHecho ? 'Falta el conteo de cierre (se hace en el PC)'
+            : efectivoContado === 0 ? 'Contá el efectivo primero'
+            : imagen === null ? 'Falta la foto obligatoria'
+            : 'Revisar y cerrar turno'}
         </button>
       </div>
     </div>

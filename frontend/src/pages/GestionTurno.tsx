@@ -9,7 +9,6 @@ import {
   Cake, Wallet, Receipt,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
-import ContadorEfectivo from '../components/ContadorEfectivo'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 
@@ -42,10 +41,7 @@ export default function GestionTurno() {
   const [baristas, setBaristas] = useState<Barista[]>([])
   const [selected, setSelected] = useState<number[]>([])
   const [tipoTurno, setTipoTurno] = useState<TipoTurno | null>(null)
-  const [baseReal, setBaseReal] = useState('')
   const [cajaFuerte, setCajaFuerte] = useState('')
-  const [esperadoInicio, setEsperadoInicio] = useState<number | null>(null)
-  const [justificacion, setJustificacion] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [impulso, setImpulso] = useState<ImpulsoItem[]>([])
@@ -59,9 +55,6 @@ export default function GestionTurno() {
       setBaristas(data)
     }).catch(() => {})
     if (tiendaId) {
-      api.get(`/caja/efectivo-inicio/${tiendaId}`)
-        .then(r => setEsperadoInicio(r.data.esperado))
-        .catch(() => {})
       // Recordatorio de pastelería por impulsar (qué ofrecer según días en inventario)
       api.get(`/inventario/pasteleria-impulso/${tiendaId}`)
         .then(r => setImpulso(r.data))
@@ -79,7 +72,7 @@ export default function GestionTurno() {
 
   const cancelar = () => {
     setStep(null); setTipoTurno(null)
-    setSelected([]); setBaseReal(''); setCajaFuerte(''); setJustificacion(''); setError('')
+    setSelected([]); setCajaFuerte(''); setError('')
   }
 
   const abrirTurno = async () => {
@@ -89,16 +82,18 @@ export default function GestionTurno() {
       const { data } = await api.post('/caja/abrir', {
         tienda_id: tiendaId,
         tipo_turno: tipoTurno,
-        base_real: Number(baseReal) || 0,
+        base_real: null, // cuadre diferido: el efectivo se cuenta despues del conteo
         caja_fuerte: Number(cajaFuerte) || 0,
-        justificacion_apertura: justificacion || null,
+        justificacion_apertura: null,
         barista_ids: selected.length > 0 ? selected : null,
       })
       cancelar()
       await refresh()
-      // Llevar directo al paso requerido para no quedar trabado: si el turno ya quedó
-      // operativo (p.ej. turno intermedio con el día ya contado) → POS; si no → conteo.
-      navigate(data?.es_operativo ? '/pos' : '/conteo-apertura')
+      // Orden del flujo: baristas → conteo de inventario → cuadre inicial → POS.
+      // Si el dia ya tiene conteo (turno intermedio/cierre) se salta directo al cuadre.
+      navigate(data?.es_operativo ? '/pos'
+        : data?.dia_tiene_conteo_apertura ? '/cuadre-inicial'
+        : '/conteo-apertura')
     } catch (e: any) {
       setError(e.response?.data?.detail || 'Error al abrir turno')
     } finally {
@@ -160,16 +155,24 @@ export default function GestionTurno() {
                 <p className="text-[12px] font-bold flex items-center gap-2" style={{ color: dark.amber }}>
                   <AlertTriangle size={13} /> POS bloqueado — completá para vender
                 </p>
-                {!turno.tiene_conteo_apertura && !turno.dia_tiene_conteo_apertura && (
-                  <button onClick={() => navigate('/conteo-apertura')}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left"
-                    style={{ background: dark.surfaceAlt }}>
-                    {turno.tiene_conteo_apertura
-                      ? <Check size={15} style={{ color: dark.green }} />
-                      : <Circle size={15} style={{ color: dark.amber }} />}
-                    <span className="text-[13px] font-semibold" style={{ color: dark.ink }}>Conteo de apertura</span>
-                  </button>
-                )}
+                <button onClick={() => navigate('/conteo-apertura')}
+                  disabled={turno.tiene_conteo_apertura || turno.dia_tiene_conteo_apertura}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left"
+                  style={{ background: dark.surfaceAlt }}>
+                  {(turno.tiene_conteo_apertura || turno.dia_tiene_conteo_apertura)
+                    ? <Check size={15} style={{ color: dark.green }} />
+                    : <Circle size={15} style={{ color: dark.amber }} />}
+                  <span className="text-[13px] font-semibold" style={{ color: dark.ink }}>1. Conteo de inventario</span>
+                </button>
+                <button onClick={() => navigate('/cuadre-inicial')}
+                  disabled={turno.tiene_cuadre_llegada}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left"
+                  style={{ background: dark.surfaceAlt }}>
+                  {turno.tiene_cuadre_llegada
+                    ? <Check size={15} style={{ color: dark.green }} />
+                    : <Circle size={15} style={{ color: dark.amber }} />}
+                  <span className="text-[13px] font-semibold" style={{ color: dark.ink }}>2. Cuadre inicial de caja</span>
+                </button>
               </div>
             )}
 
@@ -400,32 +403,10 @@ export default function GestionTurno() {
               )}
             </div>
 
-            {/* Contá el efectivo de la caja registradora (= base operativa, cuadre de llegada) */}
+            {/* Caja fuerte — reserva fija aparte, NO entra en el cuadre de la registradora.
+                El efectivo de la registradora se cuenta DESPUÉS del conteo (cuadre inicial). */}
             <div className="space-y-2">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.inkSubtle }}>
-                  Efectivo de la caja registradora
-                </p>
-                <p className="text-[11px] mt-0.5" style={{ color: dark.inkSubtle }}>
-                  Solo el efectivo con el que abrís la caja para operar. <strong>NO</strong> incluyas la caja fuerte.
-                </p>
-                {esperadoInicio !== null && (
-                  <p className="text-[11px] mt-0.5" style={{ color: dark.inkSubtle }}>
-                    Deberías tener{' '}
-                    <span className="font-mono font-semibold" style={{ color: dark.ink }}>{fmt(esperadoInicio)}</span>
-                    {' '}— lo que dejó el cierre anterior, pendiente de consignar
-                  </p>
-                )}
-              </div>
-              <ContadorEfectivo onTotal={t => setBaseReal(String(t))} />
-              {esperadoInicio !== null && Number(baseReal) > 0 && (Number(baseReal) - esperadoInicio) !== 0 && (
-                <p className="text-[12px] font-semibold pl-1" style={{ color: dark.amber }}>
-                  Diferencia: {(Number(baseReal) - esperadoInicio) > 0 ? '+' : ''}{fmt(Number(baseReal) - esperadoInicio)} — registrá el motivo abajo
-                </p>
-              )}
-
-              {/* Caja fuerte — reserva fija aparte, NO entra en el cuadre de la registradora */}
-              <div className="rounded-2xl p-4 space-y-1.5 mt-2" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
+              <div className="rounded-2xl p-4 space-y-1.5" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
                 <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.inkSubtle }}>
                   Caja fuerte / reserva (opcional)
                 </p>
@@ -442,18 +423,15 @@ export default function GestionTurno() {
                   style={{ color: dark.ink }}
                 />
               </div>
+              <div className="rounded-2xl p-3.5" style={{ background: dark.amberTint, border: `1px solid ${dark.amberDim}` }}>
+                <p className="text-[12px]" style={{ color: dark.amber }}>
+                  Después de abrir: <strong>conteo de inventario</strong> y luego el
+                  <strong> cuadre inicial de caja</strong> (el efectivo que dejó el día anterior).
+                </p>
+              </div>
             </div>
 
             </div>
-
-            <textarea
-              value={justificacion}
-              onChange={e => setJustificacion(e.target.value)}
-              placeholder="Motivo si el efectivo contado difiere del esperado"
-              rows={2}
-              className="w-full rounded-xl px-3 py-2.5 text-sm resize-none outline-none"
-              style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}
-            />
 
             {error && (
               <div className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-[12px]"

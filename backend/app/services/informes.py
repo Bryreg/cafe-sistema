@@ -289,6 +289,10 @@ def reporte_rotacion(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
         .filter(Inventario.tienda_id == tienda_id)
         .all()
     )
+    # Solo inventario gestionado (controla stock + en el conteo) — igual que la
+    # sugerencia de pedidos: fuera del conteo el stock no es confiable.
+    inventarios = [i for i in inventarios if i.producto and i.producto.controla_stock
+                   and i.producto.incluir_en_conteo is not False]
 
     # Apply optional filters (post-SQL — Inventario has no direct categoria/search column)
     if filtro:

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
+import { conMiles, soloDigitos } from '../utils/plata'
 import { CheckCircle2, XCircle, ShoppingCart, Coins, Pencil } from 'lucide-react'
 
 const BILLETES = [
@@ -95,11 +96,10 @@ function EditorSencilla({ sencilla, onAprobar, onCancelar }: {
               <div className="flex-1 relative">
                 <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">$</span>
                 <input
-                  type="number"
-                  value={getMonto(d.tipo, d.valor)}
-                  onChange={e => setMonto(d.tipo, d.valor, e.target.value)}
+                  type="text"
+                  value={conMiles(getMonto(d.tipo, d.valor))}
+                  onChange={e => setMonto(d.tipo, d.valor, soloDigitos(e.target.value))}
                   placeholder="0"
-                  step={d.valor}
                   inputMode="numeric"
                   className={`w-full pl-5 pr-2 py-1.5 text-sm font-bold border rounded-lg focus:outline-none transition-colors ${
                     esError ? 'border-red-300 text-red-700' : 'border-gray-200 focus:border-amber-400'

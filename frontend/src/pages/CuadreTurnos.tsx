@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
+import { conMiles, soloDigitos } from '../utils/plata'
 import {
   ArrowLeft, Camera, TrendingDown, TrendingUp, Users,
   X, ChevronRight, ChevronDown, ChevronUp, Download, UserCheck,
@@ -192,9 +193,9 @@ function AjusteApertura({ turno, onDone }: { turno: TurnoItem; onDone: () => voi
             Corregí si la caja fuerte quedó dentro de la base. La base debe ser SOLO el efectivo de la registradora.
           </p>
           <label style={{ fontSize: 11, color: 'oklch(50% 0.01 60)', fontWeight: 600 }}>Efectivo real de la registradora</label>
-          <input type="number" inputMode="numeric" value={baseReal} onChange={e => setBaseReal(e.target.value)} placeholder={`Actual: ${fmt(turno.base_real)}`} style={inp} />
+          <input type="text" inputMode="numeric" value={conMiles(baseReal)} onChange={e => setBaseReal(soloDigitos(e.target.value))} placeholder={`Actual: ${fmt(turno.base_real)}`} style={inp} />
           <label style={{ fontSize: 11, color: 'oklch(50% 0.01 60)', fontWeight: 600 }}>Caja fuerte (reserva aparte)</label>
-          <input type="number" inputMode="numeric" value={cajaFuerte} onChange={e => setCajaFuerte(e.target.value)} placeholder="$0" style={inp} />
+          <input type="text" inputMode="numeric" value={conMiles(cajaFuerte)} onChange={e => setCajaFuerte(soloDigitos(e.target.value))} placeholder="$0" style={inp} />
           <input value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Motivo (opcional)" style={inp} />
           {error && <p style={{ margin: 0, fontSize: 12, color: 'oklch(42% 0.18 30)' }}>{error}</p>}
           <button onClick={guardar} disabled={saving}

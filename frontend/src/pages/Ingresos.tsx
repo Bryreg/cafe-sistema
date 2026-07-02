@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useEmbedded } from '../contexts/PanelContext'
 import api from '../api/client'
+import { conMiles, soloDigitos } from '../utils/plata'
 import {
   ArrowLeft, ChevronDown, ChevronRight, Search, Plus, X,
   Check, Trash2, Croissant, Box, Upload,
@@ -324,10 +325,10 @@ export default function Ingresos() {
               <div className="flex items-baseline gap-1 mt-1">
                 <span className="text-lg font-bold text-warm-400">$</span>
                 <input
-                  type="number"
+                  type="text"
                   inputMode="numeric"
-                  value={valorTotal}
-                  onChange={e => setValorTotal(e.target.value)}
+                  value={conMiles(valorTotal)}
+                  onChange={e => setValorTotal(soloDigitos(e.target.value))}
                   placeholder="0"
                   className="text-2xl font-bold text-warm-800 bg-transparent outline-none w-full font-mono tracking-tight placeholder:text-warm-200"
                 />

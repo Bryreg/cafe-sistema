@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../api/client'
+import { conMiles, soloDigitos } from '../utils/plata'
 import {
   Truck, Wallet, Receipt, Download, Camera, X, Search,
   CheckCircle, AlertCircle, Clock, Building2, Trash2,
@@ -262,7 +263,7 @@ export default function PagosProveedores() {
                       <span className="text-xs text-gray-300">Sin soporte de pago</span>
                     )}
                     {f.estado_pago !== 'pagado' && (
-                      <button onClick={() => { setPagoFactura(f); setMonto(String(f.saldo)); setPagoError('') }}
+                      <button onClick={() => { setPagoFactura(f); setMonto(String(Math.round(f.saldo))); setPagoError('') }}
                         className="ml-auto flex items-center gap-1.5 text-xs font-bold text-white bg-forest hover:bg-forest-700 px-3 py-1.5 rounded-lg">
                         <Wallet size={13} /> Registrar pago
                       </button>
@@ -309,7 +310,7 @@ export default function PagosProveedores() {
             </div>
             <div>
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Monto a pagar</label>
-              <input type="number" value={monto} onChange={e => setMonto(e.target.value)}
+              <input type="text" inputMode="numeric" value={conMiles(monto)} onChange={e => setMonto(soloDigitos(e.target.value))}
                 className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-lg font-bold font-mono focus:outline-none focus:border-forest" />
             </div>
             <div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import api from '../api/client'
+import { conMiles, soloDigitos } from '../utils/plata'
 import { Plus, Pencil, Check, X, AlertTriangle, Package, Tag, Trash2, Copy, ChefHat } from 'lucide-react'
 
 interface Tienda { id: number; nombre: string }
@@ -613,11 +614,10 @@ export default function Catalogo() {
                               <div className="flex items-center gap-1 justify-center">
                                 <span className="text-xs text-gray-400">$</span>
                                 <input
-                                  type="number"
-                                  min="0"
-                                  step="100"
-                                  value={precioEditing.valor}
-                                  onChange={e => setPrecioEditing(pe => pe ? { ...pe, valor: e.target.value } : null)}
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={conMiles(precioEditing.valor)}
+                                  onChange={e => setPrecioEditing(pe => pe ? { ...pe, valor: soloDigitos(e.target.value) } : null)}
                                   className="w-20 border border-gray-300 rounded px-1.5 py-1 text-xs text-right font-semibold focus:outline-none focus:ring-2"
                                   style={{ '--tw-ring-color': 'oklch(48% 0.12 155)' } as React.CSSProperties}
                                   autoFocus
@@ -628,7 +628,7 @@ export default function Catalogo() {
                               </div>
                             ) : (
                               <button
-                                onClick={() => setPrecioEditing({ productoId: p.id, valor: String(p.precio_venta ?? 0) })}
+                                onClick={() => setPrecioEditing({ productoId: p.id, valor: String(Math.round(p.precio_venta ?? 0)) })}
                                 className="flex items-center gap-1 mx-auto text-xs font-semibold transition-colors px-2 py-1 rounded-lg hover:bg-green-50"
                                 style={{ color: p.precio_venta ? 'oklch(38% 0.12 155)' : 'oklch(65% 0.01 60)' }}
                                 title="Editar precio POS"

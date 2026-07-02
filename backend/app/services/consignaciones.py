@@ -223,3 +223,30 @@ def confirmar(db: Session, consignacion_id: int):
     db.commit()
     db.refresh(c)
     return c
+
+
+def eliminar(db: Session, consignacion_id: int, usuario_id: int):
+    """Revierte una consignación registrada por error (solo admin).
+
+    El saldo por consignar del turno es derivado (esperado - consignaciones),
+    así que basta con borrar la fila; los datos quedan en auditoría."""
+    from app.services import audit
+
+    c = db.query(Consignacion).filter(Consignacion.id == consignacion_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Consignación no encontrada")
+    audit.registrar(
+        db, accion="eliminar_consignacion", tabla="consignaciones",
+        registro_id=c.id, usuario_id=usuario_id, tienda_id=c.tienda_id,
+        datos_antes={
+            "valor": float(c.valor),
+            "estado": c.estado.value if c.estado else None,
+            "caja_turno_id": c.caja_turno_id,
+            "fecha": str(c.fecha),
+            "barista_nombre": c.barista_nombre,
+            "imagen_url": c.imagen_url,
+        },
+    )
+    db.delete(c)
+    db.commit()
+    return {"ok": True, "id": consignacion_id}

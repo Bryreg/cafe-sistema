@@ -4,7 +4,7 @@ import api from '../api/client'
 import {
   Banknote, User, ImageIcon, Check, X, ZoomIn,
   ChevronDown, ChevronUp, AlertTriangle, CheckCircle2,
-  Download, FileText, TrendingUp,
+  Download, FileText, TrendingUp, Trash2,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -482,6 +482,15 @@ export default function ConsignacionesAdmin() {
     } finally { setConfirmando(null) }
   }
 
+  const eliminar = async (c: ConsignacionItem) => {
+    if (!window.confirm(`¿Revertir la consignación de $${Math.round(c.valor).toLocaleString('es-CO')}? El saldo por consignar del turno se recalcula.`)) return
+    setConfirmando(c.id)
+    try {
+      await api.delete(`/consignaciones/${c.id}`)
+      if (tiendaId !== null) await load(tiendaId)
+    } finally { setConfirmando(null) }
+  }
+
   // Totales globales
   const totalEsperado   = dias.reduce((s, d) => s + d.esperado_consignar, 0)
   const totalConsignado = dias.reduce((s, d) => s + d.total_consignado, 0)
@@ -801,6 +810,11 @@ export default function ConsignacionesAdmin() {
                               Confirmada
                             </span>
                           )}
+                          <button onClick={() => eliminar(c)} disabled={confirmando === c.id}
+                            title="Revertir consignación (registrada por error)"
+                            className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 disabled:opacity-50 text-xs font-semibold px-2 py-1.5 rounded-lg transition-colors shrink-0">
+                            <Trash2 size={13} />
+                          </button>
                         </div>
                       ))}
                     </div>

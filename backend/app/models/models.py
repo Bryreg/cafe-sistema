@@ -679,6 +679,34 @@ class RecetaIngrediente(Base):
     producto   = relationship("Producto")
 
 
+class ConteoVerificacion(Base):
+    """Verificación de una diferencia de conteo: el admin la solicita desde el hub,
+    la barista recuenta ese producto en el kiosko y responde, y el admin resuelve.
+    Si aprueba con un valor distinto al stock, se ajusta el inventario (con auditoría).
+    El conteo original YA aplicó al stock — esto es el circuito de corrección."""
+    __tablename__ = "conteo_verificaciones"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False, index=True)
+    conteo_id = Column(Integer, ForeignKey("conteos_fisicos.id", ondelete="RESTRICT"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id", ondelete="RESTRICT"), nullable=False)
+    estado = Column(String(20), default="solicitada", nullable=False)  # solicitada | respondida | aprobada | rechazada
+    cantidad_sistema = Column(Float, nullable=False)     # lo que decía el sistema al contar
+    cantidad_conteo = Column(Float, nullable=False)      # lo que contó la barista originalmente
+    cantidad_verificada = Column(Float, nullable=True)   # el recuento de la verificación
+    nota_barista = Column(String(300), nullable=True)
+    nota_admin = Column(String(300), nullable=True)
+    solicitada_por_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
+    # Barista REAL que respondió (plano, sin FK — patrón del proyecto)
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
+    fecha_solicitud = Column(DateTime, default=datetime.utcnow)
+    fecha_respuesta = Column(DateTime, nullable=True)
+    fecha_resolucion = Column(DateTime, nullable=True)
+    __table_args__ = (
+        UniqueConstraint("conteo_id", "producto_id", name="uq_verificacion_conteo_producto"),
+    )
+
+
 class ProductoInsumo(Base):
     """Receta de consumo del POS: por cada unidad vendida de producto_id se
     descuentan `cantidad` unidades del insumo_id en inventario (y se reponen al

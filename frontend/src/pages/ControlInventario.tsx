@@ -84,9 +84,13 @@ function diasLabel(d: number | null) {
   return `${d.toFixed(1)}d`
 }
 
-function isoHoy() { return new Date().toISOString().slice(0, 10) }
+// Hora LOCAL: toISOString es UTC y despues de las 19:00 Colombia devuelve manana.
+function isoLocal(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function isoHoy() { return isoLocal(new Date()) }
 function isoHace(dias: number) {
-  const d = new Date(); d.setDate(d.getDate() - dias); return d.toISOString().slice(0, 10)
+  const d = new Date(); d.setDate(d.getDate() - dias); return isoLocal(d)
 }
 
 async function exportarExcel(nombre: string, cabeceras: string[], filas: (string | number | null)[][]) {

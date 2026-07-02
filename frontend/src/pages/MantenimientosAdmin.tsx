@@ -133,7 +133,11 @@ function FormNuevo({ tiendaId, onCreado, onClose }: {
   const [tipo, setTipo] = useState('equipo')
   const [titulo, setTitulo] = useState('')
   const [descripcion, setDescripcion] = useState('')
-  const [fechaRealizado, setFechaRealizado] = useState(new Date().toISOString().split('T')[0])
+  // Fecha LOCAL: toISOString es UTC y despues de las 19:00 Colombia devuelve manana.
+  const [fechaRealizado, setFechaRealizado] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
   const [costo, setCosto] = useState('')
   const [tecnico, setTecnico] = useState('')
   const [imagen, setImagen] = useState<File | null>(null)

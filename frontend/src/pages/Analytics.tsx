@@ -60,7 +60,9 @@ type Rango = 'hoy' | 'semana' | 'mes' | 'custom'
 
 function getRangoDates(rango: Rango, custom: { desde: string; hasta: string }) {
   const hoy = new Date()
-  const iso = (d: Date) => d.toISOString().split('T')[0]
+  // Componentes LOCALES: toISOString es UTC y despues de las 19:00 Colombia da manana.
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
   if (rango === 'hoy') {
     const s = iso(hoy)
@@ -241,9 +243,10 @@ function metodoPagoLabel(m: string) {
 
 export function AnaliticaContenido() {
   const [rango, setRango] = useState<Rango>('hoy')
-  const [custom, setCustom] = useState({
-    desde: new Date().toISOString().split('T')[0],
-    hasta: new Date().toISOString().split('T')[0],
+  const [custom, setCustom] = useState(() => {
+    const d = new Date()
+    const s = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    return { desde: s, hasta: s }
   })
   const [data, setData] = useState<Analytics>({
     resumen: null,

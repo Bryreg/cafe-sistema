@@ -22,9 +22,21 @@ export default function CuadreInicial() {
   const [justificacion, setJustificacion] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [desglose, setDesglose] = useState<{ ventas: number; dif: number; mismoDia: boolean } | null>(null)
   // Candado síncrono contra doble click: el estado saving es async y deja una
   // ventana en la que un segundo click dispararía otro POST.
   const enviando = useRef(false)
+
+  useEffect(() => {
+    if (!turno) return
+    api.get(`/caja/efectivo-inicio/${turno.tienda_id}`)
+      .then(r => setDesglose({
+        ventas: r.data?.ventas_efectivo_anterior ?? 0,
+        dif: r.data?.diferencia_cierre_anterior ?? 0,
+        mismoDia: !!r.data?.mismo_dia,
+      }))
+      .catch(() => setDesglose(null))
+  }, [turno?.tienda_id])
 
   // Ya cuadrado (o sin turno): salir de acá
   useEffect(() => {
@@ -76,9 +88,21 @@ export default function CuadreInicial() {
           <p className="text-[28px] font-bold font-mono tabular-nums leading-none" style={{ color: dark.ink }}>
             {fmt(esperado)}
           </p>
-          <p className="text-[11px] mt-2" style={{ color: dark.inkSubtle }}>
-            Ventas en efectivo del día anterior, pendientes de consignar — lo que dejó el último cierre.
-          </p>
+          {desglose && !desglose.mismoDia ? (
+            <p className="text-[11px] mt-2" style={{ color: dark.inkSubtle }}>
+              Ventas en efectivo de ayer ({fmt(desglose.ventas)})
+              {Math.round(desglose.dif) !== 0 && <> {desglose.dif > 0 ? '+' : '−'} diferencia del cierre ({fmt(Math.abs(desglose.dif))})</>}.
+              La plata de días anteriores no se cuenta acá: va a consignación o pagos a proveedores.
+            </p>
+          ) : desglose?.mismoDia ? (
+            <p className="text-[11px] mt-2" style={{ color: dark.inkSubtle }}>
+              Relevo del mismo día: queda todo el efectivo que dejó el cierre anterior (menos lo consignado).
+            </p>
+          ) : (
+            <p className="text-[11px] mt-2" style={{ color: dark.inkSubtle }}>
+              Lo que dejó el último cierre para arrancar el día.
+            </p>
+          )}
         </div>
 
         <ContadorEfectivo onTotal={setContado} />

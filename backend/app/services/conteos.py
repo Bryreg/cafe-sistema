@@ -5,6 +5,7 @@ from app.models.models import (ConteoFisico, ConteoFisicoItem, Inventario,
                                 ChecklistDiario, CajaTurno, EstadoTurnoEnum,
                                 MovimientoInventario, TipoMovInvEnum, TipoConteoEnum)
 from app.services.caja import get_turno_activo, _tick_checklist
+from app.services.inventario import consumir_fifo
 import logging
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,10 @@ def _registrar_consumo_turno(
                 usuario_id=usuario_id,
                 fecha=ahora,
             ))
+            # Consumir tambien los LOTES (FIFO): sin esto la trazabilidad queda
+            # desfasada del stock y la banda de frescura anuncia lotes que el
+            # conteo ya dijo que no existen (caso Pastel de Pollo 1-jul).
+            consumir_fifo(db, pid, tienda_id, consumo_derivado)
 
         # Reconciliar stock_actual con la realidad física
         inv = db.query(Inventario).filter_by(

@@ -739,12 +739,15 @@ export default function CuadreTurnos() {
   const [desde, setDesde] = useState(firstOfMonth)
   const [hasta, setHasta]  = useState(today)
 
+  // La sede activa (histTiendaId) gobierna AMBAS vistas: antes Operacional cargaba
+  // fijo la sede del admin y Palmetto solo se veía en Historial.
   useEffect(() => {
-    api.get(`/caja/historial/${tiendaId}`)
+    setLoading(true)
+    api.get(`/caja/historial/${histTiendaId}`)
       .then(r => setTurnos(r.data))
       .catch(() => null)
       .finally(() => setLoading(false))
-  }, [tiendaId])
+  }, [histTiendaId])
 
   useEffect(() => {
     if (isAdmin) {
@@ -769,7 +772,7 @@ export default function CuadreTurnos() {
           isAdmin={isAdmin}
           onAdjusted={() => {
             setSelected(null)
-            api.get(`/caja/historial/${tiendaId}`).then(r => setTurnos(r.data)).catch(() => null)
+            api.get(`/caja/historial/${histTiendaId}`).then(r => setTurnos(r.data)).catch(() => null)
           }} />
         {fotoUrl && <Lightbox url={fotoUrl} onClose={() => setFotoUrl(null)} />}
       </>
@@ -805,6 +808,20 @@ export default function CuadreTurnos() {
           </button>
         </div>
 
+        {/* Sede selector (admin) — gobierna las DOS vistas */}
+        {isAdmin && sedes.length > 1 && (
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, maxWidth: 720, margin: '8px auto 0', flexWrap: 'wrap' }}>
+            {sedes.map(s => (
+              <button key={s.id} onClick={() => setHistTiendaId(s.id)}
+                style={histTiendaId === s.id
+                  ? { ...btnBase, background: 'oklch(52% 0.14 50)', color: '#fff', padding: '4px 12px', fontSize: 11 }
+                  : { ...btnBase, background: 'oklch(96% 0.005 75)', color: 'oklch(50% 0.01 60)', padding: '4px 12px', fontSize: 11 }}>
+                {s.nombre}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Operacional sub-filter */}
         {modo === 'operacional' && (
           <div style={{ display: 'flex', gap: 6, marginTop: 8, maxWidth: 720, margin: '8px auto 0' }}>
@@ -822,20 +839,6 @@ export default function CuadreTurnos() {
         {/* Historial controls */}
         {modo === 'historial' && (
           <div style={{ maxWidth: 720, margin: '8px auto 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {/* Sede selector (admin) */}
-            {isAdmin && sedes.length > 1 && (
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {sedes.map(s => (
-                  <button key={s.id} onClick={() => setHistTiendaId(s.id)}
-                    style={histTiendaId === s.id
-                      ? { ...btnBase, background: 'oklch(52% 0.14 50)', color: '#fff', padding: '4px 12px', fontSize: 11 }
-                      : { ...btnBase, background: 'oklch(96% 0.005 75)', color: 'oklch(50% 0.01 60)', padding: '4px 12px', fontSize: 11 }}>
-                    {s.nombre}
-                  </button>
-                ))}
-              </div>
-            )}
-
             {/* Date range */}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <label style={{ fontSize: 11, color: 'oklch(55% 0.01 60)', fontWeight: 600 }}>Desde</label>

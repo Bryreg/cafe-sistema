@@ -152,6 +152,104 @@ function MapaCalorHoras({ datos }: { datos: VentaHora[] }) {
 
 // ─── Top productos ────────────────────────────────────────────────────────────
 
+// ─── Unidades vendidas por producto (lista completa) ─────────────────────────
+
+const CATS_VENTA = [
+  { key: 'todas', label: 'Todas' },
+  { key: 'bebida', label: 'Bebidas' },
+  { key: 'pasteleria', label: 'Pastelería' },
+  { key: 'porciones', label: 'Porciones' },
+] as const
+
+/** Tabla completa de lo vendido en el período: cada producto con sus unidades y
+ *  total, filtrable por categoría y buscable. TopProductos muestra el podio;
+ *  esta sección es para REVISAR todo. */
+function UnidadesPorProducto({ datos }: { datos: ProductoTop[] }) {
+  const [cats, setCats] = useState<Record<number, string>>({})
+  const [cat, setCat] = useState<string>('todas')
+  const [busca, setBusca] = useState('')
+
+  useEffect(() => {
+    api.get('/inventario/productos')
+      .then(r => {
+        const m: Record<number, string> = {}
+        for (const p of r.data ?? []) m[p.id] = p.categoria
+        setCats(m)
+      })
+      .catch(() => setCats({}))
+  }, [])
+
+  const filtrados = datos
+    .filter(d => cat === 'todas' || cats[d.producto_id] === cat)
+    .filter(d => d.nombre_producto.toLowerCase().includes(busca.toLowerCase()))
+    .sort((a, b) => b.unidades - a.unidades)
+  const totUnidades = filtrados.reduce((s, d) => s + d.unidades, 0)
+  const totPlata = filtrados.reduce((s, d) => s + d.total, 0)
+
+  const exportar = async () => {
+    const XLSX = await import('xlsx')
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Producto', 'Categoría', 'Unidades', 'Total'],
+      ...filtrados.map(d => [d.nombre_producto, cats[d.producto_id] ?? '', d.unidades, d.total]),
+    ])
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Unidades')
+    XLSX.writeFile(wb, 'unidades_por_producto.xlsx')
+  }
+
+  if (datos.length === 0) return null
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+        <SectionLabel>Unidades por producto — {filtrados.length} productos · {totUnidades} u · {fmt(totPlata)}</SectionLabel>
+        <button onClick={exportar}
+          className="text-[11px] font-bold px-2.5 py-1 rounded-lg text-white shrink-0"
+          style={{ background: 'oklch(48% 0.15 155)' }}>
+          Excel
+        </button>
+      </div>
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        {CATS_VENTA.map(c => (
+          <button key={c.key} onClick={() => setCat(c.key)}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${cat === c.key ? 'bg-forest-500 text-white' : 'bg-warm-100 text-warm-500'}`}>
+            {c.label}
+          </button>
+        ))}
+        <input
+          value={busca}
+          onChange={e => setBusca(e.target.value)}
+          placeholder="Buscar producto..."
+          className="ml-auto text-xs px-2.5 py-1.5 rounded-lg border border-warm-200 outline-none focus:border-forest-400 min-w-[140px]"
+        />
+      </div>
+      <div className="max-h-96 overflow-y-auto -mx-1 px-1">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-white">
+            <tr className="text-warm-400 border-b border-warm-100">
+              <th className="text-left py-1.5 font-semibold">Producto</th>
+              <th className="text-right py-1.5 font-semibold">Unid.</th>
+              <th className="text-right py-1.5 font-semibold pl-3">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtrados.map(d => (
+              <tr key={d.producto_id} className="border-b border-warm-50">
+                <td className="py-1.5 text-warm-700">{d.nombre_producto}</td>
+                <td className="py-1.5 text-right font-mono font-bold text-bark-800 tabular-nums">{d.unidades}</td>
+                <td className="py-1.5 text-right font-mono text-warm-500 tabular-nums pl-3">{fmt(d.total)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {filtrados.length === 0 && (
+          <p className="text-xs text-warm-400 text-center py-6">Nada vendido con ese filtro en el período.</p>
+        )}
+      </div>
+    </Card>
+  )
+}
+
 function TopProductos({ datos }: { datos: ProductoTop[] }) {
   if (datos.length === 0) return (
     <div className="flex flex-col items-center gap-2 py-8">
@@ -466,6 +564,9 @@ export function AnaliticaContenido() {
               <div className="h-2" />
             </Card>
           </div>
+
+          {/* ── Lista completa: unidades vendidas por producto ── */}
+          <UnidadesPorProducto datos={data.productosTop} />
         </>
       )}
     </div>

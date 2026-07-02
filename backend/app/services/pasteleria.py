@@ -3,7 +3,8 @@ from sqlalchemy import func
 from datetime import datetime, date, timedelta
 from fastapi import HTTPException
 from app.models.models import (PasteleriaDiaria, ChecklistDiario,
-                                Inventario, MovimientoInventario, TipoMovInvEnum)
+                                Inventario, MovimientoInventario, TipoMovInvEnum,
+                                LoteInventario, Producto, CategoriaProductoEnum)
 from app.services.caja import _tick_checklist
 from app.services.inventario import consumir_fifo
 import logging
@@ -11,6 +12,34 @@ import logging
 logger = logging.getLogger(__name__)
 
 DIAS_ROTACION = 5
+
+
+def get_frescura(db: Session, tienda_id: int, dias: int = 2) -> list[dict]:
+    """Alertas de frescura para la banda del POS: lotes de PASTELERÍA/PANADERÍA
+    (trazabilidad, LoteInventario) con vencimiento dentro de `dias` días y unidades
+    restantes. Las recepciones de proveedores (Wilenses, Delitas, Paola...) crean
+    estos lotes — la fuente PasteleriaDiaria es aparte y se mantiene en /activos."""
+    limite = datetime.utcnow() + timedelta(days=dias + 1)
+    rows = (
+        db.query(LoteInventario, Producto)
+        .join(Producto, Producto.id == LoteInventario.producto_id)
+        .filter(
+            LoteInventario.tienda_id == tienda_id,
+            LoteInventario.cantidad_restante > 0,
+            LoteInventario.fecha_agotado.is_(None),
+            LoteInventario.fecha_vencimiento.isnot(None),
+            LoteInventario.fecha_vencimiento <= limite,
+            Producto.categoria == CategoriaProductoEnum.pasteleria,
+        )
+        .order_by(LoteInventario.fecha_vencimiento.asc())
+        .all()
+    )
+    return [{
+        "producto_nombre": p.nombre,
+        "proveedor": l.proveedor,
+        "fecha_vencimiento": l.fecha_vencimiento.isoformat() if l.fecha_vencimiento else None,
+        "cantidad_restante": float(l.cantidad_restante or 0),
+    } for l, p in rows]
 
 
 def _fmt(r: PasteleriaDiaria) -> dict:

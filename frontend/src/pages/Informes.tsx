@@ -457,8 +457,10 @@ function InformesContent({
         ))}
       </div>
 
-      {/* Shared filter bar */}
-      <FilterBar />
+      {/* Filtros compartidos de Ventas/Movimientos. Analítica NO los consume (trae su
+          propio selector de rango Hoy/Semana/Mes) — mostrarla ahí era una barra muerta
+          que confundía con dos búsquedas. */}
+      {tab !== 'analitica' && <FilterBar />}
 
       {/* Tab content */}
       {tab === 'analitica'   && <AnaliticaContenido />}

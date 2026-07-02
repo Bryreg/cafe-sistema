@@ -283,6 +283,10 @@ def get_alertas(db: Session, tienda_id: int):
         Inventario.tienda_id == tienda_id,
         Inventario.stock_actual <= Inventario.stock_minimo,
     ).order_by(Inventario.stock_actual.asc()).all()
+    # Solo inventario GESTIONADO (controla stock + en el conteo): sin este filtro los
+    # archivados y lo no-contado inflaban la alarma con "agotados" falsos.
+    items = [i for i in items if i.producto and i.producto.controla_stock
+             and i.producto.incluir_en_conteo is not False]
     out = []
     for i in items:
         estado = clasificar_estado(
@@ -329,6 +333,9 @@ def get_alertas_consolidadas(db: Session, tienda_id: int | None = None):
         .order_by(Inventario.stock_actual.asc())
         .all()
     )
+    # Solo inventario GESTIONADO — misma regla que get_alertas.
+    items = [i for i in items if i.producto and i.producto.controla_stock
+             and i.producto.incluir_en_conteo is not False]
     # Orden estable: primero por estado (agotado < critico < bajo), luego stock asc.
     orden_estado = {"agotado": 0, "critico": 1, "bajo": 2, "normal": 3}
     out = []

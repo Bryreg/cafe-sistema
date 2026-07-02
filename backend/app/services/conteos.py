@@ -1,11 +1,13 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from fastapi import HTTPException
-from datetime import datetime
+from datetime import datetime, date
 from app.models.models import (ConteoFisico, ConteoFisicoItem, Inventario,
                                 ChecklistDiario, CajaTurno, EstadoTurnoEnum,
-                                MovimientoInventario, TipoMovInvEnum, TipoConteoEnum)
+                                MovimientoInventario, TipoMovInvEnum, TipoConteoEnum,
+                                Producto)
 from app.services.caja import get_turno_activo, _tick_checklist
 from app.services.inventario import consumir_fifo
+from app.core.tz import rango_col_utc
 import logging
 
 logger = logging.getLogger(__name__)
@@ -171,3 +173,53 @@ def registrar_conteo(db: Session, tienda_id: int, tipo: str,
 
 def get_conteos_turno(db: Session, turno_id: int):
     return db.query(ConteoFisico).filter(ConteoFisico.turno_id == turno_id).all()
+
+
+def get_conteos_tienda(db: Session, tienda_id: int,
+                       fecha_desde: date | None = None,
+                       fecha_hasta: date | None = None) -> list[dict]:
+    """Monitor de conteos para el hub admin: todos los conteos físicos de la tienda
+    en el rango de días Colombia, con items enriquecidos (nombre de producto) y
+    resumen de diferencias. Orden: más reciente primero."""
+    desde, hasta = rango_col_utc(fecha_desde, fecha_hasta)
+    conteos = (
+        db.query(ConteoFisico)
+        .options(joinedload(ConteoFisico.items))
+        .filter(
+            ConteoFisico.tienda_id == tienda_id,
+            ConteoFisico.fecha_registro >= desde,
+            ConteoFisico.fecha_registro <= hasta,
+        )
+        .order_by(ConteoFisico.fecha_registro.desc())
+        .all()
+    )
+    prod_ids = {i.producto_id for c in conteos for i in c.items}
+    nombres = {}
+    if prod_ids:
+        for p in db.query(Producto.id, Producto.nombre, Producto.unidad_medida).filter(Producto.id.in_(prod_ids)).all():
+            nombres[p.id] = (p.nombre, p.unidad_medida)
+
+    result = []
+    for c in conteos:
+        items = []
+        n_dif = 0
+        for i in sorted(c.items, key=lambda x: abs(x.diferencia or 0), reverse=True):
+            nombre, unidad = nombres.get(i.producto_id, (f"#{i.producto_id}", ""))
+            dif = float(i.diferencia or 0)
+            if round(dif, 3) != 0:
+                n_dif += 1
+            items.append({
+                "producto_id": i.producto_id, "nombre": nombre, "unidad": unidad,
+                "sistema": float(i.cantidad_sistema or 0),
+                "real": float(i.cantidad_real or 0),
+                "diferencia": dif,
+            })
+        tipo = c.tipo.value if hasattr(c.tipo, "value") else str(c.tipo)
+        result.append({
+            "id": c.id, "turno_id": c.turno_id, "tipo": tipo,
+            "fecha_registro": c.fecha_registro.isoformat() if c.fecha_registro else None,
+            "barista_nombre": c.barista_nombre,
+            "n_items": len(items), "n_diferencias": n_dif,
+            "items": items,
+        })
+    return result

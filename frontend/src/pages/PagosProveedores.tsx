@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import api from '../api/client'
 import {
   Truck, Wallet, Receipt, Download, Camera, X, Search,
-  CheckCircle, AlertCircle, Clock, Building2,
+  CheckCircle, AlertCircle, Clock, Building2, Trash2,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -267,6 +267,20 @@ export default function PagosProveedores() {
                         <Wallet size={13} /> Registrar pago
                       </button>
                     )}
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(`¿Eliminar la factura de ${f.proveedor} por ${fmt(f.valor_total)}?\n\nSe revierte TODO: la entrada de inventario, los lotes y el egreso de caja si se pagó en efectivo.`)) return
+                        try {
+                          await api.delete(`/facturas/${f.id}`)
+                          cargar()
+                        } catch (e: any) {
+                          alert(e.response?.data?.detail || 'No se pudo eliminar')
+                        }
+                      }}
+                      title="Eliminar factura (revierte inventario y caja)"
+                      className={`flex items-center gap-1 text-xs font-semibold text-red-500 hover:text-red-700 px-2 py-1 rounded-lg border border-red-100 hover:border-red-300 ${f.estado_pago === 'pagado' ? 'ml-auto' : ''}`}>
+                      <Trash2 size={12} /> Eliminar
+                    </button>
                   </div>
                 </div>
               )

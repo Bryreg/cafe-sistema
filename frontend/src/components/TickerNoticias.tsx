@@ -6,7 +6,7 @@ import { dark } from '../constants/darkTheme'
 
 interface TickerItem {
   id: string
-  tipo: 'pasteleria' | 'comunicado' | 'consignacion'
+  tipo: 'pasteleria' | 'comunicado' | 'consignacion' | 'verificacion'
   label: string
   urgente: boolean
   navigateTo?: string
@@ -16,6 +16,7 @@ const TIPO_CFG = {
   pasteleria:   { icon: '🥐', color: dark.amber  },
   comunicado:   { icon: '📢', color: dark.inkMuted },
   consignacion: { icon: '💰', color: dark.danger  },
+  verificacion: { icon: '🔍', color: dark.amber  },
 }
 
 export default function TickerNoticias() {
@@ -76,6 +77,18 @@ export default function TickerNoticias() {
           tipo: 'comunicado',
           label: c.titulo ? `${c.titulo}: ${c.mensaje}` : c.mensaje,
           urgente: c.urgente ?? false,
+        })
+      }
+    } catch {}
+
+    try {
+      const { data } = await api.get(`/conteos/verificaciones/${tiendaId}`, { params: { estado: 'solicitada' } })
+      for (const v of data ?? []) {
+        next.push({
+          id: `verif-${v.id}`,
+          tipo: 'verificacion',
+          label: `Verificá el conteo de ${v.producto_nombre} — pedido del admin (Panel de turno)`,
+          urgente: false,
         })
       }
     } catch {}

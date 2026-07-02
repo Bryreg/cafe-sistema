@@ -14,6 +14,16 @@ class RegistrarConteoRequest(BaseModel):
     items: List[ConteoItemRequest]
 
 
+class SolicitarVerificacionRequest(BaseModel):
+    conteo_id: int
+    producto_id: int
+
+
+class ResolverVerificacionRequest(BaseModel):
+    aprobar: bool
+    nota: Optional[str] = None
+
+
 class ConteoItemOut(BaseModel):
     id: int
     producto_id: int

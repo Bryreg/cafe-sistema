@@ -28,6 +28,16 @@ interface Conteo {
 
 interface Sede { id: number; nombre: string }
 
+interface Verif {
+  id: number
+  conteo_id: number
+  producto_id: number
+  estado: string // solicitada | respondida | aprobada | rechazada
+  cantidad_verificada: number | null
+  nota_barista: string | null
+  barista_nombre: string | null
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const fmtN = (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2)
@@ -69,6 +79,34 @@ export default function ConteosAdmin() {
   const [loading, setLoading] = useState(false)
   const [abierto, setAbierto] = useState<number | null>(null)
   const [soloDif, setSoloDif] = useState(true)
+  const [verifs, setVerifs] = useState<Record<string, Verif>>({})
+  const [accionando, setAccionando] = useState<string | null>(null)
+
+  const cargarVerifs = async (tid: number) => {
+    try {
+      const { data } = await api.get(`/conteos/verificaciones/${tid}`)
+      const map: Record<string, Verif> = {}
+      for (const v of data ?? []) map[`${v.conteo_id}-${v.producto_id}`] = v
+      setVerifs(map)
+    } catch { setVerifs({}) }
+  }
+
+  const solicitar = async (conteoId: number, productoId: number) => {
+    const key = `${conteoId}-${productoId}`
+    setAccionando(key)
+    try {
+      await api.post('/conteos/verificaciones', { conteo_id: conteoId, producto_id: productoId })
+      await cargarVerifs(tiendaId)
+    } finally { setAccionando(null) }
+  }
+
+  const resolver = async (verifId: number, aprobar: boolean, key: string) => {
+    setAccionando(key)
+    try {
+      await api.post(`/conteos/verificaciones/${verifId}/resolver`, { aprobar })
+      await cargarVerifs(tiendaId)
+    } finally { setAccionando(null) }
+  }
 
   useEffect(() => {
     api.get('/auth/tiendas').then(({ data }) => {
@@ -85,6 +123,7 @@ export default function ConteosAdmin() {
       })
       setConteos(data ?? [])
       setAbierto(null)
+      await cargarVerifs(tiendaId)
     } finally { setLoading(false) }
   }
 
@@ -193,19 +232,51 @@ export default function ConteosAdmin() {
                               <th className="text-left px-4 py-2 font-semibold">Producto</th>
                               <th className="text-right px-2 py-2 font-semibold">Sistema</th>
                               <th className="text-right px-2 py-2 font-semibold">Contado</th>
-                              <th className="text-right px-4 py-2 font-semibold">Dif.</th>
+                              <th className="text-right px-2 py-2 font-semibold">Dif.</th>
+                              <th className="text-right px-4 py-2 font-semibold">Verificación</th>
                             </tr>
                           </thead>
                           <tbody>
                             {visibles.map(i => {
                               const hayDif = Math.round(i.diferencia * 1000) !== 0
+                              const key = `${c.id}-${i.producto_id}`
+                              const v = verifs[key]
+                              const ocupado = accionando === key
                               return (
                                 <tr key={i.producto_id} style={{ borderTop: '1px solid oklch(97% 0.004 75)' }}>
                                   <td className="px-4 py-1.5 text-gray-700">{i.nombre} <span className="text-gray-300">{i.unidad}</span></td>
                                   <td className="px-2 py-1.5 text-right font-mono text-gray-500">{fmtN(i.sistema)}</td>
                                   <td className="px-2 py-1.5 text-right font-mono font-semibold text-gray-800">{fmtN(i.real)}</td>
-                                  <td className={`px-4 py-1.5 text-right font-mono font-bold ${!hayDif ? 'text-gray-300' : i.diferencia > 0 ? 'text-green-700' : 'text-red-600'}`}>
+                                  <td className={`px-2 py-1.5 text-right font-mono font-bold ${!hayDif ? 'text-gray-300' : i.diferencia > 0 ? 'text-green-700' : 'text-red-600'}`}>
                                     {hayDif ? (i.diferencia > 0 ? '+' : '') + fmtN(i.diferencia) : '='}
+                                  </td>
+                                  <td className="px-4 py-1.5 text-right">
+                                    {!hayDif ? null : !v ? (
+                                      <button onClick={() => solicitar(c.id, i.producto_id)} disabled={ocupado}
+                                        className="text-[11px] font-bold px-2 py-0.5 rounded-full disabled:opacity-40"
+                                        style={{ background: 'oklch(95% 0.04 240)', color: 'oklch(35% 0.12 240)' }}>
+                                        {ocupado ? '...' : 'Pedir verificación'}
+                                      </button>
+                                    ) : v.estado === 'solicitada' ? (
+                                      <span className="text-[11px] font-semibold text-amber-600">esperando barista…</span>
+                                    ) : v.estado === 'respondida' ? (
+                                      <span className="inline-flex items-center gap-1.5">
+                                        <span className="text-[11px] text-gray-600" title={v.nota_barista ?? ''}>
+                                          recontó <strong className="font-mono">{fmtN(v.cantidad_verificada ?? 0)}</strong>
+                                          {v.barista_nombre && <span className="text-gray-400"> ({v.barista_nombre})</span>}
+                                        </span>
+                                        <button onClick={() => resolver(v.id, true, key)} disabled={ocupado}
+                                          className="text-[11px] font-bold px-2 py-0.5 rounded-full text-white disabled:opacity-40"
+                                          style={{ background: 'oklch(48% 0.15 155)' }}>Aprobar</button>
+                                        <button onClick={() => resolver(v.id, false, key)} disabled={ocupado}
+                                          className="text-[11px] font-bold px-2 py-0.5 rounded-full disabled:opacity-40"
+                                          style={{ background: 'oklch(96% 0.04 30)', color: 'oklch(42% 0.18 30)' }}>Rechazar</button>
+                                      </span>
+                                    ) : v.estado === 'aprobada' ? (
+                                      <span className="text-[11px] font-bold text-green-700">✓ verificado {fmtN(v.cantidad_verificada ?? 0)}</span>
+                                    ) : (
+                                      <span className="text-[11px] font-semibold text-gray-400">rechazada</span>
+                                    )}
                                   </td>
                                 </tr>
                               )

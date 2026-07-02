@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Form
 from sqlalchemy.orm import Session
 from datetime import date
 from app.database import get_db
-from app.core.deps import ensure_turno_access, ensure_tienda_access, get_current_user, get_barista_actor
+from app.core.deps import (ensure_turno_access, ensure_tienda_access, get_current_user,
+                           get_barista_actor, require_admin)
 from app.models.models import Usuario
-from app.schemas.conteos import RegistrarConteoRequest, ConteoFisicoOut
+from app.schemas.conteos import (RegistrarConteoRequest, ConteoFisicoOut,
+                                 SolicitarVerificacionRequest, ResolverVerificacionRequest)
 from app.services import conteos as svc
 from typing import List, Optional
 
@@ -27,6 +29,42 @@ def conteos_turno(turno_id: int, db: Session = Depends(get_db),
                   user: Usuario = Depends(get_current_user)):
     ensure_turno_access(db, user, turno_id)
     return svc.get_conteos_turno(db, turno_id)
+
+
+@router.post("/verificaciones")
+def solicitar_verificacion(data: SolicitarVerificacionRequest, db: Session = Depends(get_db),
+                           user: Usuario = Depends(require_admin)):
+    """Admin: pide recontar un producto con diferencia en un conteo."""
+    return svc.solicitar_verificacion(db, data.conteo_id, data.producto_id, user.id)
+
+
+@router.get("/verificaciones/{tienda_id}")
+def listar_verificaciones(tienda_id: int, estado: Optional[str] = Query(None),
+                          db: Session = Depends(get_db),
+                          user: Usuario = Depends(get_current_user)):
+    """Verificaciones de conteo de la tienda (kiosko lee pendientes, admin todas)."""
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_verificaciones(db, tienda_id, estado)
+
+
+@router.post("/verificaciones/{verificacion_id}/responder")
+async def responder_verificacion(verificacion_id: int,
+                                 cantidad: float = Form(...),
+                                 nota: Optional[str] = Form(None),
+                                 db: Session = Depends(get_db),
+                                 user: Usuario = Depends(get_current_user),
+                                 barista: tuple = Depends(get_barista_actor)):
+    """Barista (kiosko): responde el recuento físico solicitado."""
+    return svc.responder_verificacion(db, verificacion_id, cantidad, nota, user.id,
+                                      barista_id=barista[0], barista_nombre=barista[1])
+
+
+@router.post("/verificaciones/{verificacion_id}/resolver")
+def resolver_verificacion(verificacion_id: int, data: ResolverVerificacionRequest,
+                          db: Session = Depends(get_db),
+                          user: Usuario = Depends(require_admin)):
+    """Admin: aprueba (ajusta stock al recuento verificado si difiere) o rechaza."""
+    return svc.resolver_verificacion(db, verificacion_id, data.aprobar, user.id, data.nota)
 
 
 @router.get("/tienda/{tienda_id}")

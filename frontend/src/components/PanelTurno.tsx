@@ -27,6 +27,92 @@ interface AlertaStockItem {
   estado: 'agotado' | 'critico' | 'bajo'
 }
 
+interface VerifPendiente {
+  id: number
+  producto_nombre: string
+  unidad: string
+  cantidad_conteo: number
+  cantidad_sistema: number
+}
+
+/** Verificaciones de conteo pedidas por el admin: la barista recuenta el producto
+ *  puntual y responde con el valor real (+ nota opcional). */
+function VerificacionesConteo({ tiendaId }: { tiendaId: number }) {
+  const [pendientes, setPendientes] = useState<VerifPendiente[]>([])
+  const [valores, setValores] = useState<Record<number, string>>({})
+  const [notas, setNotas] = useState<Record<number, string>>({})
+  const [enviando, setEnviando] = useState<number | null>(null)
+
+  const cargar = () => {
+    api.get(`/conteos/verificaciones/${tiendaId}`, { params: { estado: 'solicitada' } })
+      .then(r => setPendientes(r.data ?? []))
+      .catch(() => setPendientes([]))
+  }
+  useEffect(() => { cargar() }, [tiendaId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const responder = async (id: number) => {
+    const cantidad = Number(valores[id])
+    if (Number.isNaN(cantidad) || valores[id] === undefined || valores[id] === '') return
+    setEnviando(id)
+    try {
+      const fd = new FormData()
+      fd.append('cantidad', String(cantidad))
+      if ((notas[id] ?? '').trim()) fd.append('nota', notas[id].trim())
+      await api.post(`/conteos/verificaciones/${id}/responder`, fd)
+      cargar()
+    } finally { setEnviando(null) }
+  }
+
+  if (pendientes.length === 0) return null
+
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-2">
+        <p style={{ ...LBL, color: dark.amber }}>Verificar conteo — pedido del admin</p>
+        <span style={{ fontSize: 10, fontWeight: 700, color: 'white', background: dark.amber, borderRadius: 999, padding: '1px 7px' }}>
+          {pendientes.length}
+        </span>
+      </div>
+      <div className="flex flex-col gap-2">
+        {pendientes.map(v => (
+          <div key={v.id} className="rounded-2xl border p-3"
+            style={{ background: dark.amberTint, borderColor: dark.amberDim }}>
+            <p className="m-0 font-bold" style={{ fontSize: 13, color: dark.ink }}>{v.producto_nombre}</p>
+            <p className="m-0 mt-0.5" style={{ fontSize: 11, color: dark.inkMuted }}>
+              Contá de nuevo este producto. El conteo dijo <strong className="font-mono">{v.cantidad_conteo}</strong>
+              {' '}(el sistema decía {v.cantidad_sistema}).
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                type="number" min="0" step="0.5" inputMode="decimal"
+                value={valores[v.id] ?? ''}
+                onChange={e => setValores(s => ({ ...s, [v.id]: e.target.value }))}
+                placeholder="Recuento"
+                className="w-24 rounded-xl px-2.5 py-2 text-[14px] font-mono font-bold outline-none"
+                style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}
+              />
+              <input
+                value={notas[v.id] ?? ''}
+                onChange={e => setNotas(s => ({ ...s, [v.id]: e.target.value }))}
+                placeholder="Nota (opcional)"
+                className="flex-1 min-w-0 rounded-xl px-2.5 py-2 text-[12px] outline-none"
+                style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}
+              />
+              <button
+                onClick={() => responder(v.id)}
+                disabled={enviando === v.id || valores[v.id] === undefined || valores[v.id] === ''}
+                className="px-3 py-2 rounded-xl text-[12px] font-bold text-white disabled:opacity-40 shrink-0"
+                style={{ background: dark.green }}>
+                {enviando === v.id ? '...' : 'Responder'}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function AlertasStockTurno({ tiendaId }: { tiendaId: number }) {
   const [items, setItems] = useState<AlertaStockItem[]>([])
 
@@ -189,6 +275,7 @@ export default function PanelTurno({ turno, estados, bitacora, onRegistrar, tien
         <div className="flex flex-col gap-5">
 
           {/* Stock crítico (Módulo 6) */}
+          <VerificacionesConteo tiendaId={tiendaId} />
           <AlertasStockTurno tiendaId={tiendaId} />
 
           {/* Alertas */}

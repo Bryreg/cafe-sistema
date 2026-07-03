@@ -81,6 +81,7 @@ export default function ConteosAdmin() {
   const [soloDif, setSoloDif] = useState(true)
   const [verifs, setVerifs] = useState<Record<string, Verif>>({})
   const [accionando, setAccionando] = useState<string | null>(null)
+  const [ordenItems, setOrdenItems] = useState<'dif' | 'bajo'>('dif')
 
   const cargarVerifs = async (tid: number) => {
     try {
@@ -264,68 +265,88 @@ export default function ConteosAdmin() {
                           </button>
                         </div>
                       )}
+                      {/* Modo de lectura: diferencias (auditoría) o bajo gramaje (pedidos) */}
+                      <div className="flex items-center gap-1.5 px-4 py-2" style={{ background: 'oklch(98% 0.004 75)' }}>
+                        {([['dif', 'Mayores diferencias'], ['bajo', 'Bajo gramaje — para pedidos']] as const).map(([k, lbl]) => (
+                          <button key={k} onClick={() => setOrdenItems(k)}
+                            className={`text-[11px] font-bold px-3 py-1 rounded-full transition-colors ${
+                              ordenItems === k ? 'bg-gray-800 text-white' : 'bg-white border border-gray-200 text-gray-500'
+                            }`}>
+                            {lbl}
+                          </button>
+                        ))}
+                        {ordenItems === 'bajo' && soloDif && (
+                          <span className="text-[11px] text-amber-600 font-semibold ml-2">
+                            tip: destildá "Solo diferencias" para ver todos
+                          </span>
+                        )}
+                      </div>
                       {visibles.length === 0 ? (
                         <p className="text-xs text-gray-400 text-center py-4">
                           {soloDif ? 'Sin diferencias — todo coincidió con el sistema.' : 'Sin ítems.'}
                         </p>
                       ) : (
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className="text-gray-400" style={{ background: 'oklch(98% 0.004 75)' }}>
-                              <th className="text-left px-4 py-2 font-semibold">Producto</th>
-                              <th className="text-right px-2 py-2 font-semibold">Sistema</th>
-                              <th className="text-right px-2 py-2 font-semibold">Contado</th>
-                              <th className="text-right px-2 py-2 font-semibold">Dif.</th>
-                              <th className="text-right px-4 py-2 font-semibold">Verificación</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {visibles.map(i => {
-                              const hayDif = Math.round(i.diferencia * 1000) !== 0
-                              const key = `${c.id}-${i.producto_id}`
-                              const v = verifs[key]
-                              const ocupado = accionando === key
-                              return (
-                                <tr key={i.producto_id} style={{ borderTop: '1px solid oklch(97% 0.004 75)' }}>
-                                  <td className="px-4 py-1.5 text-gray-700">{i.nombre} <span className="text-gray-300">{i.unidad}</span></td>
-                                  <td className="px-2 py-1.5 text-right font-mono text-gray-500">{fmtN(i.sistema)}</td>
-                                  <td className="px-2 py-1.5 text-right font-mono font-semibold text-gray-800">{fmtN(i.real)}</td>
-                                  <td className={`px-2 py-1.5 text-right font-mono font-bold ${!hayDif ? 'text-gray-300' : i.diferencia > 0 ? 'text-green-700' : 'text-red-600'}`}>
-                                    {hayDif ? (i.diferencia > 0 ? '+' : '') + fmtN(i.diferencia) : '='}
-                                  </td>
-                                  <td className="px-4 py-1.5 text-right">
-                                    {!hayDif ? null : !v ? (
-                                      <button onClick={() => solicitar(c.id, i.producto_id)} disabled={ocupado}
-                                        className="text-[11px] font-bold px-2 py-0.5 rounded-full disabled:opacity-40"
-                                        style={{ background: 'oklch(95% 0.04 240)', color: 'oklch(35% 0.12 240)' }}>
-                                        {ocupado ? '...' : 'Pedir verificación'}
-                                      </button>
-                                    ) : v.estado === 'solicitada' ? (
-                                      <span className="text-[11px] font-semibold text-amber-600">esperando barista…</span>
-                                    ) : v.estado === 'respondida' ? (
-                                      <span className="inline-flex items-center gap-1.5">
-                                        <span className="text-[11px] text-gray-600" title={v.nota_barista ?? ''}>
-                                          recontó <strong className="font-mono">{fmtN(v.cantidad_verificada ?? 0)}</strong>
-                                          {v.barista_nombre && <span className="text-gray-400"> ({v.barista_nombre})</span>}
-                                        </span>
-                                        <button onClick={() => resolver(v.id, true, key)} disabled={ocupado}
-                                          className="text-[11px] font-bold px-2 py-0.5 rounded-full text-white disabled:opacity-40"
-                                          style={{ background: 'oklch(48% 0.15 155)' }}>Aprobar</button>
-                                        <button onClick={() => resolver(v.id, false, key)} disabled={ocupado}
-                                          className="text-[11px] font-bold px-2 py-0.5 rounded-full disabled:opacity-40"
-                                          style={{ background: 'oklch(96% 0.04 30)', color: 'oklch(42% 0.18 30)' }}>Rechazar</button>
+                        <div className="divide-y" style={{ borderColor: 'oklch(97% 0.004 75)' }}>
+                          {[...visibles].sort(ordenItems === 'bajo'
+                            ? (a, b) => a.real - b.real
+                            : (a, b) => Math.abs(b.diferencia) - Math.abs(a.diferencia)
+                          ).map(i => {
+                            const hayDif = Math.round(i.diferencia * 1000) !== 0
+                            const agotado = i.real <= 0
+                            const key = `${c.id}-${i.producto_id}`
+                            const v = verifs[key]
+                            const ocupado = accionando === key
+                            return (
+                              <div key={i.producto_id} className="flex items-center gap-3 px-4 py-2"
+                                style={{ background: agotado ? 'oklch(97% 0.025 25)' : 'transparent' }}>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[13px] font-semibold text-gray-800 truncate">{i.nombre}</p>
+                                  <p className="text-[11px] text-gray-400">
+                                    sistema {fmtN(i.sistema)} {i.unidad}
+                                    {hayDif && (
+                                      <span className={`font-bold ${i.diferencia > 0 ? 'text-green-700' : 'text-red-600'}`}>
+                                        {' '}· dif {(i.diferencia > 0 ? '+' : '') + fmtN(i.diferencia)}
                                       </span>
-                                    ) : v.estado === 'aprobada' ? (
-                                      <span className="text-[11px] font-bold text-green-700">✓ verificado {fmtN(v.cantidad_verificada ?? 0)}</span>
-                                    ) : (
-                                      <span className="text-[11px] font-semibold text-gray-400">rechazada</span>
                                     )}
-                                  </td>
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
+                                  </p>
+                                </div>
+                                <div className="text-right shrink-0 w-24">
+                                  <p className={`text-[15px] font-bold font-mono tabular-nums ${agotado ? 'text-red-600' : 'text-gray-800'}`}>
+                                    {fmtN(i.real)} <span className="text-[10px] font-normal text-gray-400">{i.unidad}</span>
+                                  </p>
+                                  {agotado && <p className="text-[9px] font-bold text-red-600 uppercase">agotado</p>}
+                                </div>
+                                <div className="shrink-0 w-44 text-right">
+                                  {!hayDif ? <span className="text-[11px] text-gray-300">=</span> : !v ? (
+                                    <button onClick={() => solicitar(c.id, i.producto_id)} disabled={ocupado}
+                                      className="text-[11px] font-bold px-2 py-0.5 rounded-full disabled:opacity-40"
+                                      style={{ background: 'oklch(95% 0.04 240)', color: 'oklch(35% 0.12 240)' }}>
+                                      {ocupado ? '...' : 'Pedir verificación'}
+                                    </button>
+                                  ) : v.estado === 'solicitada' ? (
+                                    <span className="text-[11px] font-semibold text-amber-600">esperando barista…</span>
+                                  ) : v.estado === 'respondida' ? (
+                                    <span className="inline-flex items-center gap-1 flex-wrap justify-end">
+                                      <span className="text-[11px] text-gray-600" title={v.nota_barista ?? ''}>
+                                        recontó <strong className="font-mono">{fmtN(v.cantidad_verificada ?? 0)}</strong>
+                                      </span>
+                                      <button onClick={() => resolver(v.id, true, key)} disabled={ocupado}
+                                        className="text-[11px] font-bold px-2 py-0.5 rounded-full text-white disabled:opacity-40"
+                                        style={{ background: 'oklch(48% 0.15 155)' }}>Aprobar</button>
+                                      <button onClick={() => resolver(v.id, false, key)} disabled={ocupado}
+                                        className="text-[11px] font-bold px-2 py-0.5 rounded-full disabled:opacity-40"
+                                        style={{ background: 'oklch(96% 0.04 30)', color: 'oklch(42% 0.18 30)' }}>Rechazar</button>
+                                    </span>
+                                  ) : v.estado === 'aprobada' ? (
+                                    <span className="text-[11px] font-bold text-green-700">✓ verificado {fmtN(v.cantidad_verificada ?? 0)}</span>
+                                  ) : (
+                                    <span className="text-[11px] font-semibold text-gray-400">rechazada</span>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
                       )}
                     </div>
                   )}

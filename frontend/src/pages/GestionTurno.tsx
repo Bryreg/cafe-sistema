@@ -6,11 +6,156 @@ import api from '../api/client'
 import {
   Users, CheckCircle, Circle, ChevronRight, AlertTriangle,
   Clock, X, Check, LogOut, Package, BarChart2, Sun, Sunset, Moon,
-  Cake, Wallet, Receipt,
+  Cake, Wallet, Receipt, Megaphone, Truck, Trash2, ShoppingCart, Coins,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
+const fmtHora = (iso: string) => {
+  const s = iso.replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1')
+  const d = new Date(s.endsWith('Z') ? s : s + 'Z')
+  return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+}
+const hoyLocal = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
+const esHoy = (iso?: string | null) => {
+  if (!iso) return false
+  const s = iso.replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1')
+  const d = new Date(s.endsWith('Z') ? s : s + 'Z')
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` === hoyLocal()
+}
+
+/** Comunicados del administrador — visibles arriba del hub, no escondidos. */
+function ComunicadosBarista() {
+  const [items, setItems] = useState<any[]>([])
+  useEffect(() => {
+    api.get('/comunicados/mis-comunicados').then(r => setItems(r.data ?? [])).catch(() => {})
+  }, [])
+  const marcarLeido = async (id: number) => {
+    setItems(prev => prev.filter(c => c.id !== id))
+    try { await api.post(`/comunicados/${id}/leer`) } catch { /* noop */ }
+  }
+  if (items.length === 0) return null
+  return (
+    <div className="space-y-2">
+      {items.map(c => {
+        const urgente = c.urgente
+        return (
+          <div key={c.id} className="rounded-2xl p-4 flex items-start gap-3"
+            style={{ background: urgente ? dark.dangerTint : dark.amberTint, border: `1px solid ${urgente ? dark.dangerDim : dark.amberDim}` }}>
+            <Megaphone size={16} style={{ color: urgente ? dark.danger : dark.amber, flexShrink: 0, marginTop: 2 }} />
+            <div className="flex-1 min-w-0">
+              {c.titulo && <p className="text-[13px] font-bold" style={{ color: urgente ? dark.danger : dark.amber }}>{c.titulo}</p>}
+              <p className="text-[13px]" style={{ color: dark.ink }}>{c.mensaje}</p>
+              <p className="text-[10px] mt-1" style={{ color: dark.inkSubtle }}>
+                {c.creado_por ? `— ${c.creado_por}` : 'Administrador'}{urgente ? ' · URGENTE' : ''}
+              </p>
+            </div>
+            <button onClick={() => marcarLeido(c.id)}
+              className="text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0"
+              style={{ background: '#fff', color: dark.inkMuted, border: `1px solid ${dark.border}` }}>
+              Entendido
+            </button>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Resumen del día para la barista: qué recibieron, qué dieron de baja, qué pidieron. */
+function ResumenDiaBarista({ tiendaId }: { tiendaId: number }) {
+  const [recibidos, setRecibidos] = useState<any[]>([])
+  const [mermas, setMermas] = useState<any[]>([])
+  const [pedidos, setPedidos] = useState<any[]>([])
+  const [sencillas, setSencillas] = useState<any[]>([])
+
+  useEffect(() => {
+    api.get(`/facturas/tienda/${tiendaId}`).then(r =>
+      setRecibidos((r.data ?? []).filter((f: any) => esHoy(f.fecha_registro)))).catch(() => {})
+    api.get(`/mermas/tienda/${tiendaId}`).then(r =>
+      setMermas((r.data ?? []).filter((m: any) => esHoy(m.fecha_registro)))).catch(() => {})
+    api.get(`/solicitudes/pedido/tienda/${tiendaId}`).then(r =>
+      setPedidos((r.data ?? []).filter((s: any) => esHoy(s.fecha_solicitud)))).catch(() => {})
+    api.get(`/solicitudes/sencilla/tienda/${tiendaId}`).then(r =>
+      setSencillas((r.data ?? []).filter((s: any) => esHoy(s.fecha_solicitud)))).catch(() => {})
+  }, [tiendaId])
+
+  const totalRecibido = recibidos.reduce((s, f) => s + (f.valor_total ?? 0), 0)
+  const nada = recibidos.length === 0 && mermas.length === 0 && pedidos.length === 0 && sencillas.length === 0
+  const MERMA_LBL: Record<string, string> = { consumo: 'Consumo', traslado: 'Traslado', 'daño': 'Daño' }
+
+  return (
+    <div className="rounded-2xl overflow-hidden lg:col-span-2" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
+      <p className="px-4 pt-4 pb-1 text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.inkSubtle }}>
+        Lo que hicieron hoy
+      </p>
+      {nada ? (
+        <p className="px-4 pb-4 text-[12px]" style={{ color: dark.inkSubtle }}>Todavía sin actividad registrada hoy.</p>
+      ) : (
+        <div className="px-4 pb-3">
+          {/* Recibidos */}
+          {recibidos.length > 0 && (
+            <div className="py-2">
+              <div className="flex items-center gap-2 mb-1.5">
+                <Truck size={13} style={{ color: dark.green }} />
+                <p className="text-[12px] font-bold" style={{ color: dark.ink }}>Recibido de proveedores · {fmt(Math.round(totalRecibido))}</p>
+              </div>
+              {recibidos.map(f => (
+                <div key={f.id} className="flex items-center justify-between py-1 pl-5">
+                  <span className="text-[12px] truncate" style={{ color: dark.inkMuted }}>
+                    {f.proveedor}{f.numero_factura ? ` · Fact. ${f.numero_factura}` : ''} · {fmtHora(f.fecha_registro)}
+                  </span>
+                  <span className="text-[12px] font-mono font-bold shrink-0" style={{ color: dark.ink }}>{fmt(Math.round(f.valor_total ?? 0))}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Mermas / consumo */}
+          {mermas.length > 0 && (
+            <div className="py-2" style={{ borderTop: `1px solid ${dark.border}` }}>
+              <div className="flex items-center gap-2 mb-1.5">
+                <Trash2 size={13} style={{ color: dark.amber }} />
+                <p className="text-[12px] font-bold" style={{ color: dark.ink }}>Bajas y consumo · {mermas.length}</p>
+              </div>
+              {mermas.map(m => (
+                <div key={m.id} className="flex items-center justify-between py-1 pl-5">
+                  <span className="text-[12px] truncate" style={{ color: dark.inkMuted }}>
+                    <span style={{ color: dark.amber, fontWeight: 600 }}>{MERMA_LBL[m.tipo] ?? m.tipo}</span> · {m.producto_nombre ?? `#${m.producto_id}`}
+                    {m.quien ? ` · consumió ${m.quien}` : ''}
+                  </span>
+                  <span className="text-[12px] font-mono font-bold shrink-0" style={{ color: dark.ink }}>{Math.round(m.cantidad)} {m.unidad_medida ?? ''}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Solicitudes */}
+          {(pedidos.length > 0 || sencillas.length > 0) && (
+            <div className="py-2" style={{ borderTop: `1px solid ${dark.border}` }}>
+              <div className="flex items-center gap-2 mb-1.5">
+                <ShoppingCart size={13} style={{ color: dark.green }} />
+                <p className="text-[12px] font-bold" style={{ color: dark.ink }}>Solicitudes al admin</p>
+              </div>
+              {pedidos.map(s => (
+                <div key={`p${s.id}`} className="flex items-center justify-between py-1 pl-5">
+                  <span className="text-[12px]" style={{ color: dark.inkMuted }}>Pedido · {(s.items?.length ?? 0)} producto{(s.items?.length ?? 0) !== 1 ? 's' : ''}</span>
+                  <span className="text-[11px] shrink-0" style={{ color: dark.inkSubtle }}>{s.estado}</span>
+                </div>
+              ))}
+              {sencillas.map(s => (
+                <div key={`s${s.id}`} className="flex items-center justify-between py-1 pl-5">
+                  <span className="text-[12px] flex items-center gap-1.5" style={{ color: dark.inkMuted }}>
+                    <Coins size={11} /> Sencilla · {fmt(Math.round(s.monto_solicitado ?? 0))}{s.motivo ? ` · ${s.motivo}` : ''}
+                  </span>
+                  <span className="text-[11px] shrink-0" style={{ color: dark.inkSubtle }}>{s.estado}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // fecha_apertura viene en UTC naïve → normalizamos a Z y calculamos transcurrido
 function tiempoEnTurno(desde: string): string {
@@ -139,6 +284,9 @@ export default function GestionTurno() {
 
       <div className="flex-1 px-4 space-y-4 w-full max-w-5xl mx-auto pb-8">
 
+        {/* Comunicados del admin — visibles siempre, con o sin turno */}
+        {!step && <ComunicadosBarista />}
+
         {/* ── CON TURNO ACTIVO ── */}
         {turno && !step && (
           <>
@@ -178,6 +326,9 @@ export default function GestionTurno() {
 
             {/* Tarjetas de estado — 2 columnas en desktop para no apilar vertical */}
             <div className="lg:grid lg:grid-cols-2 lg:gap-4 lg:items-start space-y-4 lg:space-y-0">
+
+            {/* Resumen del día: recibidos, bajas/consumo, solicitudes */}
+            {tiendaId && <ResumenDiaBarista tiendaId={tiendaId} />}
 
             {/* Baristas en turno */}
             {turno.baristas.length > 0 && (

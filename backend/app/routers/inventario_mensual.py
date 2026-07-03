@@ -22,6 +22,16 @@ def iniciar(
     return svc.iniciar(db, tienda_id, anio, mes, user.id, barista[0], barista[1])
 
 
+@router.post("/reiniciar")
+def reiniciar(
+    tienda_id: int = Query(...), anio: int = Query(...), mes: int = Query(...),
+    db: Session = Depends(get_db), user: Usuario = Depends(require_admin),
+):
+    """Admin: borra el conteo mensual EN PROCESO y lo re-siembra con el conteo del
+    sistema actual (p.ej. tras la conversión a gramos). Los cerrados no se tocan."""
+    return svc.reiniciar(db, tienda_id, anio, mes, user.id)
+
+
 @router.get("/actual")
 def actual(
     tienda_id: int = Query(...), anio: int = Query(...), mes: int = Query(...),

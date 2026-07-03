@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import api from '../api/client'
-import { Scale, Download, TrendingUp, TrendingDown, Minus, AlertTriangle } from 'lucide-react'
+import { Scale, Download, TrendingUp, TrendingDown, Minus, AlertTriangle, RotateCcw, Cpu, Users, ListChecks } from 'lucide-react'
 
 interface Item {
   id: number; producto_nombre: string; categoria: string; unidad_medida: string
@@ -46,6 +47,21 @@ export default function ConciliacionInventario() {
 
   const items = useMemo(() => (data?.items ?? []).filter(i => filtro === 'todos' || i.diferencia !== 0), [data, filtro])
 
+  const [reiniciando, setReiniciando] = useState(false)
+  const reiniciarMes = async () => {
+    if (!tiendaId) return
+    if (!window.confirm(`¿Reiniciar el conteo de ${MESES[mes - 1]} de esta sede? Se borra el avance del mes y se vuelve a sembrar con el conteo del sistema ACTUAL (en gramos). Los meses cerrados no se tocan.`)) return
+    setReiniciando(true)
+    try {
+      await api.post('/inventario-mensual/reiniciar', null, { params: { tienda_id: tiendaId, anio, mes } })
+      const r = await api.get<Conciliacion | null>('/inventario-mensual/conciliacion', { params: { tienda_id: tiendaId, anio, mes } })
+      setData(r.data)
+      alert('Mes reiniciado — re-sembrado con el conteo del sistema actual.')
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'No se pudo reiniciar')
+    } finally { setReiniciando(false) }
+  }
+
   const exportarCSV = () => {
     if (!data) return
     const head = ['Producto', 'Categoria', 'Unidad', 'Sistema', 'Fisico', 'Diferencia', 'Valor unit', 'Valor diferencia']
@@ -72,11 +88,41 @@ export default function ConciliacionInventario() {
           <select value={anio} onChange={e => setAnio(Number(e.target.value))} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white">
             {Array.from({ length: 5 }, (_, i) => now.getFullYear() - i).map(y => <option key={y} value={y}>{y}</option>)}
           </select>
+          <button onClick={reiniciarMes} disabled={reiniciando || !tiendaId || data?.estado === 'cerrado'}
+            title="Borra el avance del mes en proceso y re-siembra con el conteo del sistema actual"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white">
+            <RotateCcw size={14} /> {reiniciando ? 'Reiniciando…' : 'Reiniciar mes'}
+          </button>
           <button onClick={exportarCSV} disabled={!data}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white">
             <Download size={14} /> Excel
           </button>
         </div>
+      </div>
+
+      {/* Doble inventario: cómo se lee este panel bajo el modelo nuevo */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <div className="bg-white rounded-2xl border border-gray-200 p-4 flex items-start gap-3">
+          <span className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center shrink-0"><Cpu size={17} className="text-blue-600" /></span>
+          <div>
+            <p className="text-sm font-bold text-gray-800">Conteo del sistema</p>
+            <p className="text-xs text-gray-500 mt-0.5">Corre solo, por movimientos: ventas del POS (con recetas en gramos), ingresos por factura, mermas y salidas.</p>
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 p-4 flex items-start gap-3">
+          <span className="w-9 h-9 rounded-xl bg-amber-50 flex items-center justify-center shrink-0"><Users size={17} className="text-amber-600" /></span>
+          <div>
+            <p className="text-sm font-bold text-gray-800">Conteo de las baristas</p>
+            <p className="text-xs text-gray-500 mt-0.5">Físico, en apertura y cierre. No modifica el inventario: se compara contra el sistema y las diferencias quedan registradas.</p>
+          </div>
+        </div>
+        <Link to="/conteos-admin" className="bg-white rounded-2xl border border-gray-200 p-4 flex items-start gap-3 hover:border-forest transition-colors">
+          <span className="w-9 h-9 rounded-xl bg-green-50 flex items-center justify-center shrink-0"><ListChecks size={17} className="text-green-700" /></span>
+          <div>
+            <p className="text-sm font-bold text-gray-800">Diferencias del día →</p>
+            <p className="text-xs text-gray-500 mt-0.5">Monitor de Conteos: sistema vs contado por conteo, verificaciones y "Aplicar al inventario". Este panel es la foto MENSUAL.</p>
+          </div>
+        </Link>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -173,8 +219,8 @@ export default function ConciliacionInventario() {
                 <thead>
                   <tr className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-400">
                     <th className="text-left px-3 py-2 font-bold">Producto</th>
-                    <th className="text-right px-3 py-2 font-bold">Teórico</th>
-                    <th className="text-right px-3 py-2 font-bold">Físico</th>
+                    <th className="text-right px-3 py-2 font-bold">Sistema</th>
+                    <th className="text-right px-3 py-2 font-bold">Contado baristas</th>
                     <th className="text-right px-3 py-2 font-bold">Diferencia</th>
                     <th className="text-right px-3 py-2 font-bold hidden sm:table-cell">Valor unit.</th>
                     <th className="text-right px-3 py-2 font-bold">Valor dif.</th>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../api/client'
-import { Boxes, Search, Calendar, AlertTriangle, Truck, Download } from 'lucide-react'
+import { Boxes, Search, Calendar, AlertTriangle, Truck, Download, ChevronDown, ChevronUp, History } from 'lucide-react'
 
 interface Lote {
   id: number; producto_id: number; producto_nombre: string; unidad_medida: string
@@ -52,6 +52,31 @@ export default function LotesTrazabilidad() {
   ), [lotes, proveedor, busqueda])
 
   const porVencer = lotes.filter(l => l.estado === 'por_vencer' || l.estado === 'vencido').length
+
+  // Vista por PRODUCTO: agrupa los lotes filtrados; al desplegar se ven sus lotes.
+  const [abierto, setAbierto] = useState<string | null>(null)
+  const RANGO_ESTADO: Record<string, number> = { vencido: 3, por_vencer: 2, activo: 1, agotado: 0 }
+  const grupos = useMemo(() => {
+    const map = new Map<string, { key: string; nombre: string; unidad: string; restante: number; venceProximo: string | null; peorEstado: string; lotes: Lote[] }>()
+    for (const l of filtrados) {
+      const key = `${l.producto_id}`
+      const g = map.get(key) ?? { key, nombre: l.producto_nombre, unidad: l.unidad_medida, restante: 0, venceProximo: null, peorEstado: 'agotado', lotes: [] }
+      g.lotes.push(l)
+      g.restante += l.cantidad_restante
+      if (l.cantidad_restante > 0 && l.fecha_vencimiento && (!g.venceProximo || l.fecha_vencimiento < g.venceProximo)) g.venceProximo = l.fecha_vencimiento
+      if ((RANGO_ESTADO[l.estado] ?? 0) > (RANGO_ESTADO[g.peorEstado] ?? 0) && l.cantidad_restante > 0) g.peorEstado = l.estado
+      map.set(key, g)
+    }
+    const arr = [...map.values()]
+    for (const g of arr) g.lotes.sort((a, b) => (a.fecha_entrada ?? '').localeCompare(b.fecha_entrada ?? ''))
+    arr.sort((a, b) => a.nombre.localeCompare(b.nombre))
+    return arr
+  }, [filtrados])
+
+  // Historial rápido: últimas entradas de lotes (más reciente primero).
+  const historial = useMemo(() =>
+    [...filtrados].sort((a, b) => (b.fecha_entrada ?? '').localeCompare(a.fecha_entrada ?? '')).slice(0, 15),
+  [filtrados])
 
   const exportarCSV = () => {
     if (!filtrados.length) return
@@ -143,43 +168,89 @@ export default function LotesTrazabilidad() {
         </div>
       )}
 
-      <div className="space-y-2">
-        {filtrados.map(l => {
-          const e = ESTADO[l.estado]
-          return (
-            <div key={l.id} className="bg-white border border-gray-200 rounded-2xl p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-bold text-gray-800 truncate">{l.producto_nombre}</p>
-                  <p className="text-xs text-gray-400 flex items-center gap-1.5 flex-wrap mt-0.5">
-                    {l.proveedor && <span className="flex items-center gap-1"><Truck size={11} /> {l.proveedor}</span>}
-                    {l.numero_lote && <span>· Lote {l.numero_lote}</span>}
-                    {l.tienda_nombre && <span>· {l.tienda_nombre}</span>}
+      {!loading && filtrados.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+
+          {/* ── Por producto (desplegable a sus lotes) ── */}
+          <div className="lg:col-span-2 space-y-2">
+            {grupos.map(g => {
+              const abiertoG = abierto === g.key
+              const venceCls = g.peorEstado === 'vencido' ? 'text-red-600'
+                : g.peorEstado === 'por_vencer' ? 'text-amber-600' : 'text-gray-500'
+              return (
+                <div key={g.key} className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+                  <button onClick={() => setAbierto(abiertoG ? null : g.key)}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-gray-800 truncate">{g.nombre}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {g.lotes.length} lote{g.lotes.length !== 1 ? 's' : ''}
+                        {g.venceProximo && <span className={venceCls}> · vence {fmtF(g.venceProximo)}</span>}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-bold font-mono text-gray-800">{Math.round(g.restante)} {g.unidad}</p>
+                      <p className="text-[10px] text-gray-400">restante</p>
+                    </div>
+                    {abiertoG ? <ChevronUp size={15} className="text-gray-400 shrink-0" /> : <ChevronDown size={15} className="text-gray-400 shrink-0" />}
+                  </button>
+
+                  {abiertoG && (
+                    <div className="border-t border-gray-100 divide-y divide-gray-50">
+                      {g.lotes.map(l => {
+                        const e = ESTADO[l.estado]
+                        return (
+                          <div key={l.id} className="px-4 py-2.5">
+                            <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500">
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold shrink-0 ${e.cls}`}>{e.label}</span>
+                              {l.proveedor && <span className="flex items-center gap-1"><Truck size={11} /> {l.proveedor}</span>}
+                              {l.numero_lote && <span>· Lote {l.numero_lote}</span>}
+                              {tiendaId === null && l.tienda_nombre && <span>· {l.tienda_nombre}</span>}
+                              <span className="flex items-center gap-1"><Calendar size={11} className="text-gray-400" /> Entró <b className="text-gray-700">{fmtF(l.fecha_entrada)}</b></span>
+                              {l.fecha_vencimiento && <span>· Vence <b className={l.estado === 'vencido' ? 'text-red-600' : l.estado === 'por_vencer' ? 'text-amber-600' : 'text-gray-700'}>{fmtF(l.fecha_vencimiento)}</b></span>}
+                              {l.fecha_agotado && <span>· Agotado {fmtF(l.fecha_agotado)}</span>}
+                            </div>
+                            <div className="flex items-center gap-3 mt-1.5">
+                              <div className="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                                <div className="h-full bg-forest" style={{ width: `${Math.min(100, l.consumido_pct)}%` }} />
+                              </div>
+                              <span className="text-[11px] font-mono text-gray-500 shrink-0">
+                                {Math.round(l.cantidad_restante)}/{Math.round(l.cantidad_inicial)} {l.unidad_medida} · {l.consumido_pct}% consumido
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* ── Historial rápido: últimas entradas ── */}
+          <div className="bg-white border border-gray-200 rounded-2xl p-4">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-3 flex items-center gap-1.5">
+              <History size={13} /> Historial rápido
+            </p>
+            <div className="space-y-2.5">
+              {historial.map(l => (
+                <div key={l.id} className="text-xs">
+                  <p className="text-gray-700">
+                    Entró <b>{Math.round(l.cantidad_inicial)} {l.unidad_medida}</b> de <b>{l.producto_nombre}</b>
+                  </p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    {fmtF(l.fecha_entrada)}
+                    {l.proveedor ? ` · ${l.proveedor}` : ''}
+                    {tiendaId === null && l.tienda_nombre ? ` · ${l.tienda_nombre}` : ''}
                   </p>
                 </div>
-                <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold shrink-0 ${e.cls}`}>{e.label}</span>
-              </div>
-
-              {/* Fechas */}
-              <div className="flex items-center gap-4 mt-2 text-xs text-gray-500 flex-wrap">
-                <span className="flex items-center gap-1"><Calendar size={11} className="text-gray-400" /> Entró: <b className="text-gray-700">{fmtF(l.fecha_entrada)}</b></span>
-                {l.fecha_vencimiento && <span>Vence: <b className={l.estado === 'vencido' ? 'text-red-600' : l.estado === 'por_vencer' ? 'text-amber-600' : 'text-gray-700'}>{fmtF(l.fecha_vencimiento)}</b></span>}
-                {l.fecha_agotado && <span>Agotado: <b className="text-gray-700">{fmtF(l.fecha_agotado)}</b></span>}
-              </div>
-
-              {/* Consumo */}
-              <div className="flex items-center gap-3 mt-2">
-                <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
-                  <div className="h-full bg-forest" style={{ width: `${Math.min(100, l.consumido_pct)}%` }} />
-                </div>
-                <span className="text-xs font-mono text-gray-500 shrink-0">
-                  {Math.round(l.cantidad_restante)}/{Math.round(l.cantidad_inicial)} {l.unidad_medida} · {l.consumido_pct}% consumido
-                </span>
-              </div>
+              ))}
+              {historial.length === 0 && <p className="text-xs text-gray-400">Sin entradas registradas</p>}
             </div>
-          )
-        })}
-      </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

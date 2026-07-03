@@ -178,7 +178,10 @@ with engine.connect() as _conn:
         # Conteo de desechables: nuevo tipo en el enum nativo de Postgres.
         "ALTER TYPE tipoconteoenum ADD VALUE IF NOT EXISTS 'desechables'",
         # El unique (turno_id, tipo) solo aplica a apertura/cierre: los desechables pueden
-        # contarse más de una vez en el mismo turno si el admin lo vuelve a pedir.
+        # contarse más de una vez en el mismo turno si el admin lo vuelve a pedir. En prod
+        # el unique vive como CONSTRAINT de tabla (create_all original) — hay que dropear
+        # el constraint (no solo el índice) antes de crear el índice parcial.
+        "ALTER TABLE conteos_fisicos DROP CONSTRAINT IF EXISTS uq_conteo_turno_tipo",
         "DROP INDEX IF EXISTS uq_conteo_turno_tipo",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_conteo_turno_tipo ON conteos_fisicos (turno_id, tipo) WHERE tipo IN ('apertura', 'cierre')",
     ]:

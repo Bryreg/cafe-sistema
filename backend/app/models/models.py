@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum as SAEnum, Date, UniqueConstraint, Numeric
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum as SAEnum, Date, UniqueConstraint, Numeric, Index, text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -355,8 +355,15 @@ class ConteoFisico(Base):
     turno = relationship("CajaTurno", back_populates="conteos")
     usuario = relationship("Usuario", back_populates="conteos_fisicos")
     items = relationship("ConteoFisicoItem", back_populates="conteo", cascade="all, delete-orphan")
+    # Único apertura y cierre POR TURNO; los desechables pueden repetirse si el admin
+    # vuelve a pedir el formato. Índice único PARCIAL (no un UniqueConstraint de tabla):
+    # en prod la migración dropea el constraint viejo y crea este mismo índice.
     __table_args__ = (
-        UniqueConstraint("turno_id", "tipo", name="uq_conteo_turno_tipo"),
+        Index(
+            "uq_conteo_turno_tipo", "turno_id", "tipo", unique=True,
+            postgresql_where=text("tipo IN ('apertura', 'cierre')"),
+            sqlite_where=text("tipo IN ('apertura', 'cierre')"),
+        ),
     )
 
 

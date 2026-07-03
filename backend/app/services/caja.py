@@ -458,6 +458,13 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
         # Venta de ayer separada y guardada: la barista cuenta SOLO la registradora.
         # El monto separado (la base) queda documentado en base_snapshot sin contarse.
         efectivo_esperado -= turno.base_real
+        if efectivo_esperado < 0:
+            # Las salidas superan la venta del día: físicamente tuvieron que tocar la
+            # plata separada, así que el cuadre "solo registradora" no tiene sentido.
+            raise HTTPException(
+                status_code=400,
+                detail="Las salidas de efectivo superan la venta del día — la plata de ayer no puede estar separada completa. Destildá la casilla y contá todo.",
+            )
     diferencia_efectivo = efectivo_real - efectivo_esperado
     diferencia_tarjeta = ventas_tarjeta_bold - turno.total_tarjeta
 
@@ -927,6 +934,11 @@ def cerrar_turno_rapido(
     # total equivalente (registradora + base separada) para que la base de mañana
     # salga igual a la registradora de hoy (la venta de hoy).
     esperado_cuadre = efectivo_esperado - turno.base_real if base_separada else efectivo_esperado
+    if base_separada and esperado_cuadre < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Las salidas de efectivo superan la venta del día — la plata de ayer no puede estar separada completa. Destildá la casilla y contá todo.",
+        )
     efectivo_total = efectivo_final_real + turno.base_real if base_separada else efectivo_final_real
 
     # Record closure proof photo with the real counted vs expected diff

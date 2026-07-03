@@ -26,9 +26,15 @@ def _valor_unitario_map(db: Session) -> dict:
 
 
 def _serializar(inv: InventarioMensual) -> dict:
+    # Mismo orden que el conteo (planilla de pedidos): orden_conteo primero, resto
+    # alfabético al final — para que revisar la conciliación siga el papel.
     items = sorted(
         inv.items,
-        key=lambda x: (x.categoria or '', x.producto.nombre if x.producto else ''),
+        key=lambda x: (
+            (x.producto.orden_conteo if x.producto else None) is None,
+            (x.producto.orden_conteo if x.producto else 0) or 0,
+            x.producto.nombre if x.producto else '',
+        ),
     )
     return {
         "id": inv.id, "tienda_id": inv.tienda_id, "anio": inv.anio, "mes": inv.mes,

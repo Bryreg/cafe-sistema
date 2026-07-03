@@ -265,6 +265,11 @@ def get_trazabilidad(db: Session, tienda_id: int | None = None, producto_id: int
     pronto = ahora + timedelta(days=7)
     out = []
     for l in lotes:
+        # Productos archivados (duplicados de la limpieza) fuera de la vista: su
+        # historial queda en la DB pero no ensucia la trazabilidad (caso agua con gas).
+        p = l.producto
+        if p and not p.controla_stock and p.incluir_en_conteo is False and not (p.precio_venta or 0):
+            continue
         ini = l.cantidad_inicial or 0
         rest = l.cantidad_restante or 0
         if rest <= 0:

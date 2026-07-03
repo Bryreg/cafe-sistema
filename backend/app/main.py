@@ -184,6 +184,8 @@ with engine.connect() as _conn:
         "ALTER TABLE conteos_fisicos DROP CONSTRAINT IF EXISTS uq_conteo_turno_tipo",
         "DROP INDEX IF EXISTS uq_conteo_turno_tipo",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_conteo_turno_tipo ON conteos_fisicos (turno_id, tipo) WHERE tipo IN ('apertura', 'cierre')",
+        # Mermas de consumo: quién consumió (dueños/reuniones), aparte de quién registró.
+        "ALTER TABLE mermas ADD COLUMN quien VARCHAR(100)",
     ]:
         try:
             _conn.execute(_text(_sql))

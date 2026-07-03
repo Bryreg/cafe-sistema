@@ -10,6 +10,7 @@ class RegistrarMermaRequest(BaseModel):
     motivo: str = Field(..., min_length=1)   # rechazar motivo vacío (registro sin razón)
     tipo: str = "consumo"                    # consumo | traslado | daño
     tienda_destino_id: Optional[int] = None  # solo para traslado
+    quien: Optional[str] = None              # quién consumió (consumo dueños/reuniones)
 
 
 class MermaOut(BaseModel):
@@ -19,11 +20,14 @@ class MermaOut(BaseModel):
     cantidad: float
     motivo: str
     tipo: str
+    quien: Optional[str] = None
     tienda_destino_id: Optional[int] = None
     recibido: bool
     fecha_recibido: Optional[datetime] = None
     fecha_registro: datetime
     barista_nombre: Optional[str] = None
+    producto_nombre: Optional[str] = None
+    unidad_medida: Optional[str] = None
 
     class Config:
         from_attributes = True

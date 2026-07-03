@@ -282,6 +282,71 @@ function RecibidosHoy({ tiendaId }: { tiendaId: number }) {
   )
 }
 
+/** Actividad del día: mermas y solicitudes — el Panel de Turno como dashboard de
+ *  lo que las baristas hicieron hoy (recibidos ya tiene su sección propia). */
+function ActividadHoy({ tiendaId }: { tiendaId: number }) {
+  const [mermas, setMermas] = useState<any[]>([])
+  const [pedidos, setPedidos] = useState<any[]>([])
+  const [sencillas, setSencillas] = useState<any[]>([])
+
+  useEffect(() => {
+    const hoy = fechaLocalDe(new Date().toISOString())
+    const esHoy = (iso?: string | null) => !!iso && fechaLocalDe(iso) === hoy
+    api.get(`/mermas/tienda/${tiendaId}`).then(r =>
+      setMermas((r.data ?? []).filter((m: any) => esHoy(m.fecha_registro)))).catch(() => {})
+    api.get(`/solicitudes/pedido/tienda/${tiendaId}`).then(r =>
+      setPedidos((r.data ?? []).filter((s: any) => esHoy(s.fecha_solicitud ?? s.fecha)))).catch(() => {})
+    api.get(`/solicitudes/sencilla/tienda/${tiendaId}`).then(r =>
+      setSencillas((r.data ?? []).filter((s: any) => esHoy(s.fecha_solicitud ?? s.fecha)))).catch(() => {})
+  }, [tiendaId])
+
+  if (mermas.length === 0 && pedidos.length === 0 && sencillas.length === 0) return null
+  const MERMA_LBL: Record<string, string> = { consumo: 'Consumo', traslado: 'Traslado', 'daño': 'Daño' }
+
+  return (
+    <section>
+      <p style={LBL} className="mb-2">Actividad de hoy</p>
+      <div className="rounded-2xl border overflow-hidden" style={{ background: dark.surface, borderColor: dark.border }}>
+        {mermas.map(m => (
+          <div key={`m${m.id}`} className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: `1px solid ${dark.border}` }}>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0"
+              style={{ background: dark.amberTint, color: dark.amber }}>
+              {MERMA_LBL[m.tipo] ?? 'Merma'}
+            </span>
+            <span className="flex-1 truncate" style={{ fontSize: 12, color: dark.inkMuted }}>
+              {m.producto_nombre ?? `#${m.producto_id}`}
+              {m.quien ? ` · consumió ${m.quien}` : ''}
+            </span>
+            <span className="font-mono font-bold shrink-0" style={{ fontSize: 12, color: dark.ink }}>
+              {Math.round(m.cantidad)} {m.unidad_medida ?? ''}
+            </span>
+          </div>
+        ))}
+        {pedidos.map(s => (
+          <div key={`p${s.id}`} className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: `1px solid ${dark.border}` }}>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0"
+              style={{ background: dark.greenTint, color: dark.green }}>Pedido</span>
+            <span className="flex-1 truncate" style={{ fontSize: 12, color: dark.inkMuted }}>
+              {(s.items?.length ?? 0)} producto{(s.items?.length ?? 0) !== 1 ? 's' : ''} solicitados
+            </span>
+            <span className="shrink-0" style={{ fontSize: 11, color: dark.inkSubtle }}>{s.estado}</span>
+          </div>
+        ))}
+        {sencillas.map(s => (
+          <div key={`s${s.id}`} className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: `1px solid ${dark.border}` }}>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0"
+              style={{ background: 'oklch(95% 0.015 245)', color: 'oklch(35% 0.12 245)' }}>Sencilla</span>
+            <span className="flex-1 truncate" style={{ fontSize: 12, color: dark.inkMuted }}>
+              ${Math.round(s.monto_solicitado ?? 0).toLocaleString('es-CO')}{s.motivo ? ` · ${s.motivo}` : ''}
+            </span>
+            <span className="shrink-0" style={{ fontSize: 11, color: dark.inkSubtle }}>{s.estado}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 const RUTINAS = [
   { k: 'limpieza', label: 'Limpieza',  Icon: Sparkles,   track: true },
   { k: 'surtido',  label: 'Surtido',   Icon: Package,    track: true },
@@ -394,6 +459,7 @@ export default function PanelTurno({ turno, estados, bitacora, onRegistrar, tien
           <DesechablesPendiente tiendaId={tiendaId} />
           <AlertasStockTurno tiendaId={tiendaId} />
           <RecibidosHoy tiendaId={tiendaId} />
+          <ActividadHoy tiendaId={tiendaId} />
 
           {/* Alertas */}
           {alerts.length > 0 && (

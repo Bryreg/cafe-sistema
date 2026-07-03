@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { Plus, Minus, Send, AlertTriangle, Zap, Search } from 'lucide-react'
+import { Send, AlertTriangle, Zap, Search } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
 
 interface Producto { id: number; nombre: string; unidad_medida: string }
-interface Item { producto_id: number; nombre: string; unidad_medida: string; cantidad: number }
+interface Item { producto_id: number; nombre: string; unidad_medida: string; cantidad: string }
+
+const UNIDADES = ['unidad', 'gr', 'kg', 'lt', 'ml', 'paquete', 'caja', 'bolsa', 'botella']
 interface Alerta {
   producto_id: number; producto: string; unidad: string
   stock_actual: number; stock_minimo: number; cantidad_sugerida: number
@@ -30,33 +32,40 @@ export default function SolicitudPedido() {
     }
   }, [user?.tienda_id])
 
-  const agregar = (producto_id: number, nombre: string, unidad_medida: string, cantidad = 1) => {
+  const agregar = (producto_id: number, nombre: string, unidad_medida: string, cantidad: number | string = 1) => {
     setItems(prev => {
       const existe = prev.find(i => i.producto_id === producto_id)
       if (existe) return prev
-      return [...prev, { producto_id, nombre, unidad_medida, cantidad }]
+      return [...prev, { producto_id, nombre, unidad_medida, cantidad: String(cantidad) }]
     })
   }
 
-  const ajustar = (id: number, delta: number) => {
-    setItems(prev => prev.map(i =>
-      i.producto_id === id ? { ...i, cantidad: Math.max(1, i.cantidad + delta) } : i
-    ))
-  }
+  const setCantidad = (id: number, v: string) =>
+    setItems(prev => prev.map(i => i.producto_id === id ? { ...i, cantidad: v } : i))
+
+  const setUnidad = (id: number, u: string) =>
+    setItems(prev => prev.map(i => i.producto_id === id ? { ...i, unidad_medida: u } : i))
 
   const quitar = (id: number) => setItems(prev => prev.filter(i => i.producto_id !== id))
 
   const agregarTodosCriticos = () => {
-    alertas.forEach(a => agregar(a.producto_id, a.producto, a.unidad, a.cantidad_sugerida))
+    alertas.forEach(a => agregar(a.producto_id, a.producto, a.unidad, Math.round(a.cantidad_sugerida)))
   }
 
   const enviar = async () => {
     setError(''); setSuccess('')
+    if (items.some(i => !(Number(i.cantidad) > 0))) {
+      setError('Poné una cantidad mayor a 0 en todos los productos'); return
+    }
     try {
       await api.post('/solicitudes/pedido', {
         tienda_id: user?.tienda_id,
         nota: nota || null,
-        items: items.map(i => ({ producto_id: i.producto_id, cantidad_solicitada: i.cantidad })),
+        items: items.map(i => ({
+          producto_id: i.producto_id,
+          cantidad_solicitada: Number(i.cantidad),
+          unidad_solicitada: i.unidad_medida,
+        })),
       })
       setItems([]); setNota('')
       setSuccess('Solicitud enviada al administrador')
@@ -131,19 +140,25 @@ export default function SolicitudPedido() {
           </div>
           <div className="divide-y divide-gray-50">
             {items.map(item => (
-              <div key={item.producto_id} className="flex items-center gap-3 px-4 py-3">
-                <p className="flex-1 text-sm font-medium text-gray-800">{item.nombre}</p>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => ajustar(item.producto_id, -1)} className="p-1 rounded-lg bg-gray-100 hover:bg-gray-200">
-                    <Minus size={12} />
-                  </button>
-                  <span className="text-sm font-bold w-8 text-center">{item.cantidad}</span>
-                  <button onClick={() => ajustar(item.producto_id, 1)} className="p-1 rounded-lg bg-gray-100 hover:bg-gray-200">
-                    <Plus size={12} />
-                  </button>
-                  <span className="text-xs text-gray-400 w-12">{item.unidad_medida}</span>
-                  <button onClick={() => quitar(item.producto_id)} className="text-xs text-red-400 hover:text-red-600 ml-1">✕</button>
-                </div>
+              <div key={item.producto_id} className="flex items-center gap-2 px-4 py-3">
+                <p className="flex-1 min-w-0 text-sm font-medium text-gray-800 truncate">{item.nombre}</p>
+                <input
+                  type="number" inputMode="decimal" min={0}
+                  value={item.cantidad}
+                  onChange={e => setCantidad(item.producto_id, e.target.value)}
+                  placeholder="0"
+                  className="w-16 text-right rounded-lg border-2 border-gray-200 px-2 py-1.5 text-sm font-bold font-mono focus:outline-none focus:border-amber-400"
+                />
+                <select
+                  value={item.unidad_medida}
+                  onChange={e => setUnidad(item.producto_id, e.target.value)}
+                  className="rounded-lg border-2 border-gray-200 px-1.5 py-1.5 text-xs bg-white focus:outline-none focus:border-amber-400">
+                  {/* la unidad del producto siempre disponible aunque no esté en la lista */}
+                  {[...new Set([item.unidad_medida, ...UNIDADES])].map(u => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
+                </select>
+                <button onClick={() => quitar(item.producto_id)} className="text-xs text-red-400 hover:text-red-600" aria-label="Quitar">✕</button>
               </div>
             ))}
           </div>

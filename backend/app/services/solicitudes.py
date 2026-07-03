@@ -30,6 +30,7 @@ def crear_pedido(db: Session, tienda_id: int, nota: str | None,
             solicitud_id=solicitud.id,
             producto_id=item["producto_id"],
             cantidad_solicitada=item["cantidad_solicitada"],
+            unidad_solicitada=item.get("unidad_solicitada"),
         ))
 
     # Avisar al admin (campana + push, regla solicitud_barista): sin esto la

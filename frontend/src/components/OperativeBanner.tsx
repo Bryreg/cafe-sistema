@@ -21,16 +21,17 @@ interface Novedad {
   id: number; titulo: string; nivel: string; categoria: string; requiere_seguimiento: boolean
 }
 
+// Pastelería y Conteo compras salieron del menú (3-jul): la pastelería se ingresa por
+// Recibir (facturas) y el conteo de compras quedó reemplazado por el doble conteo.
+// Las rutas siguen vivas por si hay enlaces viejos.
 const QUICK = [
   { label: 'Ventas',          to: '/historial-ventas', icon: Receipt },
   { label: 'Recibir',         to: '/ingresos',       icon: Truck },
   { label: 'Merma',           to: '/mermas',         icon: Trash2 },
   { label: 'Inventario',      to: '/inventario',     icon: Package },
   { label: 'Inv. mensual',    to: '/inventario-mensual', icon: Boxes },
-  { label: 'Pastelería',      to: '/pasteleria',     icon: Cake },
   { label: 'Pedido',          to: '/pedido',         icon: ShoppingCart },
   { label: 'Sencilla',        to: '/sencilla',       icon: Coins },
-  { label: 'Conteo compras',  to: '/conteo-compras', icon: ClipboardCheck },
   { label: 'Consignaciones',  to: '/consignaciones', icon: ArrowRightLeft },
 ]
 

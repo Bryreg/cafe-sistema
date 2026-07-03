@@ -186,6 +186,8 @@ with engine.connect() as _conn:
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_conteo_turno_tipo ON conteos_fisicos (turno_id, tipo) WHERE tipo IN ('apertura', 'cierre')",
         # Mermas de consumo: quién consumió (dueños/reuniones), aparte de quién registró.
         "ALTER TABLE mermas ADD COLUMN quien VARCHAR(100)",
+        # Pedido: unidad elegida por la barista (gr/unidad/lt/paquete), aparte de la del producto.
+        "ALTER TABLE solicitudes_pedido_items ADD COLUMN unidad_solicitada VARCHAR(20)",
     ]:
         try:
             _conn.execute(_text(_sql))

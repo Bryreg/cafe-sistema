@@ -20,7 +20,8 @@ router = APIRouter(prefix="/solicitudes", tags=["solicitudes"])
 def crear_pedido(data: CrearSolicitudPedidoRequest, db: Session = Depends(get_db),
                  user: Usuario = Depends(get_current_user)):
     ensure_tienda_access(user, data.tienda_id)
-    items = [{"producto_id": i.producto_id, "cantidad_solicitada": i.cantidad_solicitada}
+    items = [{"producto_id": i.producto_id, "cantidad_solicitada": i.cantidad_solicitada,
+              "unidad_solicitada": i.unidad_solicitada}
              for i in data.items]
     return svc.crear_pedido(db, data.tienda_id, data.nota, items, user.id)
 

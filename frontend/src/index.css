@@ -78,3 +78,10 @@ input, select, textarea {
     padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* Cuadres: timeline + resumen lado a lado en desktop, apilado en móvil */
+@media (max-width: 640px) {
+  .cuadre-timeline-grid {
+    grid-template-columns: 1fr !important;
+  }
+}

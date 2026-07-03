@@ -2,8 +2,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import update as sa_update
 from fastapi import HTTPException
 from datetime import datetime
-from app.models.models import Merma, Inventario, MovimientoInventario, TipoMovInvEnum, Tienda
-from app.services.inventario import consumir_fifo
+from app.models.models import (Merma, Inventario, MovimientoInventario, TipoMovInvEnum,
+                                Tienda, Producto, ProductoInsumo)
+from app.services.inventario import consumir_fifo, registrar_movimiento
 from app.services import audit
 import logging
 
@@ -15,7 +16,8 @@ TIPOS_VALIDOS = {"consumo", "traslado", "daño"}
 def registrar_merma(db: Session, tienda_id: int, producto_id: int,
                     cantidad: float, motivo: str, usuario_id: int,
                     tipo: str = "consumo", tienda_destino_id: int | None = None,
-                    barista_id: int | None = None, barista_nombre: str | None = None):
+                    barista_id: int | None = None, barista_nombre: str | None = None,
+                    quien: str | None = None):
 
     if tipo not in TIPOS_VALIDOS:
         raise HTTPException(400, f"Tipo inválido. Usa: {', '.join(TIPOS_VALIDOS)}")
@@ -29,13 +31,9 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
         if not tienda_destino:
             raise HTTPException(404, "Sede destino no encontrada")
 
-    # Verify product exists and check stock before attempting atomic update
-    inv = db.query(Inventario).filter(
-        Inventario.producto_id == producto_id,
-        Inventario.tienda_id == tienda_id,
-    ).first()
-    if not inv:
-        raise HTTPException(404, "Producto no encontrado en inventario")
+    producto = db.query(Producto).filter_by(id=producto_id).first()
+    if not producto:
+        raise HTTPException(404, "Producto no encontrado")
 
     merma = Merma(
         tienda_id=tienda_id,
@@ -43,6 +41,7 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
         cantidad=cantidad,
         motivo=motivo,
         tipo=tipo,
+        quien=quien,
         tienda_destino_id=tienda_destino_id if tipo == "traslado" else None,
         recibido=False,
         usuario_id=usuario_id,
@@ -52,36 +51,66 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
     db.add(merma)
     db.flush()   # obtener merma.id para referenciarlo en la auditoría
 
+    sufijo_quien = f" ({quien})" if quien else ""
     if tipo == "consumo":
-        mov_motivo = f"Consumo: {motivo}"
+        mov_motivo = f"Consumo{sufijo_quien}: {motivo}"
     elif tipo == "daño":
         mov_motivo = f"Daño: {motivo}"
     else:  # traslado — usar el nombre de la sede destino, no el id
         mov_motivo = f"Traslado a {tienda_destino.nombre}: {motivo}"
 
-    mov = MovimientoInventario(
-        producto_id=producto_id,
-        tienda_id=tienda_id,
-        tipo=TipoMovInvEnum.salida,
-        cantidad=cantidad,
-        usuario_id=usuario_id,
-        motivo=mov_motivo,
-    )
-    db.add(mov)
-
-    # Atomic decrement with stock sufficiency check
-    rows = db.execute(
-        sa_update(Inventario)
-        .where(
+    if producto.controla_stock:
+        # Producto con stock propio: salida directa + FIFO (camino clásico).
+        inv = db.query(Inventario).filter(
             Inventario.producto_id == producto_id,
             Inventario.tienda_id == tienda_id,
-            Inventario.stock_actual >= cantidad,
+        ).first()
+        if not inv:
+            raise HTTPException(404, "Producto no encontrado en inventario")
+
+        mov = MovimientoInventario(
+            producto_id=producto_id,
+            tienda_id=tienda_id,
+            tipo=TipoMovInvEnum.salida,
+            cantidad=cantidad,
+            usuario_id=usuario_id,
+            motivo=mov_motivo,
         )
-        .values(stock_actual=Inventario.stock_actual - cantidad)
-    ).rowcount
-    if rows == 0:
-        raise HTTPException(400, f"Stock insuficiente.")
-    consumir_fifo(db, producto_id, tienda_id, cantidad)
+        db.add(mov)
+
+        # Atomic decrement with stock sufficiency check
+        rows = db.execute(
+            sa_update(Inventario)
+            .where(
+                Inventario.producto_id == producto_id,
+                Inventario.tienda_id == tienda_id,
+                Inventario.stock_actual >= cantidad,
+            )
+            .values(stock_actual=Inventario.stock_actual - cantidad)
+        ).rowcount
+        if rows == 0:
+            raise HTTPException(400, "Stock insuficiente.")
+        consumir_fifo(db, producto_id, tienda_id, cantidad)
+    else:
+        # Bebida preparada / producto sin stock propio: descuenta sus INSUMOS por
+        # receta (mismo mecanismo que la venta POS, pero sin plata). Si no tiene
+        # receta, queda solo el registro de la merma.
+        receta = db.query(ProductoInsumo).filter(
+            ProductoInsumo.producto_id == producto_id
+        ).all()
+        for r in receta:
+            try:
+                registrar_movimiento(
+                    db, producto_id=r.insumo_id, tienda_id=tienda_id,
+                    tipo="salida", cantidad=r.cantidad * cantidad,
+                    motivo=f"{mov_motivo} — insumo de {producto.nombre}",
+                    usuario_id=usuario_id, commit=False, allow_negative=True,
+                )
+            except HTTPException as e:
+                if e.status_code == 404:
+                    logger.warning(f"Insumo {r.insumo_id} sin inventario, merma registrada de todas formas")
+                else:
+                    raise
 
     audit.registrar(
         db, accion="registro_merma", tabla="mermas",

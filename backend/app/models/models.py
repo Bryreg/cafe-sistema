@@ -388,6 +388,8 @@ class Merma(Base):
     cantidad = Column(Float, nullable=False)
     motivo = Column(String(300), nullable=False)
     tipo = Column(SAEnum(TipoMermaEnum), default=TipoMermaEnum.consumo, nullable=False)
+    # Quién consumió (consumo de dueños/reuniones): distinto de barista_nombre (quien registró).
+    quien = Column(String(100), nullable=True)
     tienda_destino_id = Column(Integer, ForeignKey("tiendas.id"), nullable=True)
     recibido = Column(Boolean, default=False, nullable=False)
     fecha_recibido = Column(DateTime, nullable=True)

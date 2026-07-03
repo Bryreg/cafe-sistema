@@ -26,6 +26,7 @@ def registrar(data: RegistrarMermaRequest, db: Session = Depends(get_db),
         db, data.tienda_id, data.producto_id, data.cantidad, data.motivo,
         user.id, data.tipo, data.tienda_destino_id,
         barista_id=barista[0], barista_nombre=barista[1],
+        quien=data.quien,
     )
 
 
@@ -33,7 +34,14 @@ def registrar(data: RegistrarMermaRequest, db: Session = Depends(get_db),
 def listar(tienda_id: int, db: Session = Depends(get_db),
            user: Usuario = Depends(get_current_user)):
     ensure_tienda_access(user, tienda_id)
-    return svc.get_mermas_tienda(db, tienda_id)
+    rows = svc.get_mermas_tienda(db, tienda_id)
+    out = []
+    for m in rows:
+        d = MermaOut.model_validate(m)
+        d.producto_nombre = m.producto.nombre if m.producto else None
+        d.unidad_medida = m.producto.unidad_medida if m.producto else None
+        out.append(d)
+    return out
 
 
 @router.get("/traslados/pendientes/{tienda_id}")

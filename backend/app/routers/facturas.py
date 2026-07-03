@@ -1,6 +1,7 @@
 import json
 from datetime import date, datetime, time
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
@@ -75,6 +76,20 @@ def eliminar(factura_id: int, db: Session = Depends(get_db),
              user: Usuario = Depends(require_admin)):
     """Elimina una factura errónea/de prueba revirtiendo inventario, lotes y egresos de caja."""
     return svc.eliminar_factura(db, factura_id, user.id)
+
+
+class FacturaEditRequest(BaseModel):
+    valor_total: Optional[float] = None
+    valor_pagado: Optional[float] = None
+    numero_factura: Optional[str] = None
+
+
+@router.patch("/{factura_id}")
+def editar(factura_id: int, body: FacturaEditRequest, db: Session = Depends(get_db),
+           user: Usuario = Depends(require_admin)):
+    """Corrige montos de una factura (típico: cero de más de la barista)."""
+    return svc.editar_factura(db, factura_id, body.valor_total, body.valor_pagado,
+                              body.numero_factura, user.id)
 
 
 @router.patch("/{factura_id}/pago")

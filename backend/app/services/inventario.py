@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import update as sa_update
+from sqlalchemy import update as sa_update, nulls_last
 from fastapi import HTTPException
 from app.models.models import Inventario, MovimientoInventario, LoteInventario, Producto, Tienda
 from datetime import datetime
@@ -29,6 +29,9 @@ def get_inventario_tienda(db: Session, tienda_id: int):
         .options(joinedload(Inventario.producto))
         .join(Inventario.producto)
         .filter(Inventario.tienda_id == tienda_id, Producto.incluir_en_conteo.isnot(False))
+        # Orden fijo de la planilla de conteo (orden_conteo); los que no tienen posición
+        # van al final en alfabético. Antes no había ORDER BY: orden indefinido de la DB.
+        .order_by(nulls_last(Producto.orden_conteo.asc()), Producto.nombre.asc())
         .all()
     )
     result = []
@@ -45,6 +48,7 @@ def get_inventario_tienda(db: Session, tienda_id: int):
             "unidad_medida": item.producto.unidad_medida,
             "fraccionable": bool(item.producto.fraccionable),
             "envase": item.producto.envase,
+            "contenido_por_unidad": float(item.producto.contenido_por_unidad) if item.producto.contenido_por_unidad else None,
             "alerta": item.stock_actual <= item.stock_minimo,
         })
     return result

@@ -63,6 +63,13 @@ def lotes_trazabilidad(
 @router.get("/productos")
 def productos(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     rows = db.query(Producto).order_by(Producto.categoria, Producto.nombre).all()
+    # Archivados FUERA (firma: no controla stock + excluido del conteo + sin precio de
+    # venta). Las bebidas preparadas del POS también tienen controla_stock=False pero
+    # conservan precio_venta > 0. Sin este filtro los duplicados archivados reaparecían
+    # en el buscador de Ingresos y las baristas les daban entrada (caso agua con gas 2-jul).
+    rows = [p for p in rows if not (
+        not p.controla_stock and p.incluir_en_conteo is False and not (p.precio_venta or 0)
+    )]
     return [{"id": p.id, "nombre": p.nombre, "categoria": p.categoria.value,
              "unidad_medida": p.unidad_medida, "controla_stock": p.controla_stock} for p in rows]
 
@@ -110,11 +117,21 @@ def editar_producto(producto_id: int, data: ProductoUpdate, db: Session = Depend
         if data.envase not in ("", "bolsa", "botella"):
             raise HTTPException(400, "envase debe ser bolsa o botella")
         p.envase = data.envase or None
+    if data.contenido_por_unidad is not None:
+        p.contenido_por_unidad = data.contenido_por_unidad if data.contenido_por_unidad > 0 else None
+    if data.orden_conteo is not None:
+        p.orden_conteo = data.orden_conteo if data.orden_conteo >= 0 else None
+    if data.grupo_conteo is not None:
+        if data.grupo_conteo not in ("", "desechables"):
+            raise HTTPException(400, "grupo_conteo debe ser desechables o vacío")
+        p.grupo_conteo = data.grupo_conteo or None
     db.commit()
     return {"id": p.id, "nombre": p.nombre, "categoria": p.categoria.value,
             "unidad_medida": p.unidad_medida, "controla_stock": p.controla_stock,
             "incluir_en_conteo": p.incluir_en_conteo,
-            "fraccionable": p.fraccionable, "envase": p.envase}
+            "fraccionable": p.fraccionable, "envase": p.envase,
+            "contenido_por_unidad": p.contenido_por_unidad,
+            "orden_conteo": p.orden_conteo, "grupo_conteo": p.grupo_conteo}
 
 @router.get("/productos/{producto_id}/insumos")
 def get_insumos_producto(producto_id: int, db: Session = Depends(get_db),

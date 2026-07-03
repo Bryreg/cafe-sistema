@@ -26,6 +26,9 @@ class ProductoUpdate(BaseModel):
     incluir_en_conteo: Optional[bool] = None
     fraccionable: Optional[bool] = None
     envase: Optional[str] = None  # "" (quitar) | "bolsa" | "botella"
+    contenido_por_unidad: Optional[float] = None  # gr por unidad sellada (0 = quitar)
+    orden_conteo: Optional[int] = None            # posición fija en el conteo (-1 = quitar)
+    grupo_conteo: Optional[str] = None            # "" (normal) | "desechables"
 
 class InsumoRecetaItem(BaseModel):
     insumo_id: int

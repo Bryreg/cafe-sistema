@@ -249,6 +249,13 @@ class Producto(Base):
     # A granel: se cuenta en unidades selladas + nivel de la abierta (dibujo). envase: bolsa | botella.
     fraccionable = Column(Boolean, default=False, server_default="false")
     envase = Column(String(10), nullable=True)   # 'bolsa' (sólidos) | 'botella' (líquidos)
+    # A granel en GRAMOS: gr que trae la unidad sellada (bolsa de café 2500). El conteo con
+    # gramera = bolsas cerradas × contenido + gramos pesados de la abierta.
+    contenido_por_unidad = Column(Numeric(12, 2, asdecimal=False), nullable=True)
+    # Orden fijo del conteo/inventario (planilla de pedidos). NULL → al final, alfabético.
+    orden_conteo = Column(Integer, nullable=True)
+    # NULL = conteo diario normal; 'desechables' = solo se cuenta cuando el admin lo pide.
+    grupo_conteo = Column(String(20), nullable=True)
     inventarios = relationship("Inventario", back_populates="producto")
     movimientos_inv = relationship("MovimientoInventario", back_populates="producto")
     pastelerias = relationship("PasteleriaDiaria", back_populates="producto")

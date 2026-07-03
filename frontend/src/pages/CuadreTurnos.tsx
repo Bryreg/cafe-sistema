@@ -739,173 +739,122 @@ interface ResumenBarista {
   barista: string; entro: string | null; salio: string | null; diferencia_cuadre: number | null
 }
 
-const EVENTO_ICON: Record<string, { dot: string; ring: string }> = {
-  apertura_turno: { dot: 'oklch(48% 0.15 155)', ring: 'oklch(94% 0.04 155)' },
-  barista_entra:  { dot: 'oklch(50% 0.13 145)', ring: 'oklch(95% 0.04 145)' },
-  barista_sale:   { dot: 'oklch(60% 0.05 60)',  ring: 'oklch(95% 0.008 75)' },
-  cuadre:         { dot: 'oklch(52% 0.14 50)',  ring: 'oklch(96% 0.04 55)' },
-  cierre_turno:   { dot: 'oklch(42% 0.18 30)',  ring: 'oklch(96% 0.04 30)' },
-}
-
 function TurnoTimelineCard({ turno, onFoto, onDetalle, esDiaAnterior, onCerrarPendiente }: {
   turno: TurnoItem; onFoto: (url: string) => void; onDetalle: () => void
   esDiaAnterior: (iso: string) => boolean; onCerrarPendiente: () => void
 }) {
-  const [open, setOpen] = useState(false)
   const [data, setData] = useState<{ eventos: TimelineEvento[]; resumen_baristas: ResumenBarista[] } | null>(null)
-  const [loading, setLoading] = useState(false)
   const cerrado = turno.estado === 'cerrado'
   const diffCierre = turno.diferencia_cierre
   const hayDiff = diffCierre !== null && Math.round(diffCierre) !== 0
 
+  // Auto-carga: la info clave se ve SIEMPRE en la cara del card, no escondida tras un click.
   useEffect(() => {
-    if (!open || data) return
-    setLoading(true)
     api.get(`/caja/turno/${turno.id}/timeline`)
       .then(r => setData(r.data))
       .catch(() => setData({ eventos: [], resumen_baristas: [] }))
-      .finally(() => setLoading(false))
-  }, [open]) // eslint-disable-line
+  }, [turno.id])
+
+  const cuadres = (data?.eventos ?? []).filter(e => e.tipo === 'cuadre')
+  const baristas = data?.resumen_baristas ?? []
+  const CUADRE_LBL: Record<string, string> = { apertura: 'Inicial', entrada: 'Llegada', entrega: 'Llegada', recibo: 'Llegada', salida: 'Cierre' }
+  const dColor = (d: number) => Math.round(d) === 0 ? 'oklch(35% 0.13 145)' : d > 0 ? 'oklch(35% 0.13 240)' : 'oklch(42% 0.18 30)'
+  const dBg = (d: number) => Math.round(d) === 0 ? 'oklch(95% 0.04 145)' : d > 0 ? 'oklch(95% 0.04 240)' : 'oklch(96% 0.04 30)'
 
   return (
-    <div style={{ background: '#fff', borderRadius: 16, border: '1px solid oklch(92% 0.008 75)', boxShadow: '0 1px 3px rgba(0,0,0,.04)', overflow: 'hidden' }}>
-      {/* Cabecera: apertura, quién y base */}
-      <button onClick={() => setOpen(o => !o)}
-        style={{ width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', padding: '12px 14px' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: 'oklch(22% 0.02 60)' }}>{fmtDate(turno.fecha_apertura)}</p>
-            <p style={{ margin: '2px 0 0', fontSize: 11, color: 'oklch(55% 0.01 60)', fontWeight: 500 }}>
-              Abrió {fmtTime(turno.fecha_apertura)}{turno.fecha_cierre ? ` → cerró ${fmtTime(turno.fecha_cierre)}` : ' · en curso'}
-              {turno.tipo_turno && <span style={{ color: 'oklch(50% 0.12 65)' }}> · {turno.tipo_turno}</span>}
-            </p>
-          </div>
-          {open ? <ChevronUp size={16} style={{ color: 'oklch(60% 0.01 60)', flexShrink: 0, marginTop: 2 }} />
-                : <ChevronDown size={16} style={{ color: 'oklch(60% 0.01 60)', flexShrink: 0, marginTop: 2 }} />}
+    <div style={{ background: '#fff', borderRadius: 16, border: '1px solid oklch(92% 0.008 75)', boxShadow: '0 1px 3px rgba(0,0,0,.04)', padding: '12px 14px' }}>
+      {/* Cabecera: fecha + estado */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: 13.5, fontWeight: 700, color: 'oklch(22% 0.02 60)' }}>{fmtDate(turno.fecha_apertura)}</p>
+          <p style={{ margin: '2px 0 0', fontSize: 11, color: 'oklch(55% 0.01 60)', fontWeight: 500 }}>
+            Abrió {fmtTime(turno.fecha_apertura)}{turno.fecha_cierre ? ` → cerró ${fmtTime(turno.fecha_cierre)}` : ' · en curso'}
+            {turno.tipo_turno && <span style={{ color: 'oklch(50% 0.12 65)' }}> · {turno.tipo_turno}</span>}
+          </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, color: 'oklch(45% 0.01 60)', display: 'flex', alignItems: 'center', gap: 4 }}>
-            <UserCheck size={12} style={{ color: 'oklch(50% 0.08 155)' }} /> Abrió con base <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(turno.base_real)}</strong>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+          {!cerrado && esDiaAnterior(turno.fecha_apertura) && (
+            <span role="button" onClick={onCerrarPendiente}
+              style={{ padding: '3px 10px', borderRadius: 999, fontSize: 10, fontWeight: 800, background: 'oklch(54% 0.18 25)', color: '#fff', cursor: 'pointer' }}>
+              Cerrar turno pendiente
+            </span>
+          )}
+          <span style={{ padding: '2px 9px', borderRadius: 999, fontSize: 10, fontWeight: 700, background: cerrado ? 'oklch(95% 0.015 155)' : 'oklch(96% 0.08 145)', color: cerrado ? 'oklch(40% 0.08 155)' : 'oklch(30% 0.15 145)' }}>
+            {cerrado ? 'Cerrado' : 'Abierto'}
           </span>
-          {turno.baristas.length > 0 && (
-            <span style={{ fontSize: 11, color: 'oklch(45% 0.01 60)', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Users size={12} style={{ color: 'oklch(60% 0.01 60)' }} /> {turno.baristas.join(' · ')}
-            </span>
-          )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: 'oklch(22% 0.02 60)', fontVariantNumeric: 'tabular-nums' }}>{fmt(turno.total_ventas)}</span>
-            {cerrado && diffCierre !== null && (
-              <span style={{ fontSize: 11.5, fontWeight: 700, fontVariantNumeric: 'tabular-nums', padding: '1px 8px', borderRadius: 999,
-                color: !hayDiff ? 'oklch(35% 0.13 145)' : diffCierre > 0 ? 'oklch(35% 0.13 240)' : 'oklch(42% 0.18 30)',
-                background: !hayDiff ? 'oklch(95% 0.04 145)' : diffCierre > 0 ? 'oklch(95% 0.04 240)' : 'oklch(96% 0.04 30)' }}>{fmtDiff(diffCierre)}</span>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            {turno.imagen_cierre_url && <Camera size={12} style={{ color: 'oklch(55% 0.08 155)' }} />}
-            {!cerrado && esDiaAnterior(turno.fecha_apertura) && (
-              <span role="button" onClick={e => { e.stopPropagation(); onCerrarPendiente() }}
-                style={{ padding: '3px 10px', borderRadius: 999, fontSize: 10, fontWeight: 800, background: 'oklch(54% 0.18 25)', color: '#fff', cursor: 'pointer' }}>
-                Cerrar turno pendiente
-              </span>
-            )}
-            <span style={{ padding: '2px 9px', borderRadius: 999, fontSize: 10, fontWeight: 700, background: cerrado ? 'oklch(95% 0.015 155)' : 'oklch(96% 0.08 145)', color: cerrado ? 'oklch(40% 0.08 155)' : 'oklch(30% 0.15 145)' }}>
-              {cerrado ? 'Cerrado' : 'Abierto'}
-            </span>
-          </div>
-        </div>
-      </button>
+      </div>
 
-      {/* Desplegado: timeline + resumen */}
-      {open && (
-        <div style={{ borderTop: '1px solid oklch(95% 0.005 75)', background: 'oklch(98% 0.004 75)', padding: '12px 14px' }}>
-          {loading ? (
-            <p style={{ fontSize: 12, color: 'oklch(60% 0.01 60)', textAlign: 'center', padding: '12px 0' }}>Cargando…</p>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1fr)', gap: 14 }}
-              className="cuadre-timeline-grid">
-              {/* Timeline */}
-              <div>
-                <p style={{ margin: '0 0 8px', fontSize: 10, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'oklch(55% 0.01 60)' }}>Línea de tiempo</p>
-                <div style={{ position: 'relative', paddingLeft: 18 }}>
-                  <div style={{ position: 'absolute', left: 5, top: 4, bottom: 4, width: 2, background: 'oklch(92% 0.008 75)' }} />
-                  {(data?.eventos ?? []).map((e, i) => {
-                    const ic = EVENTO_ICON[e.tipo] ?? EVENTO_ICON.barista_entra
-                    const esCuadre = e.tipo === 'cuadre'
-                    const dif = e.diferencia ?? 0
-                    return (
-                      <div key={i} style={{ position: 'relative', paddingBottom: 12 }}>
-                        <span style={{ position: 'absolute', left: -18, top: 2, width: 12, height: 12, borderRadius: 999, background: ic.dot, boxShadow: `0 0 0 3px ${ic.ring}` }} />
-                        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-                          <p style={{ margin: 0, fontSize: 12.5, fontWeight: 600, color: 'oklch(28% 0.02 60)' }}>{e.titulo}</p>
-                          <span style={{ fontSize: 10.5, color: 'oklch(62% 0.01 60)', flexShrink: 0 }}>{e.fecha ? fmtTime(e.fecha) : ''}</span>
-                        </div>
-                        {e.barista && !esCuadre && (
-                          <p style={{ margin: '1px 0 0', fontSize: 11, color: 'oklch(55% 0.01 60)' }}>{e.barista}</p>
-                        )}
-                        {e.detalle && !esCuadre && (
-                          <p style={{ margin: '1px 0 0', fontSize: 11, color: 'oklch(50% 0.01 60)' }}>{e.detalle}</p>
-                        )}
-                        {esCuadre && (
-                          <div style={{ marginTop: 4, background: '#fff', border: '1px solid oklch(93% 0.008 75)', borderRadius: 10, padding: '7px 10px' }}>
-                            {e.barista && <p style={{ margin: '0 0 4px', fontSize: 11, color: 'oklch(50% 0.01 60)', fontWeight: 600 }}>{e.barista}{e.base_separada ? ' · venta de ayer separada' : ''}</p>}
-                            <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: 11, color: 'oklch(55% 0.01 60)' }}>Debía: <strong style={{ fontVariantNumeric: 'tabular-nums', color: 'oklch(30% 0.02 60)' }}>{fmt(e.esperado ?? 0)}</strong></span>
-                              <span style={{ fontSize: 11, color: 'oklch(55% 0.01 60)' }}>Contó: <strong style={{ fontVariantNumeric: 'tabular-nums', color: 'oklch(30% 0.02 60)' }}>{fmt(e.contado ?? 0)}</strong></span>
-                              <span style={{ fontSize: 11, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-                                color: Math.round(dif) === 0 ? 'oklch(35% 0.13 145)' : dif > 0 ? 'oklch(35% 0.13 240)' : 'oklch(42% 0.18 30)' }}>
-                                {Math.round(dif) === 0 ? '✓ cuadró' : fmtDiff(dif)}
-                              </span>
-                            </div>
-                            {e.imagen_url && (
-                              <button onClick={() => onFoto(e.imagen_url!)}
-                                style={{ marginTop: 5, fontSize: 10.5, color: 'oklch(45% 0.12 240)', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <Camera size={11} /> Ver foto del cuadre
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                  {(data?.eventos ?? []).length === 0 && (
-                    <p style={{ fontSize: 11.5, color: 'oklch(60% 0.01 60)' }}>Sin eventos registrados.</p>
-                  )}
-                </div>
-              </div>
+      {/* Apertura: base + ventas + diff de cierre — todo a la vista */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, color: 'oklch(45% 0.01 60)', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <UserCheck size={12} style={{ color: 'oklch(50% 0.08 155)' }} /> Base <strong style={{ fontVariantNumeric: 'tabular-nums', color: 'oklch(30% 0.02 60)' }}>{fmt(turno.base_real)}</strong>
+        </span>
+        <span style={{ fontSize: 11, color: 'oklch(45% 0.01 60)' }}>Ventas <strong style={{ fontVariantNumeric: 'tabular-nums', color: 'oklch(22% 0.02 60)' }}>{fmt(turno.total_ventas)}</strong></span>
+        {cerrado && diffCierre !== null && (
+          <span style={{ fontSize: 11, color: 'oklch(45% 0.01 60)' }}>Cierre{' '}
+            <strong style={{ fontVariantNumeric: 'tabular-nums', color: dColor(diffCierre) }}>{!hayDiff ? '✓ cuadró' : fmtDiff(diffCierre)}</strong>
+          </span>
+        )}
+        {turno.imagen_cierre_url && (
+          <button onClick={() => onFoto(turno.imagen_cierre_url!)}
+            style={{ fontSize: 10.5, color: 'oklch(45% 0.12 240)', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 3 }}>
+            <Camera size={11} /> foto
+          </button>
+        )}
+      </div>
 
-              {/* Resumen de baristas */}
-              <div>
-                <p style={{ margin: '0 0 8px', fontSize: 10, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'oklch(55% 0.01 60)' }}>Baristas del turno</p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {(data?.resumen_baristas ?? []).map((b, i) => (
-                    <div key={i} style={{ background: '#fff', border: '1px solid oklch(93% 0.008 75)', borderRadius: 10, padding: '8px 10px' }}>
-                      <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: 'oklch(28% 0.02 60)' }}>{b.barista}</p>
-                      <p style={{ margin: '2px 0 0', fontSize: 10.5, color: 'oklch(55% 0.01 60)' }}>
-                        {b.entro ? `Entró ${fmtTime(b.entro)}` : '—'}{b.salio ? ` · Salió ${fmtTime(b.salio)}` : ' · en turno'}
-                      </p>
-                      {b.diferencia_cuadre !== null && (
-                        <p style={{ margin: '3px 0 0', fontSize: 10.5, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-                          color: Math.round(b.diferencia_cuadre) === 0 ? 'oklch(35% 0.13 145)' : b.diferencia_cuadre > 0 ? 'oklch(35% 0.13 240)' : 'oklch(42% 0.18 30)' }}>
-                          Cuadre: {Math.round(b.diferencia_cuadre) === 0 ? '✓ exacto' : fmtDiff(b.diferencia_cuadre)}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                  {(data?.resumen_baristas ?? []).length === 0 && (
-                    <p style={{ fontSize: 11.5, color: 'oklch(60% 0.01 60)' }}>Sin baristas registradas.</p>
-                  )}
-                </div>
-                <button onClick={onDetalle}
-                  style={{ marginTop: 10, width: '100%', fontSize: 11.5, fontWeight: 700, color: 'oklch(40% 0.08 155)', background: 'oklch(96% 0.02 155)', border: '1px solid oklch(90% 0.03 155)', borderRadius: 10, padding: '7px 0', cursor: 'pointer', fontFamily: 'inherit' }}>
-                  Ver detalle completo →
-                </button>
+      {/* Cuadres SIEMPRE visibles (lo importante, afuera) */}
+      {cuadres.length > 0 && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {cuadres.map((e, i) => {
+            const dif = e.diferencia ?? 0
+            return (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'oklch(98% 0.004 75)', borderRadius: 9, padding: '6px 9px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 9.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.04em', color: 'oklch(50% 0.12 50)', background: 'oklch(96% 0.04 55)', padding: '1px 7px', borderRadius: 999, flexShrink: 0 }}>
+                  {CUADRE_LBL[e.subtipo ?? ''] ?? 'Cuadre'}
+                </span>
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: 'oklch(30% 0.02 60)', flex: 1, minWidth: 60 }}>
+                  {e.barista ?? '—'} <span style={{ color: 'oklch(62% 0.01 60)', fontWeight: 400 }}>{e.fecha ? fmtTime(e.fecha) : ''}</span>
+                </span>
+                <span style={{ fontSize: 11, color: 'oklch(55% 0.01 60)', fontVariantNumeric: 'tabular-nums' }}>
+                  contó {fmt(e.contado ?? 0)} / debía {fmt(e.esperado ?? 0)}
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 700, fontVariantNumeric: 'tabular-nums', padding: '1px 7px', borderRadius: 999, color: dColor(dif), background: dBg(dif), flexShrink: 0 }}>
+                  {Math.round(dif) === 0 ? '✓' : fmtDiff(dif)}
+                </span>
+                {e.imagen_url && (
+                  <button onClick={() => onFoto(e.imagen_url!)}
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, color: 'oklch(55% 0.08 155)', flexShrink: 0 }}>
+                    <Camera size={12} />
+                  </button>
+                )}
               </div>
-            </div>
-          )}
+            )
+          })}
         </div>
       )}
+
+      {/* Baristas: entró/salió + su cuadre — chips a la vista */}
+      {baristas.length > 0 && (
+        <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {baristas.map((b, i) => (
+            <span key={i} style={{ fontSize: 10.5, color: 'oklch(45% 0.01 60)', background: 'oklch(97% 0.005 75)', borderRadius: 999, padding: '3px 9px', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <Users size={10} style={{ color: 'oklch(55% 0.08 155)' }} />
+              <strong style={{ color: 'oklch(30% 0.02 60)' }}>{b.barista}</strong>
+              {b.entro ? fmtTime(b.entro) : ''}{b.salio ? `→${fmtTime(b.salio)}` : ' · en turno'}
+              {b.diferencia_cuadre !== null && (
+                <strong style={{ color: dColor(b.diferencia_cuadre) }}>{Math.round(b.diferencia_cuadre) === 0 ? '✓' : fmtDiff(b.diferencia_cuadre)}</strong>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <button onClick={onDetalle}
+        style={{ marginTop: 10, fontSize: 11, fontWeight: 700, color: 'oklch(40% 0.08 155)', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}>
+        Ver detalle completo →
+      </button>
     </div>
   )
 }

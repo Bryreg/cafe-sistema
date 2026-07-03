@@ -266,6 +266,65 @@ def _serializar(f: FacturaCompra) -> dict:
     }
 
 
+def editar_factura(db: Session, factura_id: int, valor_total: float | None,
+                   valor_pagado: float | None, numero_factura: str | None,
+                   usuario_id: int) -> dict:
+    """Corrige montos de una factura (típico: la barista puso un cero de más).
+    Solo admin. Ajusta el egreso de caja proporcional si el pago fue en efectivo y
+    el turno sigue abierto; bancos/transferencia no tocan caja."""
+    f = db.query(FacturaCompra).filter_by(id=factura_id).first()
+    if not f:
+        raise HTTPException(404, "Factura no encontrada")
+
+    antes = {"valor_total": float(f.valor_total or 0), "valor_pagado": float(f.valor_pagado or 0),
+             "numero_factura": f.numero_factura}
+
+    if numero_factura is not None:
+        f.numero_factura = numero_factura.strip() or None
+
+    if valor_total is not None:
+        if valor_total <= 0:
+            raise HTTPException(400, "El valor total debe ser mayor a 0")
+        f.valor_total = valor_total
+
+    if valor_pagado is not None:
+        if valor_pagado < 0:
+            raise HTTPException(400, "El valor pagado no puede ser negativo")
+        nuevo_pagado = min(valor_pagado, float(f.valor_total))
+    else:
+        # Si bajó el total por debajo de lo pagado, recortar el pagado al nuevo total.
+        nuevo_pagado = min(float(f.valor_pagado or 0), float(f.valor_total))
+
+    # Si el pago fue en efectivo, el egreso de caja quedó por el monto viejo: ajustar
+    # por la diferencia (mismo patrón de matcheo por concepto que eliminar_factura).
+    delta_pago = nuevo_pagado - float(f.valor_pagado or 0)
+    if abs(delta_pago) > 0.001 and (f.forma_pago_real or "").lower() in ("efectivo", "contado"):
+        turno_activo = db.query(CajaTurno).filter(
+            CajaTurno.tienda_id == f.tienda_id,
+            CajaTurno.estado == EstadoTurnoEnum.abierto,
+        ).first()
+        if turno_activo:
+            concepto = f"Ajuste factura {f.numero_factura or f.id}: corrección de pago"
+            db.add(MovimientoCaja(
+                caja_turno_id=turno_activo.id,
+                tipo="egreso" if delta_pago > 0 else "ingreso",
+                concepto=concepto, valor=abs(delta_pago), usuario_id=usuario_id,
+            ))
+
+    f.valor_pagado = nuevo_pagado
+
+    audit.registrar(
+        db, accion="editar_factura", tabla="facturas_compra", registro_id=f.id,
+        usuario_id=usuario_id, tienda_id=f.tienda_id,
+        datos_antes=antes,
+        datos_despues={"valor_total": float(f.valor_total), "valor_pagado": float(f.valor_pagado),
+                       "numero_factura": f.numero_factura},
+    )
+    db.commit()
+    db.refresh(f)
+    return _serializar(f)
+
+
 def registrar_pago(db: Session, factura_id: int, monto: float, forma_pago: str | None,
                    imagen_soporte_url: str | None, usuario_id: int) -> dict:
     """Registra un pago (total o parcial) a una factura de proveedor. Suma al valor_pagado

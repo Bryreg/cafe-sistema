@@ -3,7 +3,7 @@ import api from '../api/client'
 import { conMiles, soloDigitos } from '../utils/plata'
 import {
   Truck, Wallet, Receipt, Download, Camera, X, Search,
-  CheckCircle, AlertCircle, Clock, Building2, Trash2,
+  CheckCircle, AlertCircle, Clock, Building2, Trash2, Pencil,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -51,6 +51,11 @@ export default function PagosProveedores() {
   const [soporte, setSoporte] = useState<File | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [pagoError, setPagoError] = useState('')
+  // editar montos (cero de más)
+  const [editFactura, setEditFactura] = useState<Factura | null>(null)
+  const [editTotal, setEditTotal] = useState('')
+  const [editPagado, setEditPagado] = useState('')
+  const [editError, setEditError] = useState('')
 
   useEffect(() => {
     api.get<Tienda[]>('/auth/tiendas').then(r => setTiendas(r.data)).catch(() => {})
@@ -80,6 +85,30 @@ export default function PagosProveedores() {
   ), [data, fProveedor, fEstado, busqueda])
 
   const maxProv = Math.max(1, ...(data?.por_proveedor ?? []).map(p => p.facturado))
+
+  const abrirEditar = (f: Factura) => {
+    setEditFactura(f)
+    setEditTotal(String(Math.round(f.valor_total)))
+    setEditPagado(String(Math.round(f.valor_pagado)))
+    setEditError('')
+  }
+
+  const guardarEdicion = async () => {
+    if (!editFactura) return
+    const total = Number(editTotal)
+    if (!(total > 0)) { setEditError('El total debe ser mayor a 0'); return }
+    setGuardando(true); setEditError('')
+    try {
+      await api.patch(`/facturas/${editFactura.id}`, {
+        valor_total: total,
+        valor_pagado: Number(editPagado) || 0,
+      })
+      setEditFactura(null)
+      cargar()
+    } catch (e: any) {
+      setEditError(e.response?.data?.detail || 'No se pudo editar. Reintentá.')
+    } finally { setGuardando(false) }
+  }
 
   const registrarPago = async () => {
     if (!pagoFactura || !monto || Number(monto) <= 0) return
@@ -296,6 +325,11 @@ export default function PagosProveedores() {
                         <Wallet size={13} /> Registrar pago
                       </button>
                     )}
+                    <button onClick={() => abrirEditar(f)}
+                      title="Corregir montos (ej. un cero de más)"
+                      className={`flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 px-2 py-1 rounded-lg border border-blue-100 hover:border-blue-300 ${f.estado_pago === 'pagado' ? 'ml-auto' : ''}`}>
+                      <Pencil size={12} /> Editar
+                    </button>
                     <button
                       onClick={async () => {
                         if (!window.confirm(`¿Eliminar la factura de ${f.proveedor} por ${fmt(f.valor_total)}?\n\nSe revierte TODO: la entrada de inventario, los lotes y el egreso de caja si se pagó en efectivo.`)) return
@@ -322,6 +356,35 @@ export default function PagosProveedores() {
             )}
           </div>
         </>
+      )}
+
+      {/* Modal editar montos */}
+      {editFactura && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4" onClick={() => setEditFactura(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-gray-800">Corregir factura</h3>
+              <button onClick={() => setEditFactura(null)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+            </div>
+            <p className="text-xs text-gray-500">{editFactura.proveedor}{editFactura.numero_factura ? ` · Fact. ${editFactura.numero_factura}` : ''}</p>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Total de la factura</label>
+              <input type="text" inputMode="numeric" value={conMiles(editTotal)} onChange={e => setEditTotal(soloDigitos(e.target.value))}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-lg font-bold font-mono focus:outline-none focus:border-forest" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Ya pagado</label>
+              <input type="text" inputMode="numeric" value={conMiles(editPagado)} onChange={e => setEditPagado(soloDigitos(e.target.value))}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-lg font-bold font-mono focus:outline-none focus:border-forest" />
+              <p className="text-[11px] text-gray-400 mt-1">Si el pago fue en efectivo, el egreso de caja se ajusta solo por la diferencia.</p>
+            </div>
+            {editError && <p className="text-sm text-red-600">{editError}</p>}
+            <button onClick={guardarEdicion} disabled={guardando}
+              className="w-full bg-forest hover:bg-forest-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl">
+              {guardando ? 'Guardando…' : 'Guardar corrección'}
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Modal registrar pago */}

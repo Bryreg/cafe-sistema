@@ -769,6 +769,25 @@ export default function CuadreTurnos() {
     }
   }, [isAdmin])
 
+  // Turno abierto de un día anterior = huérfano (quedó sin cuadre de salida).
+  const esDiaAnterior = (iso: string) => {
+    const s = iso.replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1')
+    const d = new Date(s.endsWith('Z') ? s : s + 'Z')
+    const h = new Date()
+    return d.getFullYear() < h.getFullYear() ||
+      (d.getFullYear() === h.getFullYear() && (d.getMonth() < h.getMonth() ||
+        (d.getMonth() === h.getMonth() && d.getDate() < h.getDate())))
+  }
+  const cerrarPendiente = async (t: TurnoItem) => {
+    if (!window.confirm(`¿Cerrar el turno del ${fmtDate(t.fecha_apertura)} con el esperado (diferencia 0)? La diferencia real la captura el cuadre inicial siguiente.`)) return
+    try {
+      await api.post(`/caja/${t.id}/cerrar-administrativo`)
+      api.get(`/caja/historial/${histTiendaId}`).then(r => setTurnos(r.data)).catch(() => null)
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'No se pudo cerrar')
+    }
+  }
+
   const visibles = turnos.filter(t =>
     filtroOp === 'todos' ? true :
     filtroOp === 'cerrados' ? t.estado === 'cerrado' :
@@ -927,6 +946,13 @@ export default function CuadreTurnos() {
                       </div>
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                         {hayFoto && <Camera size={12} style={{ color: 'oklch(55% 0.08 155)' }} />}
+                        {!cerrado && esDiaAnterior(t.fecha_apertura) && (
+                          <span role="button"
+                            onClick={e => { e.stopPropagation(); cerrarPendiente(t) }}
+                            style={{ padding: '3px 10px', borderRadius: 999, fontSize: 10, fontWeight: 800, background: 'oklch(54% 0.18 25)', color: '#fff', cursor: 'pointer' }}>
+                            Cerrar turno pendiente
+                          </span>
+                        )}
                         <span style={{ padding: '2px 9px', borderRadius: 999, fontSize: 10, fontWeight: 700, background: cerrado ? 'oklch(95% 0.015 155)' : 'oklch(96% 0.08 145)', color: cerrado ? 'oklch(40% 0.08 155)' : 'oklch(30% 0.15 145)' }}>
                           {cerrado ? 'Cerrado' : 'Abierto'}
                         </span>

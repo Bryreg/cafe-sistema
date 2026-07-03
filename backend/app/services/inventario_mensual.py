@@ -82,6 +82,25 @@ def iniciar(db: Session, tienda_id: int, anio: int, mes: int, usuario_id: int,
     return _serializar(inv)
 
 
+def reiniciar(db: Session, tienda_id: int, anio: int, mes: int, usuario_id: int) -> dict:
+    """Borra el conteo mensual EN PROCESO y lo re-siembra con el conteo del sistema
+    actual. Pensado para cuando cambia el modelo/las unidades (p.ej. la conversión a
+    gramos del 3-jul dejó cantidad_sistema en unidades viejas). Los cerrados son
+    históricos intocables."""
+    inv = db.query(InventarioMensual).filter_by(tienda_id=tienda_id, anio=anio, mes=mes).first()
+    if inv:
+        if inv.estado == "cerrado":
+            raise HTTPException(400, "El inventario del mes ya está cerrado — es histórico y no se reinicia")
+        audit.registrar(
+            db, accion="inventario_mensual_reiniciado", tabla="inventarios_mensuales",
+            registro_id=inv.id, usuario_id=usuario_id, tienda_id=tienda_id,
+            datos_antes={"anio": anio, "mes": mes, "items": len(inv.items)},
+        )
+        db.delete(inv)   # cascade borra los items
+        db.commit()
+    return iniciar(db, tienda_id, anio, mes, usuario_id)
+
+
 def get_actual(db: Session, tienda_id: int, anio: int, mes: int):
     inv = db.query(InventarioMensual).filter_by(tienda_id=tienda_id, anio=anio, mes=mes).first()
     return _serializar(inv) if inv else None

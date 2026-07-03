@@ -125,10 +125,17 @@ def _base_desde_ultimo_cierre(ultimo, consigs_deducidas: float) -> float:
       ya salieron de la venta del día, no cargan a esa consignación). Lo que queda
       en la registradora = contado al cierre − base de ayer, que equivale a ventas
       en efectivo + ingresos − egresos + diferencia del cierre. Regla del negocio
-      definida por el dueño el 2-jul."""
+      definida por el dueño el 2-jul.
+
+    El "mismo día" se ancla en el día que el turno OPERÓ (su fecha_apertura), no en
+    la fecha del cierre: un turno de ayer cerrado administrativamente esta mañana es
+    DÍA NUEVO (caso 3-jul: el cuadre inicial mostraba $2.152.892 en vez de $989.192
+    porque el cierre a las 6am parecía relevo del mismo día)."""
     if ultimo is None:
         return 0.0
-    if ultimo.fecha_cierre and dia_col(ultimo.fecha_cierre) == _fecha_operativa():
+    dia_operado = dia_col(ultimo.fecha_apertura) if ultimo.fecha_apertura else (
+        dia_col(ultimo.fecha_cierre) if ultimo.fecha_cierre else None)
+    if dia_operado == _fecha_operativa():
         return (ultimo.efectivo_final_real or 0.0) - consigs_deducidas
     return max(0.0, (ultimo.efectivo_final_real or 0.0) - (ultimo.base_real or 0.0))
 
@@ -146,7 +153,19 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float | None, justificaci
         raise HTTPException(status_code=400, detail="caja_fuerte no puede ser negativa")
     if tipo_turno is not None and tipo_turno not in (e.value for e in TipoTurnoEnum):
         raise HTTPException(status_code=400, detail="tipo_turno inválido")
-    if get_turno_activo(db, tienda_id):
+    activo = get_turno_activo(db, tienda_id)
+    if activo:
+        # Si el turno abierto es de un día anterior, decir EXACTAMENTE qué faltó y cómo
+        # resolverlo (caso 3-jul: apertura bloqueada sin explicación).
+        if activo.fecha_apertura and dia_col(activo.fecha_apertura) != _fecha_operativa():
+            fecha = dia_col(activo.fecha_apertura).strftime("%d/%m")
+            falta = ("faltó el cuadre de salida" if activo.tiene_conteo_cierre
+                     else "faltan el conteo de cierre (PC) y el cuadre de salida (celular)")
+            raise HTTPException(
+                status_code=400,
+                detail=(f"El turno del {fecha} quedó abierto: {falta}. Completalo desde Salida "
+                        f"o pedile al administrador cerrarlo desde Cuadres."),
+            )
         raise HTTPException(status_code=400, detail="Ya existe un turno abierto para esta tienda")
 
     ultimo = db.query(CajaTurno).filter(
@@ -384,6 +403,15 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
     turno.justificacion_cierre = justificacion
     turno.estado = EstadoTurnoEnum.cerrado
 
+    # El cuadre de cierre ES el cuadre de salida de las últimas baristas: marcar la
+    # salida de todas las que sigan en turno (regla del dueño 3-jul — antes quedaban
+    # "en turno" si el flujo se abandonaba y el negocio abierto sin que nadie lo diga).
+    for tb in db.query(TurnoBarista).filter(
+        TurnoBarista.turno_id == turno_id,
+        TurnoBarista.salida_at.is_(None),
+    ).all():
+        tb.salida_at = datetime.utcnow()
+
     # Cerrar el día operativo cuando se cierra un turno de tipo 'cierre' (último del día)
     if turno.tipo_turno == TipoTurnoEnum.cierre and turno.dia_operativo_id:
         dia = db.query(DiaOperativo).filter(DiaOperativo.id == turno.dia_operativo_id).first()
@@ -419,6 +447,35 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
     db.refresh(turno)
     logger.info(f"Turno {turno.id} cerrado. Δefectivo: {diferencia_cierre}, Δtarjeta: {diferencia_tarjeta}")
     return turno
+
+
+def cerrar_turno_administrativo(db: Session, turno_id: int, usuario_id: int):
+    """Cierre administrativo de un turno huérfano (quedó abierto de un día anterior):
+    cierra con el esperado (diferencia 0) y justificación explícita. La diferencia
+    real la captura el cuadre inicial del día siguiente. Requiere el conteo de
+    cierre hecho — el inventario no se salta."""
+    turno = db.query(CajaTurno).filter(
+        CajaTurno.id == turno_id,
+        CajaTurno.estado == EstadoTurnoEnum.abierto,
+    ).first()
+    if not turno:
+        raise HTTPException(status_code=404, detail="Turno no encontrado o ya cerrado")
+    if not turno.tiene_conteo_cierre:
+        raise HTTPException(
+            status_code=400,
+            detail="Falta el conteo de cierre: la sede debe registrarlo desde el PC antes del cierre administrativo",
+        )
+    ingresos = db.query(func.sum(MovimientoCaja.valor)).filter(
+        MovimientoCaja.caja_turno_id == turno_id, MovimientoCaja.tipo == "ingreso"
+    ).scalar() or 0.0
+    egresos = db.query(func.sum(MovimientoCaja.valor)).filter(
+        MovimientoCaja.caja_turno_id == turno_id, MovimientoCaja.tipo == "egreso"
+    ).scalar() or 0.0
+    esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
+    justificacion = ("Cierre administrativo: el cuadre de salida no se realizó. Se cierra con el "
+                     "esperado (diferencia 0); la diferencia real la captura el cuadre inicial siguiente.")
+    return cerrar_caja(db, turno_id, esperado, justificacion, usuario_id,
+                       datafono_real=turno.total_tarjeta if turno.total_tarjeta else None)
 
 
 def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
@@ -707,7 +764,8 @@ def get_efectivo_inicio_esperado(db: Session, tienda_id: int):
         Consignacion.estado == EstadoConsignacionEnum.realizada,
     ).scalar() or 0.0
     esperado = _base_desde_ultimo_cierre(ultimo, consigs)
-    mismo_dia = bool(ultimo.fecha_cierre and dia_col(ultimo.fecha_cierre) == _fecha_operativa())
+    # Anclado en el día que el turno OPERÓ (igual que _base_desde_ultimo_cierre).
+    mismo_dia = bool(ultimo.fecha_apertura and dia_col(ultimo.fecha_apertura) == _fecha_operativa())
     return {
         "esperado": round(esperado, 2),
         "hay_cierre_previo": True,

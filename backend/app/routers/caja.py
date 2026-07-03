@@ -47,6 +47,13 @@ def cerrar(turno_id: int, data: CerrarCajaRequest, db: Session = Depends(get_db)
     ensure_turno_access(db, user, turno_id)
     return svc.cerrar_caja(db, turno_id, data.efectivo_final_real, data.justificacion_cierre, user.id, data.datafono_real)
 
+@router.post("/{turno_id}/cerrar-administrativo", response_model=TurnoOut)
+def cerrar_administrativo(turno_id: int, db: Session = Depends(get_db),
+                          user: Usuario = Depends(require_admin)):
+    """Cierra un turno huérfano de un día anterior con el esperado (diferencia 0)."""
+    return svc.cerrar_turno_administrativo(db, turno_id, user.id)
+
+
 @router.post("/{turno_id}/ajustar-apertura", response_model=TurnoOut)
 def ajustar_apertura(turno_id: int, data: AjustarAperturaRequest, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
     """Corrección admin: ajusta base real de la registradora y caja fuerte de un turno (con auditoría)."""

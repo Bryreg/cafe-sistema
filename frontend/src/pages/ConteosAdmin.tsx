@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { ChevronDown, ChevronUp, Download, ListChecks, Sun, Moon, User } from 'lucide-react'
+import { ChevronDown, ChevronUp, Download, ListChecks, Sun, Moon, User, DatabaseZap } from 'lucide-react'
 import { hoyLocal, haceDiasLocal } from '../utils/fechaLocal'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
@@ -221,6 +221,29 @@ export default function ConteosAdmin() {
 
                   {abiertoEste && (
                     <div style={{ borderTop: '1px solid oklch(95% 0.005 75)' }}>
+                      {c.n_diferencias > 0 && (
+                        <div className="flex items-center justify-between gap-3 px-4 py-2"
+                          style={{ background: 'oklch(97% 0.01 75)' }}>
+                          <p className="text-[11px] text-gray-500 m-0">
+                            El conteo no modifica el inventario: el sistema lleva su propio conteo por movimientos.
+                          </p>
+                          <button
+                            onClick={async () => {
+                              if (!window.confirm(`¿Aplicar este conteo como verdad del inventario? Se ajustan ${c.n_diferencias} productos al valor contado. Pensado para el conteo de fin de mes.`)) return
+                              setAccionando(`aplicar-${c.id}`)
+                              try {
+                                await api.post(`/conteos/${c.id}/aplicar`)
+                                await cargar()
+                              } finally { setAccionando(null) }
+                            }}
+                            disabled={accionando === `aplicar-${c.id}`}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold text-white shrink-0 disabled:opacity-50"
+                            style={{ background: 'oklch(45% 0.12 265)' }}>
+                            <DatabaseZap size={12} />
+                            {accionando === `aplicar-${c.id}` ? 'Aplicando…' : 'Aplicar al inventario'}
+                          </button>
+                        </div>
+                      )}
                       {visibles.length === 0 ? (
                         <p className="text-xs text-gray-400 text-center py-4">
                           {soloDif ? 'Sin diferencias — todo coincidió con el sistema.' : 'Sin ítems.'}

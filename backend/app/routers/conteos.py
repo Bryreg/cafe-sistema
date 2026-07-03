@@ -67,6 +67,14 @@ def resolver_verificacion(verificacion_id: int, data: ResolverVerificacionReques
     return svc.resolver_verificacion(db, verificacion_id, data.aprobar, user.id, data.nota)
 
 
+@router.post("/{conteo_id}/aplicar")
+def aplicar_conteo(conteo_id: int, db: Session = Depends(get_db),
+                   user: Usuario = Depends(require_admin)):
+    """Admin: promueve un conteo físico a verdad del inventario (ajustes masivos).
+    Pensado para el conteo de fin de mes o la primera operación de una sede."""
+    return svc.aplicar_conteo_inventario(db, conteo_id, user.id)
+
+
 @router.get("/tienda/{tienda_id}")
 def conteos_tienda(tienda_id: int,
                    fecha_desde: Optional[date] = Query(None),

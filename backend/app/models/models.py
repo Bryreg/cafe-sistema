@@ -426,6 +426,9 @@ class SolicitudPedidoItem(Base):
     solicitud_id = Column(Integer, ForeignKey("solicitudes_pedido.id"), nullable=False)
     producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
     cantidad_solicitada = Column(Float, nullable=False)
+    # Unidad elegida por la barista al pedir (gr, unidad, lt, paquete…): puede diferir
+    # de la unidad del producto (p.ej. pedir café en "paquetes" aunque el stock sea gr).
+    unidad_solicitada = Column(String(20), nullable=True)
     solicitud = relationship("SolicitudPedido", back_populates="items")
     producto = relationship("Producto")
 
@@ -435,6 +438,9 @@ class SolicitudPedidoItem(Base):
 
     @property
     def unidad_medida(self):
+        # La unidad que la barista eligió manda; si no eligió, la del producto.
+        if self.unidad_solicitada:
+            return self.unidad_solicitada
         return self.producto.unidad_medida if self.producto else ""
 
 

@@ -6,6 +6,7 @@ from datetime import datetime
 class SolicitudPedidoItemRequest(BaseModel):
     producto_id: int
     cantidad_solicitada: float
+    unidad_solicitada: Optional[str] = None
 
 
 class CrearSolicitudPedidoRequest(BaseModel):

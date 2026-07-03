@@ -564,6 +564,102 @@ def get_entregas_turno(db: Session, turno_id: int):
     ).order_by(EntregaTurno.fecha_hora.desc()).all()
 
 
+def get_turno_timeline(db: Session, turno_id: int) -> dict:
+    """Timeline cronológico de un turno + resumen de baristas, para el hub de Cuadres.
+
+    Eventos: apertura del turno, entradas/salidas de baristas y cada cuadre (EntregaTurno,
+    con esperado/contado/diferencia). El resumen dice, por barista, cuándo entró/salió y
+    cómo fue su último cuadre."""
+    turno = db.query(CajaTurno).filter(CajaTurno.id == turno_id).first()
+    if not turno:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+
+    TIPO_LBL = {
+        "apertura": "Cuadre inicial", "entrada": "Entrada de barista",
+        "entrega": "Cuadre de llegada", "recibo": "Cuadre de llegada", "salida": "Cuadre de cierre",
+    }
+    eventos = []
+
+    # 1) Apertura del turno
+    apertura_barista = db.query(TurnoBarista).filter(
+        TurnoBarista.turno_id == turno_id
+    ).order_by(TurnoBarista.created_at.asc()).first()
+    eventos.append({
+        "tipo": "apertura_turno",
+        "titulo": "Apertura de turno",
+        "fecha": turno.fecha_apertura.isoformat() if turno.fecha_apertura else None,
+        "barista": apertura_barista.nombre_snapshot if apertura_barista else None,
+        "detalle": f"Base ${float(turno.base_real or 0):,.0f}".replace(",", "."),
+        "monto": float(turno.base_real or 0),
+    })
+
+    # 2) Entradas / salidas de baristas
+    for tb in db.query(TurnoBarista).filter(TurnoBarista.turno_id == turno_id).all():
+        eventos.append({
+            "tipo": "barista_entra", "titulo": f"{tb.nombre_snapshot} entró al turno",
+            "fecha": tb.created_at.isoformat() if tb.created_at else None,
+            "barista": tb.nombre_snapshot, "detalle": None, "monto": None,
+        })
+        if tb.salida_at:
+            eventos.append({
+                "tipo": "barista_sale", "titulo": f"{tb.nombre_snapshot} marcó salida",
+                "fecha": tb.salida_at.isoformat(),
+                "barista": tb.nombre_snapshot, "detalle": None, "monto": None,
+            })
+
+    # 3) Cuadres (EntregaTurno)
+    entregas = db.query(EntregaTurno).filter(
+        EntregaTurno.turno_id == turno_id
+    ).order_by(EntregaTurno.fecha_hora.asc()).all()
+    for e in entregas:
+        dif = float(e.diferencia_efectivo or 0)
+        eventos.append({
+            "tipo": "cuadre", "subtipo": e.tipo,
+            "titulo": TIPO_LBL.get(e.tipo, "Cuadre"),
+            "fecha": e.fecha_hora.isoformat() if e.fecha_hora else None,
+            "barista": e.barista_nombre,
+            "esperado": float(e.efectivo_esperado or 0),
+            "contado": float(e.efectivo_real or 0),
+            "diferencia": dif,
+            "base_separada": bool(getattr(e, "base_separada", False)),
+            "imagen_url": e.imagen_url,
+            "entrega_id": e.id,
+            "detalle": None, "monto": None,
+        })
+
+    # 4) Cierre del turno
+    if turno.estado == EstadoTurnoEnum.cerrado and turno.fecha_cierre:
+        eventos.append({
+            "tipo": "cierre_turno", "titulo": "Cierre de turno",
+            "fecha": turno.fecha_cierre.isoformat(),
+            "barista": None,
+            "detalle": (f"Diferencia ${float(turno.diferencia_cierre or 0):,.0f}".replace(",", ".")
+                        if turno.diferencia_cierre else "Cuadró exacto"),
+            "monto": float(turno.efectivo_final_real or 0),
+        })
+
+    eventos.sort(key=lambda x: x["fecha"] or "")
+
+    # Resumen por barista
+    resumen = []
+    for tb in db.query(TurnoBarista).filter(TurnoBarista.turno_id == turno_id).all():
+        cuadre = next((e for e in reversed(entregas)
+                       if (e.barista_nombre or "") == tb.nombre_snapshot), None)
+        resumen.append({
+            "barista": tb.nombre_snapshot,
+            "entro": tb.created_at.isoformat() if tb.created_at else None,
+            "salio": tb.salida_at.isoformat() if tb.salida_at else None,
+            "diferencia_cuadre": float(cuadre.diferencia_efectivo or 0) if cuadre else None,
+        })
+
+    return {
+        "turno_id": turno.id,
+        "estado": turno.estado.value if turno.estado else None,
+        "eventos": eventos,
+        "resumen_baristas": resumen,
+    }
+
+
 def get_entregas_tienda(db: Session, tienda_id: int, limit: int | None = None, solo_hoy: bool = True):
     q = db.query(EntregaTurno).filter(EntregaTurno.tienda_id == tienda_id)
     if solo_hoy:

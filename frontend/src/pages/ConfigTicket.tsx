@@ -29,10 +29,17 @@ const EMPTY: Config = {
 
 export default function ConfigTicketPage() {
   const { user } = useAuth()
-  // No defaultear a la tienda 1: un admin sin sede asignada estaría leyendo/sobrescribiendo
-  // en silencio la config de otra tienda. Mejor null + guard explícito.
-  const tiendaId = user?.tienda_id ?? null
+  // Selector de sede: cada tienda tiene SU ticket (nombre, dirección, logo, papel).
+  const [tiendas, setTiendas] = useState<{ id: number; nombre: string }[]>([])
+  const [tiendaId, setTiendaId] = useState<number | null>(user?.tienda_id ?? null)
   const fileRef  = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    api.get('/auth/tiendas').then(({ data }) => {
+      setTiendas(data)
+      setTiendaId(prev => prev ?? (data[0]?.id ?? null))
+    }).catch(() => {})
+  }, [])
 
   const [cfg,          setCfg]          = useState<Config>(EMPTY)
   const [original,     setOriginal]     = useState<Config>(EMPTY)
@@ -43,11 +50,8 @@ export default function ConfigTicketPage() {
   const [error,        setError]        = useState('')
 
   useEffect(() => {
-    if (!tiendaId) {
-      setError('Tu cuenta de admin no tiene una sede asignada. Asigná una sede en Usuarios para configurar el ticket.')
-      setLoading(false)
-      return
-    }
+    if (!tiendaId) return
+    setError('')
     setLoading(true)
     api.get(`/config-ticket/${tiendaId}`)
       .then(({ data }) => {
@@ -156,6 +160,21 @@ export default function ConfigTicketPage() {
           </p>
         </div>
       </div>
+
+      {/* Selector de sede: cada tienda tiene SU ticket */}
+      {tiendas.length > 1 && (
+        <div className="flex items-center gap-2">
+          {tiendas.map(t => (
+            <button key={t.id} onClick={() => setTiendaId(t.id)}
+              className={`px-3 py-1.5 rounded-xl text-sm font-semibold transition-colors ${
+                tiendaId === t.id ? 'bg-forest text-white' : 'bg-white border border-warm-200 text-warm-500 hover:bg-warm-50'
+              }`}>
+              {t.nombre}
+            </button>
+          ))}
+          <span className="text-xs text-warm-400 ml-1">El ticket se configura por sede</span>
+        </div>
+      )}
 
       {error && (
         <div className="text-danger-700 bg-danger-50 border border-danger-200 rounded-xl px-4 py-3 text-sm">

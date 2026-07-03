@@ -81,6 +81,14 @@ def get_movimientos(turno_id: int, db: Session = Depends(get_db), user: Usuario 
     ensure_turno_access(db, user, turno_id)
     return svc.get_movimientos(db, turno_id)
 
+@router.get("/turno/{turno_id}/timeline")
+def turno_timeline(turno_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+    """Timeline cronológico del turno (apertura, entradas/salidas, cuadres, cierre) +
+    resumen por barista. Alimenta el hub de Cuadres rediseñado."""
+    ensure_turno_access(db, user, turno_id)
+    return svc.get_turno_timeline(db, turno_id)
+
+
 @router.get("/entrega/{entrega_id}/desglose")
 def entrega_desglose(entrega_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     """Desglose del efectivo esperado de un cuadre puntual + movimientos hasta ese instante."""

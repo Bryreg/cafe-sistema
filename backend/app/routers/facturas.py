@@ -78,18 +78,36 @@ def eliminar(factura_id: int, db: Session = Depends(get_db),
     return svc.eliminar_factura(db, factura_id, user.id)
 
 
+class FacturaEditItem(BaseModel):
+    id: int
+    cantidad: Optional[float] = None
+    precio_unitario: Optional[float] = None
+
+
 class FacturaEditRequest(BaseModel):
     valor_total: Optional[float] = None
     valor_pagado: Optional[float] = None
     numero_factura: Optional[str] = None
+    proveedor: Optional[str] = None
+    fecha_recibido: Optional[date] = None
+    tipo_pago: Optional[str] = None
+    forma_pago_real: Optional[str] = None
+    items: Optional[list[FacturaEditItem]] = None
 
 
 @router.patch("/{factura_id}")
 def editar(factura_id: int, body: FacturaEditRequest, db: Session = Depends(get_db),
            user: Usuario = Depends(require_admin)):
-    """Corrige montos de una factura (típico: cero de más de la barista)."""
-    return svc.editar_factura(db, factura_id, body.valor_total, body.valor_pagado,
-                              body.numero_factura, user.id)
+    """Editor completo de una factura (metadata, montos y productos)."""
+    items = ([{"id": i.id, "cantidad": i.cantidad, "precio_unitario": i.precio_unitario}
+              for i in body.items] if body.items is not None else None)
+    return svc.editar_factura(
+        db, factura_id, user.id,
+        valor_total=body.valor_total, valor_pagado=body.valor_pagado,
+        numero_factura=body.numero_factura, proveedor=body.proveedor,
+        fecha_recibido=body.fecha_recibido, tipo_pago=body.tipo_pago,
+        forma_pago_real=body.forma_pago_real, items=items,
+    )
 
 
 @router.patch("/{factura_id}/pago")

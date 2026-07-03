@@ -266,22 +266,78 @@ def _serializar(f: FacturaCompra) -> dict:
     }
 
 
-def editar_factura(db: Session, factura_id: int, valor_total: float | None,
-                   valor_pagado: float | None, numero_factura: str | None,
-                   usuario_id: int) -> dict:
-    """Corrige montos de una factura (típico: la barista puso un cero de más).
-    Solo admin. Ajusta el egreso de caja proporcional si el pago fue en efectivo y
-    el turno sigue abierto; bancos/transferencia no tocan caja."""
+def editar_factura(db: Session, factura_id: int, usuario_id: int, *,
+                   valor_total: float | None = None, valor_pagado: float | None = None,
+                   numero_factura: str | None = None, proveedor: str | None = None,
+                   fecha_recibido=None, tipo_pago: str | None = None,
+                   forma_pago_real: str | None = None,
+                   items: list[dict] | None = None) -> dict:
+    """Editor COMPLETO de una factura (solo admin, con auditoría). Corrige metadata,
+    montos y productos. Cambiar la cantidad de un producto ajusta el inventario y su
+    lote por la diferencia (para que el conteo del sistema no se descuadre); quitar un
+    producto revierte su entrada. El egreso de caja se ajusta si el pago fue en efectivo."""
     f = db.query(FacturaCompra).filter_by(id=factura_id).first()
     if not f:
         raise HTTPException(404, "Factura no encontrada")
 
     antes = {"valor_total": float(f.valor_total or 0), "valor_pagado": float(f.valor_pagado or 0),
-             "numero_factura": f.numero_factura}
+             "numero_factura": f.numero_factura, "proveedor": f.proveedor,
+             "items": len(f.items)}
 
+    tipo_map = {"contado": TipoPagoEnum.contado, "credito": TipoPagoEnum.credito,
+                "transferencia": TipoPagoEnum.transferencia}
+
+    # ── Metadata ──────────────────────────────────────────────────────────────
+    if proveedor is not None:
+        f.proveedor = proveedor.strip() or f.proveedor
     if numero_factura is not None:
         f.numero_factura = numero_factura.strip() or None
+    if fecha_recibido is not None:
+        f.fecha_recibido = fecha_recibido
+    if tipo_pago is not None:
+        if tipo_pago not in tipo_map:
+            raise HTTPException(400, "tipo_pago inválido: contado | credito | transferencia")
+        f.tipo_pago = tipo_map[tipo_pago]
+    if forma_pago_real is not None:
+        f.forma_pago_real = forma_pago_real.strip() or None
 
+    # ── Productos: ajustar inventario + lote por la diferencia ────────────────
+    if items is not None:
+        existentes = {it.id: it for it in f.items}
+        vistos = set()
+        motivo = f"Corrección factura #{f.numero_factura or f.id} — {f.proveedor}"
+        for upd in items:
+            it = existentes.get(upd.get("id"))
+            if not it:
+                continue
+            vistos.add(it.id)
+            nueva_cant = upd.get("cantidad")
+            if nueva_cant is not None and abs(float(nueva_cant) - float(it.cantidad)) > 0.001:
+                delta = float(nueva_cant) - float(it.cantidad)
+                # registrar_movimiento maneja stock Y lotes (entrada=agrega lote,
+                # salida=consume FIFO). No tocar los lotes a mano: se descontaría doble.
+                inv_svc.registrar_movimiento(
+                    db, producto_id=it.producto_id, tienda_id=f.tienda_id,
+                    tipo="entrada" if delta > 0 else "salida", cantidad=abs(delta),
+                    motivo=motivo, usuario_id=usuario_id, commit=False, allow_negative=True,
+                    factura_id=(f.id if delta > 0 else None), proveedor=f.proveedor,
+                )
+                it.cantidad = float(nueva_cant)
+            if upd.get("precio_unitario") is not None:
+                it.precio_unitario = float(upd["precio_unitario"])
+
+        # Productos quitados de la edición → revertir su entrada (FIFO) y borrarlos.
+        for it in list(f.items):
+            if it.id not in vistos:
+                inv_svc.registrar_movimiento(
+                    db, producto_id=it.producto_id, tienda_id=f.tienda_id,
+                    tipo="salida", cantidad=float(it.cantidad),
+                    motivo=f"{motivo} (producto quitado)", usuario_id=usuario_id,
+                    commit=False, allow_negative=True,
+                )
+                db.delete(it)
+
+    # ── Montos ────────────────────────────────────────────────────────────────
     if valor_total is not None:
         if valor_total <= 0:
             raise HTTPException(400, "El valor total debe ser mayor a 0")
@@ -292,11 +348,9 @@ def editar_factura(db: Session, factura_id: int, valor_total: float | None,
             raise HTTPException(400, "El valor pagado no puede ser negativo")
         nuevo_pagado = min(valor_pagado, float(f.valor_total))
     else:
-        # Si bajó el total por debajo de lo pagado, recortar el pagado al nuevo total.
         nuevo_pagado = min(float(f.valor_pagado or 0), float(f.valor_total))
 
-    # Si el pago fue en efectivo, el egreso de caja quedó por el monto viejo: ajustar
-    # por la diferencia (mismo patrón de matcheo por concepto que eliminar_factura).
+    # Ajuste del egreso de caja si el pago fue en efectivo y hay turno abierto.
     delta_pago = nuevo_pagado - float(f.valor_pagado or 0)
     if abs(delta_pago) > 0.001 and (f.forma_pago_real or "").lower() in ("efectivo", "contado"):
         turno_activo = db.query(CajaTurno).filter(
@@ -310,15 +364,14 @@ def editar_factura(db: Session, factura_id: int, valor_total: float | None,
                 tipo="egreso" if delta_pago > 0 else "ingreso",
                 concepto=concepto, valor=abs(delta_pago), usuario_id=usuario_id,
             ))
-
     f.valor_pagado = nuevo_pagado
 
     audit.registrar(
         db, accion="editar_factura", tabla="facturas_compra", registro_id=f.id,
-        usuario_id=usuario_id, tienda_id=f.tienda_id,
-        datos_antes=antes,
+        usuario_id=usuario_id, tienda_id=f.tienda_id, datos_antes=antes,
         datos_despues={"valor_total": float(f.valor_total), "valor_pagado": float(f.valor_pagado),
-                       "numero_factura": f.numero_factura},
+                       "numero_factura": f.numero_factura, "proveedor": f.proveedor,
+                       "items": len(f.items)},
     )
     db.commit()
     db.refresh(f)

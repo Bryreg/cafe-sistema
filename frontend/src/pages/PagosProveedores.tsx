@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
-interface FacturaItem { producto_nombre: string; cantidad: number; precio_unitario: number; unidad_medida: string }
+interface FacturaItem { id: number; producto_nombre: string; cantidad: number; precio_unitario: number; unidad_medida: string }
 interface Factura {
   id: number; tienda_id: number; tienda_nombre: string | null
   proveedor: string; numero_factura: string | null
@@ -51,10 +51,15 @@ export default function PagosProveedores() {
   const [soporte, setSoporte] = useState<File | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [pagoError, setPagoError] = useState('')
-  // editar montos (cero de más)
+  // editar factura completa
   const [editFactura, setEditFactura] = useState<Factura | null>(null)
   const [editTotal, setEditTotal] = useState('')
   const [editPagado, setEditPagado] = useState('')
+  const [editProveedor, setEditProveedor] = useState('')
+  const [editNumero, setEditNumero] = useState('')
+  const [editFecha, setEditFecha] = useState('')
+  const [editTipoPago, setEditTipoPago] = useState('')
+  const [editItems, setEditItems] = useState<{ id: number; nombre: string; unidad: string; cantidad: string; precio: string }[]>([])
   const [editError, setEditError] = useState('')
 
   useEffect(() => {
@@ -90,8 +95,18 @@ export default function PagosProveedores() {
     setEditFactura(f)
     setEditTotal(String(Math.round(f.valor_total)))
     setEditPagado(String(Math.round(f.valor_pagado)))
+    setEditProveedor(f.proveedor)
+    setEditNumero(f.numero_factura ?? '')
+    setEditFecha(f.fecha_recibido ? f.fecha_recibido.slice(0, 10) : '')
+    setEditTipoPago(f.tipo_pago)
+    setEditItems(f.items.map(i => ({
+      id: i.id, nombre: i.producto_nombre, unidad: i.unidad_medida,
+      cantidad: String(i.cantidad), precio: String(Math.round(i.precio_unitario || 0)),
+    })))
     setEditError('')
   }
+
+  const quitarItemEdit = (id: number) => setEditItems(prev => prev.filter(i => i.id !== id))
 
   const guardarEdicion = async () => {
     if (!editFactura) return
@@ -102,6 +117,15 @@ export default function PagosProveedores() {
       await api.patch(`/facturas/${editFactura.id}`, {
         valor_total: total,
         valor_pagado: Number(editPagado) || 0,
+        proveedor: editProveedor.trim() || undefined,
+        numero_factura: editNumero.trim(),
+        fecha_recibido: editFecha || undefined,
+        tipo_pago: editTipoPago || undefined,
+        items: editItems.map(i => ({
+          id: i.id,
+          cantidad: Number(i.cantidad) || 0,
+          precio_unitario: Number(i.precio) || 0,
+        })),
       })
       setEditFactura(null)
       cargar()
@@ -358,30 +382,89 @@ export default function PagosProveedores() {
         </>
       )}
 
-      {/* Modal editar montos */}
+      {/* Modal editar factura completa */}
       {editFactura && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4" onClick={() => setEditFactura(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-4" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-gray-800">Corregir factura</h3>
+              <h3 className="text-base font-bold text-gray-800">Editar factura</h3>
               <button onClick={() => setEditFactura(null)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
             </div>
-            <p className="text-xs text-gray-500">{editFactura.proveedor}{editFactura.numero_factura ? ` · Fact. ${editFactura.numero_factura}` : ''}</p>
-            <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Total de la factura</label>
-              <input type="text" inputMode="numeric" value={conMiles(editTotal)} onChange={e => setEditTotal(soloDigitos(e.target.value))}
-                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-lg font-bold font-mono focus:outline-none focus:border-forest" />
+
+            {/* Metadata */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Proveedor</label>
+                <input value={editProveedor} onChange={e => setEditProveedor(e.target.value)}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-forest" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">N° factura</label>
+                <input value={editNumero} onChange={e => setEditNumero(e.target.value)}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-forest" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Fecha recibido</label>
+                <input type="date" value={editFecha} onChange={e => setEditFecha(e.target.value)}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-forest" />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Tipo de pago</label>
+                <select value={editTipoPago} onChange={e => setEditTipoPago(e.target.value)}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:border-forest">
+                  <option value="contado">Contado (efectivo)</option>
+                  <option value="transferencia">Transferencia</option>
+                  <option value="credito">Crédito</option>
+                </select>
+              </div>
             </div>
-            <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Ya pagado</label>
-              <input type="text" inputMode="numeric" value={conMiles(editPagado)} onChange={e => setEditPagado(soloDigitos(e.target.value))}
-                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-lg font-bold font-mono focus:outline-none focus:border-forest" />
-              <p className="text-[11px] text-gray-400 mt-1">Si el pago fue en efectivo, el egreso de caja se ajusta solo por la diferencia.</p>
+
+            {/* Productos */}
+            {editItems.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Productos ingresados</p>
+                <div className="rounded-xl border border-gray-200 divide-y divide-gray-50">
+                  {editItems.map(it => (
+                    <div key={it.id} className="flex items-center gap-2 px-3 py-2">
+                      <span className="flex-1 min-w-0 text-sm text-gray-700 truncate">{it.nombre}</span>
+                      <input type="number" inputMode="decimal" min={0} value={it.cantidad}
+                        onChange={e => setEditItems(prev => prev.map(x => x.id === it.id ? { ...x, cantidad: e.target.value } : x))}
+                        className="w-16 text-right rounded-lg border-2 border-gray-200 px-2 py-1 text-sm font-bold font-mono focus:outline-none" />
+                      <span className="text-[11px] text-gray-400 w-8">{it.unidad}</span>
+                      <div className="flex items-center gap-0.5">
+                        <span className="text-[11px] text-gray-400">$</span>
+                        <input type="text" inputMode="numeric" value={conMiles(it.precio)}
+                          onChange={e => setEditItems(prev => prev.map(x => x.id === it.id ? { ...x, precio: soloDigitos(e.target.value) } : x))}
+                          placeholder="c/u"
+                          className="w-20 text-right rounded-lg border-2 border-gray-200 px-2 py-1 text-xs font-mono focus:outline-none" />
+                      </div>
+                      <button onClick={() => quitarItemEdit(it.id)} className="text-red-400 hover:text-red-600" title="Quitar producto (revierte su entrada)"><X size={14} /></button>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1">Cambiar la cantidad ajusta el inventario por la diferencia; quitar un producto revierte su entrada.</p>
+              </div>
+            )}
+
+            {/* Montos */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Total factura</label>
+                <input type="text" inputMode="numeric" value={conMiles(editTotal)} onChange={e => setEditTotal(soloDigitos(e.target.value))}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-base font-bold font-mono focus:outline-none focus:border-forest" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Ya pagado</label>
+                <input type="text" inputMode="numeric" value={conMiles(editPagado)} onChange={e => setEditPagado(soloDigitos(e.target.value))}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-base font-bold font-mono focus:outline-none focus:border-forest" />
+              </div>
             </div>
+            <p className="text-[11px] text-gray-400 -mt-1">Si el pago fue en efectivo, el egreso de caja se ajusta solo por la diferencia.</p>
+
             {editError && <p className="text-sm text-red-600">{editError}</p>}
             <button onClick={guardarEdicion} disabled={guardando}
               className="w-full bg-forest hover:bg-forest-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl">
-              {guardando ? 'Guardando…' : 'Guardar corrección'}
+              {guardando ? 'Guardando…' : 'Guardar cambios'}
             </button>
           </div>
         </div>

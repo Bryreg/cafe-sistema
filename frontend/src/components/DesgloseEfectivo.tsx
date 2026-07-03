@@ -26,6 +26,9 @@ interface Props {
   cajaFuerte?: number
   /** Movimientos de caja para itemizar salidas/ingresos. Opcional. */
   movimientos?: MovimientoDesglose[]
+  /** Venta de ayer separada y guardada: la base no se cuenta; el esperado que llega
+   *  ya viene SIN la base (solo registradora). */
+  baseSeparada?: boolean
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -54,6 +57,7 @@ export default function DesgloseEfectivo({
   esperado,
   cajaFuerte = 0,
   movimientos = [],
+  baseSeparada = false,
 }: Props) {
   const [openSalidas, setOpenSalidas] = useState(false)
   const salidas = movimientos.filter(m => m.tipo === 'egreso')
@@ -66,11 +70,20 @@ export default function DesgloseEfectivo({
       </p>
 
       <div className="space-y-2.5">
-        {/* Base inicial */}
-        <div className="flex items-center justify-between">
-          <span className="text-[13px]" style={{ color: dark.inkMuted }}>Con lo que empezaste (base)</span>
-          <span className="text-[14px] font-semibold font-mono tabular-nums" style={{ color: dark.ink }}>{fmt(base)}</span>
-        </div>
+        {/* Base inicial — si la venta de ayer está separada, no entra al conteo */}
+        {baseSeparada ? (
+          <div className="flex items-center justify-between rounded-lg px-2 py-1.5" style={{ background: dark.amberTint }}>
+            <span className="text-[13px]" style={{ color: dark.amber }}>
+              Venta de ayer separada y guardada (no se cuenta)
+            </span>
+            <span className="text-[14px] font-semibold font-mono tabular-nums" style={{ color: dark.amber, textDecoration: 'line-through' }}>{fmt(base)}</span>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <span className="text-[13px]" style={{ color: dark.inkMuted }}>Con lo que empezaste (base)</span>
+            <span className="text-[14px] font-semibold font-mono tabular-nums" style={{ color: dark.ink }}>{fmt(base)}</span>
+          </div>
+        )}
 
         {/* Ventas en efectivo */}
         <div className="flex items-center justify-between">
@@ -128,7 +141,9 @@ export default function DesgloseEfectivo({
 
         {/* Resultado */}
         <div className="flex items-center justify-between pt-2.5 mt-1" style={{ borderTop: `1px solid ${dark.border}` }}>
-          <span className="text-[13px] font-bold" style={{ color: dark.ink }}>= Debería haber en caja</span>
+          <span className="text-[13px] font-bold" style={{ color: dark.ink }}>
+            {baseSeparada ? '= A contar en la registradora' : '= Debería haber en caja'}
+          </span>
           <span className="text-[19px] font-bold font-mono tabular-nums" style={{ color: dark.ink }}>{fmt(esperado)}</span>
         </div>
       </div>

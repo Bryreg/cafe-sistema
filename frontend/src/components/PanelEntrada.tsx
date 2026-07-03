@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, Check, AlertTriangle, ChevronLeft } from 'lucide-react'
+import { Camera, Check, AlertTriangle, ChevronLeft, Lock } from 'lucide-react'
+import { conMiles, soloDigitos } from '../utils/plata'
 import { dark } from '../constants/darkTheme'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
@@ -17,6 +18,7 @@ export default function PanelEntrada({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState<'select' | 'cuadre'>('select')
   const [efectivoReal, setEfectivoReal] = useState(0)
   const [ventasTarjetaBold, setVentasTarjetaBold] = useState('')
+  const [baseSeparada, setBaseSeparada] = useState(false)
   const [imagen, setImagen] = useState<File | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -46,6 +48,7 @@ export default function PanelEntrada({ onClose }: { onClose: () => void }) {
       const fd1 = new FormData()
       fd1.append('efectivo_real', String(efectivoReal))
       fd1.append('ventas_tarjeta_bold', String(Number(ventasTarjetaBold) || 0))
+      fd1.append('base_separada', String(baseSeparada))
       if (imagen) fd1.append('imagen', imagen)
       await api.post(`/caja/${turno.id}/entrega`, fd1)
 
@@ -138,14 +141,36 @@ export default function PanelEntrada({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
+      {(turno.base_real ?? 0) > 0 && (
+        <button type="button" onClick={() => setBaseSeparada(v => !v)}
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left"
+          style={{
+            background: baseSeparada ? dark.amberTint : dark.surface,
+            border: `1px solid ${baseSeparada ? dark.amber : dark.border}`,
+          }}>
+          <Lock size={16} style={{ color: baseSeparada ? dark.amber : dark.inkSubtle }} />
+          <span className="flex-1 text-[13px] font-semibold" style={{ color: baseSeparada ? dark.amber : dark.inkMuted }}>
+            La venta de ayer está separada y guardada
+            <span className="block text-[11px] font-normal" style={{ color: dark.inkSubtle }}>
+              Contás solo la registradora ({fmt(Math.round(turno.base_real ?? 0))} quedan aparte)
+            </span>
+          </span>
+          <span className="w-5 h-5 rounded-md flex items-center justify-center shrink-0"
+            style={{ background: baseSeparada ? dark.amber : dark.surfaceAlt, border: `1px solid ${baseSeparada ? dark.amber : dark.border}` }}>
+            {baseSeparada && <Check size={13} color="#fff" strokeWidth={3} />}
+          </span>
+        </button>
+      )}
+
       <DesgloseEfectivo
         base={turno.base_real ?? 0}
         ventasEfectivo={turno.total_efectivo ?? 0}
         ingresos={turno.ingresos_movimientos ?? 0}
         egresos={turno.egresos_movimientos ?? 0}
-        esperado={turno.efectivo_esperado_actual ?? 0}
+        esperado={(turno.efectivo_esperado_actual ?? 0) - (baseSeparada ? (turno.base_real ?? 0) : 0)}
         cajaFuerte={turno.caja_fuerte ?? 0}
         movimientos={movimientos}
+        baseSeparada={baseSeparada}
       />
       <div className="flex items-center justify-between px-1 -mt-1">
         <span className="text-[11px]" style={{ color: dark.inkSubtle }}>Ventas del día {fmt(turno.total_ventas ?? 0)}</span>
@@ -154,14 +179,14 @@ export default function PanelEntrada({ onClose }: { onClose: () => void }) {
 
       <ContadorEfectivo onTotal={setEfectivoReal} />
 
-      <DiferenciaCaja contado={efectivoReal} esperado={turno.efectivo_esperado_actual ?? 0} />
+      <DiferenciaCaja contado={efectivoReal} esperado={(turno.efectivo_esperado_actual ?? 0) - (baseSeparada ? (turno.base_real ?? 0) : 0)} />
 
       <div className="rounded-2xl p-4 space-y-2" style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
         <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: dark.inkSubtle }}>Ventas tarjeta Bold</p>
         <input
-          type="number" min="0" step="100"
-          value={ventasTarjetaBold}
-          onChange={e => setVentasTarjetaBold(e.target.value)}
+          type="text" inputMode="numeric"
+          value={conMiles(ventasTarjetaBold)}
+          onChange={e => setVentasTarjetaBold(soloDigitos(e.target.value))}
           placeholder="$0"
           className="w-full bg-transparent text-[18px] font-mono font-semibold outline-none"
           style={{ color: dark.ink }}

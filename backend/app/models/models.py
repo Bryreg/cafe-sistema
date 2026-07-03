@@ -459,6 +459,10 @@ class EntregaTurno(Base):
     egresos_snapshot = Column(Numeric(12, 2, asdecimal=False), nullable=True)
     imagen_url = Column(String(300), nullable=True)
     tipo = Column(String(20), default="entrega", nullable=False, server_default="entrega")
+    # Venta de ayer separada: la barista contó SOLO la registradora; el monto separado
+    # (la base del día anterior) quedó guardado aparte sin contar. El monto vive en
+    # base_snapshot; efectivo_esperado/diferencia se calculan contra la registradora.
+    base_separada = Column(Boolean, default=False, nullable=False, server_default="false")
     # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.
     barista_id = Column(Integer, nullable=True)
     barista_nombre = Column(String(100), nullable=True)

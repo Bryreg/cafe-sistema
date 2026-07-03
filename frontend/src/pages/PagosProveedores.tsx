@@ -43,6 +43,7 @@ export default function PagosProveedores() {
   const [fProveedor, setFProveedor] = useState('')
   const [fEstado, setFEstado] = useState('')
   const [busqueda, setBusqueda] = useState('')
+  const [detalleAbierto, setDetalleAbierto] = useState<number | null>(null)
   // registrar pago
   const [pagoFactura, setPagoFactura] = useState<Factura | null>(null)
   const [monto, setMonto] = useState('')
@@ -243,9 +244,36 @@ export default function PagosProveedores() {
                         <span className="text-gray-500">Total: <span className="font-mono font-bold text-gray-800">{fmt(f.valor_total)}</span></span>
                         <span className="text-gray-500">Pagado: <span className="font-mono font-bold text-green-700">{fmt(f.valor_pagado)}</span></span>
                         {f.saldo > 0 && <span className="text-gray-500">Saldo: <span className="font-mono font-bold text-red-600">{fmt(f.saldo)}</span></span>}
+                        {f.forma_pago_real && (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                            Pagado con {f.forma_pago_real}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
+                  {/* Productos ingresados (detalle expandible) */}
+                  {f.items.length > 0 && (
+                    <div className="mt-2">
+                      <button onClick={() => setDetalleAbierto(d => (d === f.id ? null : f.id))}
+                        className="text-xs font-semibold text-gray-500 hover:text-gray-700">
+                        {detalleAbierto === f.id ? '▾' : '▸'} Productos ingresados ({f.items.length})
+                      </button>
+                      {detalleAbierto === f.id && (
+                        <div className="mt-1.5 ml-3 pl-3 border-l-2 border-gray-100 space-y-1">
+                          {f.items.map((i, idx) => (
+                            <div key={idx} className="flex items-center justify-between gap-2 text-xs">
+                              <span className="text-gray-600 truncate">{i.producto_nombre}</span>
+                              <span className="font-mono font-semibold text-gray-800 shrink-0">
+                                {Math.round(i.cantidad)} {i.unidad_medida}
+                                {i.precio_unitario ? ` · ${fmt(i.precio_unitario)} c/u` : ''}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {/* Acciones + soportes */}
                   <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-50 flex-wrap">
                     {f.imagen_url && (

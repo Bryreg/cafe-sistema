@@ -23,6 +23,26 @@ def clasificar_estado(stock_actual: float, stock_minimo: float,
     return "normal"
 
 
+def get_inventario_desechables(db: Session, tienda_id: int):
+    """Productos del formato de desechables (grupo_conteo='desechables'), agrupables
+    por proveedor. NO entran en el conteo diario (incluir_en_conteo=False)."""
+    items = (
+        db.query(Inventario)
+        .options(joinedload(Inventario.producto))
+        .join(Inventario.producto)
+        .filter(Inventario.tienda_id == tienda_id, Producto.grupo_conteo == "desechables")
+        .order_by(Producto.proveedor.asc(), nulls_last(Producto.orden_conteo.asc()), Producto.nombre.asc())
+        .all()
+    )
+    return [{
+        "producto_id": i.producto_id,
+        "producto_nombre": i.producto.nombre,
+        "unidad_medida": i.producto.unidad_medida,
+        "proveedor": i.producto.proveedor or "Sin proveedor",
+        "stock_actual": round(i.stock_actual or 0, 2),
+    } for i in items]
+
+
 def get_inventario_tienda(db: Session, tienda_id: int):
     items = (
         db.query(Inventario)

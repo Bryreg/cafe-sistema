@@ -67,6 +67,32 @@ def resolver_verificacion(verificacion_id: int, data: ResolverVerificacionReques
     return svc.resolver_verificacion(db, verificacion_id, data.aprobar, user.id, data.nota)
 
 
+@router.post("/desechables/solicitar")
+def solicitar_desechables(tienda_id: int = Form(...), db: Session = Depends(get_db),
+                          user: Usuario = Depends(require_admin)):
+    """Admin: pide el formato de desechables a la sede."""
+    return svc.solicitar_conteo_desechables(db, tienda_id, user.id)
+
+
+@router.get("/desechables/pendiente/{tienda_id}")
+def desechables_pendiente(tienda_id: int, db: Session = Depends(get_db),
+                          user: Usuario = Depends(get_current_user)):
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_solicitud_desechables(db, tienda_id)
+
+
+@router.post("/desechables", response_model=ConteoFisicoOut)
+def registrar_desechables(data: RegistrarConteoRequest, db: Session = Depends(get_db),
+                          user: Usuario = Depends(get_current_user),
+                          barista: tuple = Depends(get_barista_actor)):
+    """Barista: llena el formato de desechables solicitado por el admin."""
+    ensure_tienda_access(user, data.tienda_id)
+    items = [{"producto_id": i.producto_id, "cantidad_real": i.cantidad_real}
+             for i in data.items]
+    return svc.registrar_conteo_desechables(db, data.tienda_id, items, user.id,
+                                            barista_id=barista[0], barista_nombre=barista[1])
+
+
 @router.post("/{conteo_id}/aplicar")
 def aplicar_conteo(conteo_id: int, db: Session = Depends(get_db),
                    user: Usuario = Depends(require_admin)):

@@ -3,7 +3,8 @@ from fastapi import HTTPException
 from datetime import datetime, date
 from app.models.models import (ConteoFisico, ConteoFisicoItem, Inventario,
                                 ChecklistDiario, CajaTurno, EstadoTurnoEnum,
-                                Producto, ConteoVerificacion)
+                                Producto, ConteoVerificacion,
+                                SolicitudConteoDesechables)
 from app.services.caja import get_turno_activo, _tick_checklist
 from app.services.inventario import registrar_movimiento
 from app.services import audit
@@ -52,6 +53,79 @@ def aplicar_conteo_inventario(db: Session, conteo_id: int, usuario_id: int) -> d
     )
     db.commit()
     return {"ok": True, "conteo_id": conteo.id, "ajustados": ajustados}
+
+
+# ─── Conteo de desechables (a pedido del admin) ──────────────────────────────
+
+def solicitar_conteo_desechables(db: Session, tienda_id: int, usuario_id: int):
+    """Admin: pide a las baristas llenar el formato de desechables."""
+    pendiente = db.query(SolicitudConteoDesechables).filter_by(
+        tienda_id=tienda_id, estado="pendiente").first()
+    if pendiente:
+        raise HTTPException(status_code=400, detail="Ya hay una solicitud de conteo de desechables pendiente")
+    s = SolicitudConteoDesechables(tienda_id=tienda_id, solicitada_por_id=usuario_id)
+    db.add(s)
+    audit.registrar(db, accion="conteo_desechables_solicitado", tabla="solicitudes_conteo_desechables",
+                    registro_id=None, usuario_id=usuario_id, tienda_id=tienda_id)
+    db.commit()
+    db.refresh(s)
+    return {"ok": True, "solicitud_id": s.id}
+
+
+def get_solicitud_desechables(db: Session, tienda_id: int):
+    """Kiosko: ¿hay un formato de desechables pendiente por llenar?"""
+    s = (db.query(SolicitudConteoDesechables)
+         .filter_by(tienda_id=tienda_id, estado="pendiente")
+         .order_by(SolicitudConteoDesechables.fecha_solicitud.desc())
+         .first())
+    if not s:
+        return {"pendiente": False}
+    return {"pendiente": True, "solicitud_id": s.id,
+            "fecha_solicitud": s.fecha_solicitud.isoformat() if s.fecha_solicitud else None}
+
+
+def registrar_conteo_desechables(db: Session, tienda_id: int, items: list[dict], usuario_id: int,
+                                 barista_id: int | None = None, barista_nombre: str | None = None):
+    """Barista: llena el formato de desechables solicitado. Igual que un conteo normal,
+    registra y compara contra el sistema sin tocar stock (doble conteo)."""
+    solicitud = db.query(SolicitudConteoDesechables).filter_by(
+        tienda_id=tienda_id, estado="pendiente").first()
+    if not solicitud:
+        raise HTTPException(status_code=400, detail="No hay solicitud de conteo de desechables pendiente")
+    turno = get_turno_activo(db, tienda_id)
+    if not turno:
+        raise HTTPException(status_code=400, detail="No hay turno abierto")
+    if not items:
+        raise HTTPException(status_code=400, detail="Debes registrar al menos un item")
+
+    conteo = ConteoFisico(
+        tienda_id=tienda_id, turno_id=turno.id, tipo="desechables",
+        fecha_registro=datetime.utcnow(), usuario_id=usuario_id,
+        barista_id=barista_id, barista_nombre=barista_nombre,
+    )
+    db.add(conteo)
+    db.flush()
+    for item in items:
+        if item["cantidad_real"] < 0:
+            raise HTTPException(status_code=400, detail="cantidad_real no puede ser negativa")
+        inv = db.query(Inventario).filter(
+            Inventario.producto_id == item["producto_id"],
+            Inventario.tienda_id == tienda_id).first()
+        cantidad_sistema = inv.stock_actual if inv else 0.0
+        db.add(ConteoFisicoItem(
+            conteo_id=conteo.id, producto_id=item["producto_id"],
+            cantidad_sistema=cantidad_sistema, cantidad_real=item["cantidad_real"],
+            diferencia=item["cantidad_real"] - cantidad_sistema,
+        ))
+    solicitud.estado = "respondida"
+    solicitud.conteo_id = conteo.id
+    solicitud.fecha_respuesta = datetime.utcnow()
+    solicitud.barista_id = barista_id
+    solicitud.barista_nombre = barista_nombre
+    db.commit()
+    db.refresh(conteo)
+    logger.info(f"Conteo desechables registrado (id={conteo.id}) tienda {tienda_id}")
+    return conteo
 
 
 def registrar_conteo(db: Session, tienda_id: int, tipo: str,

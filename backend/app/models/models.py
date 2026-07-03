@@ -46,6 +46,8 @@ class EstadoConsignacionEnum(str, enum.Enum):
 class TipoConteoEnum(str, enum.Enum):
     apertura = "apertura"
     cierre = "cierre"
+    # Formato de desechables: solo se cuenta cuando el admin lo solicita.
+    desechables = "desechables"
 
 
 class TipoTurnoEnum(str, enum.Enum):
@@ -475,6 +477,22 @@ class EntregaTurno(Base):
     barista_nombre = Column(String(100), nullable=True)
     turno = relationship("CajaTurno", back_populates="entregas")
     usuario = relationship("Usuario", back_populates="entregas_turno")
+
+
+class SolicitudConteoDesechables(Base):
+    """El admin pide el conteo de desechables; la barista lo llena desde el kiosko.
+    El formato NO entra en el conteo diario (grupo_conteo='desechables')."""
+    __tablename__ = "solicitudes_conteo_desechables"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False, index=True)
+    estado = Column(String(20), default="pendiente", nullable=False)  # pendiente | respondida
+    fecha_solicitud = Column(DateTime, default=datetime.utcnow)
+    solicitada_por_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
+    conteo_id = Column(Integer, ForeignKey("conteos_fisicos.id", ondelete="RESTRICT"), nullable=True)
+    fecha_respuesta = Column(DateTime, nullable=True)
+    # Barista REAL que respondió (plano, sin FK — AmbiguousForeignKeysError).
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
 
 
 class PasteleriaDiaria(Base):

@@ -178,6 +178,24 @@ export default function ConteosAdmin() {
               <Download size={12} /> Excel
             </button>
           )}
+          <button
+            onClick={async () => {
+              if (!window.confirm('¿Pedir el conteo de desechables a esta sede? A las baristas les aparece el formato en el Panel de Turno.')) return
+              setAccionando('desechables')
+              try {
+                const fd = new FormData()
+                fd.append('tienda_id', String(tiendaId))
+                await api.post('/conteos/desechables/solicitar', fd)
+                alert('Solicitud enviada — el formato aparece en el kiosko.')
+              } catch (e: any) {
+                alert(e.response?.data?.detail || 'No se pudo solicitar')
+              } finally { setAccionando(null) }
+            }}
+            disabled={accionando === 'desechables'}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50"
+            style={{ background: 'oklch(56% 0.14 65)' }}>
+            <ListChecks size={12} /> Pedir conteo desechables
+          </button>
         </div>
 
         {/* Lista */}
@@ -196,9 +214,11 @@ export default function ConteosAdmin() {
                   <button onClick={() => setAbierto(abiertoEste ? null : c.id)}
                     className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50">
                     <span className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
-                      style={{ background: esApertura ? 'oklch(95% 0.04 145)' : 'oklch(96% 0.04 30)' }}>
+                      style={{ background: esApertura ? 'oklch(95% 0.04 145)' : c.tipo === 'desechables' ? 'oklch(95% 0.045 70)' : 'oklch(96% 0.04 30)' }}>
                       {esApertura
                         ? <Sun size={15} style={{ color: 'oklch(40% 0.12 145)' }} />
+                        : c.tipo === 'desechables'
+                        ? <ListChecks size={15} style={{ color: 'oklch(48% 0.12 65)' }} />
                         : <Moon size={15} style={{ color: 'oklch(45% 0.15 30)' }} />}
                     </span>
                     <div className="flex-1 min-w-0">

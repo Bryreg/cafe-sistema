@@ -60,6 +60,14 @@ def lotes_trazabilidad(
         ensure_tienda_access(user, tienda_id)
     return svc.get_trazabilidad(db, tienda_id, producto_id, proveedor, estado)
 
+@router.get("/desechables/{tienda_id}")
+def inventario_desechables(tienda_id: int, db: Session = Depends(get_db),
+                           user: Usuario = Depends(get_current_user)):
+    """Productos del formato de desechables, agrupables por proveedor (kiosko)."""
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_inventario_desechables(db, tienda_id)
+
+
 @router.get("/productos")
 def productos(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
     rows = db.query(Producto).order_by(Producto.categoria, Producto.nombre).all()

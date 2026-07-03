@@ -3,10 +3,10 @@ from fastapi import HTTPException
 from datetime import datetime, date
 from app.models.models import (ConteoFisico, ConteoFisicoItem, Inventario,
                                 ChecklistDiario, CajaTurno, EstadoTurnoEnum,
-                                MovimientoInventario, TipoMovInvEnum, TipoConteoEnum,
-                                Producto, ConteoVerificacion)
+                                Producto, ConteoVerificacion,
+                                SolicitudConteoDesechables)
 from app.services.caja import get_turno_activo, _tick_checklist
-from app.services.inventario import consumir_fifo, registrar_movimiento
+from app.services.inventario import registrar_movimiento
 from app.services import audit
 from app.core.tz import rango_col_utc
 import logging
@@ -14,96 +14,118 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _registrar_consumo_turno(
-    db: Session,
-    tienda_id: int,
-    turno_id: int,
-    items_cierre: list[dict],
-    usuario_id: int,
-) -> None:
+def aplicar_conteo_inventario(db: Session, conteo_id: int, usuario_id: int) -> dict:
+    """Promueve un conteo físico a verdad del inventario (solo admin).
+
+    Modelo de doble conteo: los conteos de apertura/cierre solo REGISTRAN y
+    COMPARAN contra el stock teórico (que evoluciona por movimientos: ventas,
+    ingresos, mermas, salidas). Este es el único camino masivo para que un
+    conteo pise el stock — pensado para el conteo de fin de mes que siembra
+    las cantidades con las que el sistema arranca, o la primera operación de
+    una sede. Correcciones puntuales siguen yendo por verificación.
     """
-    Al cerrar el turno: deriva el consumo real comparando apertura vs cierre.
-    Crea un MovimientoInventario tipo=salida con motivo='consumo_turno' por
-    la parte del consumo que no fue registrada explícitamente (mermas, etc.).
-    También reconcilia stock_actual con el conteo físico real.
-    """
-    def _reconciliar(pid: int, cierre_real: float) -> None:
+    conteo = db.query(ConteoFisico).filter(ConteoFisico.id == conteo_id).first()
+    if not conteo:
+        raise HTTPException(status_code=404, detail="Conteo no encontrado")
+
+    ajustados = 0
+    for item in conteo.items:
         inv = db.query(Inventario).filter_by(
-            producto_id=pid, tienda_id=tienda_id
+            producto_id=item.producto_id, tienda_id=conteo.tienda_id
         ).first()
-        if inv:
-            inv.stock_actual = cierre_real
-
-    apertura = (
-        db.query(ConteoFisico)
-        .filter_by(turno_id=turno_id, tipo=TipoConteoEnum.apertura)
-        .first()
-    )
-    if not apertura:
-        # Sin conteo de apertura no hay baseline para derivar consumo, pero el
-        # stock SÍ se reconcilia con lo contado (el conteo físico es la verdad).
-        for cierre_item in items_cierre:
-            _reconciliar(cierre_item["producto_id"], float(cierre_item["cantidad_real"]))
-        return
-
-    apertura_map: dict[int, float] = {
-        item.producto_id: item.cantidad_real for item in apertura.items
-    }
-    t_apertura = apertura.fecha_registro
-    ahora = datetime.utcnow()
-
-    for cierre_item in items_cierre:
-        pid = cierre_item["producto_id"]
-        cierre_real = float(cierre_item["cantidad_real"])
-        apertura_real = apertura_map.get(pid)
-
-        if apertura_real is None:
-            # Producto sin baseline (creado durante el día): no se puede derivar
-            # consumo, pero el stock igual se reconcilia — antes se salteaba y el
-            # conteo de cierre quedaba sin aplicar (bug detectado el 1-jul).
-            _reconciliar(pid, cierre_real)
+        if not inv:
             continue
-
-        # Movimientos registrados durante el turno (entre apertura y ahora)
-        movimientos = (
-            db.query(MovimientoInventario)
-            .filter(
-                MovimientoInventario.producto_id == pid,
-                MovimientoInventario.tienda_id == tienda_id,
-                MovimientoInventario.fecha > t_apertura,
-                MovimientoInventario.fecha <= ahora,
-            )
-            .all()
+        if abs(float(inv.stock_actual) - float(item.cantidad_real)) < 0.001:
+            continue
+        registrar_movimiento(
+            db, item.producto_id, conteo.tienda_id, "ajuste",
+            float(item.cantidad_real),
+            motivo=f"Conteo #{conteo.id} aplicado al inventario",
+            usuario_id=usuario_id, commit=False,
         )
-        ingresos = sum(m.cantidad for m in movimientos if m.tipo == TipoMovInvEnum.entrada)
-        salidas_registradas = sum(m.cantidad for m in movimientos if m.tipo == TipoMovInvEnum.salida)
+        ajustados += 1
 
-        # Consumo no registrado = lo que "desapareció" sin una merma explícita
-        consumo_derivado = round(
-            apertura_real + ingresos - salidas_registradas - cierre_real, 3
-        )
+    audit.registrar(
+        db, accion="conteo_aplicado_inventario", tabla="conteos_fisicos",
+        registro_id=conteo.id, usuario_id=usuario_id, tienda_id=conteo.tienda_id,
+        datos_despues={"tipo": conteo.tipo.value if conteo.tipo else None,
+                       "items": len(conteo.items), "ajustados": ajustados},
+    )
+    db.commit()
+    return {"ok": True, "conteo_id": conteo.id, "ajustados": ajustados}
 
-        if consumo_derivado > 0.001:
-            db.add(MovimientoInventario(
-                producto_id=pid,
-                tienda_id=tienda_id,
-                tipo=TipoMovInvEnum.salida,
-                cantidad=consumo_derivado,
-                motivo="consumo_turno",
-                usuario_id=usuario_id,
-                fecha=ahora,
-            ))
-            # Consumir tambien los LOTES (FIFO): sin esto la trazabilidad queda
-            # desfasada del stock y la banda de frescura anuncia lotes que el
-            # conteo ya dijo que no existen (caso Pastel de Pollo 1-jul).
-            consumir_fifo(db, pid, tienda_id, consumo_derivado)
 
-        # Reconciliar stock_actual con la realidad física
-        inv = db.query(Inventario).filter_by(
-            producto_id=pid, tienda_id=tienda_id
-        ).first()
-        if inv:
-            inv.stock_actual = cierre_real
+# ─── Conteo de desechables (a pedido del admin) ──────────────────────────────
+
+def solicitar_conteo_desechables(db: Session, tienda_id: int, usuario_id: int):
+    """Admin: pide a las baristas llenar el formato de desechables."""
+    pendiente = db.query(SolicitudConteoDesechables).filter_by(
+        tienda_id=tienda_id, estado="pendiente").first()
+    if pendiente:
+        raise HTTPException(status_code=400, detail="Ya hay una solicitud de conteo de desechables pendiente")
+    s = SolicitudConteoDesechables(tienda_id=tienda_id, solicitada_por_id=usuario_id)
+    db.add(s)
+    audit.registrar(db, accion="conteo_desechables_solicitado", tabla="solicitudes_conteo_desechables",
+                    registro_id=None, usuario_id=usuario_id, tienda_id=tienda_id)
+    db.commit()
+    db.refresh(s)
+    return {"ok": True, "solicitud_id": s.id}
+
+
+def get_solicitud_desechables(db: Session, tienda_id: int):
+    """Kiosko: ¿hay un formato de desechables pendiente por llenar?"""
+    s = (db.query(SolicitudConteoDesechables)
+         .filter_by(tienda_id=tienda_id, estado="pendiente")
+         .order_by(SolicitudConteoDesechables.fecha_solicitud.desc())
+         .first())
+    if not s:
+        return {"pendiente": False}
+    return {"pendiente": True, "solicitud_id": s.id,
+            "fecha_solicitud": s.fecha_solicitud.isoformat() if s.fecha_solicitud else None}
+
+
+def registrar_conteo_desechables(db: Session, tienda_id: int, items: list[dict], usuario_id: int,
+                                 barista_id: int | None = None, barista_nombre: str | None = None):
+    """Barista: llena el formato de desechables solicitado. Igual que un conteo normal,
+    registra y compara contra el sistema sin tocar stock (doble conteo)."""
+    solicitud = db.query(SolicitudConteoDesechables).filter_by(
+        tienda_id=tienda_id, estado="pendiente").first()
+    if not solicitud:
+        raise HTTPException(status_code=400, detail="No hay solicitud de conteo de desechables pendiente")
+    turno = get_turno_activo(db, tienda_id)
+    if not turno:
+        raise HTTPException(status_code=400, detail="No hay turno abierto")
+    if not items:
+        raise HTTPException(status_code=400, detail="Debes registrar al menos un item")
+
+    conteo = ConteoFisico(
+        tienda_id=tienda_id, turno_id=turno.id, tipo="desechables",
+        fecha_registro=datetime.utcnow(), usuario_id=usuario_id,
+        barista_id=barista_id, barista_nombre=barista_nombre,
+    )
+    db.add(conteo)
+    db.flush()
+    for item in items:
+        if item["cantidad_real"] < 0:
+            raise HTTPException(status_code=400, detail="cantidad_real no puede ser negativa")
+        inv = db.query(Inventario).filter(
+            Inventario.producto_id == item["producto_id"],
+            Inventario.tienda_id == tienda_id).first()
+        cantidad_sistema = inv.stock_actual if inv else 0.0
+        db.add(ConteoFisicoItem(
+            conteo_id=conteo.id, producto_id=item["producto_id"],
+            cantidad_sistema=cantidad_sistema, cantidad_real=item["cantidad_real"],
+            diferencia=item["cantidad_real"] - cantidad_sistema,
+        ))
+    solicitud.estado = "respondida"
+    solicitud.conteo_id = conteo.id
+    solicitud.fecha_respuesta = datetime.utcnow()
+    solicitud.barista_id = barista_id
+    solicitud.barista_nombre = barista_nombre
+    db.commit()
+    db.refresh(conteo)
+    logger.info(f"Conteo desechables registrado (id={conteo.id}) tienda {tienda_id}")
+    return conteo
 
 
 def registrar_conteo(db: Session, tienda_id: int, tipo: str,
@@ -155,28 +177,18 @@ def registrar_conteo(db: Session, tienda_id: int, tipo: str,
 
     db.flush()
 
-    # Activar flags del turno
+    # Activar flags del turno. DOBLE CONTEO: el conteo físico NO pisa el stock —
+    # solo registra cantidad_sistema/cantidad_real/diferencia para comparar contra
+    # el conteo interno del sistema (movimientos). Las diferencias se ven en el
+    # monitor de Conteos; se corrigen vía verificación (puntual) o aplicando el
+    # conteo completo al inventario (fin de mes / primera operación).
     if tipo == "apertura":
         turno.tiene_conteo_apertura = True
         turno.ts_conteo_apertura = datetime.utcnow()
         _tick_checklist(db, tienda_id, inventario_check=True)
-        # El conteo físico es la verdad TAMBIÉN al abrir: reconciliar el stock a lo
-        # contado. Cubre la primera operación de una sede (el conteo de apertura ES
-        # el inventario inicial — caso Palmetto 2-jul) y cualquier discrepancia
-        # matutina. La diferencia queda registrada en el item, visible en el monitor
-        # de Conteos y disputable vía verificación.
-        for item in items:
-            inv = db.query(Inventario).filter(
-                Inventario.producto_id == item["producto_id"],
-                Inventario.tienda_id == tienda_id,
-            ).first()
-            if inv:
-                inv.stock_actual = item["cantidad_real"]
     elif tipo == "cierre":
         turno.tiene_conteo_cierre = True
         turno.ts_conteo_cierre = datetime.utcnow()
-        # Calcular consumo real del turno y reconciliar stock
-        _registrar_consumo_turno(db, tienda_id, turno.id, items, usuario_id)
 
     db.commit()
     db.refresh(conteo)

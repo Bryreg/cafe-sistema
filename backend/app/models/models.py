@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum as SAEnum, Date, UniqueConstraint, Numeric
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum as SAEnum, Date, UniqueConstraint, Numeric, Index, text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -46,6 +46,8 @@ class EstadoConsignacionEnum(str, enum.Enum):
 class TipoConteoEnum(str, enum.Enum):
     apertura = "apertura"
     cierre = "cierre"
+    # Formato de desechables: solo se cuenta cuando el admin lo solicita.
+    desechables = "desechables"
 
 
 class TipoTurnoEnum(str, enum.Enum):
@@ -249,6 +251,13 @@ class Producto(Base):
     # A granel: se cuenta en unidades selladas + nivel de la abierta (dibujo). envase: bolsa | botella.
     fraccionable = Column(Boolean, default=False, server_default="false")
     envase = Column(String(10), nullable=True)   # 'bolsa' (sólidos) | 'botella' (líquidos)
+    # A granel en GRAMOS: gr que trae la unidad sellada (bolsa de café 2500). El conteo con
+    # gramera = bolsas cerradas × contenido + gramos pesados de la abierta.
+    contenido_por_unidad = Column(Numeric(12, 2, asdecimal=False), nullable=True)
+    # Orden fijo del conteo/inventario (planilla de pedidos). NULL → al final, alfabético.
+    orden_conteo = Column(Integer, nullable=True)
+    # NULL = conteo diario normal; 'desechables' = solo se cuenta cuando el admin lo pide.
+    grupo_conteo = Column(String(20), nullable=True)
     inventarios = relationship("Inventario", back_populates="producto")
     movimientos_inv = relationship("MovimientoInventario", back_populates="producto")
     pastelerias = relationship("PasteleriaDiaria", back_populates="producto")
@@ -346,8 +355,15 @@ class ConteoFisico(Base):
     turno = relationship("CajaTurno", back_populates="conteos")
     usuario = relationship("Usuario", back_populates="conteos_fisicos")
     items = relationship("ConteoFisicoItem", back_populates="conteo", cascade="all, delete-orphan")
+    # Único apertura y cierre POR TURNO; los desechables pueden repetirse si el admin
+    # vuelve a pedir el formato. Índice único PARCIAL (no un UniqueConstraint de tabla):
+    # en prod la migración dropea el constraint viejo y crea este mismo índice.
     __table_args__ = (
-        UniqueConstraint("turno_id", "tipo", name="uq_conteo_turno_tipo"),
+        Index(
+            "uq_conteo_turno_tipo", "turno_id", "tipo", unique=True,
+            postgresql_where=text("tipo IN ('apertura', 'cierre')"),
+            sqlite_where=text("tipo IN ('apertura', 'cierre')"),
+        ),
     )
 
 
@@ -459,11 +475,31 @@ class EntregaTurno(Base):
     egresos_snapshot = Column(Numeric(12, 2, asdecimal=False), nullable=True)
     imagen_url = Column(String(300), nullable=True)
     tipo = Column(String(20), default="entrega", nullable=False, server_default="entrega")
+    # Venta de ayer separada: la barista contó SOLO la registradora; el monto separado
+    # (la base del día anterior) quedó guardado aparte sin contar. El monto vive en
+    # base_snapshot; efectivo_esperado/diferencia se calculan contra la registradora.
+    base_separada = Column(Boolean, default=False, nullable=False, server_default="false")
     # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.
     barista_id = Column(Integer, nullable=True)
     barista_nombre = Column(String(100), nullable=True)
     turno = relationship("CajaTurno", back_populates="entregas")
     usuario = relationship("Usuario", back_populates="entregas_turno")
+
+
+class SolicitudConteoDesechables(Base):
+    """El admin pide el conteo de desechables; la barista lo llena desde el kiosko.
+    El formato NO entra en el conteo diario (grupo_conteo='desechables')."""
+    __tablename__ = "solicitudes_conteo_desechables"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False, index=True)
+    estado = Column(String(20), default="pendiente", nullable=False)  # pendiente | respondida
+    fecha_solicitud = Column(DateTime, default=datetime.utcnow)
+    solicitada_por_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
+    conteo_id = Column(Integer, ForeignKey("conteos_fisicos.id", ondelete="RESTRICT"), nullable=True)
+    fecha_respuesta = Column(DateTime, nullable=True)
+    # Barista REAL que respondió (plano, sin FK — AmbiguousForeignKeysError).
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
 
 
 class PasteleriaDiaria(Base):

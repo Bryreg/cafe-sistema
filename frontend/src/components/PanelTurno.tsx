@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Sparkles, Package, Eye, StickyNote, Trash2, CheckCircle,
   Check, Lock, AlertTriangle, Circle,
@@ -164,6 +165,38 @@ function AlertasStockTurno({ tiendaId }: { tiendaId: number }) {
         ))}
       </div>
     </section>
+  )
+}
+
+/** Aviso de formato de desechables pendiente (lo pide el admin desde el hub). */
+function DesechablesPendiente({ tiendaId }: { tiendaId: number }) {
+  const [pendiente, setPendiente] = useState(false)
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    api.get(`/conteos/desechables/pendiente/${tiendaId}`)
+      .then(r => setPendiente(!!r.data?.pendiente))
+      .catch(() => setPendiente(false))
+  }, [tiendaId])
+
+  if (!pendiente) return null
+  return (
+    <button type="button" onClick={() => navigate('/conteo-desechables')}
+      className="w-full flex items-center gap-3 rounded-2xl border px-4 py-3 text-left"
+      style={{ background: dark.amberTint, borderColor: dark.amberDim, cursor: 'pointer' }}>
+      <Package size={16} style={{ color: dark.amber, flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p className="m-0 font-bold" style={{ fontSize: 13, color: dark.amber }}>
+          El admin pidió el conteo de desechables
+        </p>
+        <p className="m-0 mt-0.5" style={{ fontSize: 11, color: dark.inkMuted }}>
+          Tocá para llenar el formato (agrupado por proveedor)
+        </p>
+      </div>
+      <span className="rounded-xl font-bold text-white" style={{ padding: '5px 10px', fontSize: 11, background: dark.amber }}>
+        Llenar
+      </span>
+    </button>
   )
 }
 
@@ -358,6 +391,7 @@ export default function PanelTurno({ turno, estados, bitacora, onRegistrar, tien
 
           {/* Stock crítico (Módulo 6) */}
           <VerificacionesConteo tiendaId={tiendaId} />
+          <DesechablesPendiente tiendaId={tiendaId} />
           <AlertasStockTurno tiendaId={tiendaId} />
           <RecibidosHoy tiendaId={tiendaId} />
 

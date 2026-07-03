@@ -492,6 +492,7 @@ interface DesgloseCuadre {
   fecha_hora: string | null
   barista: string | null
   base: number
+  base_separada?: boolean
   ventas_efectivo: number
   ingresos: number
   egresos: number
@@ -532,7 +533,16 @@ function CuadreDesglose({ entregaId }: { entregaId: number }) {
       <p style={{ margin: '0 0 6px', fontSize: 10, fontWeight: 700, color: 'oklch(55% 0.01 60)', letterSpacing: '.08em', textTransform: 'uppercase' }}>
         Desglose al momento del cuadre{d.fecha_hora ? ` · ${fmtTime(d.fecha_hora)}` : ''}
       </p>
-      {line('Con lo que empezó (base)', fmt(d.base))}
+      {d.base_separada ? (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 8px', margin: '2px 0', borderRadius: 8, background: 'oklch(95% 0.045 70)' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'oklch(48% 0.12 65)' }}>
+            Venta de ayer separada — guardada sin contar
+          </span>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'oklch(48% 0.12 65)', fontVariantNumeric: 'tabular-nums', textDecoration: 'line-through' }}>{fmt(d.base)}</span>
+        </div>
+      ) : (
+        line('Con lo que empezó (base)', fmt(d.base))
+      )}
       {line('+ Ventas en efectivo', fmt(d.ventas_efectivo), 'oklch(35% 0.13 145)')}
       {d.ingresos > 0 && line('+ Otros ingresos', fmt(d.ingresos), 'oklch(35% 0.13 145)')}
       {line('− Salidas de efectivo', `−${fmt(d.egresos)}`, 'oklch(42% 0.18 30)')}
@@ -549,7 +559,7 @@ function CuadreDesglose({ entregaId }: { entregaId: number }) {
         </div>
       )}
       <div style={{ borderTop: '1px solid oklch(92% 0.008 75)', marginTop: 4, paddingTop: 4 }}>
-        {line('= Debería haber en caja', fmt(d.efectivo_esperado), 'oklch(22% 0.02 60)', true)}
+        {line(d.base_separada ? '= A contar en la registradora' : '= Debería haber en caja', fmt(d.efectivo_esperado), 'oklch(22% 0.02 60)', true)}
       </div>
       {line('Contó la barista', fmt(d.efectivo_real))}
       {line('Diferencia',

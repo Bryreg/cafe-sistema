@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import update as sa_update
+from sqlalchemy import update as sa_update, nulls_last
 from fastapi import HTTPException
 from app.models.models import Inventario, MovimientoInventario, LoteInventario, Producto, Tienda
 from datetime import datetime
@@ -23,12 +23,35 @@ def clasificar_estado(stock_actual: float, stock_minimo: float,
     return "normal"
 
 
+def get_inventario_desechables(db: Session, tienda_id: int):
+    """Productos del formato de desechables (grupo_conteo='desechables'), agrupables
+    por proveedor. NO entran en el conteo diario (incluir_en_conteo=False)."""
+    items = (
+        db.query(Inventario)
+        .options(joinedload(Inventario.producto))
+        .join(Inventario.producto)
+        .filter(Inventario.tienda_id == tienda_id, Producto.grupo_conteo == "desechables")
+        .order_by(Producto.proveedor.asc(), nulls_last(Producto.orden_conteo.asc()), Producto.nombre.asc())
+        .all()
+    )
+    return [{
+        "producto_id": i.producto_id,
+        "producto_nombre": i.producto.nombre,
+        "unidad_medida": i.producto.unidad_medida,
+        "proveedor": i.producto.proveedor or "Sin proveedor",
+        "stock_actual": round(i.stock_actual or 0, 2),
+    } for i in items]
+
+
 def get_inventario_tienda(db: Session, tienda_id: int):
     items = (
         db.query(Inventario)
         .options(joinedload(Inventario.producto))
         .join(Inventario.producto)
         .filter(Inventario.tienda_id == tienda_id, Producto.incluir_en_conteo.isnot(False))
+        # Orden fijo de la planilla de conteo (orden_conteo); los que no tienen posición
+        # van al final en alfabético. Antes no había ORDER BY: orden indefinido de la DB.
+        .order_by(nulls_last(Producto.orden_conteo.asc()), Producto.nombre.asc())
         .all()
     )
     result = []
@@ -45,6 +68,7 @@ def get_inventario_tienda(db: Session, tienda_id: int):
             "unidad_medida": item.producto.unidad_medida,
             "fraccionable": bool(item.producto.fraccionable),
             "envase": item.producto.envase,
+            "contenido_por_unidad": float(item.producto.contenido_por_unidad) if item.producto.contenido_por_unidad else None,
             "alerta": item.stock_actual <= item.stock_minimo,
         })
     return result

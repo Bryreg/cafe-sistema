@@ -424,7 +424,8 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
 def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
                       efectivo_real: float,
                       ventas_tarjeta_bold: float, imagen_url: str | None,
-                      barista_id: int | None = None, barista_nombre: str | None = None):
+                      barista_id: int | None = None, barista_nombre: str | None = None,
+                      base_separada: bool = False):
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
         CajaTurno.estado == EstadoTurnoEnum.abierto
@@ -453,6 +454,17 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
     ).scalar() or 0.0
 
     efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
+    if base_separada:
+        # Venta de ayer separada y guardada: la barista cuenta SOLO la registradora.
+        # El monto separado (la base) queda documentado en base_snapshot sin contarse.
+        efectivo_esperado -= turno.base_real
+        if efectivo_esperado < 0:
+            # Las salidas superan la venta del día: físicamente tuvieron que tocar la
+            # plata separada, así que el cuadre "solo registradora" no tiene sentido.
+            raise HTTPException(
+                status_code=400,
+                detail="Las salidas de efectivo superan la venta del día — la plata de ayer no puede estar separada completa. Destildá la casilla y contá todo.",
+            )
     diferencia_efectivo = efectivo_real - efectivo_esperado
     diferencia_tarjeta = ventas_tarjeta_bold - turno.total_tarjeta
 
@@ -462,6 +474,7 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
         usuario_id=usuario_id,
         efectivo_real=efectivo_real,
         efectivo_esperado=efectivo_esperado,
+        base_separada=base_separada,
         base_snapshot=turno.base_real,
         ventas_efectivo_snapshot=turno.total_efectivo,
         ingresos_snapshot=ingresos,
@@ -645,6 +658,10 @@ def get_entrega_desglose(db: Session, entrega_id: int) -> dict | None:
         ventas_efectivo = float(e.efectivo_esperado or 0) - base - ingresos + egresos
 
     esperado = base + ventas_efectivo + ingresos - egresos
+    base_separada = bool(getattr(e, "base_separada", False))
+    if base_separada:
+        # La venta de ayer estaba separada: el cuadre se hizo contra la registradora.
+        esperado -= base
 
     return {
         "entrega_id": e.id,
@@ -653,6 +670,7 @@ def get_entrega_desglose(db: Session, entrega_id: int) -> dict | None:
         "fecha_hora": e.fecha_hora.isoformat() if e.fecha_hora else None,
         "barista": e.barista_nombre or (e.usuario.nombre if e.usuario else None),
         "base": round(base, 2),
+        "base_separada": base_separada,
         "ventas_efectivo": round(ventas_efectivo, 2),
         "ingresos": round(ingresos, 2),
         "egresos": round(egresos, 2),
@@ -884,6 +902,7 @@ def cerrar_turno_rapido(
     efectivo_final_real: float,
     datafono_real: float,
     imagen_url: str | None = None,
+    base_separada: bool = False,
 ):
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
@@ -910,23 +929,37 @@ def cerrar_turno_rapido(
         MovimientoCaja.caja_turno_id == turno_id, MovimientoCaja.tipo == "egreso"
     ).scalar() or 0.0
     efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
+    # Venta de ayer separada: la barista contó SOLO la registradora. El cuadre se
+    # evalúa contra el esperado de la registradora, y hacia cerrar_caja viaja el
+    # total equivalente (registradora + base separada) para que la base de mañana
+    # salga igual a la registradora de hoy (la venta de hoy).
+    esperado_cuadre = efectivo_esperado - turno.base_real if base_separada else efectivo_esperado
+    if base_separada and esperado_cuadre < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Las salidas de efectivo superan la venta del día — la plata de ayer no puede estar separada completa. Destildá la casilla y contá todo.",
+        )
+    efectivo_total = efectivo_final_real + turno.base_real if base_separada else efectivo_final_real
 
     # Record closure proof photo with the real counted vs expected diff
     if imagen_url:
         db.add(EntregaTurno(
             turno_id=turno_id, tienda_id=turno.tienda_id, usuario_id=usuario_id,
-            efectivo_esperado=efectivo_esperado, efectivo_real=efectivo_final_real,
+            efectivo_esperado=esperado_cuadre, efectivo_real=efectivo_final_real,
+            base_separada=base_separada,
             base_snapshot=turno.base_real, ventas_efectivo_snapshot=turno.total_efectivo,
             ingresos_snapshot=ingresos, egresos_snapshot=egresos,
             ventas_efectivo_siigo=0.0, ventas_tarjeta_bold=datafono_real,
-            diferencia_efectivo=round(efectivo_final_real - efectivo_esperado, 2),
+            diferencia_efectivo=round(efectivo_final_real - esperado_cuadre, 2),
             diferencia_tarjeta=round(datafono_real - turno.total_tarjeta, 2),
             imagen_url=imagen_url, tipo="salida",
         ))
 
     # Always provide justification so cerrar_caja doesn't 400 on diffs
     justificacion = "Salida desde kiosco — efectivo contado por barista"
-    return cerrar_caja(db, turno_id, efectivo_final_real, justificacion, usuario_id, datafono_real)
+    if base_separada:
+        justificacion += " (venta de ayer separada, sin contar)"
+    return cerrar_caja(db, turno_id, efectivo_total, justificacion, usuario_id, datafono_real)
 
 
 def _tick_checklist(db: Session, tienda_id: int, **kwargs):

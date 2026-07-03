@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTurno } from '../contexts/TurnoContext'
@@ -15,6 +15,49 @@ interface InvItem {
   categoria?: string
   fraccionable?: boolean
   envase?: 'bolsa' | 'botella' | null
+  /** Gramos por unidad sellada (bolsa de café 2500). Activa el conteo en gramos. */
+  contenido_por_unidad?: number | null
+}
+
+/** Conteo en GRAMOS para fraccionables con contenido conocido: bolsas cerradas ×
+ *  contenido + gramos pesados de la abierta (gramera). El total viaja en gramos. */
+function ConteoGramos({ contenido, onTotal }: { contenido: number; onTotal: (t: number) => void }) {
+  const [cerradas, setCerradas] = useState('')
+  const [abierta, setAbierta] = useState('')
+  const tocado = cerradas !== '' || abierta !== ''
+  const total = (Number(cerradas) || 0) * contenido + (Number(abierta) || 0)
+
+  const set = (c: string, a: string) => {
+    setCerradas(c); setAbierta(a)
+    const t = (Number(c) || 0) * contenido + (Number(a) || 0)
+    onTotal(t)
+  }
+
+  const inp: CSSProperties = {
+    background: dark.surfaceAlt, border: `2px solid ${dark.border}`, color: dark.ink,
+    fontFamily: '"JetBrains Mono", monospace',
+  }
+  return (
+    <div className="flex items-end gap-3 flex-wrap">
+      <div>
+        <p className="text-[10px] mb-1" style={{ color: dark.inkSubtle }}>Bolsas cerradas (×{Math.round(contenido)} gr)</p>
+        <input type="number" inputMode="numeric" min={0} value={cerradas} placeholder="0"
+          onChange={e => set(e.target.value, abierta)}
+          className="w-20 text-right rounded-lg px-2 py-1.5 text-sm font-bold outline-none" style={inp} />
+      </div>
+      <div>
+        <p className="text-[10px] mb-1" style={{ color: dark.inkSubtle }}>Abierta — pesala (gr)</p>
+        <input type="number" inputMode="numeric" min={0} value={abierta} placeholder="0"
+          onChange={e => set(cerradas, e.target.value)}
+          className="w-24 text-right rounded-lg px-2 py-1.5 text-sm font-bold outline-none" style={inp} />
+      </div>
+      {tocado && (
+        <p className="text-[13px] font-bold pb-1.5 font-mono tabular-nums" style={{ color: dark.green }}>
+          = {Math.round(total).toLocaleString('es-CO')} gr
+        </p>
+      )}
+    </div>
+  )
 }
 
 interface Props {
@@ -254,7 +297,17 @@ export default function ConteoInventario({ tipo }: Props) {
                     </div>
                     )}
                   </div>
-                  {item.fraccionable && (
+                  {item.fraccionable && (item.contenido_por_unidad ?? 0) > 0 ? (
+                    <div className="mt-2.5 ml-7">
+                      <ConteoGramos
+                        contenido={item.contenido_por_unidad as number}
+                        onTotal={t => {
+                          setConteos(prev => ({ ...prev, [item.producto_id]: String(t) }))
+                          setIsDirty(true)
+                        }}
+                      />
+                    </div>
+                  ) : item.fraccionable ? (
                     <div className="mt-2.5 ml-7">
                       <NivelEnvase
                         envase={item.envase === 'botella' ? 'botella' : 'bolsa'}
@@ -267,7 +320,7 @@ export default function ConteoInventario({ tipo }: Props) {
                         }}
                       />
                     </div>
-                  )}
+                  ) : null}
                   {diff !== null && diff !== 0 && (
                     <p className="text-xs font-medium mt-1 ml-7" style={{ color: dark.danger }}>
                       Diferencia: {diff > 0 ? '+' : ''}{diff} {item.unidad_medida}

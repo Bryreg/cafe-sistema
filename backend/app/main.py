@@ -164,6 +164,26 @@ with engine.connect() as _conn:
         # Caja fuerte: reserva fija guardada aparte de la registradora. Se registra para
         # control pero NO entra en efectivo_esperado. La base es solo el efectivo operativo.
         "ALTER TABLE caja_turnos ADD COLUMN caja_fuerte NUMERIC(12,2) DEFAULT 0",
+        # Cuadre con venta de ayer separada: la barista cuenta SOLO la registradora; el
+        # monto separado (base del día anterior) queda documentado sin contar en base_snapshot.
+        "ALTER TABLE entregas_turno ADD COLUMN base_separada BOOLEAN DEFAULT FALSE",
+        # Insumos a granel en gramos: contenido de la unidad sellada (gr por bolsa) para
+        # contar bolsas cerradas × contenido + gramos pesados de la abierta (gramera).
+        "ALTER TABLE productos ADD COLUMN contenido_por_unidad FLOAT",
+        # Orden fijo del conteo/inventario (planilla de la encargada de pedidos).
+        "ALTER TABLE productos ADD COLUMN orden_conteo INTEGER",
+        # Grupo de conteo: NULL = conteo diario normal; 'desechables' = solo se cuenta
+        # cuando el admin lo solicita (formato de desechables).
+        "ALTER TABLE productos ADD COLUMN grupo_conteo VARCHAR(20)",
+        # Conteo de desechables: nuevo tipo en el enum nativo de Postgres.
+        "ALTER TYPE tipoconteoenum ADD VALUE IF NOT EXISTS 'desechables'",
+        # El unique (turno_id, tipo) solo aplica a apertura/cierre: los desechables pueden
+        # contarse más de una vez en el mismo turno si el admin lo vuelve a pedir. En prod
+        # el unique vive como CONSTRAINT de tabla (create_all original) — hay que dropear
+        # el constraint (no solo el índice) antes de crear el índice parcial.
+        "ALTER TABLE conteos_fisicos DROP CONSTRAINT IF EXISTS uq_conteo_turno_tipo",
+        "DROP INDEX IF EXISTS uq_conteo_turno_tipo",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_conteo_turno_tipo ON conteos_fisicos (turno_id, tipo) WHERE tipo IN ('apertura', 'cierre')",
     ]:
         try:
             _conn.execute(_text(_sql))

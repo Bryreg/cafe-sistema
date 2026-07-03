@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Camera, Check, Monitor } from 'lucide-react'
+import { AlertTriangle, Camera, Check, Monitor, Lock } from 'lucide-react'
+import { conMiles, soloDigitos } from '../utils/plata'
 import { useNavigate } from 'react-router-dom'
 import { dark } from '../constants/darkTheme'
 import { useTurno } from '../contexts/TurnoContext'
@@ -16,6 +17,7 @@ export default function SalidaEfectivo() {
   const { resetKiosk } = useAuth()
   const navigate = useNavigate()
   const [efectivoContado, setEfectivoContado] = useState(0)
+  const [baseSeparada, setBaseSeparada] = useState(false)
   const [datafono, setDatafono] = useState(String(Math.round(turno?.total_tarjeta ?? 0)))
   const [imagen, setImagen] = useState<File | null>(null)
   const [confirming, setConfirming] = useState(false)
@@ -42,7 +44,8 @@ export default function SalidaEfectivo() {
   if (!turno) return null
 
   const conteoHecho = !!turno.tiene_conteo_cierre
-  const efectivoEsperado = turno.efectivo_esperado_actual ?? 0
+  const baseTurno = turno.base_real ?? 0
+  const efectivoEsperado = (turno.efectivo_esperado_actual ?? 0) - (baseSeparada ? baseTurno : 0)
   const datafonoVal = Number(datafono) || 0
   const diffEfectivo = Math.round((efectivoContado - efectivoEsperado) * 100) / 100
   const diffDatafono = Math.round((datafonoVal - (turno.total_tarjeta ?? 0)) * 100) / 100
@@ -55,6 +58,7 @@ export default function SalidaEfectivo() {
       const fd = new FormData()
       fd.append('efectivo_final_real', String(efectivoContado))
       fd.append('datafono_real', String(datafonoVal))
+      fd.append('base_separada', String(baseSeparada))
       if (imagen) fd.append('imagen', imagen)
       await api.post(`/caja/${turno.id}/salida`, fd)
       resetKiosk()
@@ -163,14 +167,36 @@ export default function SalidaEfectivo() {
           </div>
         )}
 
+        {baseTurno > 0 && (
+          <button type="button" onClick={() => setBaseSeparada(v => !v)}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left"
+            style={{
+              background: baseSeparada ? dark.amberTint : dark.surface,
+              border: `1px solid ${baseSeparada ? dark.amber : dark.border}`,
+            }}>
+            <Lock size={16} style={{ color: baseSeparada ? dark.amber : dark.inkSubtle }} />
+            <span className="flex-1 text-[13px] font-semibold" style={{ color: baseSeparada ? dark.amber : dark.inkMuted }}>
+              La venta de ayer está separada y guardada
+              <span className="block text-[11px] font-normal" style={{ color: dark.inkSubtle }}>
+                Contás solo la registradora ({fmt(Math.round(baseTurno))} quedan aparte)
+              </span>
+            </span>
+            <span className="w-5 h-5 rounded-md flex items-center justify-center shrink-0"
+              style={{ background: baseSeparada ? dark.amber : dark.surfaceAlt, border: `1px solid ${baseSeparada ? dark.amber : dark.border}` }}>
+              {baseSeparada && <Check size={13} color="#fff" strokeWidth={3} />}
+            </span>
+          </button>
+        )}
+
         <DesgloseEfectivo
-          base={turno.base_real ?? 0}
+          base={baseTurno}
           ventasEfectivo={turno.total_efectivo ?? 0}
           ingresos={turno.ingresos_movimientos ?? 0}
           egresos={turno.egresos_movimientos ?? 0}
           esperado={efectivoEsperado}
           cajaFuerte={turno.caja_fuerte ?? 0}
           movimientos={movimientos}
+          baseSeparada={baseSeparada}
         />
         <div className="flex items-center justify-between px-1 -mt-1">
           <span className="text-[11px]" style={{ color: dark.inkSubtle }}>Ventas del día {fmt(turno.total_ventas ?? 0)}</span>
@@ -186,10 +212,10 @@ export default function SalidaEfectivo() {
             Total datáfono Bold
           </p>
           <input
-            type="number"
+            type="text"
             inputMode="numeric"
-            value={datafono}
-            onChange={e => setDatafono(e.target.value)}
+            value={conMiles(datafono)}
+            onChange={e => setDatafono(soloDigitos(e.target.value))}
             placeholder="0"
             className="w-full rounded-xl px-4 py-3 text-[20px] font-mono font-bold outline-none"
             style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}

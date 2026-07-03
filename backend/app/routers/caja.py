@@ -98,6 +98,7 @@ async def registrar_entrega(
     turno_id: int,
     efectivo_real: float = Form(...),
     ventas_tarjeta_bold: float = Form(...),
+    base_separada: bool = Form(False),
     imagen: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
@@ -106,7 +107,8 @@ async def registrar_entrega(
     ensure_turno_access(db, user, turno_id)
     imagen_url = await upload_imagen(imagen)
     return svc.registrar_entrega(db, turno_id, user.id, efectivo_real, ventas_tarjeta_bold, imagen_url,
-                                 barista_id=barista[0], barista_nombre=barista[1])
+                                 barista_id=barista[0], barista_nombre=barista[1],
+                                 base_separada=base_separada)
 
 @router.post("/{turno_id}/cuadre-inicial", response_model=TurnoOut)
 async def cuadre_inicial(
@@ -171,13 +173,15 @@ async def salida_rapida(
     turno_id: int,
     efectivo_final_real: float = Form(...),
     datafono_real: float = Form(...),
+    base_separada: bool = Form(False),
     imagen: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
 ):
     ensure_turno_access(db, user, turno_id)
     imagen_url = await upload_imagen(imagen)
-    return svc.cerrar_turno_rapido(db, turno_id, user.id, efectivo_final_real, datafono_real, imagen_url)
+    return svc.cerrar_turno_rapido(db, turno_id, user.id, efectivo_final_real, datafono_real, imagen_url,
+                                   base_separada=base_separada)
 
 
 @router.get("/historial/{tienda_id}", response_model=List[TurnoHistorialItem])

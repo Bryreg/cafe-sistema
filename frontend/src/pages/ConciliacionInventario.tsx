@@ -43,7 +43,6 @@ export default function ConciliacionInventario() {
   const [tiendaId, setTiendaId] = useState<number | null>(null)
   const [data, setData] = useState<Conciliacion | null>(null)
   const [loading, setLoading] = useState(false)
-  const [filtro, setFiltro] = useState<'todos' | 'con_diferencia'>('con_diferencia')
 
   useEffect(() => {
     api.get<Tienda[]>('/auth/tiendas').then(r => { setTiendas(r.data); setTiendaId(p => p ?? (r.data[0]?.id ?? null)) }).catch(() => {})
@@ -72,12 +71,14 @@ export default function ConciliacionInventario() {
       .finally(() => setLoadingDia(false))
   }, [tiendaId, dia])
 
+  // Default: la lista COMPLETA del turno (sistema vivo + ultima apertura + cierre
+  // cuando exista). El toggle de diferencias es opcional, para revisar dias viejos.
+  const [soloDif, setSoloDif] = useState(false)
   const filasDia = useMemo(() => (diaria?.items ?? []).filter(i =>
-    filtro === 'todos' ||
+    !soloDif ||
     (i.apertura !== null && i.apertura.diferencia !== 0) ||
-    (i.cierre !== null && i.cierre.diferencia !== 0) ||
-    i.entradas > 0
-  ), [diaria, filtro])
+    (i.cierre !== null && i.cierre.diferencia !== 0)
+  ), [diaria, soloDif])
 
   const [reiniciando, setReiniciando] = useState(false)
   const reiniciarMes = async () => {
@@ -245,14 +246,12 @@ export default function ConciliacionInventario() {
                 {diaria.tiene_cierre ? `Cerró: ${diaria.cierre_barista ?? 's/n'}` : 'Sin conteo de cierre'}
               </span>
             )}
-            <div className="ml-auto flex gap-1">
-              {(['con_diferencia', 'todos'] as const).map(f => (
-                <button key={f} onClick={() => setFiltro(f)}
-                  className={`text-xs px-3 py-1 rounded-lg font-semibold ${filtro === f ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500'}`}>
-                  {f === 'todos' ? 'Todos' : 'Con movimiento o diferencia'}
-                </button>
-              ))}
-            </div>
+            <button onClick={() => setSoloDif(v => !v)}
+              className={`ml-auto text-xs px-3 py-1 rounded-lg font-semibold transition-colors ${
+                soloDif ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500'
+              }`}>
+              {soloDif ? '✓ Solo diferencias' : 'Solo diferencias'}
+            </button>
           </div>
           <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
             <div className="overflow-x-auto">
@@ -310,7 +309,9 @@ export default function ConciliacionInventario() {
                   })}
                   {!loadingDia && filasDia.length === 0 && (
                     <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-gray-400">
-                      Sin movimientos ni diferencias este día — cambiá el filtro a "Todos" para ver la lista completa.
+                      {soloDif
+                        ? 'Sin diferencias este día — los conteos clavaron con el sistema. Desactivá "Solo diferencias" para ver la lista completa.'
+                        : 'Sin datos para este día.'}
                     </td></tr>
                   )}
                 </tbody>

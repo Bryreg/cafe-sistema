@@ -260,41 +260,56 @@ export default function ConciliacionInventario() {
                 <thead>
                   <tr className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-400">
                     <th className="text-left px-3 py-2 font-bold">Producto</th>
+                    <th className="text-right px-3 py-2 font-bold">Dif. apertura vs sistema</th>
                     <th className="text-right px-3 py-2 font-bold">Sistema</th>
                     <th className="text-right px-3 py-2 font-bold">Conteo apertura</th>
                     <th className="text-right px-3 py-2 font-bold">Ingresos del día</th>
                     <th className="text-right px-3 py-2 font-bold">Conteo cierre</th>
+                    <th className="text-right px-3 py-2 font-bold">Dif. apertura → cierre</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {loadingDia ? (
-                    <tr><td colSpan={5} className="px-3 py-8 text-center text-sm text-gray-400 animate-pulse">Cargando día…</td></tr>
+                    <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-gray-400 animate-pulse">Cargando día…</td></tr>
                   ) : filasDia.map(i => {
-                    const celda = (c: CeldaConteo | null) => c === null
+                    const celda = (c: CeldaConteo | null, conDif: boolean) => c === null
                       ? <span className="text-gray-300">—</span>
                       : (
                         <span className={c.diferencia !== 0 ? (c.diferencia < 0 ? 'text-red-600' : 'text-blue-600') : 'text-gray-800'}>
                           <span className="font-bold">{num(c.real)}</span>
-                          {c.diferencia !== 0 && (
+                          {conDif && c.diferencia !== 0 && (
                             <span className="text-[11px] ml-1">({c.diferencia > 0 ? '+' : ''}{num(c.diferencia)})</span>
                           )}
                         </span>
                       )
+                    const difAp = i.apertura?.diferencia ?? null
+                    const cambioDia = i.apertura !== null && i.cierre !== null
+                      ? i.cierre.real - i.apertura.real : null
                     return (
                       <tr key={i.producto_id} className="hover:bg-gray-50">
                         <td className="px-3 py-2 font-medium text-gray-700">{i.nombre}
                           <span className="text-xs text-gray-400 ml-1">{i.unidad}</span></td>
+                        <td className={`px-3 py-2 text-right font-mono font-bold ${
+                          difAp === null ? 'text-gray-300' : difAp === 0 ? 'text-green-600' : difAp < 0 ? 'text-red-600' : 'text-blue-600'
+                        }`}>
+                          {difAp === null ? '—' : difAp === 0 ? '✓ 0' : `${difAp > 0 ? '+' : ''}${num(difAp)}`}
+                        </td>
                         <td className="px-3 py-2 text-right font-mono text-gray-500">{num(i.sistema)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{celda(i.apertura)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{celda(i.apertura, false)}</td>
                         <td className={`px-3 py-2 text-right font-mono ${i.entradas > 0 ? 'text-green-600 font-bold' : 'text-gray-300'}`}>
                           {i.entradas > 0 ? `+${num(i.entradas)}` : '0'}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono">{celda(i.cierre)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{celda(i.cierre, true)}</td>
+                        <td className={`px-3 py-2 text-right font-mono font-bold ${
+                          cambioDia === null ? 'text-gray-300' : 'text-gray-700'
+                        }`}>
+                          {cambioDia === null ? '—' : `${cambioDia > 0 ? '+' : ''}${num(cambioDia)}`}
+                        </td>
                       </tr>
                     )
                   })}
                   {!loadingDia && filasDia.length === 0 && (
-                    <tr><td colSpan={5} className="px-3 py-8 text-center text-sm text-gray-400">
+                    <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-gray-400">
                       Sin movimientos ni diferencias este día — cambiá el filtro a "Todos" para ver la lista completa.
                     </td></tr>
                   )}
@@ -302,7 +317,7 @@ export default function ConciliacionInventario() {
               </table>
             </div>
             <p className="px-3 py-2 text-[11px] text-gray-400 border-t border-gray-50">
-              Sistema = conteo interno (ventas con recetas, facturas, mermas). Entre paréntesis, la diferencia de cada conteo contra el sistema en ese momento. Los conteos de las baristas nunca modifican el inventario.
+              Sistema = conteo interno (ventas con recetas, facturas, mermas). "Dif. apertura vs sistema" compara contra el sistema al momento de abrir; en el cierre, el paréntesis es su diferencia contra el sistema al cerrar. "Dif. apertura → cierre" es cuánto cambió el producto durante el día según las baristas. Los conteos nunca modifican el inventario.
             </p>
           </div>
         </>

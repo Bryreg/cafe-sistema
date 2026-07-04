@@ -102,7 +102,7 @@ export default function ConteoInventario({ tipo }: Props) {
 
   const guardarBorrador = (feedback = false) => {
     try {
-      localStorage.setItem(draftKey, JSON.stringify({ conteos, gramos, ts: Date.now() }))
+      localStorage.setItem(draftKey, JSON.stringify({ conteos, gramos, usoAtajo, ts: Date.now() }))
       if (feedback) { setGuardadoOk(true); setTimeout(() => setGuardadoOk(false), 2500) }
     } catch { /* almacenamiento lleno: no bloquear el conteo */ }
   }
@@ -121,7 +121,7 @@ export default function ConteoInventario({ tipo }: Props) {
       const d = JSON.parse(raw)
       if (!d.ts || Date.now() - d.ts > 20 * 3600 * 1000) { localStorage.removeItem(draftKey); return }
       if (d.conteos && Object.keys(d.conteos).length) {
-        setConteos(d.conteos); setGramos(d.gramos ?? {}); setIsDirty(true)
+        setConteos(d.conteos); setGramos(d.gramos ?? {}); setUsoAtajo(!!d.usoAtajo); setIsDirty(true)
         setBorradorInfo(new Date(d.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }))
       }
     } catch { /* borrador corrupto: ignorar */ }
@@ -165,13 +165,17 @@ export default function ConteoInventario({ tipo }: Props) {
   }
   const getDiff = (id: number, ref: number) => getVal(id, ref) - ref
 
+  const [usoAtajo, setUsoAtajo] = useState(false)
+
   const todoOk = () => {
     // Confirmación explícita: este atajo fija todo al stock del sistema y permite cerrar
     // sin contar físicamente, lo que oculta diferencias reales si se usa a la ligera.
+    // Queda MARCADO en el conteo (es_atajo) — el admin distingue un conteo real de un eco.
     if (!window.confirm('¿Confirmás que contaste físicamente y todo coincide con el sistema?')) return
     const filled: Record<number, string> = {}
     items.forEach(i => { filled[i.producto_id] = String(i.stock_actual) })
     setConteos(filled)
+    setUsoAtajo(true)
     setIsDirty(true)
   }
 
@@ -182,7 +186,7 @@ export default function ConteoInventario({ tipo }: Props) {
         producto_id: i.producto_id,
         cantidad_real: getVal(i.producto_id, i.stock_actual),
       }))
-      await api.post('/conteos/', { tienda_id: user?.tienda_id, tipo, items: itemsList })
+      await api.post('/conteos/', { tienda_id: user?.tienda_id, tipo, items: itemsList, es_atajo: usoAtajo })
       localStorage.removeItem(draftKey)   // conteo confirmado: el borrador ya cumplió
       await refresh()
       navigate(nextPath)

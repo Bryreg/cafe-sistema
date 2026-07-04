@@ -188,6 +188,8 @@ with engine.connect() as _conn:
         "ALTER TABLE mermas ADD COLUMN quien VARCHAR(100)",
         # Pedido: unidad elegida por la barista (gr/unidad/lt/paquete), aparte de la del producto.
         "ALTER TABLE solicitudes_pedido_items ADD COLUMN unidad_solicitada VARCHAR(20)",
+        # Huella del atajo "Todo coincide con sistema": distingue conteo fisico real de un eco.
+        "ALTER TABLE conteos_fisicos ADD COLUMN es_atajo BOOLEAN DEFAULT FALSE",
     ]:
         try:
             _conn.execute(_text(_sql))

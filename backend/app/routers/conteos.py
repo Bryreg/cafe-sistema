@@ -31,7 +31,8 @@ def registrar(data: RegistrarConteoRequest, db: Session = Depends(get_db),
     items = [{"producto_id": i.producto_id, "cantidad_real": i.cantidad_real}
              for i in data.items]
     return svc.registrar_conteo(db, data.tienda_id, data.tipo, items, user.id,
-                                barista_id=barista[0], barista_nombre=barista[1])
+                                barista_id=barista[0], barista_nombre=barista[1],
+                                es_atajo=data.es_atajo)
 
 
 @router.get("/turno/{turno_id}", response_model=List[ConteoFisicoOut])

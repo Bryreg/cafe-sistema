@@ -443,6 +443,81 @@ def get_conciliacion_diaria(db: Session, tienda_id: int, fecha: date | None = No
             "cierre": _celda(ci_items.get(pid)),
         })
 
+    # ── Cierres de días anteriores (7 días hacia atrás, para el scroll de la tabla) ──
+    from datetime import timedelta
+    from app.core.tz import hoy_col
+    base_fecha = fecha or hoy_col()
+    cierres_previos = []
+    for n in range(1, 8):
+        d = base_fecha - timedelta(days=n)
+        di, df = rango_col_utc(d, d)
+        c = (
+            db.query(ConteoFisico)
+            .options(joinedload(ConteoFisico.items))
+            .filter(ConteoFisico.tienda_id == tienda_id,
+                    ConteoFisico.tipo == "cierre",
+                    ConteoFisico.fecha_registro >= di,
+                    ConteoFisico.fecha_registro <= df)
+            .order_by(ConteoFisico.fecha_registro.desc())
+            .first()
+        )
+        if c:
+            cierres_previos.append({
+                "fecha": str(d),
+                "barista": c.barista_nombre,
+                "atajo": bool(c.es_atajo),
+                "por_producto": {i.producto_id: {"real": i.cantidad_real, "diferencia": i.diferencia}
+                                 for i in c.items},
+            })
+
+    # ── Señales de decisión: faltante/sobrante del día valorizados + reincidentes ──
+    from app.services.inventario_mensual import _valor_unitario_map
+    valor_de = _valor_unitario_map(db)
+    nombres = {row["producto_id"]: (row["producto_nombre"], row["unidad_medida"]) for row in base}
+
+    def _valorado(conteo_items):
+        faltante_v = sobrante_v = 0.0
+        n_falt = n_sobr = 0
+        for i in conteo_items:
+            v = valor_de.get(i.producto_id, 0.0)
+            if i.diferencia < -0.01:
+                faltante_v += -i.diferencia * v
+                n_falt += 1
+            elif i.diferencia > 0.01:
+                sobrante_v += i.diferencia * v
+                n_sobr += 1
+        return round(faltante_v), n_falt, round(sobrante_v), n_sobr
+
+    resumen = None
+    if cierre:
+        fv, nf, sv, ns = _valorado(cierre.items)
+        resumen = {"faltante_valor": fv, "faltante_productos": nf,
+                   "sobrante_valor": sv, "sobrante_productos": ns}
+
+    # Reincidentes: productos con faltante en varios cierres de la ventana (hoy + 7 previos).
+    # La repetición es LA señal de fuga: un día es ruido, tres días es un patrón.
+    ventana = ([{"por_producto": {i.producto_id: {"diferencia": i.diferencia} for i in cierre.items},
+                 "atajo": bool(cierre.es_atajo)}] if cierre else []) + cierres_previos
+    ventana_real = [c for c in ventana if not c["atajo"]]   # los atajos no son conteos: no cuentan
+    acumulado: dict[int, dict] = {}
+    for c in ventana_real:
+        for pid, d in c["por_producto"].items():
+            if d["diferencia"] < -0.01:
+                a = acumulado.setdefault(pid, {"dias": 0, "total": 0.0})
+                a["dias"] += 1
+                a["total"] += d["diferencia"]
+    reincidentes = sorted(
+        ({"producto_id": pid,
+          "nombre": nombres.get(pid, (str(pid), ""))[0],
+          "unidad": nombres.get(pid, ("", ""))[1],
+          "dias_con_faltante": a["dias"],
+          "total_faltante": round(a["total"], 2),
+          "valor_faltante": round(-a["total"] * valor_de.get(pid, 0.0))}
+         for pid, a in acumulado.items()),
+        key=lambda x: (-x["dias_con_faltante"], -x["valor_faltante"], x["total_faltante"]),
+    )[:8]
+    atajos_semana = sum(1 for c in ventana if c["atajo"])
+
     return {
         "fecha": str(fecha) if fecha else None,
         "tiene_apertura": apertura is not None,
@@ -452,4 +527,9 @@ def get_conciliacion_diaria(db: Session, tienda_id: int, fecha: date | None = No
         "apertura_atajo": bool(apertura.es_atajo) if apertura else False,
         "cierre_atajo": bool(cierre.es_atajo) if cierre else False,
         "items": items,
+        "cierres_previos": cierres_previos,
+        "resumen": resumen,
+        "reincidentes": reincidentes,
+        "cierres_en_ventana": len(ventana_real),
+        "atajos_en_ventana": atajos_semana,
     }

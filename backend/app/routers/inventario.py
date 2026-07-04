@@ -8,7 +8,7 @@ from app.core.deps import ensure_tienda_access, get_current_user, require_admin,
 from app.models.models import Usuario, Producto, ProductoInsumo, Inventario, Tienda, CategoriaProductoEnum, LoteInventario
 from app.schemas.inventario import (
     MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate, UmbralesStockUpdate,
-    InsumosProductoUpdate,
+    InsumosProductoUpdate, PreparacionRequest,
 )
 from app.services import inventario as svc
 
@@ -25,6 +25,24 @@ def movimiento(data: MovimientoInvRequest, db: Session = Depends(get_db), user: 
     ensure_tienda_access(user, data.tienda_id)
     return svc.registrar_movimiento(db, data.producto_id, data.tienda_id, data.tipo, data.cantidad, data.motivo, user.id,
                                     barista_id=barista[0], barista_nombre=barista[1])
+
+@router.get("/preparables/{tienda_id}")
+def preparables(tienda_id: int, db: Session = Depends(get_db),
+                user: Usuario = Depends(get_current_user)):
+    """Productos intermedios que la barista puede preparar (ej. mezcla de granizado)."""
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_preparables(db, tienda_id)
+
+
+@router.post("/preparaciones")
+def registrar_preparacion(data: PreparacionRequest, db: Session = Depends(get_db),
+                          user: Usuario = Depends(get_current_user),
+                          barista: tuple = Depends(get_barista_actor)):
+    """Barista registra una preparación: descuenta insumos de la receta y suma el rendimiento."""
+    ensure_tienda_access(user, data.tienda_id)
+    return svc.registrar_preparacion(db, data.producto_id, data.tienda_id, data.cantidad,
+                                     user.id, barista_id=barista[0], barista_nombre=barista[1])
+
 
 @router.get("/alertas/{tienda_id}")
 def alertas(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):

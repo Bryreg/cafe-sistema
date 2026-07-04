@@ -397,3 +397,94 @@ def _tick_checklist_inventario(db: Session, tienda_id: int):
     _tick_checklist(db, tienda_id, inventario_check=True)
 
 
+# ─── Preparaciones: transformar materia prima en producto intermedio ─────────
+# Un producto es "preparable" si controla stock, tiene receta (producto_insumos)
+# y NO se vende en el POS (precio_venta 0) — ej. la mezcla de granizado. Su
+# contenido_por_unidad es el RENDIMIENTO de una preparación (gr que produce).
+
+def get_preparables(db: Session, tienda_id: int) -> list:
+    from app.models.models import ProductoInsumo
+    rows = (
+        db.query(Producto)
+        .filter(Producto.controla_stock.is_(True))
+        .filter((Producto.precio_venta.is_(None)) | (Producto.precio_venta <= 0))
+        .join(ProductoInsumo, ProductoInsumo.producto_id == Producto.id)
+        .distinct()
+        .all()
+    )
+    stocks = {
+        i.producto_id: i.stock_actual
+        for i in db.query(Inventario).filter(
+            Inventario.tienda_id == tienda_id,
+            Inventario.producto_id.in_([p.id for p in rows]),
+        ).all()
+    } if rows else {}
+    out = []
+    for p in rows:
+        receta = (
+            db.query(ProductoInsumo, Producto)
+            .join(Producto, Producto.id == ProductoInsumo.insumo_id)
+            .filter(ProductoInsumo.producto_id == p.id)
+            .all()
+        )
+        out.append({
+            "producto_id": p.id,
+            "nombre": p.nombre,
+            "unidad_medida": p.unidad_medida,
+            "rendimiento": p.contenido_por_unidad,
+            "stock_actual": stocks.get(p.id, 0.0),
+            "insumos": [{"insumo_id": pi.insumo_id, "nombre": prod.nombre,
+                         "cantidad": pi.cantidad, "unidad_medida": prod.unidad_medida}
+                        for pi, prod in receta],
+        })
+    return out
+
+
+def registrar_preparacion(db: Session, producto_id: int, tienda_id: int, cantidad: float,
+                          usuario_id: int, barista_id: int | None = None,
+                          barista_nombre: str | None = None) -> dict:
+    """Registra que se preparó `cantidad` tandas de un producto intermedio:
+    descuenta los insumos de su receta y suma el rendimiento al stock del producto.
+    Atómico: todo en una transacción."""
+    from app.models.models import ProductoInsumo
+    if cantidad <= 0:
+        raise HTTPException(400, "La cantidad de preparaciones debe ser mayor a 0")
+    p = db.query(Producto).filter_by(id=producto_id).first()
+    if not p:
+        raise HTTPException(404, "Producto no encontrado")
+    if not p.controla_stock or (p.precio_venta or 0) > 0:
+        raise HTTPException(400, "Este producto no es preparable")
+    if not p.contenido_por_unidad or p.contenido_por_unidad <= 0:
+        raise HTTPException(400, "El producto no tiene rendimiento configurado (contenido por unidad)")
+    receta = db.query(ProductoInsumo).filter_by(producto_id=producto_id).all()
+    if not receta:
+        raise HTTPException(400, "El producto no tiene receta de preparación")
+
+    quien = f" ({barista_nombre})" if barista_nombre else ""
+    motivo = f"Preparación: {p.nombre}{quien}"
+    for r in receta:
+        registrar_movimiento(
+            db, producto_id=r.insumo_id, tienda_id=tienda_id, tipo="salida",
+            cantidad=r.cantidad * cantidad, motivo=motivo, usuario_id=usuario_id,
+            commit=False, allow_negative=True,
+            barista_id=barista_id, barista_nombre=barista_nombre,
+        )
+    producido = p.contenido_por_unidad * cantidad
+    registrar_movimiento(
+        db, producto_id=producto_id, tienda_id=tienda_id, tipo="entrada",
+        cantidad=producido, motivo=motivo, usuario_id=usuario_id, commit=False,
+        barista_id=barista_id, barista_nombre=barista_nombre,
+    )
+    audit.registrar(
+        db, accion="preparacion", tabla="productos", registro_id=producto_id,
+        usuario_id=usuario_id, tienda_id=tienda_id,
+        datos_despues={"producto": p.nombre, "tandas": cantidad, "producido": producido,
+                       "barista": barista_nombre,
+                       "insumos": [{"id": r.insumo_id, "cantidad": r.cantidad * cantidad} for r in receta]},
+    )
+    db.commit()
+    inv = db.query(Inventario).filter_by(producto_id=producto_id, tienda_id=tienda_id).first()
+    return {"producto_id": producto_id, "producido": producido,
+            "stock_actual": inv.stock_actual if inv else producido}
+
+

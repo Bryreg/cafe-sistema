@@ -1,0 +1,54 @@
+{
+  "fecha": "2026-07-03",
+  "proposito": "Backup ANTES de la carga masiva de recetas desde Costos y PVP ENE 2026. Para restaurar: PUT /inventario/productos/{id}/insumos con los items de cada entrada de recetas_existentes, y PUT con items=[] en todo producto que haya recibido receta nueva ese dia (ver docs/RECETAS-ENE2026.md y engram sdd/recetas).",
+  "recetas_existentes": {
+    "830": {
+      "producto": "Waffle Pandebono",
+      "items": [{ "insumo_id": 735, "nombre": "MASA DE PANDEBONO X 25GRAMOS", "cantidad": 4 }]
+    },
+    "887": {
+      "producto": "Libra Medium Cafe Exportacion",
+      "items": [{ "insumo_id": 904, "nombre": "Café Libra Medium 500g", "cantidad": 500 }]
+    },
+    "890": {
+      "producto": "Media Libra Medium Cafe Exportacion",
+      "items": [{ "insumo_id": 904, "nombre": "Café Libra Medium 500g", "cantidad": 250 }]
+    }
+  },
+  "nota_catalogo": "Ningun producto del catalogo se modifica en esta operacion; solo la tabla producto_insumos. Todos los demas productos (232) tenian receta VACIA al momento del backup.",
+  "insumos_clave_verificados": {
+    "687": "Cafe Alta Tostion x2500 (gr)",
+    "1034": "Leche Entera (und, bolsa 1100gr)",
+    "907": "Leche Deslactosada (und)",
+    "724": "LECHE CONDENSADA (gr)",
+    "725": "LECHE EN POLVO (gr)",
+    "680": "Azucar a Granel (gr)",
+    "728": "Licor Baileys x1000ml (gr)",
+    "730": "Licor Whisky Black & White x1000ml (gr)",
+    "727": "Licor Amaretto x750ml (gr)",
+    "764": "Salsa Caramelo (gr)",
+    "765": "Salsa Chocolate (gr)",
+    "766": "Salsa Frutos Rojos (gr)",
+    "767": "SALSA MARACUYA (gr) = frutos amarillos",
+    "763": "SABORIZANTE VAINILLA (gr)",
+    "758": "Saborizante Canela (gr)",
+    "761": "SABORIZANTE MACADAMIA (gr)",
+    "759": "SABORIZANTE FRUTOS AMARILLOS (gr)",
+    "760": "Saborizante Kiwi Fresa (gr)",
+    "692": "CHAI (gr)",
+    "739": "MILO (gr)",
+    "1036": "Cocoa (gr) — OJO: dual-role, tambien es producto de venta POS",
+    "716": "GALLETA OREO (gr)",
+    "719": "Helado Chocolate (gr)",
+    "720": "Helado Vainilla (gr)",
+    "752": "PULPA DE LIMÓN (und)",
+    "753": "PULPA DE LULO (und)",
+    "754": "PULPA DE MANGO (und)",
+    "755": "PULPA DE MORA (und)",
+    "676": "AGUA MEDIUM CON GAS BOTELLA (und)",
+    "678": "Almojabanas (und)",
+    "688": "CAFÉ DESCAFEINADO NEW COLONY (und)",
+    "699": "CREMA CHANTILLY (und) — PENDIENTE, no se carga",
+    "735": "MASA DE PANDEBONO X 25GRAMOS (und)"
+  }
+}

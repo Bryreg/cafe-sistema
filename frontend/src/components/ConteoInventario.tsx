@@ -1,11 +1,24 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
-import { CheckCircle2, Circle, ArrowLeft, ArrowRight, AlertTriangle, ClipboardCheck } from 'lucide-react'
+import { CheckCircle2, Circle, ArrowLeft, ArrowRight, AlertTriangle, ClipboardCheck, Save, X } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import NivelEnvase from './NivelEnvase'
+import { evaluarExpresion, limpiarExpresion } from '../utils/calculo'
+
+/** Valor numérico de una casilla que puede contener una expresión (+2500+1000). */
+const valorDe = (raw: string | undefined): number | null => {
+  if (raw === undefined || raw === '') return null
+  return evaluarExpresion(raw) ?? (Number(raw) || 0)
+}
+
+/** Al dar Enter (o salir de la casilla) la expresión se convierte en su resultado. */
+const resolver = (raw: string): string => {
+  const v = evaluarExpresion(raw)
+  return v === null ? raw : String(v)
+}
 
 interface InvItem {
   producto_id: number
@@ -20,18 +33,19 @@ interface InvItem {
 }
 
 /** Conteo en GRAMOS para fraccionables con contenido conocido: bolsas cerradas ×
- *  contenido + gramos pesados de la abierta (gramera). El total viaja en gramos. */
-function ConteoGramos({ contenido, onTotal }: { contenido: number; onTotal: (t: number) => void }) {
-  const [cerradas, setCerradas] = useState('')
-  const [abierta, setAbierta] = useState('')
+ *  contenido + gramos pesados de la abierta (gramera). El total viaja en gramos.
+ *  CONTROLADO por el padre (para poder guardar/restaurar el borrador) y las
+ *  casillas aceptan sumas/restas: "+2500+1000" se calcula al dar Enter. */
+function ConteoGramos({ contenido, cerradas, abierta, onChange }: {
+  contenido: number; cerradas: string; abierta: string
+  onChange: (c: string, a: string, total: number) => void
+}) {
   const tocado = cerradas !== '' || abierta !== ''
-  const total = (Number(cerradas) || 0) * contenido + (Number(abierta) || 0)
+  const num = (s: string) => valorDe(s) ?? 0
+  const total = num(cerradas) * contenido + num(abierta)
 
-  const set = (c: string, a: string) => {
-    setCerradas(c); setAbierta(a)
-    const t = (Number(c) || 0) * contenido + (Number(a) || 0)
-    onTotal(t)
-  }
+  const set = (c: string, a: string) =>
+    onChange(c, a, num(c) * contenido + num(a))
 
   const inp: CSSProperties = {
     background: dark.surfaceAlt, border: `2px solid ${dark.border}`, color: dark.ink,
@@ -41,15 +55,19 @@ function ConteoGramos({ contenido, onTotal }: { contenido: number; onTotal: (t: 
     <div className="flex items-end gap-3 flex-wrap">
       <div>
         <p className="text-[10px] mb-1" style={{ color: dark.inkSubtle }}>Bolsas cerradas (×{Math.round(contenido)} gr)</p>
-        <input type="number" inputMode="numeric" min={0} value={cerradas} placeholder="0"
-          onChange={e => set(e.target.value, abierta)}
+        <input type="text" value={cerradas} placeholder="0"
+          onChange={e => set(limpiarExpresion(e.target.value), abierta)}
+          onKeyDown={e => { if (e.key === 'Enter') set(resolver(cerradas), abierta) }}
+          onBlur={() => set(resolver(cerradas), abierta)}
           className="w-20 text-right rounded-lg px-2 py-1.5 text-sm font-bold outline-none" style={inp} />
       </div>
       <div>
         <p className="text-[10px] mb-1" style={{ color: dark.inkSubtle }}>Abierta — pesala (gr)</p>
-        <input type="number" inputMode="numeric" min={0} value={abierta} placeholder="0"
-          onChange={e => set(cerradas, e.target.value)}
-          className="w-24 text-right rounded-lg px-2 py-1.5 text-sm font-bold outline-none" style={inp} />
+        <input type="text" value={abierta} placeholder="0"
+          onChange={e => set(cerradas, limpiarExpresion(e.target.value))}
+          onKeyDown={e => { if (e.key === 'Enter') set(cerradas, resolver(abierta)) }}
+          onBlur={() => set(cerradas, resolver(abierta))}
+          className="w-28 text-right rounded-lg px-2 py-1.5 text-sm font-bold outline-none" style={inp} />
       </div>
       {tocado && (
         <p className="text-[13px] font-bold pb-1.5 font-mono tabular-nums" style={{ color: dark.green }}>
@@ -70,10 +88,54 @@ export default function ConteoInventario({ tipo }: Props) {
   const navigate = useNavigate()
   const [items, setItems] = useState<InvItem[]>([])
   const [conteos, setConteos] = useState<Record<number, string>>({})
+  const [gramos, setGramos] = useState<Record<number, { c: string; a: string }>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
   const [error, setError] = useState('')
+  const [borradorInfo, setBorradorInfo] = useState<string | null>(null)
+  const [guardadoOk, setGuardadoOk] = useState(false)
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // ── Borrador persistente: sobrevive si salen a revisar otra pantalla ────────
+  const draftKey = `conteo_borrador_${user?.tienda_id ?? 0}_${tipo}`
+
+  const guardarBorrador = (feedback = false) => {
+    try {
+      localStorage.setItem(draftKey, JSON.stringify({ conteos, gramos, ts: Date.now() }))
+      if (feedback) { setGuardadoOk(true); setTimeout(() => setGuardadoOk(false), 2500) }
+    } catch { /* almacenamiento lleno: no bloquear el conteo */ }
+  }
+
+  const descartarBorrador = () => {
+    localStorage.removeItem(draftKey)
+    setConteos({}); setGramos({}); setIsDirty(false); setBorradorInfo(null)
+  }
+
+  // Restaurar al entrar (borradores de menos de 20h; uno viejo es de otro día)
+  useEffect(() => {
+    if (!user?.tienda_id) return
+    try {
+      const raw = localStorage.getItem(draftKey)
+      if (!raw) return
+      const d = JSON.parse(raw)
+      if (!d.ts || Date.now() - d.ts > 20 * 3600 * 1000) { localStorage.removeItem(draftKey); return }
+      if (d.conteos && Object.keys(d.conteos).length) {
+        setConteos(d.conteos); setGramos(d.gramos ?? {}); setIsDirty(true)
+        setBorradorInfo(new Date(d.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }))
+      }
+    } catch { /* borrador corrupto: ignorar */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.tienda_id, tipo])
+
+  // Autoguardado silencioso (respaldo del boton "Guardar cambios")
+  useEffect(() => {
+    if (!isDirty) return
+    if (draftTimer.current) clearTimeout(draftTimer.current)
+    draftTimer.current = setTimeout(() => guardarBorrador(false), 800)
+    return () => { if (draftTimer.current) clearTimeout(draftTimer.current) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conteos, gramos, isDirty])
 
   const [searchParams] = useSearchParams()
   const isKioskClose = searchParams.get('kiosk') === '1'
@@ -97,7 +159,10 @@ export default function ConteoInventario({ tipo }: Props) {
       .finally(() => setLoading(false))
   }, [user?.tienda_id])
 
-  const getVal  = (id: number, ref: number) => conteos[id] !== undefined ? Number(conteos[id]) : ref
+  const getVal  = (id: number, ref: number) => {
+    const v = valorDe(conteos[id])
+    return v === null ? ref : v
+  }
   const getDiff = (id: number, ref: number) => getVal(id, ref) - ref
 
   const todoOk = () => {
@@ -118,6 +183,7 @@ export default function ConteoInventario({ tipo }: Props) {
         cantidad_real: getVal(i.producto_id, i.stock_actual),
       }))
       await api.post('/conteos/', { tienda_id: user?.tienda_id, tipo, items: itemsList })
+      localStorage.removeItem(draftKey)   // conteo confirmado: el borrador ya cumplió
       await refresh()
       navigate(nextPath)
     } catch (e: any) {
@@ -179,7 +245,23 @@ export default function ConteoInventario({ tipo }: Props) {
           </p>
           <h1 className="text-xl font-bold" style={{ color: dark.ink }}>{titulo}</h1>
           <p className="text-sm mt-0.5" style={{ color: dark.inkMuted }}>{subtitulo}</p>
+          <p className="text-xs mt-1" style={{ color: dark.inkSubtle }}>
+            Tip: en las casillas podés sumar y restar — escribí <span className="font-mono">+2500+1000</span> y dale Enter para calcular.
+          </p>
         </div>
+
+        {/* Borrador restaurado */}
+        {borradorInfo && (
+          <div className="flex items-center gap-2 text-sm px-4 py-2.5 rounded-xl"
+            style={{ background: dark.amberTint, border: `1px solid ${dark.amberDim}`, color: dark.amber }}>
+            <Save size={14} className="shrink-0" />
+            <span className="flex-1">Se restauró tu conteo guardado a las {borradorInfo} — seguí donde ibas.</span>
+            <button onClick={descartarBorrador} className="p-1 rounded-lg" aria-label="Descartar borrador"
+              style={{ color: dark.amber }}>
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         {/* Contador de progreso */}
         {Object.keys(conteos).length > 0 && (
@@ -233,8 +315,9 @@ export default function ConteoInventario({ tipo }: Props) {
           }}>
             {items.map(item => {
               const val    = conteos[item.producto_id]
-              const diff   = val !== undefined ? Number(val) - item.stock_actual : null
-              const filled = val !== undefined
+              const nval   = valorDe(val)
+              const diff   = nval !== null ? nval - item.stock_actual : null
+              const filled = nval !== null
 
               let rowBg = 'transparent'
               if (filled && diff === 0) rowBg = 'oklch(94% 0.04 155 / 0.5)'
@@ -271,15 +354,21 @@ export default function ConteoInventario({ tipo }: Props) {
                     <div className="flex items-center gap-2 shrink-0">
                       <input
                         id={`conteo-${item.producto_id}`}
-                        type="number"
-                        inputMode="decimal"
+                        type="text"
                         value={val ?? ''}
                         onChange={e => {
-                          setConteos(prev => ({ ...prev, [item.producto_id]: e.target.value }))
+                          setConteos(prev => ({ ...prev, [item.producto_id]: limpiarExpresion(e.target.value) }))
                           setIsDirty(true)
                         }}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && val)
+                            setConteos(prev => ({ ...prev, [item.producto_id]: resolver(val) }))
+                        }}
+                        onBlur={() => {
+                          if (val) setConteos(prev => ({ ...prev, [item.producto_id]: resolver(val) }))
+                        }}
                         placeholder={String(item.stock_actual)}
-                        className="w-20 text-right rounded-lg px-2 py-1.5 text-sm font-bold outline-none transition-colors"
+                        className="w-24 text-right rounded-lg px-2 py-1.5 text-sm font-bold outline-none transition-colors"
                         style={{
                           background: dark.surfaceAlt,
                           border: `2px solid ${
@@ -301,7 +390,10 @@ export default function ConteoInventario({ tipo }: Props) {
                     <div className="mt-2.5 ml-7">
                       <ConteoGramos
                         contenido={item.contenido_por_unidad as number}
-                        onTotal={t => {
+                        cerradas={gramos[item.producto_id]?.c ?? ''}
+                        abierta={gramos[item.producto_id]?.a ?? ''}
+                        onChange={(c, a, t) => {
+                          setGramos(prev => ({ ...prev, [item.producto_id]: { c, a } }))
                           setConteos(prev => ({ ...prev, [item.producto_id]: String(t) }))
                           setIsDirty(true)
                         }}
@@ -352,6 +444,20 @@ export default function ConteoInventario({ tipo }: Props) {
           <p className="text-center text-xs mb-2" style={{ color: dark.inkSubtle }}>
             Ingresá al menos un valor para continuar
           </p>
+        )}
+        {isDirty && !saving && (
+          <button
+            onClick={() => guardarBorrador(true)}
+            className="w-full font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 mb-2 transition-colors"
+            style={{
+              background: guardadoOk ? dark.greenTint : dark.surfaceAlt,
+              color: guardadoOk ? dark.green : dark.inkMuted,
+              border: `1px solid ${guardadoOk ? dark.greenDim : dark.border}`,
+            }}
+          >
+            {guardadoOk ? <CheckCircle2 size={15} /> : <Save size={15} />}
+            {guardadoOk ? 'Guardado — podés salir y volver sin perderlo' : 'Guardar cambios'}
+          </button>
         )}
         <button
           onClick={confirmar}

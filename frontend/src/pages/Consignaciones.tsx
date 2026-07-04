@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import { conMiles, soloDigitos } from '../utils/plata'
-import { Banknote, Upload, AlertTriangle, Check, ImageIcon, ChevronDown, ChevronUp, X } from 'lucide-react'
+import { Banknote, Upload, AlertTriangle, Check, ImageIcon, CheckCircle2, Circle, X } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
 
 interface TurnoPendiente {
@@ -42,13 +42,13 @@ export default function Consignaciones() {
   const { user } = useAuth()
   const [pendiente, setPendiente] = useState<Pendiente | null>(null)
   const [lista, setLista] = useState<Consignacion[]>([])
+  const [turnoSel, setTurnoSel] = useState<number | null>(null)
   const [valor, setValor] = useState('')
   const [archivo, setArchivo] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [showDetalle, setShowDetalle] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const load = async () => {
@@ -61,8 +61,20 @@ export default function Consignaciones() {
       const p: Pendiente = pendRes.data
       setPendiente(p)
       setLista(listaRes.data)
-      // Pre-llenar solo si el campo está vacío (no pisar lo que el usuario esté editando)
-      if (p.total_pendiente > 0) setValor(prev => prev !== '' ? prev : String(p.total_pendiente))
+      // Seleccionar por defecto el día MAS VIEJO pendiente (los items vienen recientes primero)
+      if (p.items.length > 0) {
+        const masViejo = p.items[p.items.length - 1]
+        setTurnoSel(prev => {
+          const sigueExistiendo = prev !== null && p.items.some(i => i.turno_id === prev)
+          const sel = sigueExistiendo ? prev! : masViejo.turno_id
+          const item = p.items.find(i => i.turno_id === sel)!
+          // Pre-llenar solo si el campo está vacío (no pisar lo que el usuario esté editando)
+          setValor(v => v !== '' ? v : String(Math.round(item.pendiente)))
+          return sel
+        })
+      } else {
+        setTurnoSel(null)
+      }
     } catch { /* silencioso */ }
   }
 
@@ -82,6 +94,7 @@ export default function Consignaciones() {
       const form = new FormData()
       form.append('tienda_id', String(user?.tienda_id))
       form.append('valor', valor)
+      if (turnoSel !== null) form.append('turno_id', String(turnoSel))
       if (archivo) form.append('imagen', archivo)
       await api.post('/consignaciones/', form, { headers: { 'Content-Type': 'multipart/form-data' } })
       if (preview) URL.revokeObjectURL(preview)
@@ -116,7 +129,7 @@ export default function Consignaciones() {
                 <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${
                   hayPendiente ? 'text-amber-600' : 'text-green-600'
                 }`}>
-                  {hayPendiente ? 'Por consignar' : 'Al día'}
+                  {hayPendiente ? 'Total pendiente por consignar' : 'Al día'}
                 </p>
                 <p className={`text-[34px] font-bold font-mono leading-none ${
                   hayPendiente ? 'text-amber-700' : 'text-green-700'
@@ -130,44 +143,49 @@ export default function Consignaciones() {
                 )}
               </div>
               {hayPendiente && pendiente.items.length > 1 && (
-                <button
-                  onClick={() => setShowDetalle(v => !v)}
-                  className="flex items-center gap-1 text-xs font-semibold text-amber-600 mt-1 shrink-0"
-                >
-                  {pendiente.items.length} turnos
-                  {showDetalle ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                </button>
+                <span className="text-xs font-semibold text-amber-600 mt-1 shrink-0">
+                  {pendiente.items.length} días
+                </span>
               )}
             </div>
 
-            {/* Desglose por turno */}
-            {hayPendiente && (showDetalle || pendiente.items.length === 1) && (
-              <div className="mt-3 space-y-2.5">
-                {pendiente.items.map(item => (
-                  <div key={item.turno_id} className="pt-2.5 border-t border-amber-200">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-xs font-semibold text-amber-800">
-                          Cierre {parseUTC(item.fecha_cierre).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })} ·{' '}
-                          {parseUTC(item.fecha_cierre).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
-                        </p>
-                        <div className="flex gap-3 mt-0.5">
-                          <span className="text-[11px] text-amber-600">
-                            Esperado: <span className="font-mono font-bold">{fmt(item.esperado)}</span>
-                          </span>
-                          {item.consignado > 0 && (
-                            <span className="text-[11px] text-green-600">
-                              Consignado: <span className="font-mono font-bold">{fmt(item.consignado)}</span>
-                            </span>
-                          )}
+            {/* Días pendientes — tocá el que estás consignando */}
+            {hayPendiente && (
+              <div className="mt-3 space-y-2">
+                <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-wide">
+                  ¿Qué día estás consignando?
+                </p>
+                {pendiente.items.map(item => {
+                  const sel = turnoSel === item.turno_id
+                  return (
+                    <button key={item.turno_id}
+                      onClick={() => {
+                        setTurnoSel(item.turno_id)
+                        setValor(String(Math.round(item.pendiente)))
+                      }}
+                      className={`w-full text-left rounded-xl px-3.5 py-2.5 border-2 transition-colors ${
+                        sel ? 'border-amber-500 bg-white' : 'border-amber-200 bg-amber-100/40'
+                      }`}>
+                      <div className="flex items-center gap-2.5">
+                        {sel
+                          ? <CheckCircle2 size={17} className="text-amber-600 shrink-0" />
+                          : <Circle size={17} className="text-amber-300 shrink-0" />}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-amber-900 capitalize">
+                            {parseUTC(item.fecha_cierre).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' })}
+                          </p>
+                          <p className="text-[11px] text-amber-600">
+                            Esperado {fmt(item.esperado)}
+                            {item.consignado > 0 && <> · ya consignado {fmt(item.consignado)}</>}
+                          </p>
                         </div>
+                        <span className="text-sm font-bold font-mono text-amber-700 shrink-0">
+                          {fmt(item.pendiente)}
+                        </span>
                       </div>
-                      <span className="text-sm font-bold font-mono text-amber-700 shrink-0">
-                        {fmt(item.pendiente)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -193,11 +211,14 @@ export default function Consignaciones() {
           <div>
             <label className="text-xs font-semibold text-warm-500 uppercase tracking-wide block mb-1.5">
               Valor
-              {hayPendiente && (
-                <span className="ml-1.5 normal-case font-normal text-amber-500">
-                  — calculado del cierre
-                </span>
-              )}
+              {turnoSel !== null && pendiente && (() => {
+                const item = pendiente.items.find(i => i.turno_id === turnoSel)
+                return item ? (
+                  <span className="ml-1.5 normal-case font-normal text-amber-500 capitalize">
+                    — del {parseUTC(item.fecha_cierre).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' })}
+                  </span>
+                ) : null
+              })()}
             </label>
             <div className="relative">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-warm-300">$</span>

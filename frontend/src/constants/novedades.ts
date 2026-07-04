@@ -16,6 +16,16 @@ export interface Novedad {
 export const NOVEDADES: Novedad[] = [
   // ── 4 de julio ──────────────────────────────────────────────────────────
   {
+    fecha: '2026-07-04', rol: 'barista', tipo: 'nuevo',
+    titulo: 'Consignaciones: elegí el día que estás consignando',
+    detalle: 'La pantalla muestra el total pendiente y los días con saldo. Tocá el día que estás consignando y el valor se llena solo con lo pendiente de ese día.',
+  },
+  {
+    fecha: '2026-07-04', rol: 'barista', tipo: 'nuevo',
+    titulo: 'Conteos: guardá y seguí después',
+    detalle: 'Botón "Guardar cambios" en el conteo: si salís a revisar otra cosa, al volver seguís donde ibas. Y las casillas ahora calculan: escribí +2500+1000 y dale Enter.',
+  },
+  {
     fecha: '2026-07-04', rol: 'todos', tipo: 'nuevo',
     titulo: 'Las ventas descuentan el inventario solas',
     detalle: 'Cada bebida y producto del POS tiene su receta cargada: al vender, el sistema descuenta café, leche, salsas y demás ingredientes automáticamente. No hay que registrar nada extra.',

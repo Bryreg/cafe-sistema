@@ -49,6 +49,18 @@ def resumen_admin(
     return svc.get_resumen_admin(db, tienda_id, desde=desde, hasta=hasta)
 
 
+@router.patch("/{consignacion_id}")
+async def editar(
+    consignacion_id: int,
+    valor: Optional[float] = Form(None),
+    turno_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(require_admin),
+):
+    """Corrige el valor y/o el día (turno) de una consignación mal registrada."""
+    return svc.editar(db, consignacion_id, user.id, valor=valor, turno_id=turno_id)
+
+
 @router.patch("/{consignacion_id}/confirmar")
 def confirmar(consignacion_id: int, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
     return svc.confirmar(db, consignacion_id)

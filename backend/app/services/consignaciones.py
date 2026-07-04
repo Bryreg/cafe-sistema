@@ -225,6 +225,38 @@ def confirmar(db: Session, consignacion_id: int):
     return c
 
 
+def editar(db: Session, consignacion_id: int, usuario_id: int,
+           valor: float | None = None, turno_id: int | None = None):
+    """Corrige una consignación mal registrada (solo admin): valor y/o el turno
+    (día) al que corresponde. El saldo por consignar es derivado, así que basta
+    con corregir la fila; el cambio queda en auditoría."""
+    from app.services import audit
+
+    c = db.query(Consignacion).filter(Consignacion.id == consignacion_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Consignación no encontrada")
+    antes = {"valor": float(c.valor), "caja_turno_id": c.caja_turno_id}
+    if valor is not None:
+        if valor <= 0:
+            raise HTTPException(status_code=400, detail="El valor debe ser mayor a 0")
+        c.valor = round(valor, 2)
+    if turno_id is not None:
+        turno = db.query(CajaTurno).filter_by(id=turno_id, tienda_id=c.tienda_id).first()
+        if not turno:
+            raise HTTPException(status_code=404, detail="Turno no encontrado en esta sede")
+        c.caja_turno_id = turno_id
+    audit.registrar(
+        db, accion="editar_consignacion", tabla="consignaciones",
+        registro_id=c.id, usuario_id=usuario_id, tienda_id=c.tienda_id,
+        datos_antes=antes,
+        datos_despues={"valor": float(c.valor), "caja_turno_id": c.caja_turno_id},
+    )
+    db.commit()
+    db.refresh(c)
+    return {"id": c.id, "valor": c.valor, "caja_turno_id": c.caja_turno_id,
+            "estado": c.estado.value if hasattr(c.estado, "value") else c.estado}
+
+
 def eliminar(db: Session, consignacion_id: int, usuario_id: int):
     """Revierte una consignación registrada por error (solo admin).
 

@@ -19,6 +19,7 @@ import VentasHoy from './pages/VentasHoy'
 import Inventario from './pages/Inventario'
 import Mermas from './pages/Mermas'
 import Preparaciones from './pages/Preparaciones'
+import GuiaRapida from './pages/GuiaRapida'
 import Pasteleria from './pages/Pasteleria'
 import Consignaciones from './pages/Consignaciones'
 import ConsignacionesAdmin from './pages/ConsignacionesAdmin'
@@ -159,6 +160,11 @@ function AppRoutes() {
       <Route path="/consignaciones" element={
         hasSession
           ? isAdmin ? <Layout><ConsignacionesAdmin /></Layout> : <Consignaciones />
+          : <KioskSetup />
+      } />
+      <Route path="/guia" element={
+        hasSession
+          ? isAdmin ? <Layout><GuiaRapida /></Layout> : <GuiaRapida />
           : <KioskSetup />
       } />
 

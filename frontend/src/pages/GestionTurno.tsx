@@ -9,6 +9,7 @@ import {
   Cake, Wallet, Receipt, Megaphone, Truck, Trash2, ShoppingCart, Coins,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
+import NovedadesButton from '../components/NovedadesModal'
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 const fmtHora = (iso: string) => {
@@ -269,6 +270,7 @@ export default function GestionTurno() {
               : 'Sin turno activo'}
           </p>
         </div>
+        {!step && <NovedadesButton rol="barista" variant="dark" />}
         {isKiosk && !step && (
           <button onClick={resetKiosk} className="p-2 rounded-lg opacity-40 hover:opacity-70 transition-opacity"
             style={{ color: dark.inkSubtle }}>

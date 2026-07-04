@@ -13,6 +13,16 @@ from typing import List, Optional
 router = APIRouter(prefix="/conteos", tags=["conteos"])
 
 
+@router.get("/conciliacion-diaria/{tienda_id}")
+def conciliacion_diaria(tienda_id: int, fecha: Optional[date] = Query(None),
+                        db: Session = Depends(get_db),
+                        user: Usuario = Depends(require_admin)):
+    """Doble inventario de un día: sistema vs conteo de apertura, entradas del día
+    y conteo de cierre, por producto del conteo diario."""
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_conciliacion_diaria(db, tienda_id, fecha)
+
+
 @router.post("/", response_model=ConteoFisicoOut)
 def registrar(data: RegistrarConteoRequest, db: Session = Depends(get_db),
               user: Usuario = Depends(get_current_user),

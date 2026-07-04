@@ -352,6 +352,9 @@ class ConteoFisico(Base):
     # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.
     barista_id = Column(Integer, nullable=True)
     barista_nombre = Column(String(100), nullable=True)
+    # True si usaron el atajo "Todo coincide con sistema": el conteo es un eco del
+    # stock, no un conteo físico — el admin debe poder distinguirlos.
+    es_atajo = Column(Boolean, default=False)
     turno = relationship("CajaTurno", back_populates="conteos")
     usuario = relationship("Usuario", back_populates="conteos_fisicos")
     items = relationship("ConteoFisicoItem", back_populates="conteo", cascade="all, delete-orphan")

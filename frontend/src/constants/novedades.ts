@@ -42,6 +42,11 @@ export const NOVEDADES: Novedad[] = [
   },
   {
     fecha: '2026-07-04', rol: 'admin', tipo: 'nuevo',
+    titulo: 'Los conteos con "Todo coincide" quedan marcados',
+    detalle: 'Cuando un conteo se registra con el atajo "Todo coincide con sistema", aparece con la etiqueta ⚡ en Conciliación y en el monitor de conteos — para distinguir un conteo físico real de una confirmación sin contar.',
+  },
+  {
+    fecha: '2026-07-04', rol: 'admin', tipo: 'nuevo',
     titulo: 'Conciliación: la película del día completo',
     detalle: 'El detalle de Conciliación ahora muestra por producto: lo que el sistema calcula, lo que la barista contó al abrir, lo que entró durante el día y lo que contó al cerrar. Con selector de día.',
   },

@@ -12,6 +12,8 @@ class RegistrarConteoRequest(BaseModel):
     tienda_id: int
     tipo: str  # apertura | cierre
     items: List[ConteoItemRequest]
+    # True si la barista uso "Todo coincide con sistema" (eco del stock, no conteo fisico)
+    es_atajo: bool = False
 
 
 class SolicitarVerificacionRequest(BaseModel):
@@ -41,4 +43,5 @@ class ConteoFisicoOut(BaseModel):
     fecha_registro: datetime
     items: List[ConteoItemOut]
     barista_nombre: Optional[str] = None
+    es_atajo: Optional[bool] = False
     class Config: from_attributes = True

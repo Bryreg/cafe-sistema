@@ -130,7 +130,8 @@ def registrar_conteo_desechables(db: Session, tienda_id: int, items: list[dict],
 
 def registrar_conteo(db: Session, tienda_id: int, tipo: str,
                      items: list[dict], usuario_id: int,
-                     barista_id: int | None = None, barista_nombre: str | None = None):
+                     barista_id: int | None = None, barista_nombre: str | None = None,
+                     es_atajo: bool = False):
     turno = get_turno_activo(db, tienda_id)
     if not turno:
         raise HTTPException(status_code=400, detail="No hay turno abierto")
@@ -151,6 +152,7 @@ def registrar_conteo(db: Session, tienda_id: int, tipo: str,
         usuario_id=usuario_id,
         barista_id=barista_id,
         barista_nombre=barista_nombre,
+        es_atajo=es_atajo,
     )
     db.add(conteo)
     db.flush()
@@ -361,6 +363,7 @@ def get_conteos_tienda(db: Session, tienda_id: int,
             "id": c.id, "turno_id": c.turno_id, "tipo": tipo,
             "fecha_registro": c.fecha_registro.isoformat() if c.fecha_registro else None,
             "barista_nombre": c.barista_nombre,
+            "es_atajo": bool(c.es_atajo),
             "n_items": len(items), "n_diferencias": n_dif,
             "items": items,
         })
@@ -446,5 +449,7 @@ def get_conciliacion_diaria(db: Session, tienda_id: int, fecha: date | None = No
         "tiene_cierre": cierre is not None,
         "apertura_barista": apertura.barista_nombre if apertura else None,
         "cierre_barista": cierre.barista_nombre if cierre else None,
+        "apertura_atajo": bool(apertura.es_atajo) if apertura else False,
+        "cierre_atajo": bool(cierre.es_atajo) if cierre else False,
         "items": items,
     }

@@ -21,6 +21,7 @@ interface Conteo {
   tipo: string // apertura | cierre
   fecha_registro: string | null
   barista_nombre: string | null
+  es_atajo?: boolean
   n_items: number
   n_diferencias: number
   items: ConteoItem[]
@@ -223,8 +224,14 @@ export default function ConteosAdmin() {
                         : <Moon size={15} style={{ color: 'oklch(45% 0.15 30)' }} />}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-gray-800">
+                      <p className="text-sm font-bold text-gray-800 flex items-center gap-2 flex-wrap">
                         Conteo de {c.tipo} <span className="text-xs font-medium text-gray-400">· turno #{c.turno_id}</span>
+                        {c.es_atajo && (
+                          <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full"
+                            title='Registrado con el botón "Todo coincide con sistema" — no es un conteo físico'>
+                            ⚡ Todo coincide
+                          </span>
+                        )}
                       </p>
                       <p className="text-xs text-gray-500 flex items-center gap-2">
                         {fmtFechaHora(c.fecha_registro)}

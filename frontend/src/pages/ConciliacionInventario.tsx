@@ -13,6 +13,7 @@ interface FilaDiaria {
 interface ConciliacionDiaria {
   tiene_apertura: boolean; tiene_cierre: boolean
   apertura_barista: string | null; cierre_barista: string | null
+  apertura_atajo?: boolean; cierre_atajo?: boolean
   items: FilaDiaria[]
 }
 
@@ -240,10 +241,19 @@ export default function ConciliacionInventario() {
             <input type="date" value={dia} max={hoyLocal()} onChange={e => setDia(e.target.value)}
               className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-600 focus:outline-none focus:border-forest" />
             {diaria && (
-              <span className="text-[11px] text-gray-400">
-                {diaria.tiene_apertura ? `Abrió: ${diaria.apertura_barista ?? 's/n'}` : 'Sin conteo de apertura'}
-                {' · '}
-                {diaria.tiene_cierre ? `Cerró: ${diaria.cierre_barista ?? 's/n'}` : 'Sin conteo de cierre'}
+              <span className="text-[11px] text-gray-400 flex items-center gap-1.5 flex-wrap">
+                <span>{diaria.tiene_apertura ? `Abrió: ${diaria.apertura_barista ?? 's/n'}` : 'Sin conteo de apertura'}</span>
+                {diaria.apertura_atajo && (
+                  <span className="bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded-full" title='La apertura se registró con el botón "Todo coincide con sistema" — no es un conteo físico'>
+                    ⚡ Todo coincide
+                  </span>
+                )}
+                <span>· {diaria.tiene_cierre ? `Cerró: ${diaria.cierre_barista ?? 's/n'}` : 'Sin conteo de cierre'}</span>
+                {diaria.cierre_atajo && (
+                  <span className="bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded-full" title='El cierre se registró con el botón "Todo coincide con sistema" — no es un conteo físico'>
+                    ⚡ Todo coincide
+                  </span>
+                )}
               </span>
             )}
             <button onClick={() => setSoloDif(v => !v)}

@@ -7,6 +7,7 @@ import {
   Menu, X, Check, Circle, AlertTriangle, ClipboardList, Megaphone,
   Trash2, Package, ShoppingCart, Coins, Truck, Thermometer, ArrowRightLeft, LogOut,
   Calculator, CalendarClock, Banknote, Receipt, Boxes, Sparkles, Cake, ClipboardCheck,
+  FlaskConical,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import MovimientoCajaModal from './MovimientoCajaModal'
@@ -28,6 +29,7 @@ const QUICK = [
   { label: 'Ventas',          to: '/historial-ventas', icon: Receipt },
   { label: 'Recibir',         to: '/ingresos',       icon: Truck },
   { label: 'Merma',           to: '/mermas',         icon: Trash2 },
+  { label: 'Preparaciones',   to: '/preparaciones',  icon: FlaskConical },
   { label: 'Inventario',      to: '/inventario',     icon: Package },
   { label: 'Inv. mensual',    to: '/inventario-mensual', icon: Boxes },
   { label: 'Pedido',          to: '/pedido',         icon: ShoppingCart },

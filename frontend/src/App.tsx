@@ -18,6 +18,7 @@ import Entrega from './pages/Entrega'
 import VentasHoy from './pages/VentasHoy'
 import Inventario from './pages/Inventario'
 import Mermas from './pages/Mermas'
+import Preparaciones from './pages/Preparaciones'
 import Pasteleria from './pages/Pasteleria'
 import Consignaciones from './pages/Consignaciones'
 import ConsignacionesAdmin from './pages/ConsignacionesAdmin'
@@ -129,6 +130,7 @@ function AppRoutes() {
 
       {/* ── Herramientas barista ── */}
       <Route path="/mermas"         element={hasSession ? <Mermas />         : <KioskSetup />} />
+      <Route path="/preparaciones"  element={hasSession ? <Preparaciones />  : <KioskSetup />} />
       <Route path="/pasteleria"     element={hasSession ? <Pasteleria />     : <KioskSetup />} />
       <Route path="/pedido"         element={hasSession ? <SolicitudPedido />: <KioskSetup />} />
       <Route path="/sencilla"       element={hasSession ? <SolicitudSencilla /> : <KioskSetup />} />

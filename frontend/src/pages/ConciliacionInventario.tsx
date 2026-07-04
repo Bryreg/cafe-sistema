@@ -280,16 +280,26 @@ export default function ConciliacionInventario() {
                 )}
               </span>
             )}
-            <button onClick={() => setSoloDif(v => !v)}
-              className={`ml-auto text-xs px-3 py-1 rounded-lg font-semibold transition-colors ${
-                soloDif ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500'
-              }`}>
-              {soloDif ? '✓ Solo diferencias' : 'Solo diferencias'}
-            </button>
+            <span className="ml-auto flex items-center gap-3">
+              {(diaria?.cierres_previos?.length ?? 0) > 0 && (
+                <span className="text-[11px] text-gray-400 hidden sm:inline">
+                  Deslizá la tabla → para ver los cierres de días anteriores
+                </span>
+              )}
+              <button onClick={() => setSoloDif(v => !v)}
+                className={`text-xs px-3 py-1 rounded-lg font-semibold transition-colors ${
+                  soloDif ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500'
+                }`}>
+                {soloDif ? '✓ Solo diferencias' : 'Solo diferencias'}
+              </button>
+            </span>
           </div>
           <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              {/* Las 7 columnas principales llenan el ancho VISIBLE; los cierres de días
+                  anteriores viven más allá del borde derecho — solo con la barra horizontal. */}
+              <table className="text-sm"
+                style={{ width: `calc(100% + ${(diaria?.cierres_previos?.length ?? 0) * 140}px)` }}>
                 <thead>
                   <tr className="text-[11px] uppercase tracking-wide text-gray-400">
                     {/* Columnas 1-3 FIJAS: el scroll horizontal solo mueve desde apertura */}
@@ -300,8 +310,8 @@ export default function ConciliacionInventario() {
                     <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[100px]">Ingresos del día</th>
                     <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[120px]">Conteo cierre</th>
                     <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[110px]">Dif. apertura → cierre</th>
-                    {(diaria?.cierres_previos ?? []).map(cp => (
-                      <th key={cp.fecha} className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[110px] whitespace-nowrap">
+                    {(diaria?.cierres_previos ?? []).map((cp, idx) => (
+                      <th key={cp.fecha} className={`text-right px-3 py-2 font-bold bg-gray-50 w-[140px] min-w-[140px] whitespace-nowrap ${idx === 0 ? 'border-l-2 border-gray-200' : ''}`}>
                         Cierre {cp.fecha.slice(8, 10)}/{cp.fecha.slice(5, 7)}{cp.atajo ? ' ⚡' : ''}
                       </th>
                     ))}
@@ -344,10 +354,10 @@ export default function ConciliacionInventario() {
                         }`}>
                           {cambioDia === null ? '—' : `${cambioDia > 0 ? '+' : ''}${num(cambioDia)}`}
                         </td>
-                        {(diaria?.cierres_previos ?? []).map(cp => {
+                        {(diaria?.cierres_previos ?? []).map((cp, idx) => {
                           const d = cp.por_producto[i.producto_id]
                           return (
-                            <td key={cp.fecha} className="px-3 py-2 text-right font-mono">
+                            <td key={cp.fecha} className={`px-3 py-2 text-right font-mono w-[140px] min-w-[140px] ${idx === 0 ? 'border-l-2 border-gray-100' : ''}`}>
                               {d === undefined
                                 ? <span className="text-gray-300">—</span>
                                 : (

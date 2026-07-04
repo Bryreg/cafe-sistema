@@ -42,6 +42,11 @@ export const NOVEDADES: Novedad[] = [
   },
   {
     fecha: '2026-07-04', rol: 'admin', tipo: 'nuevo',
+    titulo: 'Corregir consignaciones',
+    detalle: 'Botón de lápiz en cada consignación del panel: corrige el valor si la barista lo registró mal. El saldo del día se recalcula solo.',
+  },
+  {
+    fecha: '2026-07-04', rol: 'admin', tipo: 'nuevo',
     titulo: 'Editar facturas de proveedores',
     detalle: 'Botón "Editar" en Pagos proveedores: corrige proveedor, número, fecha, tipo de pago, montos y productos. Si cambia una cantidad, el inventario se ajusta solo por la diferencia.',
   },

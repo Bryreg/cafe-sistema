@@ -4,7 +4,7 @@ import api from '../api/client'
 import {
   Banknote, User, ImageIcon, Check, X, ZoomIn,
   ChevronDown, ChevronUp, AlertTriangle, CheckCircle2,
-  Download, FileText, TrendingUp, Trash2,
+  Download, FileText, TrendingUp, Trash2, Pencil,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -491,6 +491,23 @@ export default function ConsignacionesAdmin() {
     } finally { setConfirmando(null) }
   }
 
+  const editar = async (c: ConsignacionItem) => {
+    const actual = Math.round(c.valor).toLocaleString('es-CO')
+    const entrada = window.prompt(`Valor correcto de la consignación (actual: $${actual}):`)
+    if (entrada === null) return
+    const nuevo = Number(entrada.replace(/[^\d]/g, ''))
+    if (!(nuevo > 0)) { alert('Valor inválido'); return }
+    setConfirmando(c.id)
+    try {
+      const fd = new FormData()
+      fd.append('valor', String(nuevo))
+      await api.patch(`/consignaciones/${c.id}`, fd)
+      if (tiendaId !== null) await load(tiendaId)
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'No se pudo editar')
+    } finally { setConfirmando(null) }
+  }
+
   // Totales globales
   const totalEsperado   = dias.reduce((s, d) => s + d.esperado_consignar, 0)
   const totalConsignado = dias.reduce((s, d) => s + d.total_consignado, 0)
@@ -810,6 +827,11 @@ export default function ConsignacionesAdmin() {
                               Confirmada
                             </span>
                           )}
+                          <button onClick={() => editar(c)} disabled={confirmando === c.id}
+                            title="Corregir el valor de la consignación"
+                            className="flex items-center gap-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 disabled:opacity-50 text-xs font-semibold px-2 py-1.5 rounded-lg transition-colors shrink-0">
+                            <Pencil size={13} />
+                          </button>
                           <button onClick={() => eliminar(c)} disabled={confirmando === c.id}
                             title="Revertir consignación (registrada por error)"
                             className="flex items-center gap-1 text-red-500 hover:text-red-700 hover:bg-red-50 disabled:opacity-50 text-xs font-semibold px-2 py-1.5 rounded-lg transition-colors shrink-0">

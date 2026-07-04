@@ -10,11 +10,24 @@ interface FilaDiaria {
   producto_id: number; nombre: string; unidad: string
   sistema: number; apertura: CeldaConteo | null; entradas: number; cierre: CeldaConteo | null
 }
+interface CierrePrevio {
+  fecha: string; barista: string | null; atajo: boolean
+  por_producto: Record<number, { real: number; diferencia: number }>
+}
+interface Reincidente {
+  producto_id: number; nombre: string; unidad: string
+  dias_con_faltante: number; total_faltante: number; valor_faltante: number
+}
 interface ConciliacionDiaria {
   tiene_apertura: boolean; tiene_cierre: boolean
   apertura_barista: string | null; cierre_barista: string | null
   apertura_atajo?: boolean; cierre_atajo?: boolean
   items: FilaDiaria[]
+  cierres_previos: CierrePrevio[]
+  resumen: { faltante_valor: number; faltante_productos: number; sobrante_valor: number; sobrante_productos: number } | null
+  reincidentes: Reincidente[]
+  cierres_en_ventana: number
+  atajos_en_ventana: number
 }
 
 interface Item {
@@ -166,73 +179,84 @@ export default function ConciliacionInventario() {
         ))}
       </div>
 
-      {loading && <p className="text-sm text-gray-400 text-center py-8 animate-pulse">Cargando conciliación...</p>}
-
-      {!loading && !data && (
-        <div className="bg-white border border-gray-200 rounded-2xl px-4 py-12 text-center">
-          <AlertTriangle size={26} className="text-gray-300 mx-auto mb-2" />
-          <p className="text-sm text-gray-500">No hay conteo mensual cerrado para {MESES[mes - 1]} {anio} en esta sede</p>
-        </div>
-      )}
-
-      {!loading && data && data.estado !== 'cerrado' && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800">
-          Conteo <strong>en proceso</strong> — cerrá el conteo del mes para ver la conciliación con las diferencias reales. Los valores aún no están calculados.
-        </div>
-      )}
-
-      {!loading && data && data.estado === 'cerrado' && (
+      {/* ── Señales de decisión: ¿a dónde se está yendo el producto? ── */}
+      {diaria && (
         <>
-          {/* KPIs */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="bg-white rounded-2xl border border-gray-200 p-4">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Diferencia neta</p>
-              <p className={`text-xl font-bold font-mono ${data.resumen.valor_neto < 0 ? 'text-red-600' : 'text-gray-800'}`}>{fmt(data.resumen.valor_neto)}</p>
-              <p className="text-xs text-gray-400">{data.estado === 'cerrado' ? 'cerrado' : 'en proceso'}</p>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1 flex items-center gap-1">
+                <TrendingDown size={12} className="text-red-500" /> Faltante del cierre
+              </p>
+              {diaria.tiene_cierre && diaria.resumen ? (
+                <>
+                  <p className="text-xl font-bold text-red-600 font-mono">{fmt(diaria.resumen.faltante_valor)}</p>
+                  <p className="text-xs text-gray-400">{diaria.resumen.faltante_productos} productos · {dia}</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xl font-bold text-gray-300 font-mono">—</p>
+                  <p className="text-xs text-gray-400">sin cierre aún</p>
+                </>
+              )}
             </div>
             <div className="bg-white rounded-2xl border border-gray-200 p-4">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1 flex items-center gap-1"><TrendingDown size={12} className="text-red-500" /> Faltantes</p>
-              <p className="text-xl font-bold text-red-600 font-mono">{fmt(Math.abs(data.resumen.valor_negativo))}</p>
-              <p className="text-xs text-gray-400">{data.resumen.negativas} productos</p>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1 flex items-center gap-1">
+                <TrendingUp size={12} className="text-blue-500" /> Sobrante del cierre
+              </p>
+              {diaria.tiene_cierre && diaria.resumen ? (
+                <>
+                  <p className="text-xl font-bold text-blue-600 font-mono">{fmt(diaria.resumen.sobrante_valor)}</p>
+                  <p className="text-xs text-gray-400">{diaria.resumen.sobrante_productos} productos</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xl font-bold text-gray-300 font-mono">—</p>
+                  <p className="text-xs text-gray-400">sin cierre aún</p>
+                </>
+              )}
             </div>
             <div className="bg-white rounded-2xl border border-gray-200 p-4">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1 flex items-center gap-1"><TrendingUp size={12} className="text-blue-500" /> Sobrantes</p>
-              <p className="text-xl font-bold text-blue-600 font-mono">{fmt(data.resumen.valor_positivo)}</p>
-              <p className="text-xs text-gray-400">{data.resumen.positivas} productos</p>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Fugas recurrentes</p>
+              <p className={`text-xl font-bold font-mono ${diaria.reincidentes.filter(r => r.dias_con_faltante >= 2).length > 0 ? 'text-red-600' : 'text-green-700'}`}>
+                {diaria.reincidentes.filter(r => r.dias_con_faltante >= 2).length}
+              </p>
+              <p className="text-xs text-gray-400">productos con faltante repetido (8 días)</p>
             </div>
             <div className="bg-white rounded-2xl border border-gray-200 p-4">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1 flex items-center gap-1"><Minus size={12} className="text-green-500" /> Sin diferencia</p>
-              <p className="text-xl font-bold text-green-700 font-mono">{data.resumen.sin_diferencia}</p>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Calidad de conteos</p>
+              <p className={`text-xl font-bold font-mono ${diaria.atajos_en_ventana > 0 ? 'text-amber-600' : 'text-green-700'}`}>
+                {diaria.cierres_en_ventana} <span className="text-sm font-medium text-gray-400">reales</span>
+              </p>
+              <p className="text-xs text-gray-400">
+                {diaria.atajos_en_ventana > 0 ? `⚡ ${diaria.atajos_en_ventana} con "Todo coincide"` : 'sin atajos en la ventana'}
+              </p>
             </div>
           </div>
 
-          {/* Por categoría + ranking */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            <div className="bg-white rounded-2xl border border-gray-200 p-4">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-3">Por categoría</p>
-              <div className="space-y-2">
-                {data.por_categoria.map(c => (
-                  <div key={c.categoria} className="flex items-center gap-2 text-sm">
-                    <span className="flex-1 font-medium text-gray-700">{CAT_LABEL[c.categoria] ?? c.categoria}</span>
-                    <span className="text-xs text-gray-400">{c.con_diferencia}/{c.items} con dif.</span>
-                    <span className={`font-mono font-bold w-24 text-right ${c.valor_diferencia < 0 ? 'text-red-600' : c.valor_diferencia > 0 ? 'text-blue-600' : 'text-gray-400'}`}>{fmt(c.valor_diferencia)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="bg-white rounded-2xl border border-gray-200 p-4">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-3">Mayores diferencias</p>
+          {/* ¿A dónde se va el producto? — reincidencia = señal de fuga */}
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">¿A dónde se va el producto?</p>
+            <p className="text-xs text-gray-400 mb-3">
+              Faltantes en los cierres de los últimos 8 días (los conteos con "Todo coincide" no cuentan).
+              Un día con faltante es ruido; varios días seguidos es un patrón para investigar.
+            </p>
+            {diaria.reincidentes.length === 0 ? (
+              <p className="text-sm text-green-700 font-medium">✓ Sin faltantes en los cierres de la ventana</p>
+            ) : (
               <div className="space-y-1.5">
-                {data.ranking.slice(0, 8).map(i => (
-                  <div key={i.id} className="flex items-center gap-2 text-sm">
-                    <span className="flex-1 font-medium text-gray-700 truncate">{i.producto_nombre}</span>
-                    <span className={`text-xs font-mono ${i.diferencia < 0 ? 'text-red-500' : 'text-blue-500'}`}>{i.diferencia > 0 ? '+' : ''}{num(i.diferencia)}</span>
-                    <span className={`font-mono font-bold w-24 text-right ${i.valor_diferencia < 0 ? 'text-red-600' : 'text-blue-600'}`}>{fmt(i.valor_diferencia)}</span>
+                {diaria.reincidentes.map(r => (
+                  <div key={r.producto_id} className="flex items-center gap-2 text-sm">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${r.dias_con_faltante >= 3 ? 'bg-red-500' : r.dias_con_faltante === 2 ? 'bg-amber-400' : 'bg-gray-300'}`} />
+                    <span className="flex-1 font-medium text-gray-700 truncate">{r.nombre}</span>
+                    <span className="text-xs text-gray-400">
+                      faltó en {r.dias_con_faltante} de {diaria.cierres_en_ventana} cierre{diaria.cierres_en_ventana !== 1 ? 's' : ''}
+                    </span>
+                    <span className="text-xs font-mono text-red-500 w-24 text-right">{num(r.total_faltante)} {r.unidad}</span>
+                    <span className="font-mono font-bold w-24 text-right text-red-600">{r.valor_faltante > 0 ? `≈ ${fmt(r.valor_faltante)}` : ''}</span>
                   </div>
                 ))}
-                {data.ranking.length === 0 && <p className="text-sm text-gray-400">Sin diferencias</p>}
               </div>
-            </div>
+            )}
           </div>
 
           {/* Detalle: doble inventario del día */}
@@ -267,19 +291,25 @@ export default function ConciliacionInventario() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-400">
-                    <th className="text-left px-3 py-2 font-bold">Producto</th>
-                    <th className="text-right px-3 py-2 font-bold">Dif. apertura vs sistema</th>
-                    <th className="text-right px-3 py-2 font-bold">Sistema</th>
-                    <th className="text-right px-3 py-2 font-bold">Conteo apertura</th>
-                    <th className="text-right px-3 py-2 font-bold">Ingresos del día</th>
-                    <th className="text-right px-3 py-2 font-bold">Conteo cierre</th>
-                    <th className="text-right px-3 py-2 font-bold">Dif. apertura → cierre</th>
+                  <tr className="text-[11px] uppercase tracking-wide text-gray-400">
+                    {/* Columnas 1-3 FIJAS: el scroll horizontal solo mueve desde apertura */}
+                    <th className="text-left px-3 py-2 font-bold sticky left-0 z-10 bg-gray-50 min-w-[180px]">Producto</th>
+                    <th className="text-right px-3 py-2 font-bold sticky left-[180px] z-10 bg-gray-50 min-w-[100px]">Dif. apertura</th>
+                    <th className="text-right px-3 py-2 font-bold sticky left-[280px] z-10 bg-gray-50 min-w-[90px] border-r-2 border-gray-200">Sistema</th>
+                    <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[110px]">Conteo apertura</th>
+                    <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[100px]">Ingresos del día</th>
+                    <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[120px]">Conteo cierre</th>
+                    <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[110px]">Dif. apertura → cierre</th>
+                    {(diaria?.cierres_previos ?? []).map(cp => (
+                      <th key={cp.fecha} className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[110px] whitespace-nowrap">
+                        Cierre {cp.fecha.slice(8, 10)}/{cp.fecha.slice(5, 7)}{cp.atajo ? ' ⚡' : ''}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {loadingDia ? (
-                    <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-gray-400 animate-pulse">Cargando día…</td></tr>
+                    <tr><td colSpan={7 + (diaria?.cierres_previos?.length ?? 0)} className="px-3 py-8 text-center text-sm text-gray-400 animate-pulse">Cargando día…</td></tr>
                   ) : filasDia.map(i => {
                     const celda = (c: CeldaConteo | null, conDif: boolean) => c === null
                       ? <span className="text-gray-300">—</span>
@@ -296,14 +326,14 @@ export default function ConciliacionInventario() {
                       ? i.cierre.real - i.apertura.real : null
                     return (
                       <tr key={i.producto_id} className="hover:bg-gray-50">
-                        <td className="px-3 py-2 font-medium text-gray-700">{i.nombre}
+                        <td className="px-3 py-2 font-medium text-gray-700 sticky left-0 z-10 bg-white">{i.nombre}
                           <span className="text-xs text-gray-400 ml-1">{i.unidad}</span></td>
-                        <td className={`px-3 py-2 text-right font-mono font-bold ${
+                        <td className={`px-3 py-2 text-right font-mono font-bold sticky left-[180px] z-10 bg-white ${
                           difAp === null ? 'text-gray-300' : difAp === 0 ? 'text-green-600' : difAp < 0 ? 'text-red-600' : 'text-blue-600'
                         }`}>
                           {difAp === null ? '—' : difAp === 0 ? '✓ 0' : `${difAp > 0 ? '+' : ''}${num(difAp)}`}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono text-gray-500">{num(i.sistema)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-500 sticky left-[280px] z-10 bg-white border-r-2 border-gray-200">{num(i.sistema)}</td>
                         <td className="px-3 py-2 text-right font-mono">{celda(i.apertura, false)}</td>
                         <td className={`px-3 py-2 text-right font-mono ${i.entradas > 0 ? 'text-green-600 font-bold' : 'text-gray-300'}`}>
                           {i.entradas > 0 ? `+${num(i.entradas)}` : '0'}
@@ -314,11 +344,28 @@ export default function ConciliacionInventario() {
                         }`}>
                           {cambioDia === null ? '—' : `${cambioDia > 0 ? '+' : ''}${num(cambioDia)}`}
                         </td>
+                        {(diaria?.cierres_previos ?? []).map(cp => {
+                          const d = cp.por_producto[i.producto_id]
+                          return (
+                            <td key={cp.fecha} className="px-3 py-2 text-right font-mono">
+                              {d === undefined
+                                ? <span className="text-gray-300">—</span>
+                                : (
+                                  <span className={d.diferencia !== 0 ? (d.diferencia < 0 ? 'text-red-600' : 'text-blue-600') : 'text-gray-600'}>
+                                    {num(d.real)}
+                                    {d.diferencia !== 0 && (
+                                      <span className="text-[11px] ml-1">({d.diferencia > 0 ? '+' : ''}{num(d.diferencia)})</span>
+                                    )}
+                                  </span>
+                                )}
+                            </td>
+                          )
+                        })}
                       </tr>
                     )
                   })}
                   {!loadingDia && filasDia.length === 0 && (
-                    <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-gray-400">
+                    <tr><td colSpan={7 + (diaria?.cierres_previos?.length ?? 0)} className="px-3 py-8 text-center text-sm text-gray-400">
                       {soloDif
                         ? 'Sin diferencias este día — los conteos clavaron con el sistema. Desactivá "Solo diferencias" para ver la lista completa.'
                         : 'Sin datos para este día.'}

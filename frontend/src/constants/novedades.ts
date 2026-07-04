@@ -42,6 +42,11 @@ export const NOVEDADES: Novedad[] = [
   },
   {
     fecha: '2026-07-04', rol: 'admin', tipo: 'nuevo',
+    titulo: 'Conciliación: la película del día completo',
+    detalle: 'El detalle de Conciliación ahora muestra por producto: lo que el sistema calcula, lo que la barista contó al abrir, lo que entró durante el día y lo que contó al cerrar. Con selector de día.',
+  },
+  {
+    fecha: '2026-07-04', rol: 'admin', tipo: 'nuevo',
     titulo: 'Corregir consignaciones',
     detalle: 'Botón de lápiz en cada consignación del panel: corrige el valor si la barista lo registró mal. El saldo del día se recalcula solo.',
   },

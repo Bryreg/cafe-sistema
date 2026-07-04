@@ -365,3 +365,86 @@ def get_conteos_tienda(db: Session, tienda_id: int,
             "items": items,
         })
     return result
+
+
+# ─── Conciliación diaria: la película del doble inventario ───────────────────
+
+def get_conciliacion_diaria(db: Session, tienda_id: int, fecha: date | None = None) -> dict:
+    """Panel del doble inventario para UN día operativo (Colombia):
+
+    Por cada producto del conteo diario (los que las baristas cuentan en
+    apertura/cierre): el stock del SISTEMA (su conteo interno por movimientos),
+    lo que la barista contó al ABRIR, lo que ENTRÓ durante el día (facturas,
+    preparaciones) y lo que la barista contó al CERRAR.
+
+    La columna sistema usa el snapshot del conteo de cierre si el día ya cerró
+    (honesto para días pasados); si no, el stock vivo actual.
+    """
+    from app.models.models import MovimientoInventario, TipoMovInvEnum
+    from app.services.inventario import get_inventario_tienda
+    from sqlalchemy import func as sa_func
+
+    ini, fin = rango_col_utc(fecha, fecha)
+
+    base = get_inventario_tienda(db, tienda_id)  # productos del conteo, en orden de planilla
+
+    # Último conteo de apertura y de cierre del día
+    conteos = (
+        db.query(ConteoFisico)
+        .options(joinedload(ConteoFisico.items))
+        .filter(
+            ConteoFisico.tienda_id == tienda_id,
+            ConteoFisico.tipo.in_(["apertura", "cierre"]),
+            ConteoFisico.fecha_registro >= ini,
+            ConteoFisico.fecha_registro <= fin,
+        )
+        .order_by(ConteoFisico.fecha_registro.asc())
+        .all()
+    )
+    apertura = next((c for c in reversed(conteos) if c.tipo == "apertura" or getattr(c.tipo, "value", None) == "apertura"), None)
+    cierre = next((c for c in reversed(conteos) if c.tipo == "cierre" or getattr(c.tipo, "value", None) == "cierre"), None)
+    ap_items = {i.producto_id: i for i in apertura.items} if apertura else {}
+    ci_items = {i.producto_id: i for i in cierre.items} if cierre else {}
+
+    # Entradas del día por producto (facturas recibidas, preparaciones, reposiciones)
+    entradas = dict(
+        db.query(MovimientoInventario.producto_id, sa_func.sum(MovimientoInventario.cantidad))
+        .filter(
+            MovimientoInventario.tienda_id == tienda_id,
+            MovimientoInventario.tipo == TipoMovInvEnum.entrada,
+            MovimientoInventario.fecha >= ini,
+            MovimientoInventario.fecha <= fin,
+        )
+        .group_by(MovimientoInventario.producto_id)
+        .all()
+    )
+
+    def _celda(it):
+        if it is None:
+            return None
+        return {"real": it.cantidad_real, "diferencia": it.diferencia,
+                "sistema": it.cantidad_sistema}
+
+    items = []
+    for row in base:
+        pid = row["producto_id"]
+        ci = ci_items.get(pid)
+        items.append({
+            "producto_id": pid,
+            "nombre": row["producto_nombre"],
+            "unidad": row["unidad_medida"],
+            # Día cerrado → sistema del snapshot del cierre; día en curso → stock vivo
+            "sistema": ci.cantidad_sistema if ci else row["stock_actual"],
+            "apertura": _celda(ap_items.get(pid)),
+            "entradas": round(float(entradas.get(pid, 0.0)), 2),
+            "cierre": _celda(ci_items.get(pid)),
+        })
+
+    return {
+        "fecha": str(fecha) if fecha else None,
+        "tiene_apertura": apertura is not None,
+        "tiene_cierre": cierre is not None,
+        "apertura_barista": apertura.barista_nombre if apertura else None,
+        "cierre_barista": cierre.barista_nombre if cierre else None,
+        "items": items,
+    }

@@ -2,6 +2,19 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import api from '../api/client'
 import { Scale, Download, TrendingUp, TrendingDown, Minus, AlertTriangle, RotateCcw, Cpu, Users, ListChecks } from 'lucide-react'
+import { hoyLocal } from '../utils/fechaLocal'
+
+// ── Doble inventario del día (tabla Detalle) ─────────────────────────────────
+interface CeldaConteo { real: number; diferencia: number; sistema: number }
+interface FilaDiaria {
+  producto_id: number; nombre: string; unidad: string
+  sistema: number; apertura: CeldaConteo | null; entradas: number; cierre: CeldaConteo | null
+}
+interface ConciliacionDiaria {
+  tiene_apertura: boolean; tiene_cierre: boolean
+  apertura_barista: string | null; cierre_barista: string | null
+  items: FilaDiaria[]
+}
 
 interface Item {
   id: number; producto_nombre: string; categoria: string; unidad_medida: string
@@ -45,7 +58,26 @@ export default function ConciliacionInventario() {
       .finally(() => setLoading(false))
   }, [tiendaId, anio, mes])
 
-  const items = useMemo(() => (data?.items ?? []).filter(i => filtro === 'todos' || i.diferencia !== 0), [data, filtro])
+  // ── Doble inventario del día ──────────────────────────────────────────────
+  const [dia, setDia] = useState(hoyLocal())
+  const [diaria, setDiaria] = useState<ConciliacionDiaria | null>(null)
+  const [loadingDia, setLoadingDia] = useState(false)
+
+  useEffect(() => {
+    if (!tiendaId) return
+    setLoadingDia(true)
+    api.get<ConciliacionDiaria>(`/conteos/conciliacion-diaria/${tiendaId}`, { params: { fecha: dia } })
+      .then(r => setDiaria(r.data))
+      .catch(() => setDiaria(null))
+      .finally(() => setLoadingDia(false))
+  }, [tiendaId, dia])
+
+  const filasDia = useMemo(() => (diaria?.items ?? []).filter(i =>
+    filtro === 'todos' ||
+    (i.apertura !== null && i.apertura.diferencia !== 0) ||
+    (i.cierre !== null && i.cierre.diferencia !== 0) ||
+    i.entradas > 0
+  ), [diaria, filtro])
 
   const [reiniciando, setReiniciando] = useState(false)
   const reiniciarMes = async () => {
@@ -201,14 +233,23 @@ export default function ConciliacionInventario() {
             </div>
           </div>
 
-          {/* Tabla detalle */}
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-semibold text-gray-600">Detalle</p>
+          {/* Detalle: doble inventario del día */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <p className="text-sm font-semibold text-gray-600">Detalle — doble inventario del día</p>
+            <input type="date" value={dia} max={hoyLocal()} onChange={e => setDia(e.target.value)}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-600 focus:outline-none focus:border-forest" />
+            {diaria && (
+              <span className="text-[11px] text-gray-400">
+                {diaria.tiene_apertura ? `Abrió: ${diaria.apertura_barista ?? 's/n'}` : 'Sin conteo de apertura'}
+                {' · '}
+                {diaria.tiene_cierre ? `Cerró: ${diaria.cierre_barista ?? 's/n'}` : 'Sin conteo de cierre'}
+              </span>
+            )}
             <div className="ml-auto flex gap-1">
               {(['con_diferencia', 'todos'] as const).map(f => (
                 <button key={f} onClick={() => setFiltro(f)}
                   className={`text-xs px-3 py-1 rounded-lg font-semibold ${filtro === f ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500'}`}>
-                  {f === 'todos' ? 'Todos' : 'Solo con diferencia'}
+                  {f === 'todos' ? 'Todos' : 'Con movimiento o diferencia'}
                 </button>
               ))}
             </div>
@@ -220,27 +261,49 @@ export default function ConciliacionInventario() {
                   <tr className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-400">
                     <th className="text-left px-3 py-2 font-bold">Producto</th>
                     <th className="text-right px-3 py-2 font-bold">Sistema</th>
-                    <th className="text-right px-3 py-2 font-bold">Contado baristas</th>
-                    <th className="text-right px-3 py-2 font-bold">Diferencia</th>
-                    <th className="text-right px-3 py-2 font-bold hidden sm:table-cell">Valor unit.</th>
-                    <th className="text-right px-3 py-2 font-bold">Valor dif.</th>
+                    <th className="text-right px-3 py-2 font-bold">Conteo apertura</th>
+                    <th className="text-right px-3 py-2 font-bold">Ingresos del día</th>
+                    <th className="text-right px-3 py-2 font-bold">Conteo cierre</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {items.map(i => (
-                    <tr key={i.id} className="hover:bg-gray-50">
-                      <td className="px-3 py-2 font-medium text-gray-700">{i.producto_nombre}
-                        <span className="text-xs text-gray-400 ml-1">{i.unidad_medida}</span></td>
-                      <td className="px-3 py-2 text-right font-mono text-gray-500">{num(i.cantidad_sistema)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-gray-800 font-bold">{num(i.cantidad_real ?? 0)}</td>
-                      <td className={`px-3 py-2 text-right font-mono font-bold ${i.diferencia < 0 ? 'text-red-600' : i.diferencia > 0 ? 'text-blue-600' : 'text-gray-300'}`}>{i.diferencia > 0 ? '+' : ''}{num(i.diferencia)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-gray-400 hidden sm:table-cell">{fmt(i.valor_unitario)}</td>
-                      <td className={`px-3 py-2 text-right font-mono font-bold ${i.valor_diferencia < 0 ? 'text-red-600' : i.valor_diferencia > 0 ? 'text-blue-600' : 'text-gray-300'}`}>{fmt(i.valor_diferencia)}</td>
-                    </tr>
-                  ))}
+                  {loadingDia ? (
+                    <tr><td colSpan={5} className="px-3 py-8 text-center text-sm text-gray-400 animate-pulse">Cargando día…</td></tr>
+                  ) : filasDia.map(i => {
+                    const celda = (c: CeldaConteo | null) => c === null
+                      ? <span className="text-gray-300">—</span>
+                      : (
+                        <span className={c.diferencia !== 0 ? (c.diferencia < 0 ? 'text-red-600' : 'text-blue-600') : 'text-gray-800'}>
+                          <span className="font-bold">{num(c.real)}</span>
+                          {c.diferencia !== 0 && (
+                            <span className="text-[11px] ml-1">({c.diferencia > 0 ? '+' : ''}{num(c.diferencia)})</span>
+                          )}
+                        </span>
+                      )
+                    return (
+                      <tr key={i.producto_id} className="hover:bg-gray-50">
+                        <td className="px-3 py-2 font-medium text-gray-700">{i.nombre}
+                          <span className="text-xs text-gray-400 ml-1">{i.unidad}</span></td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-500">{num(i.sistema)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{celda(i.apertura)}</td>
+                        <td className={`px-3 py-2 text-right font-mono ${i.entradas > 0 ? 'text-green-600 font-bold' : 'text-gray-300'}`}>
+                          {i.entradas > 0 ? `+${num(i.entradas)}` : '0'}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono">{celda(i.cierre)}</td>
+                      </tr>
+                    )
+                  })}
+                  {!loadingDia && filasDia.length === 0 && (
+                    <tr><td colSpan={5} className="px-3 py-8 text-center text-sm text-gray-400">
+                      Sin movimientos ni diferencias este día — cambiá el filtro a "Todos" para ver la lista completa.
+                    </td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
+            <p className="px-3 py-2 text-[11px] text-gray-400 border-t border-gray-50">
+              Sistema = conteo interno (ventas con recetas, facturas, mermas). Entre paréntesis, la diferencia de cada conteo contra el sistema en ese momento. Los conteos de las baristas nunca modifican el inventario.
+            </p>
           </div>
         </>
       )}

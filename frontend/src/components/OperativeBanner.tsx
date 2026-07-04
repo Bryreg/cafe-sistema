@@ -7,7 +7,7 @@ import {
   Menu, X, Check, Circle, AlertTriangle, ClipboardList, Megaphone,
   Trash2, Package, ShoppingCart, Coins, Truck, Thermometer, ArrowRightLeft, LogOut,
   Calculator, CalendarClock, Banknote, Receipt, Boxes, Sparkles, Cake, ClipboardCheck,
-  FlaskConical,
+  FlaskConical, BookOpen,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import MovimientoCajaModal from './MovimientoCajaModal'
@@ -35,6 +35,7 @@ const QUICK = [
   { label: 'Pedido',          to: '/pedido',         icon: ShoppingCart },
   { label: 'Sencilla',        to: '/sencilla',       icon: Coins },
   { label: 'Consignaciones',  to: '/consignaciones', icon: ArrowRightLeft },
+  { label: 'Guía rápida',     to: '/guia',           icon: BookOpen },
 ]
 
 export default function OperativeBanner() {

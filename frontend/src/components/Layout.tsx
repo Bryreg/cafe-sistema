@@ -6,6 +6,7 @@ import {
   Coffee, LogOut, Bell, Menu, X, CheckCheck,
 } from 'lucide-react'
 import { NAV_GROUPS } from '../constants/nav'
+import NovedadesButton from './NovedadesModal'
 
 // ─── Notificaciones ──────────────────────────────────────────────────────────
 interface Notif {
@@ -184,6 +185,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 user?.rol === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-forest-50 text-forest'
               }`}>{user?.rol}</span>
             </div>
+            <NovedadesButton rol="admin" />
             {user?.rol === 'admin' && user.tienda_id && (
               <NotifBell tiendaId={user.tienda_id} />
             )}
@@ -218,6 +220,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
             user?.rol === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-forest-50 text-forest'
           }`}>{user?.rol}</span>
+          <NovedadesButton rol="admin" />
           {user?.rol === 'admin' && user.tienda_id && (
             <NotifBell tiendaId={user.tienda_id} />
           )}

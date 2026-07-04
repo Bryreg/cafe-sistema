@@ -1,0 +1,121 @@
+// Changelog visible para el equipo. Se actualiza EN CADA DEPLOY con lo que cambió:
+// así las baristas y administradores se enteran sin depender del dueño.
+// rol: quién ve la novedad. fecha: YYYY-MM-DD (orden descendente).
+
+export type RolNovedad = 'todos' | 'barista' | 'admin'
+export type TipoNovedad = 'nuevo' | 'mejora' | 'cambio'
+
+export interface Novedad {
+  fecha: string
+  titulo: string
+  detalle: string
+  rol: RolNovedad
+  tipo: TipoNovedad
+}
+
+export const NOVEDADES: Novedad[] = [
+  // ── 4 de julio ──────────────────────────────────────────────────────────
+  {
+    fecha: '2026-07-04', rol: 'todos', tipo: 'nuevo',
+    titulo: 'Las ventas descuentan el inventario solas',
+    detalle: 'Cada bebida y producto del POS tiene su receta cargada: al vender, el sistema descuenta café, leche, salsas y demás ingredientes automáticamente. No hay que registrar nada extra.',
+  },
+  {
+    fecha: '2026-07-04', rol: 'barista', tipo: 'nuevo',
+    titulo: 'Preparaciones: registrá cada tanda de mezcla',
+    detalle: 'Cuando prepares mezcla de granizado: Menú → Preparaciones → Registrar. El sistema descuenta la materia prima y suma la mezcla preparada. En los conteos, la jarra de mezcla se pesa con la gramera.',
+  },
+  {
+    fecha: '2026-07-04', rol: 'todos', tipo: 'cambio',
+    titulo: 'Granizados de 12 oz salieron del POS',
+    detalle: 'Ya no se venden. Todos los granizados son de 16 oz.',
+  },
+  {
+    fecha: '2026-07-04', rol: 'admin', tipo: 'nuevo',
+    titulo: 'Editar facturas de proveedores',
+    detalle: 'Botón "Editar" en Pagos proveedores: corrige proveedor, número, fecha, tipo de pago, montos y productos. Si cambia una cantidad, el inventario se ajusta solo por la diferencia.',
+  },
+  // ── 3 de julio ──────────────────────────────────────────────────────────
+  {
+    fecha: '2026-07-03', rol: 'barista', tipo: 'mejora',
+    titulo: 'Mermas rediseñadas',
+    detalle: 'Menú → Merma: elegí consumo, traslado o daño. En consumo se registra quién consumió. Las bebidas preparadas descuentan sus ingredientes por receta.',
+  },
+  {
+    fecha: '2026-07-03', rol: 'barista', tipo: 'mejora',
+    titulo: 'Tu inicio ahora es un dashboard',
+    detalle: 'La pantalla de turno muestra lo que hicieron hoy: pedidos recibidos con su valor, mermas con quién, y solicitudes de sencilla.',
+  },
+  {
+    fecha: '2026-07-03', rol: 'barista', tipo: 'nuevo',
+    titulo: 'Avisos del administrador en tu inicio',
+    detalle: 'Los comunicados aparecen como banner en la pantalla de turno hasta que toques "Entendido".',
+  },
+  {
+    fecha: '2026-07-03', rol: 'barista', tipo: 'mejora',
+    titulo: 'Pedido con cantidad y unidad editables',
+    detalle: 'En Solicitar pedido podés cambiar la cantidad sugerida y elegir la unidad (gr, unidad, lt, paquete...).',
+  },
+  {
+    fecha: '2026-07-03', rol: 'admin', tipo: 'mejora',
+    titulo: 'Cuadres como línea de tiempo',
+    detalle: 'Cada día es una tarjeta con toda la información a la vista: base, ventas, cuadres de cada barista con diferencia, y cierre. Los turnos que quedaron abiertos se cierran desde ahí.',
+  },
+  {
+    fecha: '2026-07-03', rol: 'admin', tipo: 'mejora',
+    titulo: 'Pagos a proveedores más completos',
+    detalle: 'Cada factura muestra los productos ingresados y la forma de pago real. Los pagos se registran con foto del soporte.',
+  },
+  {
+    fecha: '2026-07-03', rol: 'admin', tipo: 'mejora',
+    titulo: 'Lotes agrupados por producto',
+    detalle: 'La vista de lotes agrupa por producto con sus vencimientos y consumo, más un historial rápido de entradas al lado.',
+  },
+  {
+    fecha: '2026-07-03', rol: 'admin', tipo: 'mejora',
+    titulo: 'Monitor de conteos más claro',
+    detalle: 'Vista legible por conteo con toggle "Bajo gramaje — para pedidos" para armar el pedido de la semana.',
+  },
+  {
+    fecha: '2026-07-03', rol: 'admin', tipo: 'cambio',
+    titulo: 'Ticket configurable por sede',
+    detalle: 'Config ticket permite elegir la sede y editar el ticket de cada una por separado.',
+  },
+  // ── 2 de julio ──────────────────────────────────────────────────────────
+  {
+    fecha: '2026-07-02', rol: 'todos', tipo: 'nuevo',
+    titulo: 'Doble conteo de inventario',
+    detalle: 'El sistema lleva su propio stock por movimientos (ventas, facturas, mermas). Los conteos físicos COMPARAN contra ese stock: las diferencias se investigan, ya no se pisan.',
+  },
+  {
+    fecha: '2026-07-02', rol: 'barista', tipo: 'mejora',
+    titulo: 'Conteos en gramos y en orden de planilla',
+    detalle: 'Los productos a granel se pesan con la gramera y se registran en gramos. El orden del conteo es el mismo de la planilla física.',
+  },
+  {
+    fecha: '2026-07-02', rol: 'barista', tipo: 'nuevo',
+    titulo: 'Venta de ayer separada en el cuadre',
+    detalle: 'Si la venta del día anterior quedó apartada, marcá la casilla al contar la base para que el cuadre no la mezcle.',
+  },
+  {
+    fecha: '2026-07-02', rol: 'barista', tipo: 'nuevo',
+    titulo: 'Formato de desechables a pedido',
+    detalle: 'Cuando el administrador lo solicite, aparece el formato de desechables para llenar, agrupado por proveedor.',
+  },
+]
+
+const VISTO_KEY = 'novedades_ultima_vista'
+
+export function novedadesParaRol(rol: 'barista' | 'admin'): Novedad[] {
+  return NOVEDADES.filter(n => n.rol === 'todos' || n.rol === rol)
+}
+
+export function contarNoVistas(rol: 'barista' | 'admin'): number {
+  const visto = localStorage.getItem(VISTO_KEY) ?? ''
+  return novedadesParaRol(rol).filter(n => n.fecha > visto).length
+}
+
+export function marcarVistas(): void {
+  const max = NOVEDADES.reduce((m, n) => (n.fecha > m ? n.fecha : m), '')
+  localStorage.setItem(VISTO_KEY, max)
+}

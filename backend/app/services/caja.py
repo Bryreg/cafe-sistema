@@ -1020,10 +1020,55 @@ def registrar_entrada_barista(
     return get_turno_activo(db, turno.tienda_id)
 
 
+AUTO_CIERRE_VENTANA_MIN = 60
+
+
+def _auto_cerrar_si_quedo_sin_baristas(db: Session, turno, usuario_id: int):
+    """La salida de la ÚLTIMA barista cierra el turno server-side.
+
+    2 turnos huérfanos en 2 días (3 y 4-jul): las baristas hicieron cuadres,
+    conteo de cierre y salidas — pero el cierre dependía de OTRA llamada del
+    front que se perdió (PWA cerrada / red). Si ya no queda nadie en turno, el
+    conteo de cierre existe y hay un cuadre RECIENTE (≤60 min, para no inventar
+    un cierre con números viejos), se cierra acá mismo con ese cuadre.
+    Best-effort: si el cierre no aplica, la salida queda registrada igual y el
+    turno lo cierra el admin (camino actual)."""
+    quedan = db.query(TurnoBarista).filter(
+        TurnoBarista.turno_id == turno.id,
+        TurnoBarista.salida_at.is_(None),
+    ).count()
+    if quedan > 0 or not turno.tiene_conteo_cierre:
+        return None
+    ent = (
+        db.query(EntregaTurno)
+        .filter(EntregaTurno.turno_id == turno.id)
+        .order_by(EntregaTurno.fecha_hora.desc())
+        .first()
+    )
+    if not ent or not ent.fecha_hora:
+        return None
+    if (datetime.utcnow() - ent.fecha_hora).total_seconds() > AUTO_CIERRE_VENTANA_MIN * 60:
+        return None
+    # Mismas semánticas que cerrar_turno_rapido: si la venta de ayer estaba
+    # separada, hacia el cierre viaja el total equivalente (contado + base).
+    efectivo_total = float(ent.efectivo_real or 0) + (
+        float(ent.base_snapshot or 0) if ent.base_separada else 0.0
+    )
+    try:
+        return cerrar_caja(
+            db, turno.id, efectivo_total,
+            "Cierre automático: salida de la última barista (efectivo del último cuadre)",
+            usuario_id, float(ent.ventas_tarjeta_bold or 0),
+        )
+    except HTTPException as e:
+        logger.warning(f"Auto-cierre del turno {turno.id} no aplicado: {e.detail}")
+        return None
+
+
 def registrar_salida_barista(db: Session, turno_id: int, barista_nombre: str):
-    """Marca la salida de UNA barista sin cerrar el turno.
-    Sólo válido cuando hay más de una barista activa. Si es la última, usar cerrar_turno_rapido.
-    """
+    """Marca la salida de UNA barista. Si con ella el turno queda sin baristas y el
+    conteo de cierre está hecho, el turno se CIERRA automáticamente (server-side,
+    con el último cuadre) — ya no depende de otra llamada del front."""
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
         CajaTurno.estado == EstadoTurnoEnum.abierto,
@@ -1046,6 +1091,10 @@ def registrar_salida_barista(db: Session, turno_id: int, barista_nombre: str):
         datos_despues={"barista_nombre": barista_nombre},
     )
     db.commit()
+
+    cerrado = _auto_cerrar_si_quedo_sin_baristas(db, turno, tb.usuario_id)
+    if cerrado is not None:
+        return cerrado
     return get_turno_activo(db, turno.tienda_id)
 
 
@@ -1063,6 +1112,17 @@ def cerrar_turno_rapido(
         CajaTurno.estado == EstadoTurnoEnum.abierto,
     ).first()
     if not turno:
+        # Idempotencia con el auto-cierre: si la salida de la última barista ya
+        # cerró el turno hace instantes, este POST tardío del front NO debe
+        # fallarle a la barista — el cierre que quería ya existe.
+        ya_cerrado = db.query(CajaTurno).filter(
+            CajaTurno.id == turno_id,
+            CajaTurno.estado == EstadoTurnoEnum.cerrado,
+        ).first()
+        if (ya_cerrado and ya_cerrado.fecha_cierre
+                and (datetime.utcnow() - ya_cerrado.fecha_cierre).total_seconds() < 600
+                and (ya_cerrado.justificacion_cierre or "").startswith("Cierre automático")):
+            return ya_cerrado
         raise HTTPException(status_code=404, detail="Turno no encontrado o ya cerrado")
     if efectivo_final_real < 0:
         raise HTTPException(status_code=400, detail="efectivo_final_real no puede ser negativo")

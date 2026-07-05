@@ -14,6 +14,12 @@ export interface Novedad {
 }
 
 export const NOVEDADES: Novedad[] = [
+  // ── 5 de julio ──────────────────────────────────────────────────────────
+  {
+    fecha: '2026-07-05', rol: 'todos', tipo: 'mejora',
+    titulo: 'El turno se cierra solo con la última salida',
+    detalle: 'Cuando la última barista registra su salida y el conteo de cierre ya está hecho, el turno se cierra automáticamente con el último cuadre. Ya no puede quedar un turno abierto por cerrar la app antes de tiempo.',
+  },
   // ── 4 de julio ──────────────────────────────────────────────────────────
   {
     fecha: '2026-07-04', rol: 'barista', tipo: 'nuevo',

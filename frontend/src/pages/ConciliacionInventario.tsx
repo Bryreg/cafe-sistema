@@ -89,20 +89,19 @@ export default function ConciliacionInventario() {
   // izquierda de la apertura, como línea de tiempo que termina en hoy.
   const prevAsc = useMemo(() => [...(diaria?.cierres_previos ?? [])].reverse(), [diaria])
 
-  // GEOMETRÍA EXACTA de la tabla (table-layout: fixed):
-  // - columnas fijas: 180 + 100 + 90 = 370px (los offsets sticky dependen de esto)
-  // - cierres previos: 140px cada uno (viven fuera del área visible)
-  // - las 4 columnas del día se reparten EXACTO el ancho visible restante
-  const ANCHO_FIJAS = 370
+  // GEOMETRÍA EXACTA (table-layout: fixed): el ancho VISIBLE se divide en 7
+  // partes IGUALES — las 3 primeras fijas (sticky en 0 / 1w / 2w) y las 4 del
+  // día con el mismo ancho. Los cierres previos (140px c/u) viven más allá del
+  // borde y solo aparecen deslizando.
   const ANCHO_PREVIO = 140
-  const [anchoDia, setAnchoDia] = useState(150)
+  const [anchoVisible, setAnchoVisible] = useState(1400)
   const scrollTabla = useRef<HTMLDivElement>(null)
+  const colW = Math.max(90, anchoVisible / 7)
 
   useEffect(() => {
     const medir = () => {
       const el = scrollTabla.current
-      if (!el) return
-      setAnchoDia(Math.max(110, Math.floor((el.clientWidth - ANCHO_FIJAS) / 4)))
+      if (el) setAnchoVisible(el.clientWidth)
     }
     medir()
     window.addEventListener('resize', medir)
@@ -119,7 +118,7 @@ export default function ConciliacionInventario() {
     el.scrollLeft = el.scrollWidth
     const t = setTimeout(() => { el.scrollLeft = el.scrollWidth }, 250)  // respaldo post-layout
     return () => clearTimeout(t)
-  }, [diaria, loadingDia, anchoDia])
+  }, [diaria, loadingDia, anchoVisible])
 
   // Default: la lista COMPLETA del turno (sistema vivo + ultima apertura + cierre
   // cuando exista). El toggle de diferencias es opcional, para revisar dias viejos.
@@ -343,20 +342,18 @@ export default function ConciliacionInventario() {
                   desalinea bordes en Chrome. */}
               <table className="text-sm border-separate"
                 style={{ borderSpacing: 0, tableLayout: 'fixed',
-                         width: ANCHO_FIJAS + prevAsc.length * ANCHO_PREVIO + anchoDia * 4 }}>
+                         width: colW * 7 + prevAsc.length * ANCHO_PREVIO }}>
                 <colgroup>
-                  <col style={{ width: 180 }} />
-                  <col style={{ width: 100 }} />
-                  <col style={{ width: 90 }} />
+                  {[0, 1, 2].map(i => <col key={`fija-${i}`} style={{ width: colW }} />)}
                   {prevAsc.map(cp => <col key={cp.fecha} style={{ width: ANCHO_PREVIO }} />)}
-                  {[0, 1, 2, 3].map(i => <col key={`dia-${i}`} style={{ width: anchoDia }} />)}
+                  {[0, 1, 2, 3].map(i => <col key={`dia-${i}`} style={{ width: colW }} />)}
                 </colgroup>
                 <thead>
                   <tr className="text-[11px] uppercase tracking-wide text-gray-400">
                     {/* Columnas 1-3 FIJAS: el scroll horizontal solo mueve el resto */}
                     <th className="text-left px-3 py-2 font-bold sticky left-0 z-10 bg-gray-50 border-b border-gray-200">Producto</th>
-                    <th className="text-right px-3 py-2 font-bold sticky left-[180px] z-10 bg-gray-50 border-b border-gray-200">Dif. apertura</th>
-                    <th className="text-right px-3 py-2 font-bold sticky left-[280px] z-10 bg-gray-50 border-b border-gray-200 border-r-2 border-r-gray-200">Sistema</th>
+                    <th className="text-right px-3 py-2 font-bold sticky z-10 bg-gray-50 border-b border-gray-200" style={{ left: colW }}>Dif. apertura</th>
+                    <th className="text-right px-3 py-2 font-bold sticky z-10 bg-gray-50 border-b border-gray-200 border-r-2 border-r-gray-200" style={{ left: colW * 2 }}>Sistema</th>
                     {prevAsc.map((cp, idx) => (
                       <th key={cp.fecha} className={`text-right px-3 py-2 font-bold bg-gray-50 whitespace-nowrap border-b border-gray-200 ${idx === prevAsc.length - 1 ? 'border-r-2 border-r-gray-200' : ''}`}>
                         Cierre {cp.fecha.slice(8, 10)}/{cp.fecha.slice(5, 7)}{cp.atajo ? ' ⚡' : ''}
@@ -391,12 +388,12 @@ export default function ConciliacionInventario() {
                       <tr key={i.producto_id} className="hover:bg-gray-50">
                         <td className={`px-3 py-2 font-medium text-gray-700 sticky left-0 z-10 bg-white break-words ${b}`}>{i.nombre}
                           <span className="text-xs text-gray-400 ml-1">{i.unidad}</span></td>
-                        <td className={`px-3 py-2 text-right font-mono font-bold sticky left-[180px] z-10 bg-white ${b} ${
+                        <td className={`px-3 py-2 text-right font-mono font-bold sticky z-10 bg-white ${b} ${
                           difAp === null ? 'text-gray-300' : difAp === 0 ? 'text-green-600' : difAp < 0 ? 'text-red-600' : 'text-blue-600'
-                        }`}>
+                        }`} style={{ left: colW }}>
                           {difAp === null ? '—' : difAp === 0 ? '✓ 0' : `${difAp > 0 ? '+' : ''}${num(difAp)}`}
                         </td>
-                        <td className={`px-3 py-2 text-right font-mono text-gray-500 sticky left-[280px] z-10 bg-white border-r-2 border-r-gray-200 ${b}`}>{num(i.sistema)}</td>
+                        <td className={`px-3 py-2 text-right font-mono text-gray-500 sticky z-10 bg-white border-r-2 border-r-gray-200 ${b}`} style={{ left: colW * 2 }}>{num(i.sistema)}</td>
                         {prevAsc.map((cp, idx) => {
                           const d = cp.por_producto[i.producto_id]
                           return (

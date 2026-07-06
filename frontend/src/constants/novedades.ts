@@ -16,6 +16,11 @@ export interface Novedad {
 export const NOVEDADES: Novedad[] = [
   // ── 6 de julio ──────────────────────────────────────────────────────────
   {
+    fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
+    titulo: 'Dashboard más limpio y con más valor',
+    detalle: 'Se quitó la información duplicada entre "Pulso de hoy" y "Análisis" (eran casi los mismos números): el período ahora va en una sola línea y su selector quedó pegado al Análisis. Y se sumaron dos tarjetas nuevas de las DOS sedes: "Pastelería por impulsar" (lo que hay que vender por días en inventario) y "Limpieza de hoy" (estado de las rutinas con semáforo).',
+  },
+  {
     fecha: '2026-07-06', rol: 'todos', tipo: 'mejora',
     titulo: 'Limpieza semanal: quién la hizo y a qué hora',
     detalle: 'En el checklist de Limpieza semanal, cada tarea marcada ahora muestra la barista real que la hizo (antes decía "Kiosk"), la fecha y la HORA exacta. La hora aparece también en las tareas ya registradas. El nombre real de la barista se guarda de ahora en adelante.',

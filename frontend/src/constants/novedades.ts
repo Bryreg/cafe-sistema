@@ -33,7 +33,7 @@ export const NOVEDADES: Novedad[] = [
   {
     fecha: '2026-07-06', rol: 'admin', tipo: 'cambio',
     titulo: 'Consignaciones: una tarjeta por día',
-    detalle: 'La lista de consignaciones ahora muestra UNA tarjeta por día. Si un día tuvo dos turnos, se suman en la misma tarjeta (el detalle expande los movimientos y consignaciones de ambos). Los totales por consignar no cambian.',
+    detalle: 'La lista de consignaciones ahora muestra UNA tarjeta por día, agrupada por el día en que el turno ABRIÓ (el día que vendió). Antes se agrupaba por el cierre: un turno que abría a la mañana y cerraba a la mañana siguiente hacía que ese día "desapareciera" dentro del siguiente. Los totales por consignar no cambian.',
   },
   {
     fecha: '2026-07-06', rol: 'barista', tipo: 'cambio',

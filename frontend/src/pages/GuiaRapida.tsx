@@ -29,9 +29,10 @@ const GUIA_BARISTA: Seccion[] = [
     titulo: 'Conteos de inventario',
     pasos: [
       'El orden del conteo es el mismo de la planilla física.',
-      'Graneles (café, azúcar, chai, milo...): pesá con la gramera y anotá los GRAMOS.',
-      'La jarra de mezcla de granizado también se pesa.',
-      'El sistema compara tu conteo contra lo que debería haber — si hay diferencia no pasa nada, se investiga después.',
+      'Cada producto muestra el conteo ANTERIOR como referencia: en la apertura ves el cierre de anoche; en el cierre ves la apertura de hoy.',
+      'Si el producto no se movió, tocá "Coincide" y listo. Si se movió (o es de los que rotan), pesalo con la gramera o contalo.',
+      'Graneles (café, azúcar, chai, milo...): en GRAMOS. La jarra de mezcla de granizado también se pesa.',
+      'Hay que registrar TODOS los productos para confirmar. El sistema compara después contra su propio conteo — si hay diferencia no pasa nada, se investiga.',
     ],
   },
   {

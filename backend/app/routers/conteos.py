@@ -13,6 +13,16 @@ from typing import List, Optional
 router = APIRouter(prefix="/conteos", tags=["conteos"])
 
 
+@router.get("/referencia/{tienda_id}")
+def referencia_conteo(tienda_id: int, tipo: str = Query(...),
+                      db: Session = Depends(get_db),
+                      user: Usuario = Depends(get_current_user)):
+    """Referencia para la pantalla del conteo: apertura → último cierre;
+    cierre → última apertura. El stock del sistema NO viaja (conteo a ciegas)."""
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_referencia_conteo(db, tienda_id, tipo)
+
+
 @router.get("/conciliacion-diaria/{tienda_id}")
 def conciliacion_diaria(tienda_id: int, fecha: Optional[date] = Query(None),
                         db: Session = Depends(get_db),

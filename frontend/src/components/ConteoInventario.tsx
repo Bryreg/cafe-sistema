@@ -82,6 +82,13 @@ interface Props {
   tipo: 'apertura' | 'cierre'
 }
 
+interface ReferenciaConteo {
+  tipo_referencia: 'apertura' | 'cierre'
+  fecha: string | null
+  barista: string | null
+  por_producto: Record<number, number>
+}
+
 export default function ConteoInventario({ tipo }: Props) {
   const { user } = useAuth()
   const { refresh } = useTurno()
@@ -102,7 +109,7 @@ export default function ConteoInventario({ tipo }: Props) {
 
   const guardarBorrador = (feedback = false) => {
     try {
-      localStorage.setItem(draftKey, JSON.stringify({ conteos, gramos, usoAtajo, ts: Date.now() }))
+      localStorage.setItem(draftKey, JSON.stringify({ conteos, gramos, ts: Date.now() }))
       if (feedback) { setGuardadoOk(true); setTimeout(() => setGuardadoOk(false), 2500) }
     } catch { /* almacenamiento lleno: no bloquear el conteo */ }
   }
@@ -121,7 +128,7 @@ export default function ConteoInventario({ tipo }: Props) {
       const d = JSON.parse(raw)
       if (!d.ts || Date.now() - d.ts > 20 * 3600 * 1000) { localStorage.removeItem(draftKey); return }
       if (d.conteos && Object.keys(d.conteos).length) {
-        setConteos(d.conteos); setGramos(d.gramos ?? {}); setUsoAtajo(!!d.usoAtajo); setIsDirty(true)
+        setConteos(d.conteos); setGramos(d.gramos ?? {}); setIsDirty(true)
         setBorradorInfo(new Date(d.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }))
       }
     } catch { /* borrador corrupto: ignorar */ }
@@ -143,8 +150,8 @@ export default function ConteoInventario({ tipo }: Props) {
   const paso = isApertura ? 'Paso 2 de 3' : 'Conteo de cierre'
   const titulo = isApertura ? 'Conteo de apertura' : 'Conteo de cierre'
   const subtitulo = isApertura
-    ? 'Verifica el stock físico contra el sistema.'
-    : 'Independiente del cuadre de caja: el cuadre con foto se hace desde el celular.'
+    ? 'La referencia es el cierre de anoche: si nada pasó de noche, debería coincidir. Tocá "Coincide" o registrá lo que pesaste.'
+    : 'La referencia es la apertura de hoy. "Coincide" solo para lo que no se movió — lo demás pesalo o contalo.'
   const ctaLabel = isApertura ? 'Confirmar conteo — seguir al cuadre de caja' : 'Confirmar conteo de cierre'
   const backPath = isApertura ? '/gestion-turno' : '/gestion-turno'
   // Apertura: baristas → conteo → cuadre inicial (efectivo del día anterior, sin foto).
@@ -152,12 +159,37 @@ export default function ConteoInventario({ tipo }: Props) {
   // el cuadre con foto y el cierre del turno se hacen desde el celular (Salida).
   const nextPath = isApertura ? '/cuadre-inicial' : (isKioskClose ? '/salida-efectivo' : '/gestion-turno')
 
+  // Referencia = el conteo inmediatamente anterior (apertura ← último cierre;
+  // cierre ← apertura de hoy). El stock del SISTEMA no se muestra: conteo a
+  // ciegas — la comparación contra el sistema la hace el backend al registrar.
+  const [referencia, setReferencia] = useState<ReferenciaConteo | null>(null)
+
   useEffect(() => {
     if (!user?.tienda_id) return
-    api.get(`/inventario/tienda/${user.tienda_id}`)
-      .then(r => setItems(r.data))
+    Promise.all([
+      api.get(`/inventario/tienda/${user.tienda_id}`),
+      api.get(`/conteos/referencia/${user.tienda_id}`, { params: { tipo } }).catch(() => null),
+    ])
+      .then(([inv, ref]) => { setItems(inv.data); if (ref) setReferencia(ref.data) })
       .finally(() => setLoading(false))
-  }, [user?.tienda_id])
+  }, [user?.tienda_id, tipo])
+
+  const refDe = (pid: number): number | null => {
+    const v = referencia?.por_producto?.[pid]
+    return v === undefined ? null : v
+  }
+  const refLabel = tipo === 'apertura' ? 'Cierre anterior' : 'Apertura de hoy'
+
+  const coincidir = (item: InvItem) => {
+    const v = refDe(item.producto_id)
+    if (v === null) return
+    setConteos(prev => ({ ...prev, [item.producto_id]: String(v) }))
+    if (item.fraccionable && (item.contenido_por_unidad ?? 0) > 0) {
+      // El subcomponente de gramos es controlado: reflejar la referencia como "abierta"
+      setGramos(prev => ({ ...prev, [item.producto_id]: { c: '', a: String(v) } }))
+    }
+    setIsDirty(true)
+  }
 
   const getVal  = (id: number, ref: number) => {
     const v = valorDe(conteos[id])
@@ -165,19 +197,6 @@ export default function ConteoInventario({ tipo }: Props) {
   }
   const getDiff = (id: number, ref: number) => getVal(id, ref) - ref
 
-  const [usoAtajo, setUsoAtajo] = useState(false)
-
-  const todoOk = () => {
-    // Confirmación explícita: este atajo fija todo al stock del sistema y permite cerrar
-    // sin contar físicamente, lo que oculta diferencias reales si se usa a la ligera.
-    // Queda MARCADO en el conteo (es_atajo) — el admin distingue un conteo real de un eco.
-    if (!window.confirm('¿Confirmás que contaste físicamente y todo coincide con el sistema?')) return
-    const filled: Record<number, string> = {}
-    items.forEach(i => { filled[i.producto_id] = String(i.stock_actual) })
-    setConteos(filled)
-    setUsoAtajo(true)
-    setIsDirty(true)
-  }
 
   const confirmar = async () => {
     setSaving(true); setError('')
@@ -186,7 +205,7 @@ export default function ConteoInventario({ tipo }: Props) {
         producto_id: i.producto_id,
         cantidad_real: getVal(i.producto_id, i.stock_actual),
       }))
-      await api.post('/conteos/', { tienda_id: user?.tienda_id, tipo, items: itemsList, es_atajo: usoAtajo })
+      await api.post('/conteos/', { tienda_id: user?.tienda_id, tipo, items: itemsList })
       localStorage.removeItem(draftKey)   // conteo confirmado: el borrador ya cumplió
       await refresh()
       navigate(nextPath)
@@ -197,15 +216,19 @@ export default function ConteoInventario({ tipo }: Props) {
     }
   }
 
-  const totalDifs = items.filter(i =>
-    conteos[i.producto_id] !== undefined && getDiff(i.producto_id, i.stock_actual) !== 0
-  ).length
-  const totalOk = items.filter(i =>
-    conteos[i.producto_id] !== undefined && getDiff(i.producto_id, i.stock_actual) === 0
-  ).length
-  const progreso = items.length > 0 ? Math.round((Object.keys(conteos).length / items.length) * 100) : 0
+  const registrados = items.filter(i => valorDe(conteos[i.producto_id]) !== null).length
+  // Novedad nocturna (solo apertura): lo contado difiere del cierre anterior
+  const novedades = tipo === 'apertura'
+    ? items.filter(i => {
+        const v = valorDe(conteos[i.producto_id]); const r = refDe(i.producto_id)
+        return v !== null && r !== null && Math.abs(v - r) > 0.001
+      }).length
+    : 0
+  const progreso = items.length > 0 ? Math.round((registrados / items.length) * 100) : 0
 
-  const canConfirm = isDirty && !saving
+  // TODOS los productos deben registrarse (pesados, contados o con "Coincide") —
+  // sin valor del sistema a la vista no hay relleno implícito posible.
+  const canConfirm = !saving && items.length > 0 && registrados === items.length
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: dark.bg }}>
@@ -267,25 +290,28 @@ export default function ConteoInventario({ tipo }: Props) {
           </div>
         )}
 
-        {/* Contador de progreso */}
-        {Object.keys(conteos).length > 0 && (
-          <div className="flex gap-2">
-            {totalOk > 0 && (
-              <span className="px-3 py-1 rounded-full text-xs font-bold" style={{
-                background: dark.greenTint, color: dark.green,
-              }}>
-                ✓ {totalOk} correctos
-              </span>
-            )}
-            {totalDifs > 0 && (
-              <span className="px-3 py-1 rounded-full text-xs font-bold" style={{
-                background: dark.dangerTint, color: dark.danger,
-              }}>
-                ⚠ {totalDifs} diferencia{totalDifs > 1 ? 's' : ''}
-              </span>
-            )}
-          </div>
-        )}
+        {/* Progreso: todos los productos deben quedar registrados */}
+        <div className="flex gap-2 flex-wrap items-center">
+          <span className="px-3 py-1 rounded-full text-xs font-bold" style={{
+            background: registrados === items.length && items.length > 0 ? dark.greenTint : dark.surfaceAlt,
+            color: registrados === items.length && items.length > 0 ? dark.green : dark.inkMuted,
+          }}>
+            {registrados} de {items.length} registrados
+          </span>
+          {novedades > 0 && (
+            <span className="px-3 py-1 rounded-full text-xs font-bold" style={{
+              background: dark.amberTint, color: dark.amber,
+            }}>
+              ⚠ {novedades} distinto{novedades > 1 ? 's' : ''} al cierre anterior
+            </span>
+          )}
+          {referencia?.fecha && (
+            <span className="text-xs" style={{ color: dark.inkSubtle }}>
+              Referencia: {refLabel.toLowerCase()}
+              {referencia.barista ? ` (${referencia.barista})` : ''}
+            </span>
+          )}
+        </div>
 
         {error && (
           <div className="flex items-center gap-2 text-sm px-4 py-3 rounded-xl"
@@ -293,19 +319,6 @@ export default function ConteoInventario({ tipo }: Props) {
             <AlertTriangle size={14} /> {error}
           </div>
         )}
-
-        {/* Botón todo OK */}
-        <button
-          onClick={todoOk}
-          className="w-full py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
-          style={{
-            background: dark.greenTint,
-            color: dark.green,
-            border: `2px dashed ${dark.greenDim}`,
-          }}
-        >
-          <CheckCircle2 size={16} /> Todo coincide con sistema
-        </button>
 
         {/* Lista de productos */}
         {loading ? (
@@ -320,12 +333,16 @@ export default function ConteoInventario({ tipo }: Props) {
             {items.map(item => {
               const val    = conteos[item.producto_id]
               const nval   = valorDe(val)
-              const diff   = nval !== null ? nval - item.stock_actual : null
               const filled = nval !== null
+              const ref    = refDe(item.producto_id)
+              // Solo en APERTURA una diferencia con la referencia es novedad (de noche
+              // no debió moverse nada). En cierre, moverse durante el día es lo normal.
+              const novedad = isApertura && filled && ref !== null && Math.abs(nval - ref) > 0.001
+              const coincide = filled && ref !== null && Math.abs(nval - ref) <= 0.001
 
               let rowBg = 'transparent'
-              if (filled && diff === 0) rowBg = 'oklch(94% 0.04 155 / 0.5)'
-              if (filled && diff !== 0) rowBg = 'oklch(95% 0.04 25 / 0.5)'
+              if (filled && !novedad) rowBg = 'oklch(94% 0.04 155 / 0.35)'
+              if (novedad) rowBg = 'oklch(96% 0.05 70 / 0.5)'
 
               return (
                 <div key={item.producto_id} className="px-4 py-3.5 transition-colors"
@@ -335,10 +352,10 @@ export default function ConteoInventario({ tipo }: Props) {
                   }}>
                   <div className="flex items-center gap-3">
                     <div className="shrink-0">
-                      {filled && diff === 0
+                      {novedad
+                        ? <AlertTriangle size={18} style={{ color: dark.amber }} />
+                        : filled
                         ? <CheckCircle2 size={18} style={{ color: dark.green }} />
-                        : filled && diff !== 0
-                        ? <AlertTriangle size={18} style={{ color: dark.danger }} />
                         : <Circle size={18} style={{ color: dark.inkSubtle }} />
                       }
                     </div>
@@ -351,44 +368,56 @@ export default function ConteoInventario({ tipo }: Props) {
                         {item.producto_nombre}
                       </label>
                       <p className="text-xs mt-0.5" style={{ color: dark.inkSubtle }}>
-                        Sistema: {item.stock_actual} {item.unidad_medida}
+                        {ref !== null
+                          ? `${refLabel}: ${Math.round(ref * 100) / 100} ${item.unidad_medida}`
+                          : 'Sin conteo anterior — pesalo o contalo'}
                       </p>
                     </div>
-                    {!item.fraccionable && (
                     <div className="flex items-center gap-2 shrink-0">
-                      <input
-                        id={`conteo-${item.producto_id}`}
-                        type="text"
-                        value={val ?? ''}
-                        onChange={e => {
-                          setConteos(prev => ({ ...prev, [item.producto_id]: limpiarExpresion(e.target.value) }))
-                          setIsDirty(true)
-                        }}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter' && val)
-                            setConteos(prev => ({ ...prev, [item.producto_id]: resolver(val) }))
-                        }}
-                        onBlur={() => {
-                          if (val) setConteos(prev => ({ ...prev, [item.producto_id]: resolver(val) }))
-                        }}
-                        placeholder={String(item.stock_actual)}
-                        className="w-24 text-right rounded-lg px-2 py-1.5 text-sm font-bold outline-none transition-colors"
-                        style={{
-                          background: dark.surfaceAlt,
-                          border: `2px solid ${
-                            diff !== null && diff !== 0 ? dark.dangerDim
-                            : diff === 0 ? dark.greenDim
-                            : dark.border
-                          }`,
-                          color: diff !== null && diff !== 0 ? dark.danger : diff === 0 ? dark.green : dark.ink,
-                          fontFamily: '"JetBrains Mono", monospace',
-                        }}
-                      />
-                      <span className="text-xs w-7 text-left" style={{ color: dark.inkSubtle }}>
-                        {item.unidad_medida}
-                      </span>
+                      {ref !== null && (
+                        <button
+                          onClick={() => coincidir(item)}
+                          className="text-xs font-bold px-2.5 py-1.5 rounded-lg transition-colors"
+                          style={{
+                            background: coincide ? dark.greenTint : dark.surfaceAlt,
+                            color: coincide ? dark.green : dark.inkMuted,
+                            border: `1px solid ${coincide ? dark.greenDim : dark.border}`,
+                          }}>
+                          {coincide ? '✓ Coincide' : 'Coincide'}
+                        </button>
+                      )}
+                      {!item.fraccionable && (
+                        <>
+                          <input
+                            id={`conteo-${item.producto_id}`}
+                            type="text"
+                            value={val ?? ''}
+                            onChange={e => {
+                              setConteos(prev => ({ ...prev, [item.producto_id]: limpiarExpresion(e.target.value) }))
+                              setIsDirty(true)
+                            }}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' && val)
+                                setConteos(prev => ({ ...prev, [item.producto_id]: resolver(val) }))
+                            }}
+                            onBlur={() => {
+                              if (val) setConteos(prev => ({ ...prev, [item.producto_id]: resolver(val) }))
+                            }}
+                            placeholder="0"
+                            className="w-24 text-right rounded-lg px-2 py-1.5 text-sm font-bold outline-none transition-colors"
+                            style={{
+                              background: dark.surfaceAlt,
+                              border: `2px solid ${novedad ? dark.amberDim : filled ? dark.greenDim : dark.border}`,
+                              color: novedad ? dark.amber : filled ? dark.green : dark.ink,
+                              fontFamily: '"JetBrains Mono", monospace',
+                            }}
+                          />
+                          <span className="text-xs w-7 text-left" style={{ color: dark.inkSubtle }}>
+                            {item.unidad_medida}
+                          </span>
+                        </>
+                      )}
                     </div>
-                    )}
                   </div>
                   {item.fraccionable && (item.contenido_por_unidad ?? 0) > 0 ? (
                     <div className="mt-2.5 ml-7">
@@ -417,9 +446,9 @@ export default function ConteoInventario({ tipo }: Props) {
                       />
                     </div>
                   ) : null}
-                  {diff !== null && diff !== 0 && (
-                    <p className="text-xs font-medium mt-1 ml-7" style={{ color: dark.danger }}>
-                      Diferencia: {diff > 0 ? '+' : ''}{diff} {item.unidad_medida}
+                  {novedad && ref !== null && (
+                    <p className="text-xs font-medium mt-1 ml-7" style={{ color: dark.amber }}>
+                      Distinto al {refLabel.toLowerCase()} ({Math.round(ref * 100) / 100}): revisá si hubo novedad nocturna
                     </p>
                   )}
                 </div>
@@ -428,13 +457,13 @@ export default function ConteoInventario({ tipo }: Props) {
           </div>
         )}
 
-        {totalDifs > 0 && (
+        {novedades > 0 && (
           <div className="px-4 py-3 rounded-xl text-sm" style={{
             background: dark.amberTint,
             border: `1px solid ${dark.amberDim}`,
             color: dark.amber,
           }}>
-            <strong>{totalDifs} diferencia{totalDifs > 1 ? 's' : ''}</strong> registradas. Se guardará en el reporte.
+            <strong>{novedades} producto{novedades > 1 ? 's' : ''}</strong> distinto{novedades > 1 ? 's' : ''} al cierre anterior — quedará registrado para revisión.
           </div>
         )}
       </div>
@@ -444,9 +473,11 @@ export default function ConteoInventario({ tipo }: Props) {
         background: `linear-gradient(to top, ${dark.bg} 70%, transparent)`,
         paddingBottom: 'env(safe-area-inset-bottom, 16px)',
       }}>
-        {!isDirty && !saving && (
+        {!canConfirm && !saving && (
           <p className="text-center text-xs mb-2" style={{ color: dark.inkSubtle }}>
-            Ingresá al menos un valor para continuar
+            {items.length - registrados > 0
+              ? `Faltan ${items.length - registrados} producto${items.length - registrados > 1 ? 's' : ''} por registrar — pesalos o tocá "Coincide"`
+              : 'Cargando…'}
           </p>
         )}
         {isDirty && !saving && (

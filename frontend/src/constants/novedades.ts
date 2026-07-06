@@ -16,6 +16,16 @@ export interface Novedad {
 export const NOVEDADES: Novedad[] = [
   // ── 5 de julio ──────────────────────────────────────────────────────────
   {
+    fecha: '2026-07-05', rol: 'barista', tipo: 'cambio',
+    titulo: 'Conteos: referencia del conteo anterior y botón "Coincide"',
+    detalle: 'En la apertura ves el cierre de anoche; en el cierre, la apertura de hoy. Si un producto no se movió, tocá "Coincide"; lo demás se pesa o se cuenta. Hay que registrar todos los productos — el botón "Todo coincide" ya no existe.',
+  },
+  {
+    fecha: '2026-07-05', rol: 'admin', tipo: 'mejora',
+    titulo: 'Conteos a ciegas: comparación justa',
+    detalle: 'La pantalla del conteo ya no muestra el stock del sistema — la barista cuenta contra el conteo anterior, no contra el sistema. Copiar la referencia no puede esconder faltantes: si el producto se movió, la diferencia aparece sola.',
+  },
+  {
     fecha: '2026-07-05', rol: 'todos', tipo: 'mejora',
     titulo: 'El turno se cierra solo con la última salida',
     detalle: 'Cuando la última barista registra su salida y el conteo de cierre ya está hecho, el turno se cierra automáticamente con el último cuadre. Ya no puede quedar un turno abierto por cerrar la app antes de tiempo.',

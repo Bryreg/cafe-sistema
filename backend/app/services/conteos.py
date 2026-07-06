@@ -533,3 +533,37 @@ def get_conciliacion_diaria(db: Session, tienda_id: int, fecha: date | None = No
         "cierres_en_ventana": len(ventana_real),
         "atajos_en_ventana": atajos_semana,
     }
+
+
+def get_referencia_conteo(db: Session, tienda_id: int, tipo: str) -> dict:
+    """Valores de referencia para la pantalla del conteo (diseño del dueño, 5-jul):
+
+    - apertura → el ÚLTIMO conteo de CIERRE (anoche no debió moverse nada:
+      cualquier diferencia es novedad nocturna).
+    - cierre   → el ÚLTIMO conteo de APERTURA (lo que había al arrancar el día).
+
+    La barista ve la referencia y tiene "Coincide" POR PRODUCTO; el valor del
+    sistema NO viaja acá: se compara al registrar (conteo a ciegas). Copiar la
+    referencia no puede esconder faltantes — si el producto se movió, el sistema
+    lo sabe y la diferencia aparece sola.
+    """
+    if tipo not in {"apertura", "cierre"}:
+        raise HTTPException(status_code=400, detail="tipo debe ser apertura o cierre")
+    tipo_ref = "cierre" if tipo == "apertura" else "apertura"
+    c = (
+        db.query(ConteoFisico)
+        .options(joinedload(ConteoFisico.items))
+        .filter(ConteoFisico.tienda_id == tienda_id, ConteoFisico.tipo == tipo_ref)
+        .order_by(ConteoFisico.fecha_registro.desc())
+        .first()
+    )
+    if not c:
+        return {"tipo_referencia": tipo_ref, "fecha": None, "barista": None,
+                "es_atajo": False, "por_producto": {}}
+    return {
+        "tipo_referencia": tipo_ref,
+        "fecha": c.fecha_registro.isoformat() if c.fecha_registro else None,
+        "barista": c.barista_nombre,
+        "es_atajo": bool(c.es_atajo),
+        "por_producto": {i.producto_id: i.cantidad_real for i in c.items},
+    }

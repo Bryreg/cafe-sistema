@@ -267,10 +267,18 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float | None, justificaci
 
 def registrar_cuadre_inicial(db: Session, turno_id: int, usuario_id: int,
                              efectivo_real: float, justificacion: str | None = None,
-                             barista_id: int | None = None, barista_nombre: str | None = None):
+                             barista_id: int | None = None, barista_nombre: str | None = None,
+                             saldos_incluidos: list[int] | None = None):
     """Cuadre inicial de caja (flujo diferido): tras el conteo de inventario, se cuenta el
-    efectivo de la registradora contra lo que dejó el cierre anterior (base_sistema = ventas
-    en efectivo del día anterior pendientes de consignar). Sin foto: aún no hay ventas.
+    efectivo de la registradora. Dos modos de ESPERADO:
+
+    - saldos_incluidos (diseño del dueño, 6-jul): la barista marca QUÉ días con
+      saldo pendiente por consignar están físicamente en la caja (a veces la
+      consignación de un día fue $0 y conviven varios días). El esperado = suma
+      de esos saldos, recalculada AQUÍ desde la verdad del servidor — jamás se
+      confía la suma del cliente. La selección queda en auditoría.
+    - Sin selección (legacy): lo que dejó el último cierre (base_sistema).
+
     Fija base_real, marca el cuadre de llegada y desbloquea el POS (junto con el conteo)."""
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
@@ -283,7 +291,31 @@ def registrar_cuadre_inicial(db: Session, turno_id: int, usuario_id: int,
     if efectivo_real < 0:
         raise HTTPException(status_code=400, detail="El valor no puede ser negativo")
 
-    esperado = turno.base_sistema or 0.0
+    seleccion_detalle = None
+    if saldos_incluidos is not None:
+        from app.services.consignaciones import _saldos_consignacion
+        pendientes = {
+            s["turno"].id: s
+            for s in _saldos_consignacion(db, turno.tienda_id)
+            if round(s["saldo"], 2) > 0
+        }
+        esperado = 0.0
+        seleccion_detalle = []
+        for tid in saldos_incluidos:
+            s = pendientes.get(tid)
+            if not s:
+                continue    # ese saldo ya no está pendiente (p.ej. se consignó hace un momento)
+            esperado += s["saldo"]
+            seleccion_detalle.append({
+                "turno_id": tid,
+                "fecha": s["turno"].fecha_apertura.isoformat() if s["turno"].fecha_apertura else None,
+                "saldo": round(s["saldo"], 2),
+            })
+        esperado = round(esperado, 2)
+        # El esperado del día queda anclado a la selección (visible en timeline/cuadres)
+        turno.base_sistema = esperado
+    else:
+        esperado = turno.base_sistema or 0.0
     diferencia = efectivo_real - esperado
     if round(diferencia, 2) != 0 and not justificacion:
         raise HTTPException(
@@ -310,7 +342,8 @@ def registrar_cuadre_inicial(db: Session, turno_id: int, usuario_id: int,
         db, accion="cuadre_inicial", tabla="caja_turnos",
         registro_id=turno.id, usuario_id=usuario_id, tienda_id=turno.tienda_id,
         datos_despues={"efectivo_real": efectivo_real, "esperado": esperado,
-                       "diferencia": diferencia, "justificacion": justificacion},
+                       "diferencia": diferencia, "justificacion": justificacion,
+                       "saldos_incluidos": seleccion_detalle},
     )
     db.commit()
     return get_turno_activo(db, turno.tienda_id)

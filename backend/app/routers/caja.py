@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -130,14 +131,25 @@ async def cuadre_inicial(
     turno_id: int,
     efectivo_real: float = Form(...),
     justificacion: Optional[str] = Form(None),
+    saldos_incluidos: Optional[str] = Form(None),  # JSON: [turno_id, ...] — días cuyo saldo está en caja
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
     barista: tuple = Depends(get_barista_actor),
 ):
     """Cuadre inicial de caja del flujo de apertura (post-conteo, sin foto)."""
     ensure_turno_access(db, user, turno_id)
+    seleccion: Optional[list[int]] = None
+    if saldos_incluidos is not None:
+        try:
+            parsed = json.loads(saldos_incluidos)
+            if not isinstance(parsed, list):
+                raise ValueError
+            seleccion = [int(x) for x in parsed]
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="saldos_incluidos debe ser una lista JSON de ids")
     return svc.registrar_cuadre_inicial(db, turno_id, user.id, efectivo_real, justificacion,
-                                        barista_id=barista[0], barista_nombre=barista[1])
+                                        barista_id=barista[0], barista_nombre=barista[1],
+                                        saldos_incluidos=seleccion)
 
 @router.post("/{turno_id}/cuadre-llegada", response_model=EntregaTurnoOut)
 async def cuadre_llegada(

@@ -15,6 +15,21 @@ const fmt = (v: number) => `$${Math.round(v).toLocaleString('es-CO')}`
  * cierre anterior (ventas en efectivo del día anterior, pendientes de consignar).
  * SIN foto: todavía no hay ventas que comprobar.
  */
+interface SaldoDia {
+  turno_id: number
+  fecha_apertura: string
+  fecha_cierre: string
+  esperado: number
+  consignado: number
+  pendiente: number
+}
+
+const fmtDia = (f: string) => {
+  const s = f.replace(' ', 'T').replace('+00:00', 'Z')
+  return new Date(s.endsWith('Z') ? s : s + 'Z')
+    .toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' })
+}
+
 export default function CuadreInicial() {
   const { turno, refresh } = useTurno()
   const navigate = useNavigate()
@@ -23,6 +38,10 @@ export default function CuadreInicial() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [desglose, setDesglose] = useState<{ cierre: number; baseAyer: number; mismoDia: boolean } | null>(null)
+  // Saldos pendientes por consignar de días anteriores: la barista marca cuáles
+  // están FÍSICAMENTE en la caja (a veces conviven varios días sin consignar).
+  const [saldos, setSaldos] = useState<SaldoDia[] | null>(null)
+  const [marcados, setMarcados] = useState<Record<number, boolean>>({})
   // Candado síncrono contra doble click: el estado saving es async y deja una
   // ventana en la que un segundo click dispararía otro POST.
   const enviando = useRef(false)
@@ -36,6 +55,16 @@ export default function CuadreInicial() {
         mismoDia: !!r.data?.mismo_dia,
       }))
       .catch(() => setDesglose(null))
+    api.get(`/consignaciones/pendiente/${turno.tienda_id}`)
+      .then(r => {
+        const items: SaldoDia[] = (r.data?.items ?? []).filter((s: SaldoDia) => s.turno_id !== turno.id)
+        setSaldos(items)
+        // Por defecto TODOS marcados (si no se consignó, la plata debería estar en caja)
+        const ini: Record<number, boolean> = {}
+        for (const s of items) ini[s.turno_id] = true
+        setMarcados(ini)
+      })
+      .catch(() => setSaldos(null))
   }, [turno?.tienda_id])
 
   // Ya cuadrado (o sin turno): salir de acá
@@ -46,7 +75,12 @@ export default function CuadreInicial() {
 
   if (!turno) return null
 
-  const esperado = turno.base_sistema ?? 0
+  // Con saldos por día: esperado = suma de los MARCADOS (el server lo recalcula
+  // igual — esta suma es solo para mostrar). Sin saldos: legacy (último cierre).
+  const modoSaldos = saldos !== null && saldos.length > 0
+  const esperado = modoSaldos
+    ? saldos!.reduce((acc, s) => acc + (marcados[s.turno_id] ? s.pendiente : 0), 0)
+    : (turno.base_sistema ?? 0)
   const diff = Math.round(contado - esperado)
   const necesitaJustificacion = contado > 0 && diff !== 0
 
@@ -58,6 +92,10 @@ export default function CuadreInicial() {
       const fd = new FormData()
       fd.append('efectivo_real', String(contado))
       if (justificacion.trim()) fd.append('justificacion', justificacion.trim())
+      if (modoSaldos) {
+        const ids = saldos!.filter(s => marcados[s.turno_id]).map(s => s.turno_id)
+        fd.append('saldos_incluidos', JSON.stringify(ids))
+      }
       const { data } = await api.post(`/caja/${turno.id}/cuadre-inicial`, fd)
       await refresh()
       navigate(data?.es_operativo ? '/pos' : '/gestion-turno', { replace: true })
@@ -88,7 +126,42 @@ export default function CuadreInicial() {
           <p className="text-[28px] font-bold font-mono tabular-nums leading-none" style={{ color: dark.ink }}>
             {fmt(esperado)}
           </p>
-          {desglose && !desglose.mismoDia ? (
+
+          {modoSaldos ? (
+            <div className="mt-3 space-y-1.5">
+              <p className="text-[11px] font-bold uppercase tracking-wide" style={{ color: dark.amber }}>
+                ¿La plata de qué días está en la caja?
+              </p>
+              {saldos!.map(s => (
+                <button key={s.turno_id}
+                  onClick={() => setMarcados(prev => ({ ...prev, [s.turno_id]: !prev[s.turno_id] }))}
+                  className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors"
+                  style={{
+                    background: marcados[s.turno_id] ? dark.surfaceAlt : 'transparent',
+                    border: `2px solid ${marcados[s.turno_id] ? dark.greenDim : dark.border}`,
+                  }}>
+                  <span className="w-5 h-5 rounded-md flex items-center justify-center shrink-0"
+                    style={{
+                      background: marcados[s.turno_id] ? dark.green : 'transparent',
+                      border: marcados[s.turno_id] ? 'none' : `2px solid ${dark.inkSubtle}`,
+                    }}>
+                    {marcados[s.turno_id] && <Check size={13} strokeWidth={3} style={{ color: dark.bg }} />}
+                  </span>
+                  <span className="flex-1 text-[13px] font-semibold capitalize" style={{ color: dark.ink }}>
+                    {fmtDia(s.fecha_apertura || s.fecha_cierre)}
+                  </span>
+                  <span className="text-[13px] font-bold font-mono tabular-nums"
+                    style={{ color: marcados[s.turno_id] ? dark.green : dark.inkSubtle }}>
+                    {fmt(s.pendiente)}
+                  </span>
+                </button>
+              ))}
+              <p className="text-[11px] mt-1" style={{ color: dark.inkSubtle }}>
+                Marcá solo los días cuya plata está físicamente acá. Si un día ya se consignó
+                o está apartado, destildalo.
+              </p>
+            </div>
+          ) : desglose && !desglose.mismoDia ? (
             <p className="text-[11px] mt-2" style={{ color: dark.inkSubtle }}>
               Efectivo del cierre de ayer ({fmt(desglose.cierre)}) menos la base de ayer que se
               consigna completa ({fmt(desglose.baseAyer)}). Los pagos de contado de ayer ya

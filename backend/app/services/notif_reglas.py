@@ -80,6 +80,17 @@ DEFAULTS = [
         "canal_push": True,
         "nivel": "info",
     },
+    {
+        "tipo": "preparacion_sin_registrar",
+        "label": "Preparacion sin registrar (stock negativo)",
+        "descripcion": "Avisa cuando un producto preparado (ej. mezcla de granizado) queda en negativo: se vendio sin registrar la preparacion.",
+        "unidad": "",
+        "umbral": 0,
+        "activa": True,
+        "canal_bell": True,
+        "canal_push": True,
+        "nivel": "advertencia",
+    },
 ]
 
 # Índice por tipo para mergear metadata estática rápido.

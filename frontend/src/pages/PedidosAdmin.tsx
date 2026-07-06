@@ -389,35 +389,64 @@ function TabPedidos({ tiendaId }: { tiendaId: number | null }) {
   )
 }
 
-// ─── TabConteos ───────────────────────────────────────────────────────────────
+// ─── TabSolicitudes: pedidos de las baristas, con decisión ────────────────────
 
-function TabConteos() {
-  const [conteos, setConteos]     = useState<Conteo[]>([])
-  const [expandido, setExpandido] = useState<number | null>(null)
-  const [ajustando, setAjustando] = useState<number | null>(null)
-  const [error, setError]         = useState('')
+interface SolItem {
+  id: number; producto_id: number; cantidad_solicitada: number
+  nombre: string; unidad_medida: string; proveedor: string | null
+}
+interface Solicitud {
+  id: number; tienda_id: number; tienda_nombre: string | null
+  fecha_solicitud: string; estado: string; nota: string | null
+  items: SolItem[]
+}
+
+function TabSolicitudes({ onCount }: { onCount: (n: number) => void }) {
+  const [solicitudes, setSolicitudes] = useState<Solicitud[]>([])
+  const [accionando, setAccionando]   = useState<number | null>(null)
+  const [verResueltas, setVerResueltas] = useState(false)
+  const [error, setError]             = useState('')
 
   const cargar = useCallback(async () => {
     try {
-      const { data } = await api.get<Conteo[]>('/compras/conteo/pendientes')
-      setConteos(data)
+      const { data } = await api.get<Solicitud[]>('/solicitudes/pedido/todas')
+      setSolicitudes(data)
+      onCount(data.filter(s => s.estado === 'pendiente').length)
       setError('')
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'No se pudieron cargar los conteos pendientes')
+      setError(e.response?.data?.detail || 'No se pudieron cargar las solicitudes')
     }
-  }, [])
+  }, [onCount])
 
   useEffect(() => { cargar() }, [cargar])
 
-  const ajustar = async (conteoId: number) => {
-    setAjustando(conteoId); setError('')
+  const decidir = async (id: number, accion: 'aprobar' | 'rechazar') => {
+    setAccionando(id); setError('')
     try {
-      await api.post(`/compras/conteo/${conteoId}/ajustar`)
+      await api.patch(`/solicitudes/pedido/${id}/${accion}`)
       await cargar()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Error al ajustar')
-    } finally { setAjustando(null) }
+      setError(e.response?.data?.detail || 'No se pudo actualizar')
+    } finally { setAccionando(null) }
   }
+
+  const copiarPorProveedor = (s: Solicitud) => {
+    const fecha = new Date(s.fecha_solicitud).toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })
+    const porProv: Record<string, SolItem[]> = {}
+    for (const it of s.items) {
+      const k = it.proveedor || 'Sin proveedor'
+      if (!porProv[k]) porProv[k] = []
+      porProv[k].push(it)
+    }
+    const bloques = Object.entries(porProv).map(([prov, items]) =>
+      `*${prov}*\n${items.map(i => `- ${i.nombre}: ${i.cantidad_solicitada} ${i.unidad_medida}`).join('\n')}`)
+    const texto = `*Pedido ${s.tienda_nombre ?? ''} — ${fecha}*\n\n${bloques.join('\n\n')}`
+    navigator.clipboard.writeText(texto).then(() => alert('Pedido copiado por proveedor ✓')).catch(() => alert(texto))
+  }
+
+  const pendientes = solicitudes.filter(s => s.estado === 'pendiente')
+  const resueltas  = solicitudes.filter(s => s.estado !== 'pendiente')
+  const visibles   = verResueltas ? solicitudes : pendientes
 
   return (
     <div className="space-y-3">
@@ -427,81 +456,93 @@ function TabConteos() {
         </div>
       )}
 
-      {conteos.length === 0 && (
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-gray-400">
+          Lo que las baristas pidieron desde el kiosko, con el proveedor de sus compras.
+        </p>
+        {resueltas.length > 0 && (
+          <button onClick={() => setVerResueltas(v => !v)} className="text-xs text-gray-400 hover:text-gray-600 underline">
+            {verResueltas ? 'Solo pendientes' : `Ver ${resueltas.length} resueltas`}
+          </button>
+        )}
+      </div>
+
+      {visibles.length === 0 && (
         <div className="bg-white border border-gray-200 rounded-2xl px-4 py-8 text-center">
           <CheckCircle size={28} className="text-green-400 mx-auto mb-2" />
-          <p className="text-sm text-gray-500">No hay conteos pendientes de ajuste</p>
+          <p className="text-sm text-gray-500">No hay solicitudes pendientes</p>
         </div>
       )}
 
-      {conteos.map(c => (
-        <div key={c.id} className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
-          <button
-            onClick={() => setExpandido(expandido === c.id ? null : c.id)}
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
-          >
-            <div className="text-left">
-              <p className="text-sm font-semibold text-gray-800">
-                Conteo #{c.id} — {c.tienda_nombre ?? `Tienda ${c.tienda_id}`}
-              </p>
-              <p className="text-xs text-gray-400">
-                {new Date(c.fecha_conteo).toLocaleDateString('es-CO', {
-                  day: '2-digit', month: 'short', year: 'numeric',
-                })} · Por: {c.usuario_nombre}
-              </p>
-              {c.nota && <p className="text-xs text-amber-700 mt-0.5 font-medium">Nota: {c.nota}</p>}
-            </div>
-            {expandido === c.id
-              ? <ChevronUp size={16} className="text-gray-400" />
-              : <ChevronDown size={16} className="text-gray-400" />}
-          </button>
-
-          {expandido === c.id && (
-            <div className="border-t border-gray-100">
-              <div className="px-4 py-2 bg-gray-50 grid grid-cols-4 text-xs font-bold text-gray-400 uppercase tracking-wide">
-                <span className="col-span-2">Producto</span>
-                <span className="text-center">Sistema</span>
-                <span className="text-center">Real</span>
-              </div>
-              <div className="divide-y divide-gray-50">
-                {c.items.map(item => {
-                  const dif = item.diferencia
-                  const difColor = dif < 0 ? 'text-red-600' : dif > 0 ? 'text-blue-600' : 'text-gray-400'
-                  return (
-                    <div key={item.id} className="px-4 py-2.5 grid grid-cols-4 items-center">
-                      <div className="col-span-2">
-                        <p className="text-sm font-medium text-gray-800">{item.producto_nombre}</p>
-                        <p className="text-xs text-gray-400">{item.unidad_medida}</p>
-                      </div>
-                      <p className="text-sm text-center text-gray-500">{Math.round(item.cantidad_sistema)}</p>
-                      <div className="text-center">
-                        <p className="text-sm font-bold text-gray-800">{Math.round(item.cantidad_real)}</p>
-                        {dif !== 0 && (
-                          <p className={`text-xs font-semibold ${difColor}`}>
-                            {dif > 0 ? `+${Math.round(dif)}` : Math.round(dif)}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-              <div className="px-4 py-3 border-t border-gray-100">
-                <button
-                  onClick={() => ajustar(c.id)}
-                  disabled={ajustando === c.id}
-                  className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white font-bold py-3 rounded-xl text-sm transition-colors"
-                >
-                  {ajustando === c.id ? 'Ajustando stock...' : 'Aprobar y Ajustar Stock'}
-                </button>
-                <p className="text-xs text-gray-400 text-center mt-1.5">
-                  Actualiza el inventario a las cantidades reales contadas
+      {visibles.map(s => {
+        // Items agrupados por proveedor (el de las compras de las baristas)
+        const porProv: Record<string, SolItem[]> = {}
+        for (const it of s.items) {
+          const k = it.proveedor || 'Sin proveedor'
+          if (!porProv[k]) porProv[k] = []
+          porProv[k].push(it)
+        }
+        const pendiente = s.estado === 'pendiente'
+        return (
+          <div key={s.id} className={`bg-white border rounded-2xl overflow-hidden ${pendiente ? 'border-amber-300' : 'border-gray-200 opacity-70'}`}>
+            <div className="px-4 py-3 flex items-center justify-between gap-2 flex-wrap border-b border-gray-100">
+              <div>
+                <p className="text-sm font-semibold text-gray-800">
+                  {s.tienda_nombre ?? `Tienda ${s.tienda_id}`} · {s.items.length} producto{s.items.length !== 1 ? 's' : ''}
                 </p>
+                <p className="text-xs text-gray-400">
+                  {new Date(s.fecha_solicitud).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' })}
+                  {' · '}
+                  {new Date(s.fecha_solicitud).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+                {s.nota && <p className="text-xs text-amber-700 mt-0.5 font-medium">Nota: {s.nota}</p>}
               </div>
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                s.estado === 'pendiente' ? 'bg-amber-100 text-amber-700'
+                : s.estado === 'aprobada' ? 'bg-green-100 text-green-700'
+                : 'bg-gray-100 text-gray-500'
+              }`}>{s.estado}</span>
             </div>
-          )}
-        </div>
-      ))}
+
+            <div className="px-4 py-2 space-y-2">
+              {Object.entries(porProv).map(([prov, items]) => (
+                <div key={prov}>
+                  <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide flex items-center gap-1">
+                    <Phone size={10} /> {prov}
+                  </p>
+                  {items.map(it => (
+                    <div key={it.id} className="flex items-center justify-between text-sm py-0.5 pl-4">
+                      <span className="text-gray-700">{it.nombre}</span>
+                      <span className="font-mono font-bold text-gray-800">
+                        {it.cantidad_solicitada} {it.unidad_medida}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+
+            <div className="px-4 py-3 border-t border-gray-100 flex items-center gap-2 flex-wrap">
+              <button onClick={() => copiarPorProveedor(s)}
+                className="flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50">
+                <Copy size={12} /> Copiar por proveedor
+              </button>
+              {pendiente && (
+                <>
+                  <button onClick={() => decidir(s.id, 'aprobar')} disabled={accionando === s.id}
+                    className="ml-auto flex items-center gap-1.5 text-xs font-bold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 px-3 py-1.5 rounded-lg">
+                    <Check size={13} /> Aprobar
+                  </button>
+                  <button onClick={() => decidir(s.id, 'rechazar')} disabled={accionando === s.id}
+                    className="text-xs font-semibold text-red-500 hover:text-red-700 border border-red-100 hover:border-red-300 px-3 py-1.5 rounded-lg">
+                    Rechazar
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -659,16 +700,17 @@ export default function PedidosAdmin() {
   const { user } = useAuth()
   const [sedes, setSedes]         = useState<Sede[]>([])
   const [tiendaId, setTiendaId]   = useState<number | null>(user?.tienda_id ?? null)
-  const [tab, setTab]             = useState<'pedidos' | 'conteos' | 'proveedores'>('pedidos')
-  const [nConteos, setNConteos]   = useState(0)
+  const [tab, setTab]             = useState<'pedidos' | 'solicitudes' | 'proveedores'>('solicitudes')
+  const [nPendientes, setNPendientes] = useState(0)
 
   useEffect(() => {
     api.get('/auth/tiendas').then(r => {
       setSedes(r.data)
       if (tiendaId === null && r.data.length > 0) setTiendaId(r.data[0].id)
     }).catch(() => {})
-    api.get<Conteo[]>('/compras/conteo/pendientes')
-      .then(r => setNConteos(r.data.length))
+    // Badge de solicitudes pendientes (lo que las baristas pidieron y espera decisión)
+    api.get<Solicitud[]>('/solicitudes/pedido/todas')
+      .then(r => setNPendientes(r.data.filter(s => s.estado === 'pendiente').length))
       .catch(() => {})
   }, [])
 
@@ -707,15 +749,15 @@ export default function PedidosAdmin() {
               <ShoppingCart size={13} /> Sugerencia
             </button>
             <button
-              onClick={() => setTab('conteos')}
+              onClick={() => setTab('solicitudes')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                tab === 'conteos' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                tab === 'solicitudes' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}
             >
-              <ClipboardList size={13} /> Conteos
-              {nConteos > 0 && (
+              <ClipboardList size={13} /> Solicitudes
+              {nPendientes > 0 && (
                 <span className="bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
-                  {nConteos}
+                  {nPendientes}
                 </span>
               )}
             </button>
@@ -732,7 +774,7 @@ export default function PedidosAdmin() {
       </div>
 
       {tab === 'pedidos'     && <TabPedidos     tiendaId={tiendaId} />}
-      {tab === 'conteos'     && <TabConteos />}
+      {tab === 'solicitudes' && <TabSolicitudes onCount={setNPendientes} />}
       {tab === 'proveedores' && <TabProveedores tiendaId={tiendaId} />}
     </div>
   )

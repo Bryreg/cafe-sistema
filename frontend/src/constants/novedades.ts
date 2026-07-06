@@ -16,6 +16,11 @@ export interface Novedad {
 export const NOVEDADES: Novedad[] = [
   // ── 6 de julio ──────────────────────────────────────────────────────────
   {
+    fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
+    titulo: 'Pedidos: solicitudes de las baristas con decisión',
+    detalle: 'La pestaña "Solicitudes" muestra cada pedido del kiosko agrupado por el proveedor de las compras (el que las baristas registran al Recibir), con Aprobar / Rechazar y copia por proveedor para WhatsApp. El flujo viejo de conteo-compras salió del panel. Servilletas ya están en el formato de desechables.',
+  },
+  {
     fecha: '2026-07-06', rol: 'barista', tipo: 'nuevo',
     titulo: 'Contar existencia desde Pedido',
     detalle: 'En "Pedido / Existencia" hay dos modos: Pedir (como siempre) o Contar existencia. Usá "Contar existencia" para registrar cuánto hay de lo que no entra al conteo diario: vasos, tapas, helado. Queda para que el admin lo revise.',

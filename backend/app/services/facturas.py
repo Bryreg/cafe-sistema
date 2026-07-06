@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from datetime import datetime
 from app.models.models import (FacturaCompra, FacturaCompraItem, TipoPagoEnum,
                                CajaTurno, MovimientoCaja, EstadoTurnoEnum,
-                               LoteInventario)
+                               LoteInventario, Producto)
 from app.services import inventario as inv_svc
 from app.services import audit
 
@@ -135,6 +135,12 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
             numero_lote=numero_lote_item,
             fecha_vencimiento=item.fecha_vencimiento,
         ))
+        # El proveedor de la compra alimenta al producto (si no tiene uno asignado):
+        # así los pedidos se agrupan solos con los proveedores que las baristas
+        # registran al Recibir. La asignación manual del admin nunca se pisa.
+        prod = db.query(Producto).filter_by(id=item.producto_id).first()
+        if prod is not None and not (prod.proveedor or "").strip() and (data.proveedor or "").strip():
+            prod.proveedor = data.proveedor.strip()
         inv_svc.registrar_movimiento(
             db,
             producto_id=item.producto_id,

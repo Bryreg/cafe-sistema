@@ -21,6 +21,7 @@ class SolicitudPedidoItemOut(BaseModel):
     cantidad_solicitada: float
     nombre: str = ""
     unidad_medida: str = ""
+    proveedor: Optional[str] = None
     class Config: from_attributes = True
 
 

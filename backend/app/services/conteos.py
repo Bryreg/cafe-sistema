@@ -128,6 +128,58 @@ def registrar_conteo_desechables(db: Session, tienda_id: int, items: list[dict],
     return conteo
 
 
+def registrar_existencia(db: Session, tienda_id: int, items: list[dict], usuario_id: int,
+                         barista_id: int | None = None, barista_nombre: str | None = None):
+    """Existencia ad-hoc iniciada por la barista (sin solicitud del admin): cuenta
+    cuánto hay de productos que NO entran al conteo diario (vasos, tapas, helado…).
+    Registra y compara contra el sistema SIN tocar stock (doble conteo). El admin lo
+    ve en el monitor de conteos y decide si aplicarlo — para no reintroducir la
+    edición libre de stock por parte de la barista."""
+    turno = get_turno_activo(db, tienda_id)
+    if not turno:
+        raise HTTPException(status_code=400, detail="No hay turno abierto")
+    if not items:
+        raise HTTPException(status_code=400, detail="Debes contar al menos un producto")
+
+    conteo = ConteoFisico(
+        tienda_id=tienda_id, turno_id=turno.id, tipo="existencia",
+        fecha_registro=datetime.utcnow(), usuario_id=usuario_id,
+        barista_id=barista_id, barista_nombre=barista_nombre,
+    )
+    db.add(conteo)
+    db.flush()
+    for item in items:
+        if item["cantidad_real"] < 0:
+            raise HTTPException(status_code=400, detail="cantidad_real no puede ser negativa")
+        inv = db.query(Inventario).filter(
+            Inventario.producto_id == item["producto_id"],
+            Inventario.tienda_id == tienda_id).first()
+        cantidad_sistema = inv.stock_actual if inv else 0.0
+        db.add(ConteoFisicoItem(
+            conteo_id=conteo.id, producto_id=item["producto_id"],
+            cantidad_sistema=cantidad_sistema, cantidad_real=item["cantidad_real"],
+            diferencia=item["cantidad_real"] - cantidad_sistema,
+        ))
+
+    n = len(items)
+    msg = f"Existencia contada desde el kiosko: {n} producto{'s' if n != 1 else ''}"
+    if barista_nombre:
+        msg += f" — {barista_nombre}"
+    try:
+        from app.services import notificaciones
+        notificaciones.disparar(
+            db, tienda_id=tienda_id, tipo="solicitud_barista",
+            mensaje=msg, nivel="info", referencia_id=conteo.id,
+            push_titulo="Existencia contada", push_cuerpo=msg,
+        )
+    except Exception:   # noqa: BLE001 — una notificación no debe tumbar el registro
+        logger.warning("No se pudo notificar existencia", exc_info=True)
+    db.commit()
+    db.refresh(conteo)
+    logger.info(f"Conteo existencia registrado (id={conteo.id}) tienda {tienda_id}")
+    return conteo
+
+
 def registrar_conteo(db: Session, tienda_id: int, tipo: str,
                      items: list[dict], usuario_id: int,
                      barista_id: int | None = None, barista_nombre: str | None = None,

@@ -116,7 +116,11 @@ def productos(db: Session = Depends(get_db), user: Usuario = Depends(get_current
         not p.controla_stock and p.incluir_en_conteo is False and not (p.precio_venta or 0)
     )]
     return [{"id": p.id, "nombre": p.nombre, "categoria": p.categoria.value,
-             "unidad_medida": p.unidad_medida, "controla_stock": p.controla_stock} for p in rows]
+             "unidad_medida": p.unidad_medida, "controla_stock": p.controla_stock,
+             # Para el modo "Existencia" del kiosko: distinguir lo que NO entra al
+             # conteo diario (vasos, tapas, helado) — incluir_en_conteo False.
+             "incluir_en_conteo": p.incluir_en_conteo is not False,
+             "grupo_conteo": p.grupo_conteo} for p in rows]
 
 @router.post("/productos")
 def crear_producto(data: ProductoCreate, db: Session = Depends(get_db),

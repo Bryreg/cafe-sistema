@@ -14,6 +14,17 @@ export interface Novedad {
 }
 
 export const NOVEDADES: Novedad[] = [
+  // ── 6 de julio ──────────────────────────────────────────────────────────
+  {
+    fecha: '2026-07-06', rol: 'barista', tipo: 'nuevo',
+    titulo: 'Contar existencia desde Pedido',
+    detalle: 'En "Pedido / Existencia" hay dos modos: Pedir (como siempre) o Contar existencia. Usá "Contar existencia" para registrar cuánto hay de lo que no entra al conteo diario: vasos, tapas, helado. Queda para que el admin lo revise.',
+  },
+  {
+    fecha: '2026-07-06', rol: 'admin', tipo: 'nuevo',
+    titulo: 'Existencia ad-hoc de las baristas',
+    detalle: 'Las baristas pueden contar la existencia de productos fuera del conteo diario (vasos, tapas, helado) cuando quieran. Aparece en el monitor de conteos como tipo "existencia" — comparás y aplicás si querés. No modifica el stock por sí solo.',
+  },
   // ── 5 de julio ──────────────────────────────────────────────────────────
   {
     fecha: '2026-07-05', rol: 'barista', tipo: 'cambio',

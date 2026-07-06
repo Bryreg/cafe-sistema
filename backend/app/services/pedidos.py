@@ -5,7 +5,25 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.models import (
     Inventario, MovimientoInventario, TipoMovInvEnum,
     SolicitudPedido, SolicitudPedidoItem, EstadoSolicitudEnum,
+    FacturaCompra, FacturaCompraItem,
 )
+
+
+def _proveedores_por_compras(db: Session) -> dict[int, str]:
+    """Último proveedor que facturó cada producto — lo que las baristas registran
+    al Recibir. Sirve de fallback cuando el producto no tiene proveedor asignado
+    a mano: los pedidos se agrupan con los MISMOS proveedores de las compras."""
+    rows = (
+        db.query(FacturaCompraItem.producto_id, FacturaCompra.proveedor)
+        .join(FacturaCompra, FacturaCompra.id == FacturaCompraItem.factura_id)
+        .order_by(FacturaCompra.fecha_recibido.asc(), FacturaCompra.id.asc())
+        .all()
+    )
+    out: dict[int, str] = {}
+    for pid, prov in rows:      # asc: la última escritura = la compra más reciente
+        if prov and prov.strip():
+            out[pid] = prov.strip()
+    return out
 
 # Días de historial para calcular consumo promedio
 DIAS_ANALISIS = 14
@@ -71,6 +89,9 @@ def sugerencia_pedido(db: Session, tienda_id: int) -> dict:
         .all()
     )
 
+    # Proveedor por historial de compras: fallback cuando no hay asignación manual
+    prov_compras = _proveedores_por_compras(db)
+
     items = []
     for inv in inventarios:
         p = inv.producto
@@ -103,7 +124,8 @@ def sugerencia_pedido(db: Session, tienda_id: int) -> dict:
             "nombre": p.nombre,
             "categoria": p.categoria.value,
             "unidad": p.unidad_medida,
-            "proveedor": p.proveedor,
+            # Manual manda; si no hay, el proveedor de la última compra (Recibir)
+            "proveedor": p.proveedor or prov_compras.get(p.id),
             "lead_time_dias": lead_time,
             "stock_actual": round(stock, 1),
             "stock_minimo": round(inv.stock_minimo, 1),

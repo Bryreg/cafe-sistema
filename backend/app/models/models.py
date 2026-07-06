@@ -443,6 +443,11 @@ class SolicitudPedidoItem(Base):
         return self.producto.nombre if self.producto else ""
 
     @property
+    def proveedor(self):
+        # A quién se le compra este producto (lo alimentan las facturas al Recibir).
+        return self.producto.proveedor if self.producto else None
+
+    @property
     def unidad_medida(self):
         # La unidad que la barista eligió manda; si no eligió, la del producto.
         if self.unidad_solicitada:

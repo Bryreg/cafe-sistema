@@ -698,7 +698,7 @@ export default function ConsignacionesAdmin() {
                     )}
                   </div>
                   <p className="text-xs text-gray-400 mt-0.5">
-                    Cierre {fmtHora(dia.fecha_cierre)} · Efectivo ventas {fmt(dia.total_efectivo)}
+                    Turno {fmtHora(dia.fecha_apertura)} → {fmtHora(dia.fecha_cierre)} · Efectivo ventas {fmt(dia.total_efectivo)}
                   </p>
                 </div>
 

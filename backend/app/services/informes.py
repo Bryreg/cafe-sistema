@@ -550,13 +550,18 @@ def reporte_baristas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
 
     entregas = q.all()
 
-    por_usuario: dict[int, dict] = {}
+    # Agrupar por la BARISTA REAL (barista_nombre), no por e.usuario_id: en el kiosko
+    # compartido usuario_id es el login del dispositivo ('Kiosk'), así que agrupar por
+    # ahí mostraba 'Kiosk' con todos los cuadres juntos. barista_nombre lo captura el
+    # header X-Barista-Id. Fallback al usuario solo si el cuadre es viejo y no lo tiene.
+    por_usuario: dict[str, dict] = {}
     for e in entregas:
-        uid = e.usuario_id
-        if uid not in por_usuario:
-            por_usuario[uid] = {
-                "usuario_id": uid,
-                "nombre": e.usuario.nombre if e.usuario else str(uid),
+        nombre = (e.barista_nombre or "").strip() or (e.usuario.nombre if e.usuario else str(e.usuario_id))
+        key = nombre
+        if key not in por_usuario:
+            por_usuario[key] = {
+                "usuario_id": e.barista_id if e.barista_id is not None else e.usuario_id,
+                "nombre": nombre,
                 "n_recibos": 0,
                 "n_cierres": 0,
                 "n_diff_efectivo": 0,
@@ -565,7 +570,7 @@ def reporte_baristas(db: Session, tienda_id: int, fecha_desde: date, fecha_hasta
                 "peor_diferencia": 0.0,
                 "ultimo_cuadre": None,
             }
-        d = por_usuario[uid]
+        d = por_usuario[key]
         if e.tipo == "recibo":
             d["n_recibos"] += 1
         else:

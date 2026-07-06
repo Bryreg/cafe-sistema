@@ -115,6 +115,7 @@ async def registrar_entrega(
     efectivo_real: float = Form(...),
     ventas_tarjeta_bold: float = Form(...),
     base_separada: bool = Form(False),
+    es_salida: bool = Form(False),  # True cuando el cuadre viene del flujo de SALIDA de barista
     imagen: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
@@ -124,7 +125,8 @@ async def registrar_entrega(
     imagen_url = await upload_imagen(imagen)
     return svc.registrar_entrega(db, turno_id, user.id, efectivo_real, ventas_tarjeta_bold, imagen_url,
                                  barista_id=barista[0], barista_nombre=barista[1],
-                                 base_separada=base_separada)
+                                 base_separada=base_separada,
+                                 tipo_cuadre="salida_barista" if es_salida else "entrega")
 
 @router.post("/{turno_id}/cuadre-inicial", response_model=TurnoOut)
 async def cuadre_inicial(

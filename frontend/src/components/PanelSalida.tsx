@@ -58,6 +58,9 @@ export default function PanelSalida() {
       const fd1 = new FormData()
       fd1.append('efectivo_real', String(efectivoReal))
       fd1.append('ventas_tarjeta_bold', String(Number(ventasTarjetaBold) || 0))
+      // Este panel es exclusivamente el flujo de SALIDA: el cuadre se guarda como
+      // 'salida_barista' para que el timeline lo rotule "Salida" y no "Llegada".
+      fd1.append('es_salida', 'true')
       if (imagen) fd1.append('imagen', imagen)
       await api.post(`/caja/${turno.id}/entrega`, fd1)
 

@@ -280,9 +280,14 @@ def editar_factura(db: Session, factura_id: int, usuario_id: int, *,
     if not f:
         raise HTTPException(404, "Factura no encontrada")
 
-    antes = {"valor_total": float(f.valor_total or 0), "valor_pagado": float(f.valor_pagado or 0),
+    # Estado de caja ANTES de tocar nada: solo efectivo/contado tiene egreso en caja.
+    forma_antes = (f.forma_pago_real or "").lower()
+    pagado_antes = float(f.valor_pagado or 0)
+    caja_antes = pagado_antes if forma_antes in ("efectivo", "contado") else 0.0
+
+    antes = {"valor_total": float(f.valor_total or 0), "valor_pagado": pagado_antes,
              "numero_factura": f.numero_factura, "proveedor": f.proveedor,
-             "items": len(f.items)}
+             "forma_pago_real": f.forma_pago_real, "items": len(f.items)}
 
     tipo_map = {"contado": TipoPagoEnum.contado, "credito": TipoPagoEnum.credito,
                 "transferencia": TipoPagoEnum.transferencia}
@@ -298,6 +303,12 @@ def editar_factura(db: Session, factura_id: int, usuario_id: int, *,
         if tipo_pago not in tipo_map:
             raise HTTPException(400, "tipo_pago inválido: contado | credito | transferencia")
         f.tipo_pago = tipo_map[tipo_pago]
+        # Cambiar el tipo de pago cambia CÓMO se pagó realmente: sincronizar
+        # forma_pago_real salvo que el llamador la haya fijado explícitamente.
+        # (contado→"contado", transferencia→"transferencia"; crédito no toca la forma
+        # porque el pago se rastrea aparte.)
+        if forma_pago_real is None and tipo_pago in ("contado", "transferencia"):
+            f.forma_pago_real = tipo_pago
     if forma_pago_real is not None:
         f.forma_pago_real = forma_pago_real.strip() or None
 
@@ -349,28 +360,36 @@ def editar_factura(db: Session, factura_id: int, usuario_id: int, *,
         nuevo_pagado = min(valor_pagado, float(f.valor_total))
     else:
         nuevo_pagado = min(float(f.valor_pagado or 0), float(f.valor_total))
+    f.valor_pagado = nuevo_pagado
 
-    # Ajuste del egreso de caja si el pago fue en efectivo y hay turno abierto.
-    delta_pago = nuevo_pagado - float(f.valor_pagado or 0)
-    if abs(delta_pago) > 0.001 and (f.forma_pago_real or "").lower() in ("efectivo", "contado"):
+    # ── Reconciliación de caja HOLÍSTICA ──────────────────────────────────────
+    # El egreso que la factura DEBE tener en caja hoy es su pago solo si fue en
+    # efectivo/contado (transferencia/crédito NO tocan el cajón). Comparamos el
+    # estado nuevo contra el anterior y compensamos la diferencia con UN solo
+    # movimiento. Así, pasar de contado→transferencia devuelve la plata al cajón
+    # (ingreso), y transferencia→contado la saca (egreso) — el cuadre queda bien.
+    forma_despues = (f.forma_pago_real or "").lower()
+    caja_despues = nuevo_pagado if forma_despues in ("efectivo", "contado") else 0.0
+    delta_caja = round(caja_despues - caja_antes, 2)
+    if abs(delta_caja) > 0.001:
         turno_activo = db.query(CajaTurno).filter(
             CajaTurno.tienda_id == f.tienda_id,
             CajaTurno.estado == EstadoTurnoEnum.abierto,
         ).first()
         if turno_activo:
-            concepto = f"Ajuste factura {f.numero_factura or f.id}: corrección de pago"
+            concepto = f"Ajuste factura {f.numero_factura or f.id}: corrección de forma/monto de pago"
             db.add(MovimientoCaja(
                 caja_turno_id=turno_activo.id,
-                tipo="egreso" if delta_pago > 0 else "ingreso",
-                concepto=concepto, valor=abs(delta_pago), usuario_id=usuario_id,
+                tipo="egreso" if delta_caja > 0 else "ingreso",
+                concepto=concepto, valor=abs(delta_caja), usuario_id=usuario_id,
             ))
-    f.valor_pagado = nuevo_pagado
 
     audit.registrar(
         db, accion="editar_factura", tabla="facturas_compra", registro_id=f.id,
         usuario_id=usuario_id, tienda_id=f.tienda_id, datos_antes=antes,
         datos_despues={"valor_total": float(f.valor_total), "valor_pagado": float(f.valor_pagado),
                        "numero_factura": f.numero_factura, "proveedor": f.proveedor,
+                       "forma_pago_real": f.forma_pago_real, "delta_caja": delta_caja,
                        "items": len(f.items)},
     )
     db.commit()

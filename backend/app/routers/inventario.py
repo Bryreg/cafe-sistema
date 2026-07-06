@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
@@ -23,8 +23,27 @@ def get_inventario(tienda_id: int, db: Session = Depends(get_db), user: Usuario 
 def movimiento(data: MovimientoInvRequest, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user),
                barista: tuple = Depends(get_barista_actor)):
     ensure_tienda_access(user, data.tienda_id)
+    # El AJUSTE reescribe el stock a un valor absoluto y borra la evidencia del
+    # doble conteo. Es una herramienta de correccion, no de operacion: solo admin.
+    # Las baristas registran HECHOS (entrada por factura, salida, merma,
+    # preparacion); las correcciones van por verificacion o por el administrador.
+    if data.tipo == "ajuste" and getattr(user.rol, "value", user.rol) != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="El ajuste de inventario es solo del administrador. Si un número no cuadra, registralo en el conteo o avisale al admin.",
+        )
     return svc.registrar_movimiento(db, data.producto_id, data.tienda_id, data.tipo, data.cantidad, data.motivo, user.id,
                                     barista_id=barista[0], barista_nombre=barista[1])
+
+
+@router.get("/movimientos/{tienda_id}")
+def movimientos_inventario(tienda_id: int, tipo: Optional[str] = Query(None),
+                           fecha: Optional[date] = Query(None),
+                           db: Session = Depends(get_db),
+                           user: Usuario = Depends(require_admin)):
+    """Revisión de movimientos (admin): auditar ajustes, entradas y salidas."""
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_movimientos_inventario(db, tienda_id, tipo, fecha)
 
 @router.get("/preparables/{tienda_id}")
 def preparables(tienda_id: int, db: Session = Depends(get_db),

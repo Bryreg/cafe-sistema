@@ -74,6 +74,31 @@ def get_inventario_tienda(db: Session, tienda_id: int):
     return result
 
 
+def _notificar_preparable_negativo(db: Session, producto_id: int, tienda_id: int,
+                                   stock_resultante: float) -> None:
+    """Si el producto que cruzó a negativo es un PREPARABLE (controla stock, tiene
+    receta de preparación y no se vende), dispara la notificación al admin."""
+    from app.models.models import ProductoInsumo
+    p = db.query(Producto).filter_by(id=producto_id).first()
+    if not p or not p.controla_stock or (p.precio_venta or 0) > 0:
+        return
+    tiene_receta = db.query(ProductoInsumo).filter_by(producto_id=producto_id).first()
+    if not tiene_receta:
+        return
+    try:
+        from app.services import notificaciones
+        msg = (f"{p.nombre} quedó en {round(stock_resultante)} {p.unidad_medida}: "
+               "se está vendiendo sin registrar la preparación")
+        notificaciones.disparar(
+            db, tienda_id=tienda_id, tipo="preparacion_sin_registrar",
+            mensaje=msg, nivel="advertencia", referencia_id=producto_id,
+            push_titulo="Preparación sin registrar", push_cuerpo=msg,
+        )
+    except Exception:   # noqa: BLE001 — una notificación nunca debe tumbar una venta
+        logger = __import__("logging").getLogger(__name__)
+        logger.warning("No se pudo disparar preparacion_sin_registrar", exc_info=True)
+
+
 def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: str,
                           cantidad: float, motivo: str | None, usuario_id: int,
                           fecha_vencimiento: datetime | None = None, commit: bool = True,
@@ -109,6 +134,7 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
                      numero_lote=numero_lote, proveedor=proveedor,
                      fecha_fabricacion=fecha_fabricacion, factura_id=factura_id)
     elif tipo == "salida":
+        stock_antes_salida = float(inv.stock_actual or 0)
         if allow_negative:
             # POS mode: permitir stock negativo (proveedor llega después)
             db.execute(
@@ -130,6 +156,12 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
             if rows == 0:
                 raise HTTPException(status_code=400, detail="Stock insuficiente")
         consumir_fifo(db, producto_id, tienda_id, cantidad)
+        # Un PREPARABLE (mezcla de granizado) que CRUZA a negativo = se está
+        # vendiendo sin registrar la preparación. Avisar al admin (dedupe diario
+        # del motor de notificaciones — no spamea por cada venta).
+        if stock_antes_salida >= 0 and stock_antes_salida - cantidad < 0:
+            _notificar_preparable_negativo(db, producto_id, tienda_id,
+                                           stock_antes_salida - cantidad)
     elif tipo == "ajuste":
         # Read current stock to compute FIFO delta, then set atomically
         stock_antes = inv.stock_actual
@@ -488,3 +520,33 @@ def registrar_preparacion(db: Session, producto_id: int, tienda_id: int, cantida
             "stock_actual": inv.stock_actual if inv else producido}
 
 
+
+
+def get_movimientos_inventario(db: Session, tienda_id: int, tipo: str | None = None,
+                               fecha=None, limite: int = 300) -> list:
+    """Revisión de movimientos de inventario (admin): quién movió qué, cuándo y por qué.
+    Pensado para auditar ajustes, pero sirve para cualquier tipo."""
+    from app.core.tz import rango_col_utc
+    q = (
+        db.query(MovimientoInventario, Producto)
+        .join(Producto, Producto.id == MovimientoInventario.producto_id)
+        .filter(MovimientoInventario.tienda_id == tienda_id)
+    )
+    if tipo:
+        q = q.filter(MovimientoInventario.tipo == tipo)
+    if fecha:
+        ini, fin = rango_col_utc(fecha, fecha)
+        q = q.filter(MovimientoInventario.fecha >= ini, MovimientoInventario.fecha <= fin)
+    rows = q.order_by(MovimientoInventario.fecha.desc()).limit(limite).all()
+    return [{
+        "id": m.id,
+        "fecha": m.fecha.isoformat() if m.fecha else None,
+        "tipo": m.tipo.value if hasattr(m.tipo, "value") else str(m.tipo),
+        "producto_id": m.producto_id,
+        "producto": p.nombre,
+        "unidad": p.unidad_medida,
+        "cantidad": m.cantidad,
+        "motivo": m.motivo,
+        "barista": m.barista_nombre,
+        "usuario_id": m.usuario_id,
+    } for m, p in rows]

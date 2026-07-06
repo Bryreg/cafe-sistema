@@ -50,6 +50,7 @@ const GUIA_BARISTA: Seccion[] = [
       'Menú → Merma: elegí el tipo — consumo, traslado o daño.',
       'En consumo: registrá QUIÉN consumió (buscador de todo el catálogo).',
       'Las bebidas preparadas (ej. un cappuccino) descuentan sus ingredientes automáticamente.',
+      'Regla de oro: ustedes registran lo que PASA (entradas, salidas, mermas, preparaciones). Si un número del inventario no cuadra, NO se ajusta — se cuenta en el conteo o se le avisa al administrador.',
     ],
   },
   {

@@ -580,14 +580,15 @@ function InventarioBarista() {
                   <AlertTriangle size={14} /> {error}
                 </div>
               )}
+              {/* Ajuste es SOLO admin: las baristas registran hechos (entrada/salida);
+                  las correcciones de stock van por el administrador o verificación. */}
               <div className="flex gap-2">
-                {(['entrada', 'salida', 'ajuste'] as const).map(t => (
+                {(['entrada', 'salida'] as const).map(t => (
                   <button key={t} onClick={() => { setTipo(t); setError('') }}
                     className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border-2 transition-colors ${
                       tipo === t
                         ? t === 'entrada' ? 'bg-green-100 border-green-400 text-green-700'
-                          : t === 'salida' ? 'bg-red-100 border-red-400 text-red-700'
-                          : 'bg-blue-100 border-blue-400 text-blue-700'
+                          : 'bg-red-100 border-red-400 text-red-700'
                         : 'border-gray-200 text-gray-400'
                     }`}>{t}</button>
                 ))}

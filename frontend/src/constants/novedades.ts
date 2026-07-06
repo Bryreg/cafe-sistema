@@ -17,6 +17,21 @@ export const NOVEDADES: Novedad[] = [
   // ── 5 de julio ──────────────────────────────────────────────────────────
   {
     fecha: '2026-07-05', rol: 'barista', tipo: 'cambio',
+    titulo: 'El "ajuste" de inventario ahora es solo del administrador',
+    detalle: 'Ustedes registran lo que PASA: entradas, salidas, mermas y preparaciones. Si un número no cuadra, va en el conteo o se le avisa al admin — los números los corrige solo el administrador.',
+  },
+  {
+    fecha: '2026-07-05', rol: 'barista', tipo: 'nuevo',
+    titulo: 'Aviso cuando falta registrar la mezcla',
+    detalle: 'Si se venden granizados sin registrar la preparación, aparece un aviso en la pantalla de turno con botón directo a Preparaciones.',
+  },
+  {
+    fecha: '2026-07-05', rol: 'admin', tipo: 'nuevo',
+    titulo: 'Control de ajustes y preparaciones',
+    detalle: 'Notificación (campana y push) cuando un preparado queda en negativo. Y los movimientos de inventario se pueden auditar por tipo y fecha — quién movió qué, cuándo y por qué.',
+  },
+  {
+    fecha: '2026-07-05', rol: 'barista', tipo: 'cambio',
     titulo: 'Conteos: referencia del conteo anterior y botón "Coincide"',
     detalle: 'En la apertura ves el cierre de anoche; en el cierre, la apertura de hoy. Si un producto no se movió, tocá "Coincide"; lo demás se pesa o se cuenta. Hay que registrar todos los productos — el botón "Todo coincide" ya no existe.',
   },

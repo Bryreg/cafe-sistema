@@ -26,6 +26,42 @@ const esHoy = (iso?: string | null) => {
 }
 
 /** Comunicados del administrador — visibles arriba del hub, no escondidos. */
+/** Persigue (sin bloquear) cuando un preparable quedó NEGATIVO: se vendieron
+ *  granizados sin registrar la preparación de la mezcla. */
+function PreparacionPendienteBanner() {
+  const { user } = useAuth()
+  const navigate = useNavigate()
+  const [negativos, setNegativos] = useState<{ nombre: string; stock: number; unidad: string }[]>([])
+  useEffect(() => {
+    if (!user?.tienda_id) return
+    api.get(`/inventario/preparables/${user.tienda_id}`)
+      .then(r => setNegativos((r.data ?? [])
+        .filter((p: any) => (p.stock_actual ?? 0) < -0.01)
+        .map((p: any) => ({ nombre: p.nombre, stock: Math.round(p.stock_actual), unidad: p.unidad_medida }))))
+      .catch(() => {})
+  }, [user?.tienda_id])
+  if (negativos.length === 0) return null
+  return (
+    <div className="rounded-2xl p-4 mb-3 flex items-start gap-3"
+      style={{ background: dark.amberTint, border: `1px solid ${dark.amberDim}` }}>
+      <span className="text-lg leading-none">⚠</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-bold" style={{ color: dark.amber }}>
+          Se está vendiendo sin mezcla registrada
+        </p>
+        <p className="text-xs mt-0.5" style={{ color: dark.amber }}>
+          {negativos.map(n => `${n.nombre}: ${n.stock} ${n.unidad}`).join(' · ')} — si prepararon una tanda, regístrenla.
+        </p>
+      </div>
+      <button onClick={() => navigate('/preparaciones')}
+        className="shrink-0 text-xs font-bold px-3 py-2 rounded-xl"
+        style={{ background: dark.amber, color: dark.bg }}>
+        Registrar
+      </button>
+    </div>
+  )
+}
+
 function ComunicadosBarista() {
   const [items, setItems] = useState<any[]>([])
   useEffect(() => {
@@ -287,6 +323,7 @@ export default function GestionTurno() {
       <div className="flex-1 px-4 space-y-4 w-full max-w-5xl mx-auto pb-8">
 
         {/* Comunicados del admin — visibles siempre, con o sin turno */}
+        {!step && <PreparacionPendienteBanner />}
         {!step && <ComunicadosBarista />}
 
         {/* ── CON TURNO ACTIVO ── */}

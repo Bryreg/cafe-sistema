@@ -16,6 +16,11 @@ export interface Novedad {
 export const NOVEDADES: Novedad[] = [
   // ── 6 de julio ──────────────────────────────────────────────────────────
   {
+    fecha: '2026-07-06', rol: 'barista', tipo: 'cambio',
+    titulo: 'Cuadre de apertura: marcá qué días están en la caja',
+    detalle: 'Al abrir, el cuadre muestra los días con plata pendiente por consignar. Marcá solo los que están físicamente en la caja — el esperado se arma con esos. Si un día ya se consignó o está apartado, destildalo.',
+  },
+  {
     fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
     titulo: 'Pedidos: solicitudes de las baristas con decisión',
     detalle: 'La pestaña "Solicitudes" muestra cada pedido del kiosko agrupado por el proveedor de las compras (el que las baristas registran al Recibir), con Aprobar / Rechazar y copia por proveedor para WhatsApp. El flujo viejo de conteo-compras salió del panel. Servilletas ya están en el formato de desechables.',

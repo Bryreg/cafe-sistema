@@ -20,6 +20,7 @@ const GUIA_BARISTA: Seccion[] = [
     titulo: 'Cuadres de caja',
     pasos: [
       'Contá el efectivo con el contador de billetes y monedas.',
+      'En la APERTURA: el cuadre muestra los días con plata pendiente por consignar — marcá solo los que están físicamente en la caja. El esperado se arma con esos.',
       'Si la venta de ayer quedó apartada de la registradora, marcá la casilla "venta de ayer separada".',
       'Si hay diferencia, el sistema pide una justificación — escribila tal cual pasó.',
       'El cuadre de cierre lo hacen juntas las últimas baristas: es del negocio, no individual.',

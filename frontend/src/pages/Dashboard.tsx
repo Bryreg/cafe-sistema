@@ -4,7 +4,7 @@ import api from '../api/client'
 import {
   BarChart3, TrendingUp, TrendingDown, ShoppingCart, Package,
   AlertTriangle, Download, RefreshCw, Layers, Store, Banknote,
-  Wallet, Check, ChevronRight, Inbox, Sparkles,
+  Wallet, Check, ChevronRight, Inbox, Sparkles, Cake,
 } from 'lucide-react'
 // Hora LOCAL (Colombia): toISOString es UTC y despues de las 19:00 devuelve manana,
 // haciendo que el panel consulte un dia futuro y muestre todo en cero.
@@ -46,6 +46,10 @@ interface VentaSede {
   total: number
   n_tickets: number
 }
+
+interface ImpulsoSede { lote_id: number; producto_nombre: string; cantidad_restante: number; dias_en_inventario: number; urgente: boolean; sede: string }
+interface RutinaHoy { clave: string; nombre: string; status: 'ok' | 'warn' | 'alert' | null; hechas: number }
+interface LimpiezaSede { tienda: string; rutinas: RutinaHoy[] }
 
 interface VentaCategoria {
   categoria: string
@@ -303,6 +307,9 @@ export default function Dashboard() {
   const [invValorizado, setInvValorizado] = useState<InvValorizado | null>(null)
   const [comprasPeriodo, setComprasPeriodo] = useState<DashCompras | null>(null)
   const [mermas, setMermas] = useState<MermaItem[]>([])
+  // Pastelería por impulsar + Limpieza de hoy — de TODAS las sedes (no respetan el filtro de sede).
+  const [impulso, setImpulso] = useState<ImpulsoSede[]>([])
+  const [limpiezaSedes, setLimpiezaSedes] = useState<LimpiezaSede[]>([])
 
   // ── Cargar sedes ──
   useEffect(() => {
@@ -340,6 +347,42 @@ export default function Dashboard() {
       res.forEach(x => { map[x.id] = x.abierto })
       setTurnosPorSede(map)
     })
+    return () => { cancel = true }
+  }, [sedes])
+
+  // Pastelería por impulsar (lotes 3+ días) de TODAS las sedes, combinada.
+  useEffect(() => {
+    if (sedes.length === 0) return
+    let cancel = false
+    Promise.all(
+      sedes.map(s =>
+        api.get(`/inventario/pasteleria-impulso/${s.id}`)
+          .then(r => (r.data ?? []).map((it: any) => ({ ...it, sede: s.nombre })))
+          .catch(() => [])
+      )
+    ).then(res => {
+      if (cancel) return
+      const all = (res.flat() as ImpulsoSede[])
+        .sort((a, b) => (b.urgente ? 1 : 0) - (a.urgente ? 1 : 0) || b.dias_en_inventario - a.dias_en_inventario)
+      setImpulso(all)
+    })
+    return () => { cancel = true }
+  }, [sedes])
+
+  // Limpieza/rutinas de HOY por sede (estado de las 3 trackeadas).
+  useEffect(() => {
+    if (sedes.length === 0) return
+    let cancel = false
+    Promise.all(
+      sedes.map(s =>
+        api.get('/rutinas/cumplimiento-dia', { params: { tienda_id: s.id } })
+          .then(r => ({
+            tienda: s.nombre,
+            rutinas: (r.data?.rutinas ?? []).map((x: any) => ({ clave: x.clave, nombre: x.nombre, status: x.status, hechas: x.hechas })),
+          }))
+          .catch(() => ({ tienda: s.nombre, rutinas: [] as RutinaHoy[] }))
+      )
+    ).then(res => { if (!cancel) setLimpiezaSedes(res) })
     return () => { cancel = true }
   }, [sedes])
 
@@ -609,31 +652,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Separador */}
-        {sedes.length > 1 && <div style={{ width: 1, height: 20, background: '#e0d9cc' }} />}
-
-        {/* Período (solo Banda 3) */}
-        <div style={{ display: 'flex', gap: 6 }}>
-          {PERIODOS.map(p => (
-            <button
-              key={p.key}
-              onClick={() => setPeriodo(p.key)}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 20,
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-                border: periodo === p.key ? 'none' : '1px solid #e0d9cc',
-                background: periodo === p.key ? '#5c7a4e' : '#fff',
-                color: periodo === p.key ? '#fff' : '#4a3728',
-              }}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* ══ BANDA 1 · Pulso de hoy ══ */}
@@ -787,25 +805,24 @@ export default function Dashboard() {
 
       {/* ══ BANDA 3 · Análisis ══ */}
       <BandLabel label="Análisis" />
-
-      {/* KPIs del período */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 20 }}>
-        <KpiCard
-          label="Ventas período"
-          value={fmt(resumen?.total_ventas ?? 0)}
-          sub={`${resumen?.n_tickets ?? 0} tickets`}
-          color="#1a6b3a"
-        />
-        <KpiCard label="Ticket promedio" value={fmt(resumen?.ticket_promedio ?? 0)} />
-        <KpiCard label="Efectivo" value={fmt(resumen?.total_efectivo ?? 0)} />
-        <KpiCard label="Tarjeta" value={fmt(resumen?.total_tarjeta ?? 0)} />
-        <KpiCard
-          label="Inventario valorizado"
-          value={fmt(invValorizado?.total ?? 0)}
-          sub="a costo de compra"
-          color="#2d5a9a"
-        />
+      {/* Selector de período — ahora pegado al Análisis que controla (antes flotaba arriba) */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+        {PERIODOS.map(p => (
+          <button key={p.key} onClick={() => setPeriodo(p.key)}
+            style={{
+              padding: '5px 13px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s',
+              border: periodo === p.key ? 'none' : '1px solid #e0d9cc',
+              background: periodo === p.key ? '#5c7a4e' : '#fff',
+              color: periodo === p.key ? '#fff' : '#4a3728',
+            }}>
+            {p.label}
+          </button>
+        ))}
       </div>
+      {/* Resumen del período en UNA línea — sin repetir el "Pulso de hoy" (antes eran 5 KPIs iguales) */}
+      <p style={{ margin: '0 0 16px', fontSize: 12.5, color: '#8b7d6b' }}>
+        <strong style={{ color: '#1a6b3a' }}>{fmt(resumen?.total_ventas ?? 0)}</strong> en ventas · {resumen?.n_tickets ?? 0} tickets · prom {fmt(resumen?.ticket_promedio ?? 0)} · efectivo {fmt(resumen?.total_efectivo ?? 0)} · tarjeta {fmt(resumen?.total_tarjeta ?? 0)}
+      </p>
 
       {/* Grid principal de widgets */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, marginBottom: 16 }}>
@@ -1024,6 +1041,57 @@ export default function Dashboard() {
               <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
                 <span style={{ fontSize: 12, color: '#4a3728', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '65%' }}>{m.producto}</span>
                 <span style={{ fontSize: 12, color: '#b45309', fontWeight: 600 }}>{Math.round(m.cantidad)} u.</span>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Pastelería por impulsar — lotes con días en inventario, ambas sedes */}
+        <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
+          <SectionTitle icon={Cake} label="Pastelería por impulsar" />
+          {impulso.length === 0 ? (
+            <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Nada urgente por impulsar</p>
+          ) : (
+            impulso.slice(0, 7).map(it => (
+              <div key={`${it.sede}-${it.lote_id}`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: 0, fontSize: 12.5, color: '#2d1f0f', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.producto_nombre}</p>
+                  <p style={{ margin: 0, fontSize: 10.5, color: '#8b7d6b' }}>{sedes.length > 1 ? `${it.sede} · ` : ''}{it.cantidad_restante} {it.cantidad_restante === 1 ? 'unidad' : 'u.'}</p>
+                </div>
+                <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, flexShrink: 0,
+                  background: it.urgente ? '#fde8e8' : '#fef3c7', color: it.urgente ? '#b42318' : '#b45309' }}>
+                  {it.urgente ? '¡Último día!' : `${it.dias_en_inventario}d`}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Limpieza de hoy — estado de las rutinas por sede */}
+        <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
+          <SectionTitle icon={Sparkles} label="Limpieza de hoy" />
+          {limpiezaSedes.length === 0 ? (
+            <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Cargando…</p>
+          ) : (
+            limpiezaSedes.map(s => (
+              <div key={s.tienda} style={{ marginBottom: 11 }}>
+                <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 700, color: '#4a3728' }}>{s.tienda}</p>
+                {s.rutinas.length === 0 ? (
+                  <p style={{ margin: 0, fontSize: 11, color: '#8b7d6b' }}>Sin registros hoy</p>
+                ) : (
+                  s.rutinas.map(r => {
+                    const c = r.status === 'ok' ? '#16a34a' : r.status === 'warn' ? '#d97706' : r.status === 'alert' ? '#dc2626' : '#c8c0b4'
+                    return (
+                      <div key={r.clave} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 999, background: c, flexShrink: 0 }} />
+                        <span style={{ flex: 1, fontSize: 12, color: '#2d1f0f' }}>{r.nombre}</span>
+                        <span style={{ fontSize: 11, color: '#8b7d6b', fontWeight: 600 }}>
+                          {r.hechas > 0 ? `${r.hechas}×` : (r.status === 'alert' ? 'sin hacer' : '—')}
+                        </span>
+                      </div>
+                    )
+                  })
+                )}
               </div>
             ))
           )}

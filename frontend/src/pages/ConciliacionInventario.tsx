@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import api from '../api/client'
 import { Scale, Download, TrendingUp, TrendingDown, Minus, AlertTriangle, RotateCcw, Cpu, Users, ListChecks } from 'lucide-react'
@@ -84,6 +84,19 @@ export default function ConciliacionInventario() {
       .catch(() => setDiaria(null))
       .finally(() => setLoadingDia(false))
   }, [tiendaId, dia])
+
+  // Cierres previos en orden CRONOLÓGICO (el más viejo primero): van a la
+  // izquierda de la apertura, como línea de tiempo que termina en hoy.
+  const prevAsc = useMemo(() => [...(diaria?.cierres_previos ?? [])].reverse(), [diaria])
+
+  // La tabla arranca desplazada al PRESENTE (extremo derecho): la historia
+  // queda detrás, deslizando hacia atrás.
+  const scrollTabla = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = scrollTabla.current
+    if (!el) return
+    requestAnimationFrame(() => { el.scrollLeft = el.scrollWidth })
+  }, [diaria])
 
   // Default: la lista COMPLETA del turno (sistema vivo + ultima apertura + cierre
   // cuando exista). El toggle de diferencias es opcional, para revisar dias viejos.
@@ -283,7 +296,7 @@ export default function ConciliacionInventario() {
             <span className="ml-auto flex items-center gap-3">
               {(diaria?.cierres_previos?.length ?? 0) > 0 && (
                 <span className="text-[11px] text-gray-400 hidden sm:inline">
-                  Deslizá la tabla → para ver los cierres de días anteriores
+                  ← Deslizá la tabla hacia atrás para ver los cierres de días anteriores
                 </span>
               )}
               <button onClick={() => setSoloDif(v => !v)}
@@ -295,26 +308,28 @@ export default function ConciliacionInventario() {
             </span>
           </div>
           <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-            <div className="overflow-x-auto">
-              {/* Las 7 columnas principales llenan el ancho VISIBLE; los cierres de días
-                  anteriores viven más allá del borde derecho — solo con la barra horizontal. */}
+            <div className="overflow-x-auto" ref={scrollTabla}>
+              {/* Línea de tiempo: los cierres de días anteriores van A LA IZQUIERDA de la
+                  apertura (el pasado atrás). La tabla arranca desplazada al presente:
+                  las 7 columnas principales llenan el ancho visible y se desliza hacia
+                  atrás para ver la historia. */}
               <table className="text-sm"
                 style={{ width: `calc(100% + ${(diaria?.cierres_previos?.length ?? 0) * 140}px)` }}>
                 <thead>
                   <tr className="text-[11px] uppercase tracking-wide text-gray-400">
-                    {/* Columnas 1-3 FIJAS: el scroll horizontal solo mueve desde apertura */}
+                    {/* Columnas 1-3 FIJAS: el scroll horizontal solo mueve el resto */}
                     <th className="text-left px-3 py-2 font-bold sticky left-0 z-10 bg-gray-50 min-w-[180px]">Producto</th>
                     <th className="text-right px-3 py-2 font-bold sticky left-[180px] z-10 bg-gray-50 min-w-[100px]">Dif. apertura</th>
                     <th className="text-right px-3 py-2 font-bold sticky left-[280px] z-10 bg-gray-50 min-w-[90px] border-r-2 border-gray-200">Sistema</th>
+                    {prevAsc.map((cp, idx) => (
+                      <th key={cp.fecha} className={`text-right px-3 py-2 font-bold bg-gray-50 w-[140px] min-w-[140px] whitespace-nowrap ${idx === prevAsc.length - 1 ? 'border-r-2 border-gray-200' : ''}`}>
+                        Cierre {cp.fecha.slice(8, 10)}/{cp.fecha.slice(5, 7)}{cp.atajo ? ' ⚡' : ''}
+                      </th>
+                    ))}
                     <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[110px]">Conteo apertura</th>
                     <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[100px]">Ingresos del día</th>
                     <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[120px]">Conteo cierre</th>
                     <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[110px]">Dif. apertura → cierre</th>
-                    {(diaria?.cierres_previos ?? []).map((cp, idx) => (
-                      <th key={cp.fecha} className={`text-right px-3 py-2 font-bold bg-gray-50 w-[140px] min-w-[140px] whitespace-nowrap ${idx === 0 ? 'border-l-2 border-gray-200' : ''}`}>
-                        Cierre {cp.fecha.slice(8, 10)}/{cp.fecha.slice(5, 7)}{cp.atajo ? ' ⚡' : ''}
-                      </th>
-                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -344,20 +359,10 @@ export default function ConciliacionInventario() {
                           {difAp === null ? '—' : difAp === 0 ? '✓ 0' : `${difAp > 0 ? '+' : ''}${num(difAp)}`}
                         </td>
                         <td className="px-3 py-2 text-right font-mono text-gray-500 sticky left-[280px] z-10 bg-white border-r-2 border-gray-200">{num(i.sistema)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{celda(i.apertura, false)}</td>
-                        <td className={`px-3 py-2 text-right font-mono ${i.entradas > 0 ? 'text-green-600 font-bold' : 'text-gray-300'}`}>
-                          {i.entradas > 0 ? `+${num(i.entradas)}` : '0'}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono">{celda(i.cierre, true)}</td>
-                        <td className={`px-3 py-2 text-right font-mono font-bold ${
-                          cambioDia === null ? 'text-gray-300' : 'text-gray-700'
-                        }`}>
-                          {cambioDia === null ? '—' : `${cambioDia > 0 ? '+' : ''}${num(cambioDia)}`}
-                        </td>
-                        {(diaria?.cierres_previos ?? []).map((cp, idx) => {
+                        {prevAsc.map((cp, idx) => {
                           const d = cp.por_producto[i.producto_id]
                           return (
-                            <td key={cp.fecha} className={`px-3 py-2 text-right font-mono w-[140px] min-w-[140px] ${idx === 0 ? 'border-l-2 border-gray-100' : ''}`}>
+                            <td key={cp.fecha} className={`px-3 py-2 text-right font-mono w-[140px] min-w-[140px] ${idx === prevAsc.length - 1 ? 'border-r-2 border-gray-100' : ''}`}>
                               {d === undefined
                                 ? <span className="text-gray-300">—</span>
                                 : (
@@ -371,6 +376,16 @@ export default function ConciliacionInventario() {
                             </td>
                           )
                         })}
+                        <td className="px-3 py-2 text-right font-mono">{celda(i.apertura, false)}</td>
+                        <td className={`px-3 py-2 text-right font-mono ${i.entradas > 0 ? 'text-green-600 font-bold' : 'text-gray-300'}`}>
+                          {i.entradas > 0 ? `+${num(i.entradas)}` : '0'}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono">{celda(i.cierre, true)}</td>
+                        <td className={`px-3 py-2 text-right font-mono font-bold ${
+                          cambioDia === null ? 'text-gray-300' : 'text-gray-700'
+                        }`}>
+                          {cambioDia === null ? '—' : `${cambioDia > 0 ? '+' : ''}${num(cambioDia)}`}
+                        </td>
                       </tr>
                     )
                   })}

@@ -22,6 +22,7 @@ export default function SolicitudPedido() {
   const [nota, setNota] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [sending, setSending] = useState(false)
 
   useEffect(() => {
     api.get('/inventario/productos').then(r => setProductos(r.data))
@@ -52,11 +53,20 @@ export default function SolicitudPedido() {
     alertas.forEach(a => agregar(a.producto_id, a.producto, a.unidad, Math.round(a.cantidad_sugerida)))
   }
 
+  const invalido = (c: string) => !(Number(c) > 0)
+  const hayInvalidos = items.some(i => invalido(i.cantidad))
+
   const enviar = async () => {
     setError(''); setSuccess('')
-    if (items.some(i => !(Number(i.cantidad) > 0))) {
-      setError('Poné una cantidad mayor a 0 en todos los productos'); return
+    if (items.length === 0) { setError('Agregá al menos un producto'); return }
+    if (hayInvalidos) {
+      // El error va JUNTO al botón (antes solo arriba, fuera de vista en el kiosko):
+      // la barista tocaba enviar y "no pasaba nada" porque no veía el mensaje.
+      const malos = items.filter(i => invalido(i.cantidad)).map(i => i.nombre)
+      setError(`Poné una cantidad mayor a 0 en: ${malos.join(', ')}`)
+      return
     }
+    setSending(true)
     try {
       await api.post('/solicitudes/pedido', {
         tienda_id: user?.tienda_id,
@@ -69,7 +79,9 @@ export default function SolicitudPedido() {
       })
       setItems([]); setNota('')
       setSuccess('Solicitud enviada al administrador')
-    } catch (e: any) { setError(e.response?.data?.detail || 'Error') }
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'No se pudo enviar. Revisá tu conexión y reintentá.')
+    } finally { setSending(false) }
   }
 
   return (
@@ -147,7 +159,11 @@ export default function SolicitudPedido() {
                   value={item.cantidad}
                   onChange={e => setCantidad(item.producto_id, e.target.value)}
                   placeholder="0"
-                  className="w-16 text-right rounded-lg border-2 border-gray-200 px-2 py-1.5 text-sm font-bold font-mono focus:outline-none focus:border-amber-400"
+                  className={`w-16 text-right rounded-lg border-2 px-2 py-1.5 text-sm font-bold font-mono focus:outline-none ${
+                    invalido(item.cantidad)
+                      ? 'border-red-300 bg-red-50 text-red-600 focus:border-red-400'
+                      : 'border-gray-200 focus:border-amber-400'
+                  }`}
                 />
                 <select
                   value={item.unidad_medida}
@@ -171,9 +187,11 @@ export default function SolicitudPedido() {
           <textarea value={nota} onChange={e => setNota(e.target.value)} rows={2}
             placeholder="Nota al administrador (opcional)"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none" />
-          <button onClick={enviar}
-            className="w-full bg-amber-600 hover:bg-amber-700 text-white font-semibold py-2.5 rounded-lg text-sm flex items-center justify-center gap-2">
-            <Send size={14} /> Enviar solicitud
+          {/* Feedback JUNTO al botón — así la barista siempre ve por qué no se envió */}
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2 rounded-lg">{error}</div>}
+          <button onClick={enviar} disabled={sending}
+            className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg text-sm flex items-center justify-center gap-2">
+            <Send size={14} /> {sending ? 'Enviando…' : 'Enviar solicitud'}
           </button>
         </div>
       )}

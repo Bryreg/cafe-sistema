@@ -864,53 +864,54 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Ventas por categoría */}
+        {/* Pastelería por impulsar — lotes con días en inventario, ambas sedes */}
         <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
-          <SectionTitle icon={Layers} label="Ventas por categoría" />
-          {ventasPorCategoria.length === 0 ? (
-            <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Sin datos en el período</p>
+          <SectionTitle icon={Cake} label="Pastelería por impulsar" />
+          {impulso.length === 0 ? (
+            <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Nada urgente por impulsar</p>
           ) : (
-            <div>
-              {ventasPorCategoria.map(c => (
-                <BarHorizontal
-                  key={c.categoria}
-                  label={c.categoria.charAt(0).toUpperCase() + c.categoria.slice(1)}
-                  value={c.total}
-                  max={maxVentaCat}
-                  color={catColores[c.categoria] ?? '#7a6a55'}
-                />
-              ))}
-            </div>
+            impulso.slice(0, 7).map(it => (
+              <div key={`${it.sede}-${it.lote_id}`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: 0, fontSize: 12.5, color: '#2d1f0f', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.producto_nombre}</p>
+                  <p style={{ margin: 0, fontSize: 10.5, color: '#8b7d6b' }}>{sedes.length > 1 ? `${it.sede} · ` : ''}{it.cantidad_restante} {it.cantidad_restante === 1 ? 'unidad' : 'u.'}</p>
+                </div>
+                <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, flexShrink: 0,
+                  background: it.urgente ? '#fde8e8' : '#fef3c7', color: it.urgente ? '#b42318' : '#b45309' }}>
+                  {it.urgente ? '¡Último día!' : `${it.dias_en_inventario}d`}
+                </span>
+              </div>
+            ))
           )}
         </div>
 
-        {/* Ventas por sede (client-filtered por sedeId) */}
+        {/* Limpieza de hoy — estado de las rutinas por sede */}
         <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
-          <SectionTitle icon={Store} label="Ventas por sede" />
-          {ventasPorSedeFiltradas.length === 0 ? (
-            <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Sin sedes activas</p>
+          <SectionTitle icon={Sparkles} label="Limpieza de hoy" />
+          {limpiezaSedes.length === 0 ? (
+            <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Cargando…</p>
           ) : (
-            <div>
-              {ventasPorSedeFiltradas.map(s => {
-                const prom = s.n_tickets > 0 ? s.total / s.n_tickets : 0
-                return (
-                  <div key={s.tienda_id} style={{ marginBottom: 11 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 }}>
-                      <span style={{ fontSize: 12.5, color: '#2d1f0f', fontWeight: 600 }}>{s.tienda}</span>
-                      <span style={{ fontSize: 12.5, color: '#1a6b3a', fontWeight: 700 }}>{fmt(s.total)}</span>
-                    </div>
-                    <div style={{ height: 5, background: '#f0ebe4', borderRadius: 3, overflow: 'hidden', marginBottom: 3 }}>
-                      <div style={{ height: '100%', width: `${Math.round((s.total / maxVentaSede) * 100)}%`, background: '#5c7a4e', borderRadius: 3 }} />
-                    </div>
-                    <div style={{ display: 'flex', gap: 7, fontSize: 10.5, color: '#8b7d6b' }}>
-                      <span>{s.n_tickets} tickets</span>
-                      <span>·</span>
-                      <span>ticket prom. {fmt(prom)}</span>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+            limpiezaSedes.map(s => (
+              <div key={s.tienda} style={{ marginBottom: 11 }}>
+                <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 700, color: '#4a3728' }}>{s.tienda}</p>
+                {s.rutinas.length === 0 ? (
+                  <p style={{ margin: 0, fontSize: 11, color: '#8b7d6b' }}>Sin registros hoy</p>
+                ) : (
+                  s.rutinas.map(r => {
+                    const c = r.status === 'ok' ? '#16a34a' : r.status === 'warn' ? '#d97706' : r.status === 'alert' ? '#dc2626' : '#c8c0b4'
+                    return (
+                      <div key={r.clave} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 999, background: c, flexShrink: 0 }} />
+                        <span style={{ flex: 1, fontSize: 12, color: '#2d1f0f' }}>{r.nombre}</span>
+                        <span style={{ fontSize: 11, color: '#8b7d6b', fontWeight: 600 }}>
+                          {r.hechas > 0 ? `${r.hechas}×` : (r.status === 'alert' ? 'sin hacer' : '—')}
+                        </span>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            ))
           )}
         </div>
 
@@ -1046,54 +1047,53 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Pastelería por impulsar — lotes con días en inventario, ambas sedes */}
+        {/* Ventas por categoría */}
         <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
-          <SectionTitle icon={Cake} label="Pastelería por impulsar" />
-          {impulso.length === 0 ? (
-            <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Nada urgente por impulsar</p>
+          <SectionTitle icon={Layers} label="Ventas por categoría" />
+          {ventasPorCategoria.length === 0 ? (
+            <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Sin datos en el período</p>
           ) : (
-            impulso.slice(0, 7).map(it => (
-              <div key={`${it.sede}-${it.lote_id}`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ margin: 0, fontSize: 12.5, color: '#2d1f0f', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.producto_nombre}</p>
-                  <p style={{ margin: 0, fontSize: 10.5, color: '#8b7d6b' }}>{sedes.length > 1 ? `${it.sede} · ` : ''}{it.cantidad_restante} {it.cantidad_restante === 1 ? 'unidad' : 'u.'}</p>
-                </div>
-                <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, flexShrink: 0,
-                  background: it.urgente ? '#fde8e8' : '#fef3c7', color: it.urgente ? '#b42318' : '#b45309' }}>
-                  {it.urgente ? '¡Último día!' : `${it.dias_en_inventario}d`}
-                </span>
-              </div>
-            ))
+            <div>
+              {ventasPorCategoria.map(c => (
+                <BarHorizontal
+                  key={c.categoria}
+                  label={c.categoria.charAt(0).toUpperCase() + c.categoria.slice(1)}
+                  value={c.total}
+                  max={maxVentaCat}
+                  color={catColores[c.categoria] ?? '#7a6a55'}
+                />
+              ))}
+            </div>
           )}
         </div>
 
-        {/* Limpieza de hoy — estado de las rutinas por sede */}
+        {/* Ventas por sede (client-filtered por sedeId) */}
         <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
-          <SectionTitle icon={Sparkles} label="Limpieza de hoy" />
-          {limpiezaSedes.length === 0 ? (
-            <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Cargando…</p>
+          <SectionTitle icon={Store} label="Ventas por sede" />
+          {ventasPorSedeFiltradas.length === 0 ? (
+            <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Sin sedes activas</p>
           ) : (
-            limpiezaSedes.map(s => (
-              <div key={s.tienda} style={{ marginBottom: 11 }}>
-                <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 700, color: '#4a3728' }}>{s.tienda}</p>
-                {s.rutinas.length === 0 ? (
-                  <p style={{ margin: 0, fontSize: 11, color: '#8b7d6b' }}>Sin registros hoy</p>
-                ) : (
-                  s.rutinas.map(r => {
-                    const c = r.status === 'ok' ? '#16a34a' : r.status === 'warn' ? '#d97706' : r.status === 'alert' ? '#dc2626' : '#c8c0b4'
-                    return (
-                      <div key={r.clave} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 999, background: c, flexShrink: 0 }} />
-                        <span style={{ flex: 1, fontSize: 12, color: '#2d1f0f' }}>{r.nombre}</span>
-                        <span style={{ fontSize: 11, color: '#8b7d6b', fontWeight: 600 }}>
-                          {r.hechas > 0 ? `${r.hechas}×` : (r.status === 'alert' ? 'sin hacer' : '—')}
-                        </span>
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-            ))
+            <div>
+              {ventasPorSedeFiltradas.map(s => {
+                const prom = s.n_tickets > 0 ? s.total / s.n_tickets : 0
+                return (
+                  <div key={s.tienda_id} style={{ marginBottom: 11 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 }}>
+                      <span style={{ fontSize: 12.5, color: '#2d1f0f', fontWeight: 600 }}>{s.tienda}</span>
+                      <span style={{ fontSize: 12.5, color: '#1a6b3a', fontWeight: 700 }}>{fmt(s.total)}</span>
+                    </div>
+                    <div style={{ height: 5, background: '#f0ebe4', borderRadius: 3, overflow: 'hidden', marginBottom: 3 }}>
+                      <div style={{ height: '100%', width: `${Math.round((s.total / maxVentaSede) * 100)}%`, background: '#5c7a4e', borderRadius: 3 }} />
+                    </div>
+                    <div style={{ display: 'flex', gap: 7, fontSize: 10.5, color: '#8b7d6b' }}>
+                      <span>{s.n_tickets} tickets</span>
+                      <span>·</span>
+                      <span>ticket prom. {fmt(prom)}</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           )}
         </div>
 

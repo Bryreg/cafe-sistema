@@ -67,9 +67,12 @@ const parseUTC = (f: string) => {
   return new Date(s.endsWith('Z') ? s : s + 'Z')
 }
 
-// Día calendario LOCAL (YYYY-MM-DD) del cierre (o apertura si no hay cierre) — clave de agrupación.
+// Día calendario LOCAL (YYYY-MM-DD) de APERTURA — el día en que el turno vendió.
+// Se agrupa por apertura (no por cierre) porque un turno puede abrir a la mañana y
+// cerrarse recién a la mañana siguiente (cierre demorado / turno huérfano): su plata
+// es del día que abrió. Por cierre, ese día "desaparecía" dentro del día siguiente.
 const dayKeyOf = (d: ResumenDia) => {
-  const dt = parseUTC(d.fecha_cierre || d.fecha_apertura)
+  const dt = parseUTC(d.fecha_apertura)
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
 }
 
@@ -755,7 +758,7 @@ export default function ConsignacionesAdmin() {
                 {/* Fecha + sede */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-bold text-gray-800 capitalize">{fmtFecha(dia.fecha_cierre || dia.fecha_apertura)}</p>
+                    <p className="text-sm font-bold text-gray-800 capitalize">{fmtFecha(dia.fecha_apertura)}</p>
                     {sedes.length > 1 && (
                       <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">
                         {dia.tienda_nombre}
@@ -768,7 +771,7 @@ export default function ConsignacionesAdmin() {
                     )}
                   </div>
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {dia.n_turnos > 1 ? `${dia.n_turnos} turnos` : `Cierre ${fmtHora(dia.fecha_cierre)}`} · Efectivo ventas {fmt(dia.total_efectivo)}
+                    {dia.n_turnos > 1 && `${dia.n_turnos} turnos · `}Efectivo ventas {fmt(dia.total_efectivo)}
                   </p>
                 </div>
 

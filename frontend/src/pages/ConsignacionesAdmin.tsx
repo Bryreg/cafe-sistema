@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
@@ -35,6 +35,28 @@ interface ResumenDia {
   consignaciones: ConsignacionItem[]
 }
 
+// Un DÍA de calendario = uno o más turnos cerrados ese día, agregados. Cada consignación
+// sigue atada a su turno (backend); esto es SOLO presentación: sumamos los turnos del día
+// para mostrar una tarjeta por día. El detalle expande los movimientos y consignaciones de
+// todos los turnos del día juntos.
+interface DiaAgrupado {
+  key: string
+  tienda_nombre: string
+  fecha_apertura: string
+  fecha_cierre: string | null
+  n_turnos: number
+  total_efectivo: number
+  total_ingresos_mov: number
+  total_egresos: number
+  diferencia_cierre: number
+  esperado_consignar: number
+  total_consignado: number
+  diferencia: number
+  egresos_detalle: MovDetalle[]
+  ingresos_detalle: MovDetalle[]
+  consignaciones: ConsignacionItem[]
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const fmt = (v: number) => `$${Math.round(v).toLocaleString('es-CO')}`
@@ -43,6 +65,12 @@ const fmtNum = (v: number) => Math.round(v).toLocaleString('es-CO')
 const parseUTC = (f: string) => {
   const s = f.replace(' ', 'T').replace('+00:00', 'Z')
   return new Date(s.endsWith('Z') ? s : s + 'Z')
+}
+
+// Día calendario LOCAL (YYYY-MM-DD) del cierre (o apertura si no hay cierre) — clave de agrupación.
+const dayKeyOf = (d: ResumenDia) => {
+  const dt = parseUTC(d.fecha_cierre || d.fecha_apertura)
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
 }
 
 // Tolerantes a null/'' — un turno cerrado puede no tener fecha_cierre cargada.
@@ -428,7 +456,8 @@ export default function ConsignacionesAdmin() {
   const [loading, setLoading] = useState(false)
   const [fotoModal, setFotoModal] = useState<string | null>(null)
   const [confirmando, setConfirmando] = useState<number | null>(null)
-  const [expandido, setExpandido] = useState<number | null>(null)
+  // expandido = clave de DÍA (YYYY-MM-DD), no turno_id: la lista ahora es por día.
+  const [expandido, setExpandido] = useState<string | null>(null)
   const [desde, setDesde] = useState('')
   const [hasta, setHasta] = useState('')
 
@@ -452,7 +481,7 @@ export default function ConsignacionesAdmin() {
       const primero = data.find((d: ResumenDia) =>
         d.consignaciones.some((c: ConsignacionItem) => c.estado === 'pendiente')
       )
-      if (primero) setExpandido(primero.turno_id)
+      if (primero) setExpandido(dayKeyOf(primero))
     } finally { setLoading(false) }
   }
 
@@ -508,11 +537,52 @@ export default function ConsignacionesAdmin() {
     } finally { setConfirmando(null) }
   }
 
-  // Totales globales
-  const totalEsperado   = dias.reduce((s, d) => s + d.esperado_consignar, 0)
-  const totalConsignado = dias.reduce((s, d) => s + d.total_consignado, 0)
-  const totalPendiente  = dias.reduce((s, d) => s + Math.max(0, d.esperado_consignar - d.total_consignado), 0)
-  const diasConDiferencia = dias.filter(d => Math.abs(d.diferencia) > 0.5).length
+  // Agrupar los turnos por DÍA de calendario (una tarjeta por día). Suma esperado y
+  // consignado del día; concatena movimientos y consignaciones de sus turnos. El backend
+  // devuelve los turnos en orden de cierre desc, así que el Map conserva ese orden por día.
+  const diasAgrupados = useMemo<DiaAgrupado[]>(() => {
+    const map = new Map<string, DiaAgrupado>()
+    for (const d of dias) {
+      const key = dayKeyOf(d)
+      let g = map.get(key)
+      if (!g) {
+        g = {
+          key, tienda_nombre: d.tienda_nombre,
+          fecha_apertura: d.fecha_apertura, fecha_cierre: d.fecha_cierre,
+          n_turnos: 0, total_efectivo: 0, total_ingresos_mov: 0, total_egresos: 0,
+          diferencia_cierre: 0, esperado_consignar: 0, total_consignado: 0, diferencia: 0,
+          egresos_detalle: [], ingresos_detalle: [], consignaciones: [],
+        }
+        map.set(key, g)
+      }
+      g.n_turnos += 1
+      g.total_efectivo += d.total_efectivo
+      g.total_ingresos_mov += d.total_ingresos_mov
+      g.total_egresos += d.total_egresos
+      g.diferencia_cierre += d.diferencia_cierre ?? 0
+      g.esperado_consignar += d.esperado_consignar
+      g.total_consignado += d.total_consignado
+      g.egresos_detalle.push(...d.egresos_detalle)
+      g.ingresos_detalle.push(...d.ingresos_detalle)
+      g.consignaciones.push(...d.consignaciones)
+      // Rango del día: apertura más temprana, cierre más tardío.
+      if (d.fecha_apertura < g.fecha_apertura) g.fecha_apertura = d.fecha_apertura
+      if (d.fecha_cierre && (!g.fecha_cierre || d.fecha_cierre > g.fecha_cierre)) g.fecha_cierre = d.fecha_cierre
+    }
+    const arr = [...map.values()]
+    for (const g of arr) {
+      g.diferencia = g.total_consignado - g.esperado_consignar
+      g.egresos_detalle.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
+      g.ingresos_detalle.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
+      g.consignaciones.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
+    }
+    return arr
+  }, [dias])
+
+  // Totales globales — sobre los días agregados (coincide con lo que muestran las tarjetas).
+  const totalEsperado   = diasAgrupados.reduce((s, g) => s + g.esperado_consignar, 0)
+  const totalConsignado = diasAgrupados.reduce((s, g) => s + g.total_consignado, 0)
+  const totalPendiente  = diasAgrupados.reduce((s, g) => s + Math.max(0, g.esperado_consignar - g.total_consignado), 0)
 
   return (
     <div className="space-y-6">
@@ -658,8 +728,8 @@ export default function ConsignacionesAdmin() {
                 )}
 
                 <div className="space-y-3">
-                {dias.map(dia => {
-          const abierto = expandido === dia.turno_id
+                {diasAgrupados.map(dia => {
+          const abierto = expandido === dia.key
           const pendientes = dia.consignaciones.filter(c => c.estado === 'pendiente')
           const ok = Math.abs(dia.diferencia) <= 0.5
           const hayEgresos = dia.egresos_detalle.length > 0
@@ -667,7 +737,7 @@ export default function ConsignacionesAdmin() {
           const porConsignar = Math.max(0, dia.esperado_consignar - dia.total_consignado)
 
           return (
-            <div key={dia.turno_id}
+            <div key={dia.key}
               className={`bg-white rounded-2xl border-2 overflow-hidden transition-all ${
                 !ok ? 'border-red-200' : pendientes.length > 0 ? 'border-amber-200' : 'border-gray-200'
               }`}>
@@ -675,7 +745,7 @@ export default function ConsignacionesAdmin() {
               {/* Cabecera del día — siempre visible */}
               <button
                 className="w-full px-5 py-4 flex items-center gap-4 hover:bg-gray-50 transition-colors text-left"
-                onClick={() => setExpandido(abierto ? null : dia.turno_id)}
+                onClick={() => setExpandido(abierto ? null : dia.key)}
               >
                 {/* Indicador estado */}
                 <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
@@ -698,7 +768,7 @@ export default function ConsignacionesAdmin() {
                     )}
                   </div>
                   <p className="text-xs text-gray-400 mt-0.5">
-                    Turno {fmtHora(dia.fecha_apertura)} → {fmtHora(dia.fecha_cierre)} · Efectivo ventas {fmt(dia.total_efectivo)}
+                    {dia.n_turnos > 1 ? `${dia.n_turnos} turnos` : `Cierre ${fmtHora(dia.fecha_cierre)}`} · Efectivo ventas {fmt(dia.total_efectivo)}
                   </p>
                 </div>
 

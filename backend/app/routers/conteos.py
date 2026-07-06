@@ -13,6 +13,19 @@ from typing import List, Optional
 router = APIRouter(prefix="/conteos", tags=["conteos"])
 
 
+@router.post("/existencia", response_model=ConteoFisicoOut)
+def registrar_existencia(data: RegistrarConteoRequest, db: Session = Depends(get_db),
+                         user: Usuario = Depends(get_current_user),
+                         barista: tuple = Depends(get_barista_actor)):
+    """Existencia ad-hoc iniciada por la barista (productos fuera del conteo diario:
+    vasos, tapas, helado). Registra y compara vs sistema sin tocar stock."""
+    ensure_tienda_access(user, data.tienda_id)
+    items = [{"producto_id": i.producto_id, "cantidad_real": i.cantidad_real}
+             for i in data.items]
+    return svc.registrar_existencia(db, data.tienda_id, items, user.id,
+                                    barista_id=barista[0], barista_nombre=barista[1])
+
+
 @router.get("/referencia/{tienda_id}")
 def referencia_conteo(tienda_id: int, tipo: str = Query(...),
                       db: Session = Depends(get_db),

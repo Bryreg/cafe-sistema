@@ -177,6 +177,7 @@ with engine.connect() as _conn:
         "ALTER TABLE productos ADD COLUMN grupo_conteo VARCHAR(20)",
         # Conteo de desechables: nuevo tipo en el enum nativo de Postgres.
         "ALTER TYPE tipoconteoenum ADD VALUE IF NOT EXISTS 'desechables'",
+        "ALTER TYPE tipoconteoenum ADD VALUE IF NOT EXISTS 'existencia'",
         # El unique (turno_id, tipo) solo aplica a apertura/cierre: los desechables pueden
         # contarse más de una vez en el mismo turno si el admin lo vuelve a pedir. En prod
         # el unique vive como CONSTRAINT de tabla (create_all original) — hay que dropear

@@ -62,9 +62,11 @@ const GUIA_BARISTA: Seccion[] = [
     ],
   },
   {
-    titulo: 'Pedidos al administrador y sencilla',
+    titulo: 'Pedidos, existencia y sencilla',
     pasos: [
-      'Menú → Pedido: los productos con stock bajo aparecen con cantidad sugerida — podés cambiar cantidad y unidad.',
+      'Menú → Pedido / Existencia: arriba elegís el modo.',
+      'Modo "Pedir": los productos con stock bajo aparecen con cantidad sugerida — podés cambiar cantidad y unidad.',
+      'Modo "Contar existencia": registrá cuánto hay de lo que NO entra al conteo diario (vasos, tapas, helado). No cambia el inventario; queda para que el admin lo revise.',
       'Menú → Sencilla: solicitá cambio cuando falte.',
       'Los avisos del administrador aparecen en tu pantalla de inicio — tocá "Entendido" cuando los leas.',
     ],

@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { Send, AlertTriangle, Zap, Search } from 'lucide-react'
+import { Send, AlertTriangle, Zap, Search, ClipboardList, Check } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
 
-interface Producto { id: number; nombre: string; unidad_medida: string }
+interface Producto {
+  id: number; nombre: string; unidad_medida: string
+  incluir_en_conteo?: boolean; grupo_conteo?: string | null
+}
 interface Item { producto_id: number; nombre: string; unidad_medida: string; cantidad: string }
 
 const UNIDADES = ['unidad', 'gr', 'kg', 'lt', 'ml', 'paquete', 'caja', 'bolsa', 'botella']
@@ -23,6 +26,12 @@ export default function SolicitudPedido() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [sending, setSending] = useState(false)
+  // Modo dual: pedir reposición o contar existencia (sobre todo lo que NO entra
+  // al conteo diario: vasos, tapas, helado). La existencia se registra como conteo
+  // que compara vs sistema sin tocar stock — el admin decide si aplicarlo.
+  const [modo, setModo] = useState<'pedido' | 'existencia'>('pedido')
+  const [existencias, setExistencias] = useState<Record<number, string>>({})
+  const [soloFueraConteo, setSoloFueraConteo] = useState(true)
 
   useEffect(() => {
     api.get('/inventario/productos').then(r => setProductos(r.data))
@@ -84,14 +93,115 @@ export default function SolicitudPedido() {
     } finally { setSending(false) }
   }
 
+  // Productos para el modo existencia: por defecto los que NO entran al conteo diario.
+  const productosExistencia = useMemo(() => productos
+    .filter(p => !soloFueraConteo || p.incluir_en_conteo === false)
+    .filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase())),
+    [productos, soloFueraConteo, busqueda])
+  const nContados = Object.values(existencias).filter(v => v !== '' && Number(v) >= 0).length
+
+  const enviarExistencia = async () => {
+    setError(''); setSuccess('')
+    const items = Object.entries(existencias)
+      .filter(([, v]) => v !== '' && Number(v) >= 0)
+      .map(([pid, v]) => ({ producto_id: Number(pid), cantidad_real: Number(v) }))
+    if (items.length === 0) { setError('Contá al menos un producto'); return }
+    setSending(true)
+    try {
+      await api.post('/conteos/existencia', {
+        tienda_id: user?.tienda_id, tipo: 'existencia', items,
+      })
+      setExistencias({})
+      setSuccess(`Existencia registrada: ${items.length} producto${items.length !== 1 ? 's' : ''}. El administrador la puede ver en el monitor.`)
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'No se pudo registrar. Revisá tu conexión y reintentá.')
+    } finally { setSending(false) }
+  }
+
   return (
-    <BaristaLayout title="Solicitar pedido">
+    <BaristaLayout title="Pedido y existencia">
     <div className="space-y-4">
-      <h1 className="text-base font-bold text-gray-800">Solicitar pedido</h1>
+      <h1 className="text-base font-bold text-gray-800">
+        {modo === 'pedido' ? 'Solicitar pedido' : 'Contar existencia'}
+      </h1>
+
+      {/* Toggle de modo */}
+      <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+        <button onClick={() => { setModo('pedido'); setError(''); setSuccess('') }}
+          className={`flex-1 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+            modo === 'pedido' ? 'bg-white shadow-sm text-amber-700' : 'text-gray-500'}`}>
+          <Send size={13} /> Pedir
+        </button>
+        <button onClick={() => { setModo('existencia'); setError(''); setSuccess('') }}
+          className={`flex-1 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors ${
+            modo === 'existencia' ? 'bg-white shadow-sm text-forest' : 'text-gray-500'}`}>
+          <ClipboardList size={13} /> Contar existencia
+        </button>
+      </div>
 
       {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-xl">{error}</div>}
       {success && <div className="bg-green-50 border border-green-200 text-green-700 text-sm px-4 py-3 rounded-xl">{success}</div>}
 
+      {/* ══════════ MODO EXISTENCIA ══════════ */}
+      {modo === 'existencia' && (
+        <>
+          <p className="text-xs text-gray-500">
+            Contá lo que hay físicamente — sobre todo lo que no entra al conteo diario (vasos, tapas, helado).
+            No modifica el inventario: queda registrado para que el administrador lo revise.
+          </p>
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-3 py-2.5 border-b border-gray-100 space-y-2">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar producto…"
+                  className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-forest" />
+              </div>
+              <label className="flex items-center gap-2 text-xs text-gray-500">
+                <input type="checkbox" checked={soloFueraConteo} onChange={e => setSoloFueraConteo(e.target.checked)} />
+                Solo lo que no entra al conteo diario
+              </label>
+            </div>
+            <div className="divide-y divide-gray-50 max-h-[55vh] overflow-y-auto">
+              {productosExistencia.map(p => {
+                const v = existencias[p.id] ?? ''
+                const contado = v !== '' && Number(v) >= 0
+                return (
+                  <div key={p.id} className="flex items-center gap-2 px-4 py-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{p.nombre}</p>
+                      {p.incluir_en_conteo === false && (
+                        <span className="text-[10px] text-forest bg-forest-50 px-1.5 py-0.5 rounded-full">fuera del conteo diario</span>
+                      )}
+                    </div>
+                    <input type="number" inputMode="decimal" min={0} value={v}
+                      onChange={e => setExistencias(prev => ({ ...prev, [p.id]: e.target.value }))}
+                      placeholder="—"
+                      className={`w-20 text-right rounded-lg border-2 px-2 py-1.5 text-sm font-bold font-mono focus:outline-none ${
+                        contado ? 'border-forest bg-forest-50 text-forest' : 'border-gray-200 focus:border-forest'}`} />
+                    <span className="text-xs text-gray-400 w-8">{p.unidad_medida}</span>
+                  </div>
+                )
+              })}
+              {productosExistencia.length === 0 && (
+                <p className="px-4 py-8 text-sm text-gray-400 text-center">Sin productos con ese filtro</p>
+              )}
+            </div>
+          </div>
+
+          {nContados > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3 sticky bottom-2">
+              <p className="text-xs text-gray-500">{nContados} producto{nContados !== 1 ? 's' : ''} contado{nContados !== 1 ? 's' : ''}</p>
+              <button onClick={enviarExistencia} disabled={sending}
+                className="w-full bg-forest hover:bg-forest-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg text-sm flex items-center justify-center gap-2">
+                <Check size={15} /> {sending ? 'Registrando…' : 'Registrar existencia'}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ══════════ MODO PEDIDO ══════════ */}
+      {modo === 'pedido' && <>
       {/* Productos críticos con sugerencia */}
       {alertas.length > 0 && (
         <div className="bg-red-50 border border-red-200 rounded-xl overflow-hidden">
@@ -228,6 +338,7 @@ export default function SolicitudPedido() {
           })}
         </div>
       </div>
+      </>}
     </div>
     </BaristaLayout>
   )

@@ -48,6 +48,9 @@ class TipoConteoEnum(str, enum.Enum):
     cierre = "cierre"
     # Formato de desechables: solo se cuenta cuando el admin lo solicita.
     desechables = "desechables"
+    # Existencia ad-hoc: la barista cuenta cuando quiere, sobre todo lo que NO
+    # entra al conteo diario (vasos, tapas, helado). Compara vs sistema, no toca stock.
+    existencia = "existencia"
 
 
 class TipoTurnoEnum(str, enum.Enum):

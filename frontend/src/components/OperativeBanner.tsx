@@ -32,7 +32,7 @@ const QUICK = [
   { label: 'Preparaciones',   to: '/preparaciones',  icon: FlaskConical },
   { label: 'Inventario',      to: '/inventario',     icon: Package },
   { label: 'Inv. mensual',    to: '/inventario-mensual', icon: Boxes },
-  { label: 'Pedido',          to: '/pedido',         icon: ShoppingCart },
+  { label: 'Pedido / Existencia', to: '/pedido',    icon: ShoppingCart },
   { label: 'Sencilla',        to: '/sencilla',       icon: Coins },
   { label: 'Consignaciones',  to: '/consignaciones', icon: ArrowRightLeft },
   { label: 'Guía rápida',     to: '/guia',           icon: BookOpen },

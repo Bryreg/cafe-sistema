@@ -6,7 +6,7 @@ import BaristaLayout from '../components/BaristaLayout'
 
 interface Producto {
   id: number; nombre: string; unidad_medida: string
-  incluir_en_conteo?: boolean; grupo_conteo?: string | null
+  controla_stock?: boolean; incluir_en_conteo?: boolean; grupo_conteo?: string | null
 }
 interface Item { producto_id: number; nombre: string; unidad_medida: string; cantidad: string }
 
@@ -93,8 +93,12 @@ export default function SolicitudPedido() {
     } finally { setSending(false) }
   }
 
-  // Productos para el modo existencia: por defecto los que NO entran al conteo diario.
+  // Modo existencia: solo productos con STOCK FÍSICO (controla_stock). Así se
+  // excluyen las bebidas del POS (Americano, Afogatto…) que no son inventario
+  // contable. Por defecto, además, los que NO entran al conteo diario (vasos,
+  // tapas, helado) — que es lo que no se cuenta hoy.
   const productosExistencia = useMemo(() => productos
+    .filter(p => p.controla_stock !== false)
     .filter(p => !soloFueraConteo || p.incluir_en_conteo === false)
     .filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase())),
     [productos, soloFueraConteo, busqueda])

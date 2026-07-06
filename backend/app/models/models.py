@@ -697,6 +697,9 @@ class LimpiezaSemanal(Base):
     fecha      = Column(DateTime, nullable=False, default=datetime.utcnow)
     vobo       = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Barista REAL que marcó la tarea (≠ usuario del dispositivo/kiosko). Columna plana sin FK.
+    barista_id     = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
 
     usuario = relationship("Usuario")
 

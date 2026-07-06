@@ -16,6 +16,11 @@ export interface Novedad {
 export const NOVEDADES: Novedad[] = [
   // ── 6 de julio ──────────────────────────────────────────────────────────
   {
+    fecha: '2026-07-06', rol: 'todos', tipo: 'mejora',
+    titulo: 'Limpieza semanal: quién la hizo y a qué hora',
+    detalle: 'En el checklist de Limpieza semanal, cada tarea marcada ahora muestra la barista real que la hizo (antes decía "Kiosk"), la fecha y la HORA exacta. La hora aparece también en las tareas ya registradas. El nombre real de la barista se guarda de ahora en adelante.',
+  },
+  {
     fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
     titulo: 'Cumplimiento: bitácora "quién hizo qué y cuándo"',
     detalle: 'El cockpit de limpieza ahora incluye una bitácora del día en orden cronológico: cada rutina registrada con su hora, la barista que la hizo y la foto/nota si tiene. De un vistazo ves toda la actividad del día antes de ir a revisar. Además se limpiaron plantillas de rutina duplicadas viejas.',

@@ -14,6 +14,7 @@ interface Tarea {
 interface Registro {
   id: number; tarea_key: string; fecha: string; semana: number
   usuario_nombre: string; usuario_id: number; vobo: boolean
+  barista_nombre?: string | null; creado?: string | null
 }
 
 const MESES = [
@@ -24,6 +25,13 @@ const MESES = [
 function semanaDelMes(d: Date) {
   return Math.floor((d.getDate() - 1) / 7) + 1
 }
+
+// Los timestamps se guardan en UTC; parsear como UTC para mostrar hora local Colombia.
+const parseUTC = (s: string) => {
+  const t = s.replace(' ', 'T').replace('+00:00', 'Z')
+  return new Date(t.endsWith('Z') ? t : t + 'Z')
+}
+const fmtHora = (s: string) => parseUTC(s).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
 
 export default function Limpieza() {
   const { user } = useAuth()
@@ -249,7 +257,9 @@ export default function Limpieza() {
                           </p>
                           {hecho && (
                             <p className="text-xs text-forest mt-0.5">
-                              {reg.usuario_nombre} · {new Date(reg.fecha).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}
+                              <span className="font-semibold">{reg.barista_nombre || reg.usuario_nombre}</span>
+                              {' · '}{new Date(reg.fecha).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}
+                              {reg.creado && <span className="text-warm-400"> · {fmtHora(reg.creado)}</span>}
                               {reg.vobo && (
                                 <span className="ml-2 inline-flex items-center gap-0.5 text-forest-500 font-semibold">
                                   <ShieldCheck size={11} /> VoBo

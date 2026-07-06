@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from app.database import get_db
-from app.core.deps import get_current_user, require_admin, ensure_tienda_access
+from app.core.deps import get_current_user, require_admin, ensure_tienda_access, get_barista_actor
 from app.models.models import Usuario, LimpiezaSemanal, TareaLimpieza
 
 router = APIRouter(prefix="/limpieza", tags=["limpieza"])
@@ -47,13 +47,18 @@ def inicio_fin_mes(mes: int, anio: int):
 
 def formato_registro(r: LimpiezaSemanal) -> dict:
     fecha = r.fecha.date() if isinstance(r.fecha, datetime) else r.fecha
+    # Barista REAL que marcó; los registros viejos solo tienen el usuario del kiosko.
+    barista = (r.barista_nombre or "").strip() or (r.usuario.nombre if r.usuario else None)
     return {
         "id":             r.id,
         "tarea_key":      r.tarea_key,
         "fecha":          fecha.isoformat(),
         "semana":         semana_del_mes(fecha),
-        "usuario_nombre": r.usuario.nombre,
+        "usuario_nombre": r.usuario.nombre if r.usuario else None,
         "usuario_id":     r.usuario_id,
+        "barista_nombre": barista,
+        # Timestamp REAL de cuándo se marcó (hora incluida) — para "quién, cuándo, a qué hora".
+        "creado":         r.created_at.isoformat() if r.created_at else None,
         "vobo":           r.vobo,
     }
 
@@ -160,6 +165,7 @@ def registrar_tarea(
     body: RegistrarTareaIn,
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
+    barista: tuple = Depends(get_barista_actor),
 ):
     ensure_tienda_access(user, tienda_id)
 
@@ -195,6 +201,8 @@ def registrar_tarea(
         usuario_id=user.id,
         tarea_key=body.tarea_key,
         fecha=datetime.combine(fecha, datetime.min.time()),
+        barista_id=barista[0],
+        barista_nombre=barista[1],
     )
     db.add(registro)
     db.commit()

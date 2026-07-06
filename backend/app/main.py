@@ -118,6 +118,9 @@ with engine.connect() as _conn:
         # Movimientos de inventario: atribución de barista en kiosko compartido (plano, sin FK).
         "ALTER TABLE movimientos_inventario ADD COLUMN barista_id INTEGER",
         "ALTER TABLE movimientos_inventario ADD COLUMN barista_nombre VARCHAR(100)",
+        # Limpieza semanal: barista REAL que marcó (antes solo el usuario del kiosko).
+        "ALTER TABLE limpieza_semanal ADD COLUMN barista_id INTEGER",
+        "ALTER TABLE limpieza_semanal ADD COLUMN barista_nombre VARCHAR(100)",
         # Pagos a proveedores: valor pagado, forma de pago real y foto del soporte de pago.
         "ALTER TABLE facturas_compra ADD COLUMN valor_pagado NUMERIC(12,2) DEFAULT 0",
         "ALTER TABLE facturas_compra ADD COLUMN forma_pago_real VARCHAR(40)",

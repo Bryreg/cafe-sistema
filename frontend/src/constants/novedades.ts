@@ -17,6 +17,11 @@ export const NOVEDADES: Novedad[] = [
   // ── 6 de julio ──────────────────────────────────────────────────────────
   {
     fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
+    titulo: 'Más claridad: mes vs mes y rendimiento por sede',
+    detalle: 'El Informe Contador ahora compara los indicadores del mes con el mes anterior (▲/▼ %) para ver si el negocio crece o cae. Y en el dashboard, el split por sede muestra los tickets y el ticket promedio de cada local — no solo el volumen — para ver cuál rinde mejor por transacción.',
+  },
+  {
+    fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
     titulo: 'Cumplimiento: cockpit de limpieza por día',
     detalle: 'La pantalla de Cumplimiento se rediseñó: elegís el día y ves por cada rutina (limpieza, surtido, vitrina) cuándo se hizo, la última vez, la próxima esperada y un semáforo (al día / pronto / vencida), con la línea de tiempo del día y los huecos marcados. Más la tendencia de 7 días y quién limpió — ahora con los nombres reales de las baristas (ya no "Kiosk").',
   },

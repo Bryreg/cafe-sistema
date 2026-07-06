@@ -89,6 +89,9 @@ export default function Ingresos() {
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState('')
   const [exito, setExito]   = useState(false)
+  // Flujo del día en caja (venta efectivo + ingresos - salidas): si un pago de
+  // contado lo supera, la plata va a salir del sobre separado — avisar ANTES.
+  const [flujoCaja, setFlujoCaja] = useState<number | null>(null)
 
   useEffect(() => {
     api.get('/inventario/productos').then(r => setProductos(r.data))
@@ -96,6 +99,12 @@ export default function Ingresos() {
       api.get(`/facturas/proveedores/${user.tienda_id}`)
         .then(r => setHistorialProv(r.data))
         .catch(() => {})
+      api.get(`/caja/activo/${user.tienda_id}`)
+        .then(r => {
+          const t = r.data
+          setFlujoCaja(t ? (t.efectivo_esperado_actual ?? 0) - (t.base_real ?? 0) : null)
+        })
+        .catch(() => setFlujoCaja(null))
     }
   }, [user?.tienda_id])
 
@@ -479,6 +488,15 @@ export default function Ingresos() {
               </div>
             </details>
           </div>
+
+          {/* Pago contado que supera la venta del día: saldría del sobre separado */}
+          {tipoPago === 'contado' && flujoCaja !== null && Number(valorTotal) > Math.max(0, flujoCaja) && (
+            <div className="mx-4 mt-3 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[13px] text-amber-800">
+              <strong>Ojo:</strong> este pago de contado supera lo que hay de la venta de hoy en la
+              registradora ({fmt(Math.max(0, Math.round(flujoCaja)))}) — lo que falte va a salir de la
+              plata separada para consignar. Si se puede, mejor pagalo por Bancos (transferencia).
+            </div>
+          )}
 
           {/* Feedback */}
           {error && (

@@ -17,6 +17,11 @@ export const NOVEDADES: Novedad[] = [
   // ── 6 de julio ──────────────────────────────────────────────────────────
   {
     fecha: '2026-07-06', rol: 'barista', tipo: 'cambio',
+    titulo: 'Cuadre cuando los pagos superan la venta del día',
+    detalle: 'Si los pagos a proveedores superan la venta en efectivo del día, la plata que faltó salió de la separada: el cuadre ahora lo explica con los montos y se cuenta TODO junto (registradora + lo que quede separado). Y al recibir un pedido de contado, el sistema avisa antes si el pago va a tocar la plata separada.',
+  },
+  {
+    fecha: '2026-07-06', rol: 'barista', tipo: 'cambio',
     titulo: 'Cuadre de apertura: marcá qué días están en la caja',
     detalle: 'Al abrir, el cuadre muestra los días con plata pendiente por consignar. Marcá solo los que están físicamente en la caja — el esperado se arma con esos. Si un día ya se consignó o está apartado, destildalo.',
   },

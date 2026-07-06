@@ -89,18 +89,37 @@ export default function ConciliacionInventario() {
   // izquierda de la apertura, como línea de tiempo que termina en hoy.
   const prevAsc = useMemo(() => [...(diaria?.cierres_previos ?? [])].reverse(), [diaria])
 
+  // GEOMETRÍA EXACTA de la tabla (table-layout: fixed):
+  // - columnas fijas: 180 + 100 + 90 = 370px (los offsets sticky dependen de esto)
+  // - cierres previos: 140px cada uno (viven fuera del área visible)
+  // - las 4 columnas del día se reparten EXACTO el ancho visible restante
+  const ANCHO_FIJAS = 370
+  const ANCHO_PREVIO = 140
+  const [anchoDia, setAnchoDia] = useState(150)
+  const scrollTabla = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const medir = () => {
+      const el = scrollTabla.current
+      if (!el) return
+      setAnchoDia(Math.max(110, Math.floor((el.clientWidth - ANCHO_FIJAS) / 4)))
+    }
+    medir()
+    window.addEventListener('resize', medir)
+    return () => window.removeEventListener('resize', medir)
+  }, [diaria])
+
   // La tabla arranca desplazada al PRESENTE (extremo derecho): la historia
   // queda detrás, deslizando hacia atrás. Asignación SÍNCRONA en el effect —
   // requestAnimationFrame no corre en pestañas en segundo plano (PWA) y el
   // scroll quedaba en 0 si la pestaña no estaba visible al cargar.
-  const scrollTabla = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = scrollTabla.current
     if (!el || !diaria) return
     el.scrollLeft = el.scrollWidth
     const t = setTimeout(() => { el.scrollLeft = el.scrollWidth }, 250)  // respaldo post-layout
     return () => clearTimeout(t)
-  }, [diaria, loadingDia])
+  }, [diaria, loadingDia, anchoDia])
 
   // Default: la lista COMPLETA del turno (sistema vivo + ultima apertura + cierre
   // cuando exista). El toggle de diferencias es opcional, para revisar dias viejos.
@@ -317,26 +336,39 @@ export default function ConciliacionInventario() {
                   apertura (el pasado atrás). La tabla arranca desplazada al presente:
                   las 7 columnas principales llenan el ancho visible y se desliza hacia
                   atrás para ver la historia. */}
-              <table className="text-sm"
-                style={{ width: `calc(100% + ${(diaria?.cierres_previos?.length ?? 0) * 140}px)` }}>
+              {/* table-layout FIXED + colgroup: cada columna mide EXACTO lo declarado.
+                  Los offsets sticky (0/180/280) dependen de estos anchos; las 4 columnas
+                  del día llenan justo el ancho visible y los cierres previos quedan
+                  100% fuera hasta que se desliza. border-separate: sticky + collapse
+                  desalinea bordes en Chrome. */}
+              <table className="text-sm border-separate"
+                style={{ borderSpacing: 0, tableLayout: 'fixed',
+                         width: ANCHO_FIJAS + prevAsc.length * ANCHO_PREVIO + anchoDia * 4 }}>
+                <colgroup>
+                  <col style={{ width: 180 }} />
+                  <col style={{ width: 100 }} />
+                  <col style={{ width: 90 }} />
+                  {prevAsc.map(cp => <col key={cp.fecha} style={{ width: ANCHO_PREVIO }} />)}
+                  {[0, 1, 2, 3].map(i => <col key={`dia-${i}`} style={{ width: anchoDia }} />)}
+                </colgroup>
                 <thead>
                   <tr className="text-[11px] uppercase tracking-wide text-gray-400">
                     {/* Columnas 1-3 FIJAS: el scroll horizontal solo mueve el resto */}
-                    <th className="text-left px-3 py-2 font-bold sticky left-0 z-10 bg-gray-50 min-w-[180px]">Producto</th>
-                    <th className="text-right px-3 py-2 font-bold sticky left-[180px] z-10 bg-gray-50 min-w-[100px]">Dif. apertura</th>
-                    <th className="text-right px-3 py-2 font-bold sticky left-[280px] z-10 bg-gray-50 min-w-[90px] border-r-2 border-gray-200">Sistema</th>
+                    <th className="text-left px-3 py-2 font-bold sticky left-0 z-10 bg-gray-50 border-b border-gray-200">Producto</th>
+                    <th className="text-right px-3 py-2 font-bold sticky left-[180px] z-10 bg-gray-50 border-b border-gray-200">Dif. apertura</th>
+                    <th className="text-right px-3 py-2 font-bold sticky left-[280px] z-10 bg-gray-50 border-b border-gray-200 border-r-2 border-r-gray-200">Sistema</th>
                     {prevAsc.map((cp, idx) => (
-                      <th key={cp.fecha} className={`text-right px-3 py-2 font-bold bg-gray-50 w-[140px] min-w-[140px] whitespace-nowrap ${idx === prevAsc.length - 1 ? 'border-r-2 border-gray-200' : ''}`}>
+                      <th key={cp.fecha} className={`text-right px-3 py-2 font-bold bg-gray-50 whitespace-nowrap border-b border-gray-200 ${idx === prevAsc.length - 1 ? 'border-r-2 border-r-gray-200' : ''}`}>
                         Cierre {cp.fecha.slice(8, 10)}/{cp.fecha.slice(5, 7)}{cp.atajo ? ' ⚡' : ''}
                       </th>
                     ))}
-                    <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[110px]">Conteo apertura</th>
-                    <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[100px]">Ingresos del día</th>
-                    <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[120px]">Conteo cierre</th>
-                    <th className="text-right px-3 py-2 font-bold bg-gray-50 min-w-[110px]">Dif. apertura → cierre</th>
+                    <th className="text-right px-3 py-2 font-bold bg-gray-50 border-b border-gray-200">Conteo apertura</th>
+                    <th className="text-right px-3 py-2 font-bold bg-gray-50 border-b border-gray-200">Ingresos del día</th>
+                    <th className="text-right px-3 py-2 font-bold bg-gray-50 border-b border-gray-200">Conteo cierre</th>
+                    <th className="text-right px-3 py-2 font-bold bg-gray-50 border-b border-gray-200">Dif. apertura → cierre</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-50">
+                <tbody>
                   {loadingDia ? (
                     <tr><td colSpan={7 + (diaria?.cierres_previos?.length ?? 0)} className="px-3 py-8 text-center text-sm text-gray-400 animate-pulse">Cargando día…</td></tr>
                   ) : filasDia.map(i => {
@@ -353,20 +385,22 @@ export default function ConciliacionInventario() {
                     const difAp = i.apertura?.diferencia ?? null
                     const cambioDia = i.apertura !== null && i.cierre !== null
                       ? i.cierre.real - i.apertura.real : null
+                    // border-separate no pinta bordes de <tr>: el divisor va en cada celda
+                    const b = 'border-b border-gray-50'
                     return (
                       <tr key={i.producto_id} className="hover:bg-gray-50">
-                        <td className="px-3 py-2 font-medium text-gray-700 sticky left-0 z-10 bg-white">{i.nombre}
+                        <td className={`px-3 py-2 font-medium text-gray-700 sticky left-0 z-10 bg-white break-words ${b}`}>{i.nombre}
                           <span className="text-xs text-gray-400 ml-1">{i.unidad}</span></td>
-                        <td className={`px-3 py-2 text-right font-mono font-bold sticky left-[180px] z-10 bg-white ${
+                        <td className={`px-3 py-2 text-right font-mono font-bold sticky left-[180px] z-10 bg-white ${b} ${
                           difAp === null ? 'text-gray-300' : difAp === 0 ? 'text-green-600' : difAp < 0 ? 'text-red-600' : 'text-blue-600'
                         }`}>
                           {difAp === null ? '—' : difAp === 0 ? '✓ 0' : `${difAp > 0 ? '+' : ''}${num(difAp)}`}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono text-gray-500 sticky left-[280px] z-10 bg-white border-r-2 border-gray-200">{num(i.sistema)}</td>
+                        <td className={`px-3 py-2 text-right font-mono text-gray-500 sticky left-[280px] z-10 bg-white border-r-2 border-r-gray-200 ${b}`}>{num(i.sistema)}</td>
                         {prevAsc.map((cp, idx) => {
                           const d = cp.por_producto[i.producto_id]
                           return (
-                            <td key={cp.fecha} className={`px-3 py-2 text-right font-mono w-[140px] min-w-[140px] ${idx === prevAsc.length - 1 ? 'border-r-2 border-gray-100' : ''}`}>
+                            <td key={cp.fecha} className={`px-3 py-2 text-right font-mono ${b} ${idx === prevAsc.length - 1 ? 'border-r-2 border-r-gray-200' : ''}`}>
                               {d === undefined
                                 ? <span className="text-gray-300">—</span>
                                 : (
@@ -380,12 +414,12 @@ export default function ConciliacionInventario() {
                             </td>
                           )
                         })}
-                        <td className="px-3 py-2 text-right font-mono">{celda(i.apertura, false)}</td>
-                        <td className={`px-3 py-2 text-right font-mono ${i.entradas > 0 ? 'text-green-600 font-bold' : 'text-gray-300'}`}>
+                        <td className={`px-3 py-2 text-right font-mono ${b}`}>{celda(i.apertura, false)}</td>
+                        <td className={`px-3 py-2 text-right font-mono ${b} ${i.entradas > 0 ? 'text-green-600 font-bold' : 'text-gray-300'}`}>
                           {i.entradas > 0 ? `+${num(i.entradas)}` : '0'}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono">{celda(i.cierre, true)}</td>
-                        <td className={`px-3 py-2 text-right font-mono font-bold ${
+                        <td className={`px-3 py-2 text-right font-mono ${b}`}>{celda(i.cierre, true)}</td>
+                        <td className={`px-3 py-2 text-right font-mono font-bold ${b} ${
                           cambioDia === null ? 'text-gray-300' : 'text-gray-700'
                         }`}>
                           {cambioDia === null ? '—' : `${cambioDia > 0 ? '+' : ''}${num(cambioDia)}`}

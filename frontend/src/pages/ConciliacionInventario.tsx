@@ -120,6 +120,44 @@ export default function ConciliacionInventario() {
     return () => clearTimeout(t)
   }, [diaria, loadingDia, anchoVisible])
 
+  // Arrastrar-para-desplazar: agarrar la tabla con el mouse la mueve en vez de
+  // seleccionar texto (que es lo que el dueño notaba al no ver barra). Pointer
+  // events cubren mouse y táctil; setPointerCapture no pierde el drag al salir.
+  useEffect(() => {
+    const el = scrollTabla.current
+    if (!el) return
+    let dragging = false, startX = 0, startScroll = 0
+    const down = (e: PointerEvent) => {
+      if (e.button !== 0) return
+      dragging = true
+      startX = e.clientX
+      startScroll = el.scrollLeft
+      try { el.setPointerCapture(e.pointerId) } catch { /* noop */ }
+      el.style.cursor = 'grabbing'
+      el.style.userSelect = 'none'
+    }
+    const move = (e: PointerEvent) => {
+      if (!dragging) return
+      el.scrollLeft = startScroll - (e.clientX - startX)
+    }
+    const up = (e: PointerEvent) => {
+      dragging = false
+      el.style.cursor = ''
+      el.style.userSelect = ''
+      try { el.releasePointerCapture(e.pointerId) } catch { /* noop */ }
+    }
+    el.addEventListener('pointerdown', down)
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+    el.addEventListener('pointercancel', up)
+    return () => {
+      el.removeEventListener('pointerdown', down)
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      el.removeEventListener('pointercancel', up)
+    }
+  }, [diaria])
+
   // Default: la lista COMPLETA del turno (sistema vivo + ultima apertura + cierre
   // cuando exista). El toggle de diferencias es opcional, para revisar dias viejos.
   const [soloDif, setSoloDif] = useState(false)
@@ -329,8 +367,8 @@ export default function ConciliacionInventario() {
               </button>
             </span>
           </div>
-          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-            <div className="overflow-x-auto" ref={scrollTabla}>
+          <div className="bg-white rounded-2xl border border-gray-200">
+            <div className="overflow-x-auto scroll-visible cursor-grab active:cursor-grabbing rounded-2xl" ref={scrollTabla}>
               {/* Línea de tiempo: los cierres de días anteriores van A LA IZQUIERDA de la
                   apertura (el pasado atrás). La tabla arranca desplazada al presente:
                   las 7 columnas principales llenan el ancho visible y se desliza hacia

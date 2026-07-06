@@ -4,11 +4,12 @@ import api from '../api/client'
 import {
   BarChart3, TrendingUp, TrendingDown, ShoppingCart, Package,
   AlertTriangle, Download, RefreshCw, Layers, Store, Banknote,
-  Wallet, Check, ChevronRight, Inbox,
+  Wallet, Check, ChevronRight, Inbox, Sparkles,
 } from 'lucide-react'
 // Hora LOCAL (Colombia): toISOString es UTC y despues de las 19:00 devuelve manana,
 // haciendo que el panel consulte un dia futuro y muestre todo en cero.
 import { hoyLocal as today, haceDiasLocal as daysAgo, inicioMesLocal as primerDiaDelMes } from '../utils/fechaLocal'
+import { novedadesParaRol, TipoNovedad } from '../constants/novedades'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -145,6 +146,19 @@ const catColores: Record<string, string> = {
   bebida: '#5c7a4e',
   pasteleria: '#c08a3e',
   insumo: '#7a6a55',
+}
+
+// Badges de novedad (estilo inline para matchear el dashboard; el modal usa Tailwind).
+const TIPO_NOV: Record<TipoNovedad, { label: string; fg: string; bg: string }> = {
+  nuevo:  { label: 'Nuevo',  fg: '#15803d', bg: '#dcfce7' },
+  mejora: { label: 'Mejora', fg: '#1d4ed8', bg: '#dbeafe' },
+  cambio: { label: 'Cambio', fg: '#b45309', bg: '#fef3c7' },
+}
+// Parseo manual de YYYY-MM-DD para evitar el corrimiento UTC de new Date(iso).
+function fmtFechaNov(f: string): string {
+  const [a, m, d] = f.split('-').map(Number)
+  return new Date(a, (m || 1) - 1, d || 1)
+    .toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })
 }
 
 // ─── Componentes auxiliares ───────────────────────────────────────────────────
@@ -978,6 +992,22 @@ export default function Dashboard() {
               </div>
             ))
           )}
+        </div>
+
+        {/* Novedades del sistema: changelog para el admin, siempre a la vista (la
+            estrellita del header sigue siendo el historial completo + marca-visto). */}
+        <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
+          <SectionTitle icon={Sparkles} label="Novedades del sistema" />
+          {novedadesParaRol('admin').slice(0, 6).map((n, idx, arr) => (
+            <div key={idx} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: idx < arr.length - 1 ? '1px solid #f0ebe4' : 'none' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, color: TIPO_NOV[n.tipo].fg, background: TIPO_NOV[n.tipo].bg }}>{TIPO_NOV[n.tipo].label}</span>
+                <span style={{ fontSize: 10, color: '#8b7d6b' }}>{fmtFechaNov(n.fecha)}</span>
+              </div>
+              <p style={{ margin: 0, fontSize: 12.5, fontWeight: 600, color: '#2d1f0f' }}>{n.titulo}</p>
+              <p style={{ margin: '2px 0 0', fontSize: 11.5, color: '#6b5d4b', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{n.detalle}</p>
+            </div>
+          ))}
         </div>
 
       </div>

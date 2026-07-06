@@ -46,6 +46,32 @@ input, select, textarea {
   font-size: 16px;
 }
 
+/*
+ * Barra horizontal VISIBLE — opt-out del `::-webkit-scrollbar{display:none}` global.
+ * Debe ir FUERA de @layer para ganarle en la cascada. La usa la tabla de
+ * conciliación, donde los cierres previos viven fuera del borde y sin barra el
+ * dueño no sabe que puede deslizar. Verde forest para matchear la marca.
+ */
+.scroll-visible {
+  scrollbar-width: thin;                              /* Firefox */
+  scrollbar-color: oklch(55% 0.12 155) transparent;
+}
+.scroll-visible::-webkit-scrollbar {
+  display: block;                                     /* revierte el hide global */
+  height: 10px;
+}
+.scroll-visible::-webkit-scrollbar-track {
+  background: oklch(95% 0.015 155);
+  border-radius: 9999px;
+}
+.scroll-visible::-webkit-scrollbar-thumb {
+  background: oklch(55% 0.12 155);
+  border-radius: 9999px;
+}
+.scroll-visible::-webkit-scrollbar-thumb:hover {
+  background: oklch(35% 0.05 155);
+}
+
 /* ── News ticker ─────────────────────────────────────────────────────────── */
 @keyframes ticker-scroll {
   0%   { transform: translateX(0); }

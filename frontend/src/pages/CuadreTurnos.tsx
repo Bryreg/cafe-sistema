@@ -630,12 +630,12 @@ function HistorialBaristas({ tiendaId, desde, hasta }: { tiendaId: number; desde
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Desempeño por barista</p>
           <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
             {baristasFilas.map((f, i) => (
-              <div key={f.usuario_id} className="px-4 py-3 flex items-center gap-3">
+              <div key={f.nombre} className="px-4 py-3 flex items-center gap-3">
                 <span className="text-sm font-mono text-gray-300 w-5 shrink-0">{i + 1}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-gray-800">{f.nombre}</p>
                   <p className="text-xs text-gray-400">
-                    {f.n_recibos} llegadas · {f.n_cierres} cierres
+                    {totalCuadres(f)} cuadres
                     {f.ultimo_cuadre && <span> · último {fmtDateTime(f.ultimo_cuadre)}</span>}
                   </p>
                 </div>
@@ -664,7 +664,7 @@ function HistorialBaristas({ tiendaId, desde, hasta }: { tiendaId: number; desde
 
       {cuadresTotales && (
         <>
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2">Cuadres de llegada</p>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2">Resumen de cuadres</p>
           <div className="grid grid-cols-3 gap-3">
             <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
               <p className="text-xs text-gray-400">Total cuadres</p>
@@ -757,7 +757,7 @@ function TurnoTimelineCard({ turno, onFoto, onDetalle, esDiaAnterior, onCerrarPe
 
   const cuadres = (data?.eventos ?? []).filter(e => e.tipo === 'cuadre')
   const baristas = data?.resumen_baristas ?? []
-  const CUADRE_LBL: Record<string, string> = { apertura: 'Inicial', entrada: 'Llegada', entrega: 'Llegada', recibo: 'Llegada', salida: 'Cierre' }
+  const CUADRE_LBL: Record<string, string> = { apertura: 'Inicial', entrada: 'Llegada', entrega: 'Llegada', recibo: 'Llegada', salida_barista: 'Salida', salida: 'Cierre' }
   const dColor = (d: number) => Math.round(d) === 0 ? 'oklch(35% 0.13 145)' : d > 0 ? 'oklch(35% 0.13 240)' : 'oklch(42% 0.18 30)'
   const dBg = (d: number) => Math.round(d) === 0 ? 'oklch(95% 0.04 145)' : d > 0 ? 'oklch(95% 0.04 240)' : 'oklch(96% 0.04 30)'
 
@@ -872,15 +872,13 @@ export default function CuadreTurnos() {
   const [fotoUrl, setFotoUrl] = useState<string | null>(null)
   const [filtroOp, setFiltroOp] = useState<'todos' | 'cerrados' | 'abiertos'>('todos')
 
-  // Mode
-  const [modo, setModo] = useState<'operacional' | 'historial'>('operacional')
-
-  // Historial
+  // Una sola pantalla: la línea de tiempo de turnos + rango de fechas + panel
+  // colapsable de desempeño por barista. (Antes: dos niveles de pestañas confusos.)
   const [sedes, setSedes] = useState<Sede[]>([])
   const [histTiendaId, setHistTiendaId] = useState<number>(tiendaId)
-  const [histTab, setHistTab] = useState<'turnos' | 'baristas'>('turnos')
   const [desde, setDesde] = useState(firstOfMonth)
   const [hasta, setHasta]  = useState(today)
+  const [verDesempeno, setVerDesempeno] = useState(false)
 
   // La sede activa (histTiendaId) gobierna AMBAS vistas: antes Operacional cargaba
   // fijo la sede del admin y Palmetto solo se veía en Historial.
@@ -920,10 +918,15 @@ export default function CuadreTurnos() {
     }
   }
 
+  // Filtro por estado + rango de fechas (client-side sobre TODOS los turnos que
+  // devuelve /caja/historial). El mismo rango alimenta el panel de desempeño.
+  const enRango = (iso: string) => {
+    const f = isoLocal(parseUTC(iso))
+    return (!desde || f >= desde) && (!hasta || f <= hasta)
+  }
   const visibles = turnos.filter(t =>
-    filtroOp === 'todos' ? true :
-    filtroOp === 'cerrados' ? t.estado === 'cerrado' :
-    t.estado === 'abierto'
+    (filtroOp === 'todos' ? true : filtroOp === 'cerrados' ? t.estado === 'cerrado' : t.estado === 'abierto')
+    && enRango(t.fecha_apertura)
   )
 
   // Detail view (takes over full screen)
@@ -960,19 +963,9 @@ export default function CuadreTurnos() {
           <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'oklch(22% 0.02 60)', flex: 1 }}>Cuadres de turno</p>
         </div>
 
-        {/* Mode toggle */}
-        <div style={{ display: 'flex', gap: 6, marginTop: 10, maxWidth: 720, margin: '10px auto 0' }}>
-          <button onClick={() => setModo('operacional')} style={modo === 'operacional' ? btnActive : btnInactive}>
-            Operacional
-          </button>
-          <button onClick={() => setModo('historial')} style={modo === 'historial' ? btnActive : btnInactive}>
-            Historial
-          </button>
-        </div>
-
-        {/* Sede selector (admin) — gobierna las DOS vistas */}
+        {/* Sede selector (admin) */}
         {isAdmin && sedes.length > 1 && (
-          <div style={{ display: 'flex', gap: 6, marginTop: 8, maxWidth: 720, margin: '8px auto 0', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 6, marginTop: 10, maxWidth: 720, margin: '10px auto 0', flexWrap: 'wrap' }}>
             {sedes.map(s => (
               <button key={s.id} onClick={() => setHistTiendaId(s.id)}
                 style={histTiendaId === s.id
@@ -984,77 +977,52 @@ export default function CuadreTurnos() {
           </div>
         )}
 
-        {/* Operacional sub-filter */}
-        {modo === 'operacional' && (
-          <div style={{ display: 'flex', gap: 6, marginTop: 8, maxWidth: 720, margin: '8px auto 0' }}>
-            {(['todos', 'cerrados', 'abiertos'] as const).map(f => (
-              <button key={f} onClick={() => setFiltroOp(f)}
-                style={filtroOp === f
-                  ? { ...btnBase, background: 'oklch(50% 0.08 155)', color: '#fff', padding: '4px 12px', fontSize: 11 }
-                  : { ...btnBase, background: 'oklch(96% 0.005 75)', color: 'oklch(50% 0.01 60)', padding: '4px 12px', fontSize: 11 }}>
-                {f.charAt(0).toUpperCase() + f.slice(1)}
-              </button>
+        {/* Filtros: estado + rango de fechas — gobiernan la lista y el desempeño */}
+        <div style={{ maxWidth: 720, margin: '8px auto 0', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {(['todos', 'cerrados', 'abiertos'] as const).map(f => (
+            <button key={f} onClick={() => setFiltroOp(f)}
+              style={filtroOp === f
+                ? { ...btnBase, background: 'oklch(50% 0.08 155)', color: '#fff', padding: '4px 12px', fontSize: 11 }
+                : { ...btnBase, background: 'oklch(96% 0.005 75)', color: 'oklch(50% 0.01 60)', padding: '4px 12px', fontSize: 11 }}>
+              {f.charAt(0).toUpperCase() + f.slice(1)}
+            </button>
+          ))}
+          <span style={{ flex: 1 }} />
+          <label style={{ fontSize: 11, color: 'oklch(55% 0.01 60)', fontWeight: 600 }}>Desde</label>
+          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
+            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '1.5px solid oklch(88% 0.006 75)', background: '#fff', fontFamily: 'inherit' }} />
+          <label style={{ fontSize: 11, color: 'oklch(55% 0.01 60)', fontWeight: 600 }}>Hasta</label>
+          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
+            style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '1.5px solid oklch(88% 0.006 75)', background: '#fff', fontFamily: 'inherit' }} />
+        </div>
+      </div>
+
+      {/* Content: UNA pantalla — línea de tiempo de turnos + desempeño colapsable */}
+      <div style={{ maxWidth: 720, margin: '0 auto', padding: '12px 16px 32px' }}>
+        {loading ? (
+          <p style={{ textAlign: 'center', color: 'oklch(60% 0.01 60)', fontSize: 13, marginTop: 40 }}>Cargando...</p>
+        ) : visibles.length === 0 ? (
+          <p style={{ textAlign: 'center', color: 'oklch(60% 0.01 60)', fontSize: 13, marginTop: 40 }}>Sin turnos en el período seleccionado</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {visibles.map(t => (
+              <TurnoTimelineCard key={t.id} turno={t} onFoto={setFotoUrl}
+                onDetalle={() => setSelected(t)}
+                esDiaAnterior={esDiaAnterior}
+                onCerrarPendiente={() => cerrarPendiente(t)} />
             ))}
           </div>
         )}
 
-        {/* Historial controls */}
-        {modo === 'historial' && (
-          <div style={{ maxWidth: 720, margin: '8px auto 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {/* Date range */}
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <label style={{ fontSize: 11, color: 'oklch(55% 0.01 60)', fontWeight: 600 }}>Desde</label>
-              <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '1.5px solid oklch(88% 0.006 75)', background: '#fff', fontFamily: 'inherit' }} />
-              <label style={{ fontSize: 11, color: 'oklch(55% 0.01 60)', fontWeight: 600 }}>Hasta</label>
-              <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
-                style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '1.5px solid oklch(88% 0.006 75)', background: '#fff', fontFamily: 'inherit' }} />
-            </div>
-
-            {/* Sub-tabs */}
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button onClick={() => setHistTab('turnos')}
-                style={histTab === 'turnos'
-                  ? { ...btnBase, background: 'oklch(30% 0.06 155)', color: '#fff', padding: '4px 14px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }
-                  : { ...btnBase, background: 'oklch(96% 0.005 75)', color: 'oklch(50% 0.01 60)', padding: '4px 14px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }}>
-                <ChevronRight size={12} /> Turnos
-              </button>
-              <button onClick={() => setHistTab('baristas')}
-                style={histTab === 'baristas'
-                  ? { ...btnBase, background: 'oklch(30% 0.06 155)', color: '#fff', padding: '4px 14px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }
-                  : { ...btnBase, background: 'oklch(96% 0.005 75)', color: 'oklch(50% 0.01 60)', padding: '4px 14px', fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }}>
-                <UserCheck size={12} /> Baristas
-              </button>
-            </div>
-          </div>
-        )}
+        {/* Desempeño por barista — opcional, sobre el mismo rango de fechas */}
+        <button onClick={() => setVerDesempeno(v => !v)}
+          style={{ ...btnBase, marginTop: 16, width: '100%', justifyContent: 'center', background: '#fff',
+                   border: '1px solid oklch(92% 0.008 75)', color: 'oklch(35% 0.06 155)',
+                   display: 'flex', alignItems: 'center', gap: 6, padding: '10px' }}>
+          <UserCheck size={14} /> Desempeño por barista {verDesempeno ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+        {verDesempeno && <HistorialBaristas tiendaId={histTiendaId} desde={desde} hasta={hasta} />}
       </div>
-
-      {/* Content */}
-      {modo === 'operacional' ? (
-        <div style={{ maxWidth: 720, margin: '0 auto', padding: '12px 16px 32px' }}>
-          {loading ? (
-            <p style={{ textAlign: 'center', color: 'oklch(60% 0.01 60)', fontSize: 13, marginTop: 40 }}>Cargando...</p>
-          ) : visibles.length === 0 ? (
-            <p style={{ textAlign: 'center', color: 'oklch(60% 0.01 60)', fontSize: 13, marginTop: 40 }}>Sin turnos registrados</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {visibles.map(t => (
-                <TurnoTimelineCard key={t.id} turno={t} onFoto={setFotoUrl}
-                  onDetalle={() => setSelected(t)}
-                  esDiaAnterior={esDiaAnterior}
-                  onCerrarPendiente={() => cerrarPendiente(t)} />
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div style={{ maxWidth: 720, margin: '0 auto' }}>
-          {histTab === 'turnos'
-            ? <HistorialTurnos   tiendaId={histTiendaId} desde={desde} hasta={hasta} />
-            : <HistorialBaristas tiendaId={histTiendaId} desde={desde} hasta={hasta} />}
-        </div>
-      )}
 
       {fotoUrl && <Lightbox url={fotoUrl} onClose={() => setFotoUrl(null)} />}
     </div>

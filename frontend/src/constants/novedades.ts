@@ -16,6 +16,26 @@ export interface Novedad {
 export const NOVEDADES: Novedad[] = [
   // ── 6 de julio ──────────────────────────────────────────────────────────
   {
+    fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
+    titulo: 'Novedades del sistema en el dashboard',
+    detalle: 'El dashboard ahora tiene un panel de Novedades: los cambios del sistema quedan a la vista sin tener que abrir la estrellita. Siempre vas a ver lo último que se actualizó.',
+  },
+  {
+    fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
+    titulo: 'Cuadres: salidas bien etiquetadas y una sola pantalla',
+    detalle: 'En Cuadres de turno, cuando una barista marca salida ahora dice "Salida" (antes decía "Llegada" para todo). Y se unificó todo en una sola pantalla con filtro por estado y rango de fechas, más un panel colapsable de desempeño por barista con los nombres reales (ya no aparece "Kiosk").',
+  },
+  {
+    fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
+    titulo: 'Conciliación: barra para ver los cierres anteriores',
+    detalle: 'La tabla de conciliación ahora tiene barra de scroll horizontal visible y podés arrastrarla con el mouse para ver los cierres de días anteriores. Antes, al arrastrar, solo se seleccionaba el texto.',
+  },
+  {
+    fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
+    titulo: 'Consignaciones: horario del turno junto a la fecha',
+    detalle: 'Cuando un día tiene dos turnos, cada tarjeta ahora muestra el rango horario (ej. "Turno 08:12 → 17:44") para que se distingan a simple vista. Cada turno se consigna por separado: no es una fecha duplicada.',
+  },
+  {
     fecha: '2026-07-06', rol: 'barista', tipo: 'cambio',
     titulo: 'Cuadre cuando los pagos superan la venta del día',
     detalle: 'Si los pagos a proveedores superan la venta en efectivo del día, la plata que faltó salió de la separada: el cuadre ahora lo explica con los montos y se cuenta TODO junto (registradora + lo que quede separado). Y al recibir un pedido de contado, el sistema avisa antes si el pago va a tocar la plata separada.',

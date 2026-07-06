@@ -527,7 +527,7 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
                       efectivo_real: float,
                       ventas_tarjeta_bold: float, imagen_url: str | None,
                       barista_id: int | None = None, barista_nombre: str | None = None,
-                      base_separada: bool = False):
+                      base_separada: bool = False, tipo_cuadre: str = "entrega"):
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
         CajaTurno.estado == EstadoTurnoEnum.abierto
@@ -590,6 +590,9 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
         imagen_url=imagen_url,
         barista_id=barista_id,
         barista_nombre=barista_nombre,
+        # 'salida_barista' cuando una barista se va a mitad de turno (desde PanelSalida):
+        # así el timeline lo rotula "Salida" y no "Llegada". Default 'entrega' (cuadre común).
+        tipo=tipo_cuadre,
     )
     db.add(entrega)
     audit.registrar(
@@ -623,7 +626,8 @@ def get_turno_timeline(db: Session, turno_id: int) -> dict:
 
     TIPO_LBL = {
         "apertura": "Cuadre inicial", "entrada": "Entrada de barista",
-        "entrega": "Cuadre de llegada", "recibo": "Cuadre de llegada", "salida": "Cuadre de cierre",
+        "entrega": "Cuadre de llegada", "recibo": "Cuadre de llegada",
+        "salida_barista": "Salida de barista", "salida": "Cuadre de cierre",
     }
     eventos = []
 

@@ -31,9 +31,9 @@ export const NOVEDADES: Novedad[] = [
     detalle: 'La tabla de conciliación ahora tiene barra de scroll horizontal visible y podés arrastrarla con el mouse para ver los cierres de días anteriores. Antes, al arrastrar, solo se seleccionaba el texto.',
   },
   {
-    fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
-    titulo: 'Consignaciones: horario del turno junto a la fecha',
-    detalle: 'Cuando un día tiene dos turnos, cada tarjeta ahora muestra el rango horario (ej. "Turno 08:12 → 17:44") para que se distingan a simple vista. Cada turno se consigna por separado: no es una fecha duplicada.',
+    fecha: '2026-07-06', rol: 'admin', tipo: 'cambio',
+    titulo: 'Consignaciones: una tarjeta por día',
+    detalle: 'La lista de consignaciones ahora muestra UNA tarjeta por día. Si un día tuvo dos turnos, se suman en la misma tarjeta (el detalle expande los movimientos y consignaciones de ambos). Los totales por consignar no cambian.',
   },
   {
     fecha: '2026-07-06', rol: 'barista', tipo: 'cambio',

@@ -743,7 +743,8 @@ function TurnoTimelineCard({ turno, onFoto, onDetalle, esDiaAnterior, onCerrarPe
   turno: TurnoItem; onFoto: (url: string) => void; onDetalle: () => void
   esDiaAnterior: (iso: string) => boolean; onCerrarPendiente: () => void
 }) {
-  const [data, setData] = useState<{ eventos: TimelineEvento[]; resumen_baristas: ResumenBarista[] } | null>(null)
+  type MovTL = { tipo: string; concepto: string; valor: number; fecha: string | null; imagen_url: string | null }
+  const [data, setData] = useState<{ eventos: TimelineEvento[]; resumen_baristas: ResumenBarista[]; movimientos: MovTL[] } | null>(null)
   const cerrado = turno.estado === 'cerrado'
   const diffCierre = turno.diferencia_cierre
   const hayDiff = diffCierre !== null && Math.round(diffCierre) !== 0
@@ -752,17 +753,20 @@ function TurnoTimelineCard({ turno, onFoto, onDetalle, esDiaAnterior, onCerrarPe
   useEffect(() => {
     api.get(`/caja/turno/${turno.id}/timeline`)
       .then(r => setData(r.data))
-      .catch(() => setData({ eventos: [], resumen_baristas: [] }))
+      .catch(() => setData({ eventos: [], resumen_baristas: [], movimientos: [] }))
   }, [turno.id])
 
   const cuadres = (data?.eventos ?? []).filter(e => e.tipo === 'cuadre')
   const baristas = data?.resumen_baristas ?? []
+  const movimientos = data?.movimientos ?? []
   const CUADRE_LBL: Record<string, string> = { apertura: 'Inicial', entrada: 'Llegada', entrega: 'Llegada', recibo: 'Llegada', salida_barista: 'Salida', salida: 'Cierre' }
   const dColor = (d: number) => Math.round(d) === 0 ? 'oklch(35% 0.13 145)' : d > 0 ? 'oklch(35% 0.13 240)' : 'oklch(42% 0.18 30)'
   const dBg = (d: number) => Math.round(d) === 0 ? 'oklch(95% 0.04 145)' : d > 0 ? 'oklch(95% 0.04 240)' : 'oklch(96% 0.04 30)'
 
   return (
     <div style={{ background: '#fff', borderRadius: 16, border: '1px solid oklch(92% 0.008 75)', boxShadow: '0 1px 3px rgba(0,0,0,.04)', padding: '12px 14px' }}>
+     <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+      <div style={{ flex: '1 1 360px', minWidth: 0 }}>
       {/* Cabecera: fecha + estado */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -855,6 +859,41 @@ function TurnoTimelineCard({ turno, onFoto, onDetalle, esDiaAnterior, onCerrarPe
         style={{ marginTop: 10, fontSize: 11, fontWeight: 700, color: 'oklch(40% 0.08 155)', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}>
         Ver detalle completo →
       </button>
+      </div>
+
+      {/* Columna derecha: movimientos de caja del turno — el detalle al lado, no tras un click */}
+      {movimientos.length > 0 && (
+        <div style={{ flex: '1 1 300px', minWidth: 0, borderLeft: '1px solid oklch(94% 0.006 75)', paddingLeft: 14 }}>
+          <p style={{ margin: '0 0 8px', fontSize: 10, fontWeight: 700, color: 'oklch(55% 0.01 60)', letterSpacing: '.08em', textTransform: 'uppercase' }}>
+            Movimientos de caja
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {movimientos.map((m, i) => {
+              const ing = m.tipo === 'ingreso'
+              return (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'oklch(98% 0.004 75)', borderRadius: 8, padding: '5px 8px' }}>
+                  <span style={{ width: 22, height: 22, borderRadius: 7, flexShrink: 0, background: ing ? 'oklch(94% 0.05 145)' : 'oklch(96% 0.04 30)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {ing ? <TrendingUp size={11} style={{ color: 'oklch(35% 0.13 145)' }} /> : <TrendingDown size={11} style={{ color: 'oklch(42% 0.18 30)' }} />}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 11.5, fontWeight: 600, color: 'oklch(28% 0.02 60)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.concepto}</p>
+                    <p style={{ margin: 0, fontSize: 10, color: 'oklch(60% 0.01 60)' }}>{m.fecha ? fmtTime(m.fecha) : ''}</p>
+                  </div>
+                  {m.imagen_url && (
+                    <button onClick={() => onFoto(m.imagen_url!)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, color: 'oklch(55% 0.08 155)', flexShrink: 0 }}>
+                      <Camera size={12} />
+                    </button>
+                  )}
+                  <span style={{ fontSize: 11.5, fontWeight: 700, fontVariantNumeric: 'tabular-nums', flexShrink: 0, color: ing ? 'oklch(35% 0.13 145)' : 'oklch(42% 0.18 30)' }}>
+                    {ing ? '+' : '−'}{fmt(m.valor)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+     </div>
     </div>
   )
 }
@@ -956,7 +995,7 @@ export default function CuadreTurnos() {
 
       {/* Header */}
       <div style={{ background: '#fff', borderBottom: '1px solid oklch(92% 0.008 75)', padding: '12px 16px', position: 'sticky', top: 0, zIndex: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, maxWidth: 720, margin: '0 auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, maxWidth: 1100, margin: '0 auto' }}>
           <button onClick={() => navigate(-1)} style={{ padding: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: 'oklch(55% 0.01 60)' }}>
             <ArrowLeft size={20} />
           </button>
@@ -965,7 +1004,7 @@ export default function CuadreTurnos() {
 
         {/* Sede selector (admin) */}
         {isAdmin && sedes.length > 1 && (
-          <div style={{ display: 'flex', gap: 6, marginTop: 10, maxWidth: 720, margin: '10px auto 0', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 6, marginTop: 10, maxWidth: 1100, margin: '10px auto 0', flexWrap: 'wrap' }}>
             {sedes.map(s => (
               <button key={s.id} onClick={() => setHistTiendaId(s.id)}
                 style={histTiendaId === s.id
@@ -978,7 +1017,7 @@ export default function CuadreTurnos() {
         )}
 
         {/* Filtros: estado + rango de fechas — gobiernan la lista y el desempeño */}
-        <div style={{ maxWidth: 720, margin: '8px auto 0', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ maxWidth: 1100, margin: '8px auto 0', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {(['todos', 'cerrados', 'abiertos'] as const).map(f => (
             <button key={f} onClick={() => setFiltroOp(f)}
               style={filtroOp === f
@@ -998,7 +1037,7 @@ export default function CuadreTurnos() {
       </div>
 
       {/* Content: UNA pantalla — línea de tiempo de turnos + desempeño colapsable */}
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '12px 16px 32px' }}>
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '12px 16px 32px' }}>
         {loading ? (
           <p style={{ textAlign: 'center', color: 'oklch(60% 0.01 60)', fontSize: 13, marginTop: 40 }}>Cargando...</p>
         ) : visibles.length === 0 ? (

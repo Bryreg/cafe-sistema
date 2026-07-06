@@ -884,8 +884,13 @@ export default function Dashboard() {
           )}
         </div>
 
+      </div>
+
+      {/* Fila: Top productos (izq) + Novedades del sistema (der, horizontal) */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 16 }}>
+
         {/* Top productos */}
-        <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
+        <div style={{ flex: '1 1 280px', minWidth: 0, background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
           <SectionTitle icon={TrendingUp} label="Top productos" />
           {topProductos.length === 0 ? (
             <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Sin ventas en el período</p>
@@ -909,6 +914,23 @@ export default function Dashboard() {
               ))}
             </div>
           )}
+        </div>
+
+        {/* Novedades del sistema — horizontal, ocupa el ancho a la derecha de Top productos */}
+        <div style={{ flex: '2 1 460px', minWidth: 0, background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
+          <SectionTitle icon={Sparkles} label="Novedades del sistema" />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: 10 }}>
+            {novedadesParaRol('admin').slice(0, 6).map((n, idx) => (
+              <div key={idx} style={{ border: '1px solid #f0ebe4', borderRadius: 10, padding: '8px 10px', background: '#fcfbf9' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, color: TIPO_NOV[n.tipo].fg, background: TIPO_NOV[n.tipo].bg }}>{TIPO_NOV[n.tipo].label}</span>
+                  <span style={{ fontSize: 10, color: '#8b7d6b' }}>{fmtFechaNov(n.fecha)}</span>
+                </div>
+                <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: '#2d1f0f' }}>{n.titulo}</p>
+                <p style={{ margin: '2px 0 0', fontSize: 11, color: '#6b5d4b', lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{n.detalle}</p>
+              </div>
+            ))}
+          </div>
         </div>
 
       </div>
@@ -992,22 +1014,6 @@ export default function Dashboard() {
               </div>
             ))
           )}
-        </div>
-
-        {/* Novedades del sistema: changelog para el admin, siempre a la vista (la
-            estrellita del header sigue siendo el historial completo + marca-visto). */}
-        <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
-          <SectionTitle icon={Sparkles} label="Novedades del sistema" />
-          {novedadesParaRol('admin').slice(0, 6).map((n, idx, arr) => (
-            <div key={idx} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: idx < arr.length - 1 ? '1px solid #f0ebe4' : 'none' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, color: TIPO_NOV[n.tipo].fg, background: TIPO_NOV[n.tipo].bg }}>{TIPO_NOV[n.tipo].label}</span>
-                <span style={{ fontSize: 10, color: '#8b7d6b' }}>{fmtFechaNov(n.fecha)}</span>
-              </div>
-              <p style={{ margin: 0, fontSize: 12.5, fontWeight: 600, color: '#2d1f0f' }}>{n.titulo}</p>
-              <p style={{ margin: '2px 0 0', fontSize: 11.5, color: '#6b5d4b', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{n.detalle}</p>
-            </div>
-          ))}
         </div>
 
       </div>

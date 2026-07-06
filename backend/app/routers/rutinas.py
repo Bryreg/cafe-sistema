@@ -108,3 +108,28 @@ def cumplimiento_semana(tienda_id: int, db: Session = Depends(get_db),
                         user: Usuario = Depends(get_current_user)):
     ensure_tienda_access(user, tienda_id)
     return svc.get_cumplimiento_semana(db, tienda_id)
+
+
+@router.get("/cumplimiento-dia")
+def cumplimiento_dia(tienda_id: int, fecha: Optional[str] = Query(None),
+                     db: Session = Depends(get_db),
+                     user: Usuario = Depends(get_current_user)):
+    """Cockpit de limpieza de un día (default hoy). fecha en YYYY-MM-DD (hora Colombia)."""
+    from datetime import date as _date
+    ensure_tienda_access(user, tienda_id)
+    d = None
+    if fecha:
+        try:
+            d = _date.fromisoformat(fecha)
+        except ValueError:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="fecha debe ser YYYY-MM-DD")
+    return svc.get_cumplimiento_dia(db, tienda_id, d)
+
+
+@router.get("/cumplimiento-tendencia")
+def cumplimiento_tendencia(tienda_id: int, dias: int = Query(7, ge=1, le=31),
+                           db: Session = Depends(get_db),
+                           user: Usuario = Depends(get_current_user)):
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_cumplimiento_tendencia(db, tienda_id, dias)

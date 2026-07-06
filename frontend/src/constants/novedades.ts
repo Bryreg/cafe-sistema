@@ -17,6 +17,11 @@ export const NOVEDADES: Novedad[] = [
   // ── 6 de julio ──────────────────────────────────────────────────────────
   {
     fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
+    titulo: 'Cumplimiento: cockpit de limpieza por día',
+    detalle: 'La pantalla de Cumplimiento se rediseñó: elegís el día y ves por cada rutina (limpieza, surtido, vitrina) cuándo se hizo, la última vez, la próxima esperada y un semáforo (al día / pronto / vencida), con la línea de tiempo del día y los huecos marcados. Más la tendencia de 7 días y quién limpió — ahora con los nombres reales de las baristas (ya no "Kiosk").',
+  },
+  {
+    fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
     titulo: 'Novedades del sistema en el dashboard',
     detalle: 'El dashboard ahora tiene un panel de Novedades: los cambios del sistema quedan a la vista sin tener que abrir la estrellita. Siempre vas a ver lo último que se actualizó.',
   },

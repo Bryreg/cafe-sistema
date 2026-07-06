@@ -703,11 +703,31 @@ def get_turno_timeline(db: Session, turno_id: int) -> dict:
             "diferencia_cuadre": float(cuadre.diferencia_efectivo or 0) if cuadre else None,
         })
 
+    # Movimientos de caja (ingresos/egresos: pagos a proveedor, cambio de sencilla…)
+    # para mostrar el detalle al lado del turno sin un segundo request.
+    movs = (
+        db.query(MovimientoCaja)
+        .filter(MovimientoCaja.caja_turno_id == turno_id)
+        .order_by(MovimientoCaja.fecha.asc())
+        .all()
+    )
+    movimientos = [
+        {
+            "tipo": _mov_tipo(m),
+            "concepto": m.concepto,
+            "valor": float(m.valor or 0),
+            "fecha": m.fecha.isoformat() if m.fecha else None,
+            "imagen_url": m.imagen_url,
+        }
+        for m in movs
+    ]
+
     return {
         "turno_id": turno.id,
         "estado": turno.estado.value if turno.estado else None,
         "eventos": eventos,
         "resumen_baristas": resumen,
+        "movimientos": movimientos,
     }
 
 

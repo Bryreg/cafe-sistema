@@ -17,6 +17,11 @@ export const NOVEDADES: Novedad[] = [
   // ── 6 de julio ──────────────────────────────────────────────────────────
   {
     fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
+    titulo: 'Cumplimiento: bitácora "quién hizo qué y cuándo"',
+    detalle: 'El cockpit de limpieza ahora incluye una bitácora del día en orden cronológico: cada rutina registrada con su hora, la barista que la hizo y la foto/nota si tiene. De un vistazo ves toda la actividad del día antes de ir a revisar. Además se limpiaron plantillas de rutina duplicadas viejas.',
+  },
+  {
+    fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',
     titulo: 'Más claridad: mes vs mes y rendimiento por sede',
     detalle: 'El Informe Contador ahora compara los indicadores del mes con el mes anterior (▲/▼ %) para ver si el negocio crece o cae. Y en el dashboard, el split por sede muestra los tickets y el ticket promedio de cada local — no solo el volumen — para ver cuál rinde mejor por transacción.',
   },

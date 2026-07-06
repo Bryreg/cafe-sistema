@@ -75,6 +75,14 @@ export default function CumplimientoAdmin() {
   const maxTend = useMemo(() => Math.max(...tend.map(t => t.total), 1), [tend])
   const maxBar = useMemo(() => Math.max(...baristas.map(b => b.registros), 1), [baristas])
 
+  // Bitácora cronológica del día: quién hizo qué y cuándo, mezclando todas las rutinas.
+  const actividad = useMemo(() => {
+    if (!dia) return [] as { fecha: string; barista: string; rutina: string; nota: string | null; imagen_url: string | null }[]
+    return dia.rutinas
+      .flatMap(r => r.eventos.map(e => ({ fecha: e.fecha, barista: e.barista, rutina: r.nombre, nota: e.nota, imagen_url: e.imagen_url })))
+      .sort((a, b) => parseUTC(a.fecha).getTime() - parseUTC(b.fecha).getTime())
+  }, [dia])
+
   const cambiarDia = (delta: number) => {
     const [a, m, d] = fecha.split('-').map(Number)
     const nd = new Date(a, m - 1, d + delta)
@@ -206,6 +214,27 @@ export default function CumplimientoAdmin() {
               )
             })}
           </div>
+
+          {/* ── Bitácora del día: quién hizo qué y cuándo (todo en orden cronológico) ── */}
+          {actividad.length > 0 && (
+            <div style={card} className="p-4">
+              <p style={labelCss} className="mb-3">Quién hizo qué y cuándo</p>
+              <div className="flex flex-col">
+                {actividad.map((a, i) => (
+                  <div key={i} className="flex items-center gap-3 py-1.5"
+                    style={{ borderBottom: i < actividad.length - 1 ? `1px solid ${dark.border}` : 'none' }}>
+                    <span className="tabular-nums font-bold" style={{ fontSize: 12.5, color: dark.ink, minWidth: 64 }}>{fmtHora(a.fecha)}</span>
+                    <span className="text-[11px] px-2 py-0.5 rounded-full flex-shrink-0" style={{ background: dark.surfaceAlt, color: dark.inkMuted }}>{a.rutina}</span>
+                    <span className="text-sm font-semibold" style={{ color: dark.ink }}>{a.barista}</span>
+                    {a.nota && <span className="text-xs truncate" style={{ color: dark.inkSubtle }}>· {a.nota}</span>}
+                    {a.imagen_url && (
+                      <button onClick={() => setFoto(a.imagen_url!)} className="ml-auto flex-shrink-0" style={{ color: 'oklch(55% 0.08 155)' }}><Camera size={13} /></button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* ── Tendencia: actividad de limpieza por día (últimos 7) ── */}
           <div style={card} className="p-4">

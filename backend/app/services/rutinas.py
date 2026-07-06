@@ -124,6 +124,20 @@ def crear_plantilla(db: Session, data: dict):
     return p
 
 
+def actualizar_plantilla(db: Session, plantilla_id: int, data: dict):
+    """Edita/activa/desactiva una plantilla (solo admin). Desactivar (activa=False)
+    la saca del catálogo sin borrar el historial de eventos."""
+    p = db.query(RutinaPlantilla).filter(RutinaPlantilla.id == plantilla_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Rutina no encontrada")
+    for k in ("nombre", "clave", "activa", "esperadas_por_periodo"):
+        if data.get(k) is not None:
+            setattr(p, k, data[k])
+    db.commit()
+    db.refresh(p)
+    return p
+
+
 # Claves de panel (5 rutinas de 1 clic)
 _PANEL_DEFS = [
     {"k": "limpieza", "nombre": "Limpieza General", "every": 120, "track": True},

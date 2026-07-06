@@ -68,6 +68,20 @@ def crear_plantilla(data: PlantillaCreate, db: Session = Depends(get_db),
     return {"id": p.id, "clave": p.clave, "nombre": p.nombre}
 
 
+class PlantillaUpdate(BaseModel):
+    nombre: Optional[str] = None
+    clave: Optional[str] = None
+    activa: Optional[bool] = None
+    esperadas_por_periodo: Optional[int] = None
+
+
+@router.patch("/plantillas/{plantilla_id}")
+def actualizar_plantilla(plantilla_id: int, data: PlantillaUpdate,
+                         db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    p = svc.actualizar_plantilla(db, plantilla_id, data.dict(exclude_none=True))
+    return {"id": p.id, "clave": p.clave, "nombre": p.nombre, "activa": p.activa}
+
+
 @router.get("/estado-turno")
 def estado_turno(tienda_id: int, db: Session = Depends(get_db),
                  user: Usuario = Depends(get_current_user)):

@@ -698,6 +698,9 @@ export default function Dashboard() {
               }} />
               <span style={{ fontSize: 13, color: '#4a3728', fontWeight: 500 }}>{s.tienda}</span>
               <span style={{ fontSize: 13, color: '#1a6b3a', fontWeight: 700 }}>{fmt(s.total)}</span>
+              <span style={{ fontSize: 11, color: '#8b7d6b' }}>
+                {s.n_tickets} tk · prom {fmt(s.n_tickets > 0 ? s.total / s.n_tickets : 0)}
+              </span>
               {i < ventasSedeHoy.length - 1 && <span style={{ color: '#d6cec2', marginLeft: 6 }}>·</span>}
             </div>
           ))}
@@ -871,15 +874,25 @@ export default function Dashboard() {
             <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Sin sedes activas</p>
           ) : (
             <div>
-              {ventasPorSedeFiltradas.map(s => (
-                <BarHorizontal
-                  key={s.tienda_id}
-                  label={s.tienda}
-                  value={s.total}
-                  max={maxVentaSede}
-                  color="#5c7a4e"
-                />
-              ))}
+              {ventasPorSedeFiltradas.map(s => {
+                const prom = s.n_tickets > 0 ? s.total / s.n_tickets : 0
+                return (
+                  <div key={s.tienda_id} style={{ marginBottom: 11 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 }}>
+                      <span style={{ fontSize: 12.5, color: '#2d1f0f', fontWeight: 600 }}>{s.tienda}</span>
+                      <span style={{ fontSize: 12.5, color: '#1a6b3a', fontWeight: 700 }}>{fmt(s.total)}</span>
+                    </div>
+                    <div style={{ height: 5, background: '#f0ebe4', borderRadius: 3, overflow: 'hidden', marginBottom: 3 }}>
+                      <div style={{ height: '100%', width: `${Math.round((s.total / maxVentaSede) * 100)}%`, background: '#5c7a4e', borderRadius: 3 }} />
+                    </div>
+                    <div style={{ display: 'flex', gap: 7, fontSize: 10.5, color: '#8b7d6b' }}>
+                      <span>{s.n_tickets} tickets</span>
+                      <span>·</span>
+                      <span>ticket prom. {fmt(prom)}</span>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>

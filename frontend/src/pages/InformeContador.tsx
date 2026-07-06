@@ -31,14 +31,23 @@ const fmtDia = (iso: string) => {
 }
 
 // ─── KPI card ─────────────────────────────────────────────────────────────────
-function Kpi({ label, value, sub, Icon, tint }: { label: string; value: string; sub?: string; Icon: typeof Wallet; tint: string }) {
+function Kpi({ label, value, sub, Icon, tint, delta }: {
+  label: string; value: string; sub?: string; Icon: typeof Wallet; tint: string; delta?: number | null
+}) {
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-4">
       <div className="flex items-center gap-2 mb-1.5">
         <Icon size={14} style={{ color: tint }} />
         <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400">{label}</p>
       </div>
-      <p className="text-xl font-bold text-gray-800 font-mono leading-none">{value}</p>
+      <div className="flex items-baseline gap-2 flex-wrap">
+        <p className="text-xl font-bold text-gray-800 font-mono leading-none">{value}</p>
+        {delta != null && isFinite(delta) && (
+          <span className={`text-xs font-bold ${delta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+            {delta >= 0 ? '▲' : '▼'} {Math.abs(delta)}%
+          </span>
+        )}
+      </div>
       {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
     </div>
   )
@@ -52,6 +61,7 @@ export default function InformeContador() {
   const [tiendas, setTiendas] = useState<Tienda[]>([])
   const [tiendaId, setTiendaId] = useState<number | null>(null)
   const [data, setData] = useState<Contador | null>(null)
+  const [dataPrev, setDataPrev] = useState<Contador | null>(null)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -63,11 +73,21 @@ export default function InformeContador() {
   useEffect(() => {
     if (!tiendaId) return
     setLoading(true)
-    api.get<Contador>('/pos/analytics/contador', { params: { anio, mes, tienda_id: tiendaId } })
-      .then(r => setData(r.data))
-      .catch(() => setData(null))
+    // Mes anterior para comparar (diciembre → año-1).
+    const prevMes = mes === 1 ? 12 : mes - 1
+    const prevAnio = mes === 1 ? anio - 1 : anio
+    Promise.all([
+      api.get<Contador>('/pos/analytics/contador', { params: { anio, mes, tienda_id: tiendaId } }),
+      api.get<Contador>('/pos/analytics/contador', { params: { anio: prevAnio, mes: prevMes, tienda_id: tiendaId } }),
+    ])
+      .then(([cur, prev]) => { setData(cur.data); setDataPrev(prev.data) })
+      .catch(() => { setData(null); setDataPrev(null) })
       .finally(() => setLoading(false))
   }, [anio, mes, tiendaId])
+
+  // Delta % vs mes anterior (null si el mes anterior no tuvo venta → evita dividir por 0).
+  const pctDelta = (cur: number, prev: number | undefined | null) =>
+    prev && prev > 0 ? Math.round((cur - prev) / prev * 100) : null
 
   const maxDia = useMemo(() => Math.max(1, ...(data?.dias.map(d => d.total) ?? [1])), [data])
   const maxAcum = useMemo(() => Math.max(1, ...(data?.dias.map(d => d.acumulado) ?? [1])), [data])
@@ -147,10 +167,10 @@ export default function InformeContador() {
         <>
           {/* KPIs */}
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-            <Kpi label="Total del mes" value={fmt(data.total_mes)} sub={`${data.dias_con_venta} días con venta`} Icon={Receipt} tint="#2d5a3f" />
-            <Kpi label="Venta diaria (mes)" value={fmt(data.promedio_venta_diaria)} sub={`${data.total_mes ? fmt(data.total_mes) : '$0'} ÷ ${data.dias_periodo} días`} Icon={TrendingUp} tint="#2d5a3f" />
-            <Kpi label="Promedio por día con venta" value={fmt(data.promedio_diario)} sub={`${data.dias_con_venta} días`} Icon={TrendingUp} tint="#5b8def" />
-            <Kpi label="Ticket promedio" value={fmt(data.ticket_promedio_mes)} sub={`${data.total_facturas} facturas`} Icon={Receipt} tint="#c08a3e" />
+            <Kpi label="Total del mes" value={fmt(data.total_mes)} sub={`${data.dias_con_venta} días con venta · vs ${MESES[(mes === 1 ? 12 : mes - 1) - 1]}`} Icon={Receipt} tint="#2d5a3f" delta={pctDelta(data.total_mes, dataPrev?.total_mes)} />
+            <Kpi label="Venta diaria (mes)" value={fmt(data.promedio_venta_diaria)} sub={`${data.total_mes ? fmt(data.total_mes) : '$0'} ÷ ${data.dias_periodo} días`} Icon={TrendingUp} tint="#2d5a3f" delta={pctDelta(data.promedio_venta_diaria, dataPrev?.promedio_venta_diaria)} />
+            <Kpi label="Promedio por día con venta" value={fmt(data.promedio_diario)} sub={`${data.dias_con_venta} días`} Icon={TrendingUp} tint="#5b8def" delta={pctDelta(data.promedio_diario, dataPrev?.promedio_diario)} />
+            <Kpi label="Ticket promedio" value={fmt(data.ticket_promedio_mes)} sub={`${data.total_facturas} facturas`} Icon={Receipt} tint="#c08a3e" delta={pctDelta(data.ticket_promedio_mes, dataPrev?.ticket_promedio_mes)} />
             <Kpi label="Efectivo / Tarjeta" value={`${data.participacion.efectivo}% / ${data.participacion.tarjeta}%`} Icon={Wallet} tint="#2a8d8a" />
           </div>
 

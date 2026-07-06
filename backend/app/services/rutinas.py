@@ -246,22 +246,21 @@ def get_cumplimiento_semana(db: Session, tienda_id: int):
         )
         por_rutina.append({"clave": defn["k"], "nombre": defn["nombre"], "total": int(total), "track": defn["track"]})
 
-    usuarios = db.query(UsuarioModel).filter(
-        UsuarioModel.tienda_id == tienda_id, UsuarioModel.rol == "barista"
-    ).all()
-    por_barista = []
-    for u in usuarios:
-        cnt = int(
-            db.query(func.count(RutinaEvento.id))
-            .filter(
-                RutinaEvento.tienda_id == tienda_id,
-                RutinaEvento.usuario_id == u.id,
-                RutinaEvento.fecha >= desde,
-            )
-            .scalar() or 0
-        )
-        por_barista.append({"id": u.id, "nombre": u.nombre, "registros": cnt})
-
+    # Quién limpió — agrupar por la BARISTA REAL (barista_nombre), no por el usuario del
+    # dispositivo (usuario_id = 'Kiosk' en el kiosko compartido). Mismo idiom que
+    # caja.py/consignaciones. Los eventos sin barista real (barista_nombre NULL) caen al
+    # nombre del usuario del dispositivo.
+    umap = {u.id: u.nombre for u in db.query(UsuarioModel).filter(UsuarioModel.tienda_id == tienda_id).all()}
+    eventos = (
+        db.query(RutinaEvento)
+        .filter(RutinaEvento.tienda_id == tienda_id, RutinaEvento.fecha >= desde)
+        .all()
+    )
+    conteo: dict[str, int] = {}
+    for e in eventos:
+        nombre = (e.barista_nombre or "").strip() or umap.get(e.usuario_id) or "—"
+        conteo[nombre] = conteo.get(nombre, 0) + 1
+    por_barista = [{"nombre": n, "registros": c} for n, c in conteo.items()]
     por_barista.sort(key=lambda x: x["registros"], reverse=True)
     max_reg = max((b["registros"] for b in por_barista), default=1) or 1
     for b in por_barista:
@@ -270,8 +269,118 @@ def get_cumplimiento_semana(db: Session, tienda_id: int):
     return {
         "por_rutina": por_rutina,
         "por_barista": por_barista,
-        "total_eventos": sum(b["registros"] for b in por_barista),
+        "total_eventos": len(eventos),
     }
+
+
+def get_cumplimiento_dia(db: Session, tienda_id: int, fecha=None):
+    """Cockpit de limpieza de UN día: por rutina trackeada, cuándo se hizo, última vez,
+    próxima esperada, semáforo y cuántas veces vs lo esperado según la cadencia real y la
+    ventana operativa (apertura→cierre/ahora). Sin migración: todo se deriva al leer."""
+    from datetime import datetime
+    from app.core.tz import hoy_col, inicio_dia_col_utc, fin_dia_col_utc
+    from app.models.models import CajaTurno, Usuario as UsuarioModel
+
+    dia = fecha or hoy_col()
+    ini, fin = inicio_dia_col_utc(dia), fin_dia_col_utc(dia)
+    now = datetime.utcnow()
+    es_hoy = dia == hoy_col()
+
+    # Ventana operativa del día: de la apertura más temprana al cierre más tardío
+    # (o 'ahora' si hay un turno abierto y es hoy). Sin turnos → sin ventana (no penaliza).
+    turnos = (
+        db.query(CajaTurno)
+        .filter(CajaTurno.tienda_id == tienda_id,
+                CajaTurno.fecha_apertura >= ini, CajaTurno.fecha_apertura <= fin)
+        .all()
+    )
+    if turnos:
+        w_ini = min(t.fecha_apertura for t in turnos)
+        w_fin = max((t.fecha_cierre or (now if es_hoy else fin)) for t in turnos)
+        w_min = max(0.0, (w_fin - w_ini).total_seconds() / 60)
+    else:
+        w_ini = w_fin = None
+        w_min = 0.0
+
+    umap = {u.id: u.nombre for u in db.query(UsuarioModel).filter(UsuarioModel.tienda_id == tienda_id).all()}
+
+    rutinas = []
+    for defn in _PANEL_DEFS:
+        if not defn["track"]:
+            continue
+        evs = (
+            db.query(RutinaEvento)
+            .join(RutinaPlantilla, RutinaEvento.plantilla_id == RutinaPlantilla.id)
+            .filter(RutinaPlantilla.clave == defn["k"],
+                    RutinaEvento.tienda_id == tienda_id,
+                    RutinaEvento.fecha >= ini, RutinaEvento.fecha <= fin)
+            .order_by(RutinaEvento.fecha.asc())
+            .all()
+        )
+        eventos = [{
+            "fecha": e.fecha.isoformat(),
+            "barista": (e.barista_nombre or "").strip() or umap.get(e.usuario_id) or "—",
+            "valor": e.valor,
+            "nota": e.nota,
+            "imagen_url": e.imagen_url,
+        } for e in evs]
+        hechas = len(evs)
+        every = defn["every"]
+        esperadas = int(w_min // every) if (w_min and every) else None
+        pct = round(min(hechas / esperadas, 1) * 100) if esperadas else None
+        ultimo = evs[-1].fecha if evs else None
+        minutos = int((now - ultimo).total_seconds() / 60) if (ultimo and es_hoy) else None
+        status = None
+        if es_hoy and every:
+            if minutos is None:
+                status = "alert"  # hoy y nunca se hizo
+            else:
+                ratio = minutos / every
+                status = "alert" if ratio >= 1 else ("warn" if ratio >= 0.8 else "ok")
+        rutinas.append({
+            "clave": defn["k"], "nombre": defn["nombre"], "every": every,
+            "hechas": hechas, "esperadas": esperadas, "pct": pct,
+            "ultimo": ultimo.isoformat() if ultimo else None,
+            "minutos": minutos, "status": status,
+            "eventos": eventos,
+        })
+
+    return {
+        "fecha": dia.isoformat(),
+        "es_hoy": es_hoy,
+        "ventana": {"inicio": w_ini.isoformat() if w_ini else None,
+                    "fin": w_fin.isoformat() if w_fin else None},
+        "rutinas": rutinas,
+    }
+
+
+def get_cumplimiento_tendencia(db: Session, tienda_id: int, dias: int = 7):
+    """Actividad de limpieza por día (últimos N días): total y por rutina trackeada.
+    Cuentas simples (honesto, sin denominador ambiguo) para ver la tendencia."""
+    from datetime import timedelta
+    from app.core.tz import hoy_col, inicio_dia_col_utc, fin_dia_col_utc
+
+    tracked = [d for d in _PANEL_DEFS if d["track"]]
+    hoy = hoy_col()
+    out = []
+    for i in range(dias - 1, -1, -1):
+        d = hoy - timedelta(days=i)
+        ini, fin = inicio_dia_col_utc(d), fin_dia_col_utc(d)
+        por_clave = {}
+        total = 0
+        for defn in tracked:
+            c = int(
+                db.query(func.count(RutinaEvento.id))
+                .join(RutinaPlantilla, RutinaEvento.plantilla_id == RutinaPlantilla.id)
+                .filter(RutinaPlantilla.clave == defn["k"],
+                        RutinaEvento.tienda_id == tienda_id,
+                        RutinaEvento.fecha >= ini, RutinaEvento.fecha <= fin)
+                .scalar() or 0
+            )
+            por_clave[defn["k"]] = c
+            total += c
+        out.append({"fecha": d.isoformat(), "total": total, "por_clave": por_clave})
+    return out
 
 
 def registrar_por_clave(db: Session, tienda_id: int, clave: str, usuario_id: int,

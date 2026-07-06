@@ -511,6 +511,18 @@ def cerrar_turno_administrativo(db: Session, turno_id: int, usuario_id: int):
                        datafono_real=turno.total_tarjeta if turno.total_tarjeta else None)
 
 
+def _msg_pagos_superan_venta(entrada_dia: float, egresos: float) -> str:
+    """Cuadre con 'venta de ayer separada' cuando los pagos superan la venta del día:
+    la plata que faltó salió físicamente del sobre separado, así que contar 'solo la
+    registradora' ya no representa nada — se cuenta todo junto."""
+    faltante = egresos - entrada_dia
+    return (
+        f"Los pagos de hoy (${egresos:,.0f}) superan la venta en efectivo del día (${entrada_dia:,.0f}): "
+        f"${faltante:,.0f} salieron de la plata separada. "
+        "Destildá la casilla y contá TODO junto: registradora + lo que quede de lo separado."
+    )
+
+
 def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
                       efectivo_real: float,
                       ventas_tarjeta_bold: float, imagen_url: str | None,
@@ -551,9 +563,11 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
         if efectivo_esperado < 0:
             # Las salidas superan la venta del día: físicamente tuvieron que tocar la
             # plata separada, así que el cuadre "solo registradora" no tiene sentido.
+            # El kiosko oculta la casilla en este caso; esto es el backstop para
+            # clientes con bundle viejo — con los montos para que se entienda.
             raise HTTPException(
                 status_code=400,
-                detail="Las salidas de efectivo superan la venta del día — la plata de ayer no puede estar separada completa. Destildá la casilla y contá todo.",
+                detail=_msg_pagos_superan_venta(turno.total_efectivo + ingresos, egresos),
             )
     diferencia_efectivo = efectivo_real - efectivo_esperado
     diferencia_tarjeta = ventas_tarjeta_bold - turno.total_tarjeta
@@ -1182,9 +1196,10 @@ def cerrar_turno_rapido(
     # salga igual a la registradora de hoy (la venta de hoy).
     esperado_cuadre = efectivo_esperado - turno.base_real if base_separada else efectivo_esperado
     if base_separada and esperado_cuadre < 0:
+        # El kiosko oculta la casilla en este caso; backstop para bundles viejos.
         raise HTTPException(
             status_code=400,
-            detail="Las salidas de efectivo superan la venta del día — la plata de ayer no puede estar separada completa. Destildá la casilla y contá todo.",
+            detail=_msg_pagos_superan_venta(turno.total_efectivo + ingresos, egresos),
         )
     efectivo_total = efectivo_final_real + turno.base_real if base_separada else efectivo_final_real
 

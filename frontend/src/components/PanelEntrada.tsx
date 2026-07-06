@@ -84,6 +84,14 @@ export default function PanelEntrada({ onClose }: { onClose: () => void }) {
 
   const selectedBarista = baristas.find(b => b.id === selected)
   const canCuadre = efectivoReal > 0 && ventasTarjetaBold.trim() !== '' && imagen !== null
+  // Flujo del día (venta efectivo + ingresos - salidas). Si es NEGATIVO, los pagos
+  // superaron la venta: la plata que faltó salió del sobre separado, así que la
+  // casilla "venta de ayer separada" no aplica — se cuenta todo junto.
+  const flujoDia = (turno.efectivo_esperado_actual ?? 0) - (turno.base_real ?? 0)
+  const pagosSuperanVenta = flujoDia < 0
+  // El refresh del turno puede volver negativo el flujo con la casilla ya marcada
+  // (un pago registrado desde otra pantalla): destildarla acá evita el 400 del server.
+  if (pagosSuperanVenta && baseSeparada) setBaseSeparada(false)
 
   if (step === 'select') {
     return (
@@ -141,7 +149,17 @@ export default function PanelEntrada({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      {(turno.base_real ?? 0) > 0 && (
+      {(turno.base_real ?? 0) > 0 && pagosSuperanVenta && (
+        <div className="rounded-2xl p-4 flex items-start gap-2.5"
+          style={{ background: dark.amberTint, border: `1px solid ${dark.amberDim}` }}>
+          <AlertTriangle size={15} className="shrink-0 mt-0.5" style={{ color: dark.amber }} />
+          <p className="text-[12px]" style={{ color: dark.amber }}>
+            <strong>Los pagos de hoy superaron la venta en efectivo</strong> — {fmt(Math.round(-flujoDia))} salieron
+            de la plata separada. Contá TODO junto: registradora + lo que quede de lo separado.
+          </p>
+        </div>
+      )}
+      {(turno.base_real ?? 0) > 0 && !pagosSuperanVenta && (
         <button type="button" onClick={() => setBaseSeparada(v => !v)}
           className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left"
           style={{

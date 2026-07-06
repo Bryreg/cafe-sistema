@@ -45,7 +45,15 @@ export default function SalidaEfectivo() {
 
   const conteoHecho = !!turno.tiene_conteo_cierre
   const baseTurno = turno.base_real ?? 0
+  // Flujo del día (venta efectivo + ingresos - salidas). Si es NEGATIVO, los pagos
+  // superaron la venta: la plata que faltó salió del sobre separado, así que la
+  // casilla "venta de ayer separada" no aplica — se cuenta todo junto.
+  const flujoDia = (turno.efectivo_esperado_actual ?? 0) - baseTurno
+  const pagosSuperanVenta = flujoDia < 0
   const efectivoEsperado = (turno.efectivo_esperado_actual ?? 0) - (baseSeparada ? baseTurno : 0)
+  // El refresh periódico puede volver negativo el flujo con la casilla ya marcada
+  // (un pago registrado desde otra pantalla): destildarla acá evita el 400 del server.
+  if (pagosSuperanVenta && baseSeparada) setBaseSeparada(false)
   const datafonoVal = Number(datafono) || 0
   const diffEfectivo = Math.round((efectivoContado - efectivoEsperado) * 100) / 100
   const diffDatafono = Math.round((datafonoVal - (turno.total_tarjeta ?? 0)) * 100) / 100
@@ -167,7 +175,17 @@ export default function SalidaEfectivo() {
           </div>
         )}
 
-        {baseTurno > 0 && (
+        {baseTurno > 0 && pagosSuperanVenta && (
+          <div className="rounded-2xl p-4 flex items-start gap-2.5"
+            style={{ background: dark.amberTint, border: `1px solid ${dark.amberDim}` }}>
+            <AlertTriangle size={15} className="shrink-0 mt-0.5" style={{ color: dark.amber }} />
+            <p className="text-[12px]" style={{ color: dark.amber }}>
+              <strong>Los pagos de hoy superaron la venta en efectivo</strong> — {fmt(Math.round(-flujoDia))} salieron
+              de la plata separada. Contá TODO junto: registradora + lo que quede de lo separado.
+            </p>
+          </div>
+        )}
+        {baseTurno > 0 && !pagosSuperanVenta && (
           <button type="button" onClick={() => setBaseSeparada(v => !v)}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left"
             style={{

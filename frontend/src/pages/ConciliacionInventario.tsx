@@ -90,13 +90,17 @@ export default function ConciliacionInventario() {
   const prevAsc = useMemo(() => [...(diaria?.cierres_previos ?? [])].reverse(), [diaria])
 
   // La tabla arranca desplazada al PRESENTE (extremo derecho): la historia
-  // queda detrás, deslizando hacia atrás.
+  // queda detrás, deslizando hacia atrás. Asignación SÍNCRONA en el effect —
+  // requestAnimationFrame no corre en pestañas en segundo plano (PWA) y el
+  // scroll quedaba en 0 si la pestaña no estaba visible al cargar.
   const scrollTabla = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = scrollTabla.current
-    if (!el) return
-    requestAnimationFrame(() => { el.scrollLeft = el.scrollWidth })
-  }, [diaria])
+    if (!el || !diaria) return
+    el.scrollLeft = el.scrollWidth
+    const t = setTimeout(() => { el.scrollLeft = el.scrollWidth }, 250)  // respaldo post-layout
+    return () => clearTimeout(t)
+  }, [diaria, loadingDia])
 
   // Default: la lista COMPLETA del turno (sistema vivo + ultima apertura + cierre
   // cuando exista). El toggle de diferencias es opcional, para revisar dias viejos.

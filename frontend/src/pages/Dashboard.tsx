@@ -49,7 +49,7 @@ interface VentaSede {
 
 interface ImpulsoSede { lote_id: number; producto_nombre: string; cantidad_restante: number; dias_en_inventario: number; urgente: boolean; sede: string }
 interface RutinaHoy { clave: string; nombre: string; status: 'ok' | 'warn' | 'alert' | null; hechas: number }
-interface LimpiezaSede { tienda: string; rutinas: RutinaHoy[] }
+interface LimpiezaSede { tienda: string; rutinas: RutinaHoy[]; aseoHechas: number; aseoTotal: number; ultimaActividad: string | null }
 
 interface VentaCategoria {
   categoria: string
@@ -369,18 +369,33 @@ export default function Dashboard() {
     return () => { cancel = true }
   }, [sedes])
 
-  // Limpieza/rutinas de HOY por sede (estado de las 3 trackeadas).
+  // Limpieza por sede: rutinas por hora (estado) + aseo profundo de la semana + última actividad.
   useEffect(() => {
     if (sedes.length === 0) return
     let cancel = false
+    const hoyStr = today()                       // YYYY-MM-DD local
+    const [aa, mm, dd] = hoyStr.split('-').map(Number)
+    const semanaHoy = Math.min(Math.floor((dd - 1) / 7) + 1, 4)
     Promise.all(
       sedes.map(s =>
-        api.get('/rutinas/cumplimiento-dia', { params: { tienda_id: s.id } })
-          .then(r => ({
+        Promise.all([
+          api.get('/rutinas/cumplimiento-dia', { params: { tienda_id: s.id } }).then(r => r.data).catch(() => null),
+          api.get(`/limpieza/${s.id}/tareas`).then(r => r.data).catch(() => []),
+          api.get(`/limpieza/${s.id}/semanal`, { params: { mes: mm, anio: aa } }).then(r => r.data).catch(() => []),
+        ]).then(([cd, tareas, regs]: [any, any[], any[]]) => {
+          const activas = (tareas ?? []).filter((t: any) => t.activa)
+          const regSem = new Set((regs ?? []).filter((r: any) => Math.min(r.semana || 1, 4) === semanaHoy).map((r: any) => r.tarea_key))
+          const rutinas = (cd?.rutinas ?? []).map((x: any) => ({ clave: x.clave, nombre: x.nombre, status: x.status, hechas: x.hechas }))
+          // Última actividad de rutinas (hora del evento más reciente de hoy).
+          const ultimos = (cd?.rutinas ?? []).map((x: any) => x.ultimo).filter(Boolean).sort()
+          return {
             tienda: s.nombre,
-            rutinas: (r.data?.rutinas ?? []).map((x: any) => ({ clave: x.clave, nombre: x.nombre, status: x.status, hechas: x.hechas })),
-          }))
-          .catch(() => ({ tienda: s.nombre, rutinas: [] as RutinaHoy[] }))
+            rutinas,
+            aseoHechas: activas.filter((t: any) => regSem.has(t.key)).length,
+            aseoTotal: activas.length,
+            ultimaActividad: ultimos.length ? ultimos[ultimos.length - 1] : null,
+          }
+        })
       )
     ).then(res => { if (!cancel) setLimpiezaSedes(res) })
     return () => { cancel = true }
@@ -885,33 +900,50 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Limpieza de hoy — estado de las rutinas por sede */}
+        {/* Limpieza — rutinas por hora + aseo profundo semanal, por sede */}
         <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
-          <SectionTitle icon={Sparkles} label="Limpieza de hoy" />
+          <SectionTitle icon={Sparkles} label="Limpieza y aseo" />
           {limpiezaSedes.length === 0 ? (
             <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Cargando…</p>
           ) : (
-            limpiezaSedes.map(s => (
-              <div key={s.tienda} style={{ marginBottom: 11 }}>
-                <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 700, color: '#4a3728' }}>{s.tienda}</p>
-                {s.rutinas.length === 0 ? (
-                  <p style={{ margin: 0, fontSize: 11, color: '#8b7d6b' }}>Sin registros hoy</p>
-                ) : (
-                  s.rutinas.map(r => {
-                    const c = r.status === 'ok' ? '#16a34a' : r.status === 'warn' ? '#d97706' : r.status === 'alert' ? '#dc2626' : '#c8c0b4'
-                    return (
-                      <div key={r.clave} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 999, background: c, flexShrink: 0 }} />
-                        <span style={{ flex: 1, fontSize: 12, color: '#2d1f0f' }}>{r.nombre}</span>
-                        <span style={{ fontSize: 11, color: '#8b7d6b', fontWeight: 600 }}>
-                          {r.hechas > 0 ? `${r.hechas}×` : (r.status === 'alert' ? 'sin hacer' : '—')}
+            limpiezaSedes.map(s => {
+              const venc = s.rutinas.filter(r => r.status === 'alert').length
+              const aseoPct = s.aseoTotal ? Math.round((s.aseoHechas / s.aseoTotal) * 100) : 0
+              const aseoOk = s.aseoTotal > 0 && s.aseoHechas === s.aseoTotal
+              return (
+                <div key={s.tienda} style={{ marginBottom: 13 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#4a3728' }}>{s.tienda}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
+                      background: venc > 0 ? '#fde8e8' : '#dcfce7', color: venc > 0 ? '#b42318' : '#15803d' }}>
+                      {venc > 0 ? `${venc} rutina${venc > 1 ? 's' : ''} vencida${venc > 1 ? 's' : ''}` : 'rutinas al día'}
+                    </span>
+                  </div>
+                  {/* Rutinas por hora: dots por rutina */}
+                  <div style={{ display: 'flex', gap: 12, marginBottom: 7 }}>
+                    {s.rutinas.map(r => {
+                      const c = r.status === 'ok' ? '#16a34a' : r.status === 'warn' ? '#d97706' : r.status === 'alert' ? '#dc2626' : '#c8c0b4'
+                      const nom = r.nombre.replace('Limpieza General', 'Limpieza').replace('Revisión Vitrina', 'Vitrina')
+                      return (
+                        <span key={r.clave} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: '#6b5d4b' }} title={`${r.nombre}: ${r.hechas} hoy`}>
+                          <span style={{ width: 7, height: 7, borderRadius: 999, background: c, flexShrink: 0 }} />
+                          {nom} <strong style={{ color: '#4a3728' }}>{r.hechas}</strong>
                         </span>
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-            ))
+                      )
+                    })}
+                    {s.rutinas.length === 0 && <span style={{ fontSize: 10.5, color: '#8b7d6b' }}>sin rutinas hoy</span>}
+                  </div>
+                  {/* Aseo profundo semanal */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 }}>
+                    <span style={{ fontSize: 11, color: '#6b5d4b' }}>Aseo profundo · semana</span>
+                    <span style={{ fontSize: 11.5, fontWeight: 700, color: aseoOk ? '#15803d' : '#4a3728' }}>{s.aseoHechas}/{s.aseoTotal}{aseoOk ? ' ✓' : ''}</span>
+                  </div>
+                  <div style={{ height: 5, background: '#f0ebe4', borderRadius: 3, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${aseoPct}%`, background: aseoOk ? '#16a34a' : aseoPct > 0 ? '#c08a3e' : '#f0ebe4', borderRadius: 3 }} />
+                  </div>
+                </div>
+              )
+            })
           )}
         </div>
 

@@ -46,6 +46,9 @@ export default function Limpieza() {
   const [registros, setRegistros] = useState<Registro[]>([])
   const [loading,   setLoading]   = useState(false)
   const [marcando,  setMarcando]  = useState<string | null>(null)
+  // "¿Quién lo hizo?" — al tocar una tarea, se elige la barista antes de marcar.
+  const [baristas,  setBaristas]  = useState<{ id: number; nombre: string }[]>([])
+  const [pickKey,   setPickKey]   = useState<string | null>(null)
 
   // Admin edit state
   const [editingId,   setEditingId]   = useState<number | null>(null)
@@ -79,15 +82,19 @@ export default function Limpieza() {
 
   useEffect(() => { cargarTareas() },    [user?.tienda_id])
   useEffect(() => { cargarRegistros() }, [mes, anio, user?.tienda_id])
+  useEffect(() => {
+    if (isAdmin) return
+    api.get('/auth/baristas').then(({ data }) => setBaristas(data ?? [])).catch(() => {})
+  }, [isAdmin])
 
   const deEstaSemana: Record<string, Registro> = {}
   registros.filter(r => r.semana === semana).forEach(r => { deEstaSemana[r.tarea_key] = r })
   const tareasActivas = tareas.filter(t => t.activa)
   const completadas   = tareasActivas.filter(t => deEstaSemana[t.key]).length
 
-  const marcar = async (key: string) => {
+  const marcar = async (key: string, barista?: { id: number; nombre: string }) => {
     if (!user?.tienda_id || marcando) return
-    setMarcando(key)
+    setMarcando(key); setPickKey(null)
     try {
       const ahora    = new Date()
       const esHoy    = mes === ahora.getMonth() + 1 && anio === ahora.getFullYear() && semana === semanaDelMes(ahora)
@@ -96,7 +103,9 @@ export default function Limpieza() {
       const isoLocal = (d: Date) =>
         `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
       const fechaEnviar = esHoy ? isoLocal(ahora) : isoLocal(new Date(anio, mes - 1, dia))
-      const { data } = await api.post(`/limpieza/${user.tienda_id}/semanal`, { tarea_key: key, fecha: fechaEnviar })
+      const body: Record<string, unknown> = { tarea_key: key, fecha: fechaEnviar }
+      if (barista) { body.barista_id = barista.id; body.barista_nombre = barista.nombre }
+      const { data } = await api.post(`/limpieza/${user.tienda_id}/semanal`, body)
       setRegistros(prev => [...prev, data])
     } catch (e: any) {
       alert(e.response?.data?.detail || 'Error al registrar tarea')
@@ -223,14 +232,14 @@ export default function Limpieza() {
                           : <ToggleLeft  size={20} className="text-warm-300" />}
                       </button>
                     ) : (
-                      <button onClick={() => !hecho && !inactiva && marcar(tarea.key)}
+                      <button onClick={() => !hecho && !inactiva && setPickKey(pickKey === tarea.key ? null : tarea.key)}
                         disabled={hecho || inactiva || marcando === tarea.key}
                         className="shrink-0 mt-0.5 transition-all active:scale-95 disabled:cursor-default">
                         {marcando === tarea.key
                           ? <div className="w-5 h-5 rounded-full border-2 border-forest animate-spin border-t-transparent" />
                           : hecho
                             ? <CheckCircle2 size={20} className="text-forest-500" />
-                            : <Circle size={20} className={inactiva ? 'text-warm-200' : 'text-warm-300'} />}
+                            : <Circle size={20} className={inactiva ? 'text-warm-200' : (pickKey === tarea.key ? 'text-forest-500' : 'text-warm-300')} />}
                       </button>
                     )}
 
@@ -266,6 +275,29 @@ export default function Limpieza() {
                                 </span>
                               )}
                             </p>
+                          )}
+                          {/* Selector "¿Quién lo hizo?" — se abre al tocar la tarea pendiente */}
+                          {!hecho && !inactiva && pickKey === tarea.key && (
+                            <div className="mt-2 rounded-xl p-2.5" style={{ background: 'oklch(97% 0.02 155)', border: '1px solid oklch(88% 0.05 155)' }}>
+                              <p className="text-[11px] font-bold text-forest-700 mb-1.5">¿Quién lo hizo?</p>
+                              {baristas.length === 0 ? (
+                                <p className="text-[11px] text-warm-500">No hay baristas cargadas.</p>
+                              ) : (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {baristas.map(b => (
+                                    <button key={b.id} onClick={() => marcar(tarea.key, b)}
+                                      className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-colors active:scale-95"
+                                      style={{ background: 'oklch(48% 0.12 155)' }}>
+                                      {b.nombre}
+                                    </button>
+                                  ))}
+                                  <button onClick={() => setPickKey(null)}
+                                    className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-warm-500 border border-warm-200">
+                                    Cancelar
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           )}
                         </>
                       )}
@@ -338,7 +370,7 @@ export default function Limpieza() {
 
       {!isAdmin && (
         <p className="text-xs text-warm-400 text-center">
-          Toca el círculo de una tarea para marcarla como realizada
+          Tocá el círculo de una tarea y elegí quién la hizo para marcarla
         </p>
       )}
     </div>

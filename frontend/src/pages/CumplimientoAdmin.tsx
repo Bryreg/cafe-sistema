@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import { dark } from '../constants/darkTheme'
-import { CheckCircle2, Clock, AlertTriangle, Camera, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react'
+import { CheckCircle2, Circle, Clock, AlertTriangle, Camera, ChevronLeft, ChevronRight, Sparkles, Brush } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 interface Sede { id: number; nombre: string }
@@ -16,6 +16,8 @@ interface RutinaDia {
 interface CumplDia { fecha: string; es_hoy: boolean; ventana: { inicio: string | null; fin: string | null }; rutinas: RutinaDia[] }
 interface TendDia { fecha: string; total: number; por_clave: Record<string, number> }
 interface BaristaResumen { nombre: string; registros: number; pct: number }
+interface TareaLimp { id: number; key: string; label: string; activa: boolean; orden: number }
+interface RegistroLimp { id: number; tarea_key: string; fecha: string; semana: number; usuario_nombre: string; barista_nombre?: string | null; creado?: string | null }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const parseUTC = (s: string) => {
@@ -29,6 +31,8 @@ const proximaHora = (ultimo: string, every: number) => {
   return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
 }
 const isoLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const semanaDeIso = (iso: string) => Math.floor((Number(iso.split('-')[2]) - 1) / 7) + 1
+const fmtDiaCorto = (iso: string) => { const [a, m, d] = iso.split('-').map(Number); return new Date(a, m - 1, d).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) }
 const fmtDiaLargo = (iso: string) => {
   const [a, m, d] = iso.split('-').map(Number)
   return new Date(a, m - 1, d).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })
@@ -48,6 +52,8 @@ export default function CumplimientoAdmin() {
   const [dia, setDia] = useState<CumplDia | null>(null)
   const [tend, setTend] = useState<TendDia[]>([])
   const [baristas, setBaristas] = useState<BaristaResumen[]>([])
+  const [tareasLimp, setTareasLimp] = useState<TareaLimp[]>([])
+  const [registrosLimp, setRegistrosLimp] = useState<RegistroLimp[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [foto, setFoto] = useState<string | null>(null)
@@ -72,6 +78,18 @@ export default function CumplimientoAdmin() {
       .finally(() => setLoading(false))
   }, [tid, fecha])
 
+  // Limpieza semanal (las 13 tareas de aseo profundo) — de la semana del día elegido.
+  useEffect(() => {
+    if (tid == null) return
+    const [a, m] = fecha.split('-').map(Number)
+    let cancel = false
+    Promise.all([
+      api.get<TareaLimp[]>(`/limpieza/${tid}/tareas`).then(r => r.data).catch(() => [] as TareaLimp[]),
+      api.get<RegistroLimp[]>(`/limpieza/${tid}/semanal`, { params: { mes: m, anio: a } }).then(r => r.data).catch(() => [] as RegistroLimp[]),
+    ]).then(([tt, rr]) => { if (!cancel) { setTareasLimp(tt); setRegistrosLimp(rr) } })
+    return () => { cancel = true }
+  }, [tid, fecha])
+
   const maxTend = useMemo(() => Math.max(...tend.map(t => t.total), 1), [tend])
   const maxBar = useMemo(() => Math.max(...baristas.map(b => b.registros), 1), [baristas])
 
@@ -82,6 +100,16 @@ export default function CumplimientoAdmin() {
       .flatMap(r => r.eventos.map(e => ({ fecha: e.fecha, barista: e.barista, rutina: r.nombre, nota: e.nota, imagen_url: e.imagen_url })))
       .sort((a, b) => parseUTC(a.fecha).getTime() - parseUTC(b.fecha).getTime())
   }, [dia])
+
+  // Limpieza semanal: tareas de la semana del día elegido + su registro (quién/cuándo).
+  const semanaSel = semanaDeIso(fecha)
+  const regLimpPorTarea = useMemo(() => {
+    const map: Record<string, RegistroLimp> = {}
+    registrosLimp.filter(r => r.semana === semanaSel).forEach(r => { map[r.tarea_key] = r })
+    return map
+  }, [registrosLimp, semanaSel])
+  const tareasLimpActivas = useMemo(() => [...tareasLimp].filter(t => t.activa).sort((a, b) => a.orden - b.orden), [tareasLimp])
+  const limpHechas = tareasLimpActivas.filter(t => regLimpPorTarea[t.key]).length
 
   const cambiarDia = (delta: number) => {
     const [a, m, d] = fecha.split('-').map(Number)
@@ -214,6 +242,49 @@ export default function CumplimientoAdmin() {
               )
             })}
           </div>
+
+          {/* ── Limpieza semanal: las 13 tareas de aseo profundo de la semana del día ── */}
+          {tareasLimpActivas.length > 0 && (
+            <div style={card} className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <p style={labelCss} className="flex items-center gap-1.5"><Brush size={12} /> Limpieza semanal · Semana {semanaSel}</p>
+                <span className="text-sm font-bold tabular-nums" style={{ color: limpHechas === tareasLimpActivas.length ? 'oklch(45% 0.13 145)' : dark.ink }}>
+                  {limpHechas}/{tareasLimpActivas.length}
+                </span>
+              </div>
+              <div className="flex flex-col">
+                {tareasLimpActivas.map((t, i) => {
+                  const reg = regLimpPorTarea[t.key]
+                  const quien = reg ? (reg.barista_nombre || reg.usuario_nombre) : null
+                  return (
+                    <div key={t.id} className="flex items-start gap-3 py-2"
+                      style={{ borderBottom: i < tareasLimpActivas.length - 1 ? `1px solid ${dark.border}` : 'none' }}>
+                      {reg
+                        ? <CheckCircle2 size={17} style={{ color: 'oklch(55% 0.16 145)', flexShrink: 0, marginTop: 1 }} />
+                        : <Circle size={17} style={{ color: dark.inkSubtle, flexShrink: 0, marginTop: 1 }} />}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px]" style={{ color: reg ? dark.ink : dark.inkMuted, fontWeight: reg ? 500 : 400 }}>
+                          <span className="text-[10px] font-bold mr-1.5" style={{ color: dark.inkSubtle }}>{String(i + 1).padStart(2, '0')}</span>
+                          {t.label}
+                        </p>
+                        {reg && (
+                          <p className="text-[11px] mt-0.5" style={{ color: dark.inkSubtle }}>
+                            <span className="font-semibold" style={{ color: dark.inkMuted }}>{quien}</span>
+                            {' · '}{fmtDiaCorto(reg.fecha)}{reg.creado && ` · ${fmtHora(reg.creado)}`}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              {limpHechas < tareasLimpActivas.length && (
+                <p className="text-[11px] mt-2" style={{ color: dark.inkSubtle }}>
+                  Faltan {tareasLimpActivas.length - limpHechas} de esta semana. Las baristas las marcan desde Menú → Limpieza.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* ── Bitácora del día: quién hizo qué y cuándo (todo en orden cronológico) ── */}
           {actividad.length > 0 && (

@@ -14,6 +14,12 @@ export interface Novedad {
 }
 
 export const NOVEDADES: Novedad[] = [
+  // ── 7 de julio ──────────────────────────────────────────────────────────
+  {
+    fecha: '2026-07-07', rol: 'admin', tipo: 'mejora',
+    titulo: 'Cumplimiento: la limpieza semanal en la misma pantalla',
+    detalle: 'El cockpit de Cumplimiento ahora también muestra las 13 tareas de la limpieza semanal (aseo profundo: pisos, congelador, trampa de grasas…) de la semana del día elegido, con su tilde, quién la hizo y a qué hora. Antes eso solo se veía en la pantalla aparte de Limpieza semanal.',
+  },
   // ── 6 de julio ──────────────────────────────────────────────────────────
   {
     fecha: '2026-07-06', rol: 'admin', tipo: 'mejora',

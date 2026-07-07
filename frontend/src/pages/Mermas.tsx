@@ -114,8 +114,9 @@ export default function Mermas() {
       ? (nota.trim() || `Traslado a ${destinoNombre}`)
       : nota.trim()
     try {
+      let enviados = 0
       for (const it of items) {
-        await api.post('/mermas/', {
+        const payload = {
           tienda_id: user?.tienda_id,
           producto_id: it.producto.id,
           cantidad: Number(it.cantidad),
@@ -123,10 +124,29 @@ export default function Mermas() {
           tipo: vista,
           tienda_destino_id: vista === 'traslado' ? sedeDestinoId : null,
           quien: vista === 'consumo' ? quien.trim() : null,
-        })
+        }
+        try {
+          await api.post('/mermas/', payload)
+          enviados++
+        } catch (err: any) {
+          // 409 = guard anti-doble-envío: el mismo traslado ya salió hace un momento.
+          // Confirmar reenvía; cancelar saltea este ítem (los demás siguen).
+          if (err.response?.status === 409) {
+            if (window.confirm(err.response.data?.detail || '¿Enviar de nuevo este traslado?')) {
+              await api.post('/mermas/', { ...payload, confirmar: true })
+              enviados++
+            }
+            continue
+          }
+          throw err
+        }
       }
-      setSaved(true); setTimeout(() => setSaved(false), 2500)
-      setVista('menu')
+      // Solo confirmar si realmente se registró algo (si canceló todos los
+      // reenvíos, no mostrar el "Registrado correctamente" ni resetear).
+      if (enviados > 0) {
+        setSaved(true); setTimeout(() => setSaved(false), 2500)
+        setVista('menu')
+      }
       load()
     } catch (e: any) { setError(e.response?.data?.detail || 'Error al registrar') }
     finally { setSaving(false) }

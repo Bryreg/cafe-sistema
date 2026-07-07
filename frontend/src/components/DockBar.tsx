@@ -15,9 +15,11 @@ const TOOLS = [
 export default function DockBar({
   active,
   onSelect,
+  badges,
 }: {
   active: string | null
   onSelect: (key: string | null) => void
+  badges?: Record<string, number>
 }) {
   return (
     <div
@@ -31,11 +33,12 @@ export default function DockBar({
     >
       {TOOLS.map(({ key, label, icon: Icon }) => {
         const on = active === key
+        const badge = badges?.[key] ?? 0
         return (
           <button
             key={key}
             onClick={() => onSelect(on ? null : key)}
-            className="flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all"
+            className="relative flex flex-col items-center justify-center gap-0.5 rounded-xl transition-all"
             style={{
               minWidth: 44,
               height: 48,
@@ -44,6 +47,18 @@ export default function DockBar({
               color: on ? dark.green : dark.inkSubtle,
             }}
           >
+            {badge > 0 && (
+              <span
+                className="absolute flex items-center justify-center rounded-full font-bold"
+                style={{
+                  top: 2, right: 6, minWidth: 16, height: 16, padding: '0 4px',
+                  fontSize: 10, lineHeight: 1, color: '#fff', background: '#ef4444',
+                  boxShadow: `0 0 0 2px ${dark.surface}`,
+                }}
+              >
+                {badge > 9 ? '9+' : badge}
+              </span>
+            )}
             <Icon size={18} />
             <span style={{ fontSize: 9, fontWeight: 600, lineHeight: 1.1 }}>{label}</span>
           </button>

@@ -26,7 +26,7 @@ def registrar(data: RegistrarMermaRequest, db: Session = Depends(get_db),
         db, data.tienda_id, data.producto_id, data.cantidad, data.motivo,
         user.id, data.tipo, data.tienda_destino_id,
         barista_id=barista[0], barista_nombre=barista[1],
-        quien=data.quien,
+        quien=data.quien, confirmar=data.confirmar,
     )
 
 

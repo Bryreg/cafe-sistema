@@ -106,6 +106,7 @@ export default function POS() {
   const [reprintTicket, setReprintTicket] = useState<TicketData | null>(null)
   const [reprintMsg, setReprintMsg] = useState('')
   const [activePanel, setActivePanel] = useState<string | null>(null)
+  const [trasladosPend, setTrasladosPend] = useState(0)
 
   const PANELS: Record<string, React.ReactNode> = {
     ingresos:       <Ingresos />,
@@ -139,6 +140,22 @@ export default function POS() {
       .catch(() => setLoadError('No se pudieron cargar los productos'))
       .finally(() => setLoading(false))
   }, [turnoListo])
+
+  // Traslados entrantes por recibir → badge en el dock/banner. Refresca cada 30s
+  // y al abrir/cerrar un panel (así baja apenas la barista recibe en Merma).
+  useEffect(() => {
+    const tid = turno?.tienda_id
+    if (!turnoListo || !tid) return
+    let alive = true
+    const cargar = () =>
+      api
+        .get(`/mermas/traslados/pendientes/${tid}`)
+        .then(r => { if (alive) setTrasladosPend(Array.isArray(r.data) ? r.data.length : 0) })
+        .catch(() => {})
+    cargar()
+    const id = setInterval(cargar, 30_000)
+    return () => { alive = false; clearInterval(id) }
+  }, [turnoListo, turno?.tienda_id, activePanel])
 
   const total = useMemo(
     () => cart.reduce((s, i) => s + (i.precio_venta * i.cantidad - (i.descuento || 0)), 0),
@@ -462,10 +479,12 @@ export default function POS() {
         estados={rutinasEstado}
         panelOpen={activePanel === 'turno'}
         onOpen={() => setActivePanel(activePanel === 'turno' ? null : 'turno')}
+        trasladosPend={trasladosPend}
+        onRecibir={() => setActivePanel('mermas')}
       />
 
       {/* ── Dock: herramientas de alta frecuencia, siempre visible ── */}
-      <DockBar active={activePanel} onSelect={setActivePanel} />
+      <DockBar active={activePanel} onSelect={setActivePanel} badges={{ mermas: trasladosPend }} />
     </div>
   )
 }

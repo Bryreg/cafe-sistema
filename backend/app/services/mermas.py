@@ -17,7 +17,8 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
                     cantidad: float, motivo: str, usuario_id: int,
                     tipo: str = "consumo", tienda_destino_id: int | None = None,
                     barista_id: int | None = None, barista_nombre: str | None = None,
-                    quien: str | None = None, confirmar: bool = False):
+                    quien: str | None = None, confirmar: bool = False,
+                    permitir_negativo: bool = False):
 
     if tipo not in TIPOS_VALIDOS:
         raise HTTPException(400, f"Tipo inválido. Usa: {', '.join(TIPOS_VALIDOS)}")
@@ -85,7 +86,14 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
             Inventario.tienda_id == tienda_id,
         ).first()
         if not inv:
-            raise HTTPException(404, "Producto no encontrado en inventario")
+            if permitir_negativo:
+                # Reparación admin: si el origen no tiene fila, la creamos en 0 y
+                # dejamos que el descuento la lleve a negativo (base a re-contar).
+                inv = Inventario(producto_id=producto_id, tienda_id=tienda_id, stock_actual=0)
+                db.add(inv)
+                db.flush()
+            else:
+                raise HTTPException(404, "Producto no encontrado en inventario")
 
         mov = MovimientoInventario(
             producto_id=producto_id,
@@ -97,18 +105,29 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
         )
         db.add(mov)
 
-        # Atomic decrement with stock sufficiency check
-        rows = db.execute(
-            sa_update(Inventario)
-            .where(
-                Inventario.producto_id == producto_id,
-                Inventario.tienda_id == tienda_id,
-                Inventario.stock_actual >= cantidad,
+        if permitir_negativo:
+            # Override admin (reparación de datos): descuenta aunque quede negativo.
+            db.execute(
+                sa_update(Inventario)
+                .where(
+                    Inventario.producto_id == producto_id,
+                    Inventario.tienda_id == tienda_id,
+                )
+                .values(stock_actual=Inventario.stock_actual - cantidad)
             )
-            .values(stock_actual=Inventario.stock_actual - cantidad)
-        ).rowcount
-        if rows == 0:
-            raise HTTPException(400, "Stock insuficiente.")
+        else:
+            # Atomic decrement with stock sufficiency check
+            rows = db.execute(
+                sa_update(Inventario)
+                .where(
+                    Inventario.producto_id == producto_id,
+                    Inventario.tienda_id == tienda_id,
+                    Inventario.stock_actual >= cantidad,
+                )
+                .values(stock_actual=Inventario.stock_actual - cantidad)
+            ).rowcount
+            if rows == 0:
+                raise HTTPException(400, "Stock insuficiente.")
         consumir_fifo(db, producto_id, tienda_id, cantidad)
     else:
         # Bebida preparada / producto sin stock propio: descuenta sus INSUMOS por
@@ -213,6 +232,77 @@ def recibir_traslado(db: Session, merma_id: int, tienda_destino_id: int, usuario
     db.commit()
     db.refresh(merma)
     return merma
+
+
+def anular_traslado(db: Session, merma_id: int, usuario_id: int):
+    """Anula un traslado revirtiendo su efecto EXACTO en ambas sedes y borra el
+    registro. Reversa por movimiento (usa la cantidad guardada, sin adivinar):
+      - Si estaba recibido: saca del inventario DESTINO lo que había entrado.
+      - Si el producto controla stock: devuelve al inventario ORIGEN lo que el
+        envío había descontado.
+    Solo-admin (gate en el router). Sirve para limpiar traslados duplicados o
+    con cantidades erradas sin dejar stock fantasma."""
+    from app.services.inventario import registrar_movimiento
+    merma = db.query(Merma).filter(
+        Merma.id == merma_id,
+        Merma.tipo == "traslado",
+    ).first()
+    if not merma:
+        raise HTTPException(404, "Traslado no encontrado")
+
+    # Capturar antes de borrar (la fila queda expirada tras el delete/commit).
+    pid, cant = merma.producto_id, merma.cantidad
+    origen_id, destino_id, estaba_recibido = merma.tienda_id, merma.tienda_destino_id, merma.recibido
+
+    producto = db.query(Producto).filter_by(id=pid).first()
+    controla = bool(producto and producto.controla_stock)
+
+    # 1) Revertir el recibo en el DESTINO (solo si se había recibido).
+    if estaba_recibido and destino_id:
+        registrar_movimiento(
+            db, producto_id=pid, tienda_id=destino_id,
+            tipo="salida", cantidad=cant,
+            motivo=f"Anulación traslado #{merma_id} (revertir recibo)",
+            usuario_id=usuario_id, commit=False, allow_negative=True,
+        )
+
+    # 2) Revertir el envío en el ORIGEN, reflejando lo que el envío realmente
+    #    descontó según el tipo de producto:
+    if controla:
+        # Producto con stock propio: el envío descontó el producto → devolverlo.
+        registrar_movimiento(
+            db, producto_id=pid, tienda_id=origen_id,
+            tipo="entrada", cantidad=cant,
+            motivo=f"Anulación traslado #{merma_id} (revertir envío)",
+            usuario_id=usuario_id, commit=False,
+        )
+    else:
+        # Bebida preparada sin stock propio: el envío descontó los INSUMOS por
+        # receta → devolverlos. Si un insumo no tiene fila, se saltea (como el envío).
+        for r in db.query(ProductoInsumo).filter(ProductoInsumo.producto_id == pid).all():
+            try:
+                registrar_movimiento(
+                    db, producto_id=r.insumo_id, tienda_id=origen_id,
+                    tipo="entrada", cantidad=r.cantidad * cant,
+                    motivo=f"Anulación traslado #{merma_id} (revertir insumos)",
+                    usuario_id=usuario_id, commit=False,
+                )
+            except HTTPException as e:
+                if e.status_code != 404:
+                    raise
+                logger.warning(f"Insumo {r.insumo_id} sin inventario, reversa de insumo salteada")
+
+    audit.registrar(
+        db, accion="anular_traslado", tabla="mermas",
+        registro_id=merma_id, usuario_id=usuario_id, tienda_id=origen_id,
+        datos_antes={"producto_id": pid, "cantidad": cant,
+                     "recibido": estaba_recibido, "tienda_destino_id": destino_id},
+    )
+    db.delete(merma)
+    db.commit()
+    return {"anulado": merma_id, "producto_id": pid, "cantidad": cant,
+            "revirtio_recibo": bool(estaba_recibido and destino_id),
+            "revirtio_envio": controla}
 
 
 def get_mermas_tienda(db: Session, tienda_id: int):

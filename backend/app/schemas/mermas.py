@@ -14,6 +14,17 @@ class RegistrarMermaRequest(BaseModel):
     confirmar: bool = False                  # traslado: confirma reenvío pese al guard anti-duplicado
 
 
+class AdminTrasladoRequest(BaseModel):
+    """Admin: registrar un traslado ya realizado (reparación de datos).
+    Permite descontar el origen aunque quede negativo y recibirlo en el acto."""
+    tienda_origen_id: int
+    tienda_destino_id: int
+    producto_id: int
+    cantidad: float = Field(..., gt=0)
+    motivo: Optional[str] = None
+    recibir: bool = True   # marcar recibido en el destino de una vez
+
+
 class MermaOut(BaseModel):
     id: int
     tienda_id: int

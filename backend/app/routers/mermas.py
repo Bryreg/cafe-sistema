@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
-from app.core.deps import ensure_tienda_access, get_current_user, get_barista_actor
+from app.core.deps import ensure_tienda_access, get_current_user, get_barista_actor, require_admin
 from app.models.models import Usuario, Tienda
-from app.schemas.mermas import RegistrarMermaRequest, MermaOut
+from app.schemas.mermas import RegistrarMermaRequest, AdminTrasladoRequest, MermaOut
 from app.services import mermas as svc
 
 router = APIRouter(prefix="/mermas", tags=["mermas"])
@@ -73,3 +73,30 @@ def confirmar_recibo(merma_id: int, db: Session = Depends(get_db),
     if not user.tienda_id:
         raise HTTPException(400, "Usuario sin tienda asignada")
     return svc.recibir_traslado(db, merma_id, user.tienda_id, user.id)
+
+
+@router.delete("/{merma_id}/anular")
+def anular_traslado(merma_id: int, db: Session = Depends(get_db),
+                    admin: Usuario = Depends(require_admin)):
+    """Admin: anula un traslado revirtiendo su efecto exacto en ambas sedes."""
+    return svc.anular_traslado(db, merma_id, admin.id)
+
+
+@router.post("/admin/traslado")
+def admin_registrar_traslado(data: AdminTrasladoRequest, db: Session = Depends(get_db),
+                             admin: Usuario = Depends(require_admin)):
+    """Admin: registra un traslado ya realizado (reparación). Descuenta el origen
+    aunque quede negativo y lo recibe en el destino de una vez."""
+    if data.tienda_origen_id == data.tienda_destino_id:
+        raise HTTPException(400, "El origen y el destino deben ser distintos")
+    merma = svc.registrar_merma(
+        db, data.tienda_origen_id, data.producto_id, data.cantidad,
+        data.motivo or "Traslado registrado por admin", admin.id,
+        tipo="traslado", tienda_destino_id=data.tienda_destino_id,
+        confirmar=True, permitir_negativo=True,
+    )
+    recibido = False
+    if data.recibir:
+        r = svc.recibir_traslado(db, merma.id, data.tienda_destino_id, admin.id)
+        recibido = r.recibido
+    return {"merma_id": merma.id, "recibido": recibido}

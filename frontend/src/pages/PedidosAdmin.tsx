@@ -6,6 +6,13 @@ import {
   Copy, ChevronDown, ChevronUp, Phone, ClipboardList, Settings2, Check, Search,
 } from 'lucide-react'
 
+// Timestamps en UTC naive → parsear como UTC para mostrar hora local Colombia
+// (UTC-5). Sin esto `new Date` los toma como local y quedan 5 horas adelantados.
+const parseUTC = (s: string) => {
+  const t = s.replace(' ', 'T').replace('+00:00', 'Z')
+  return new Date(t.endsWith('Z') ? t : t + 'Z')
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Sede { id: number; nombre: string }
@@ -431,7 +438,7 @@ function TabSolicitudes({ onCount }: { onCount: (n: number) => void }) {
   }
 
   const copiarPorProveedor = (s: Solicitud) => {
-    const fecha = new Date(s.fecha_solicitud).toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })
+    const fecha = parseUTC(s.fecha_solicitud).toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })
     const porProv: Record<string, SolItem[]> = {}
     for (const it of s.items) {
       const k = it.proveedor || 'Sin proveedor'
@@ -491,9 +498,9 @@ function TabSolicitudes({ onCount }: { onCount: (n: number) => void }) {
                   {s.tienda_nombre ?? `Tienda ${s.tienda_id}`} · {s.items.length} producto{s.items.length !== 1 ? 's' : ''}
                 </p>
                 <p className="text-xs text-gray-400">
-                  {new Date(s.fecha_solicitud).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' })}
+                  {parseUTC(s.fecha_solicitud).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'short' })}
                   {' · '}
-                  {new Date(s.fecha_solicitud).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                  {parseUTC(s.fecha_solicitud).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
                 </p>
                 {s.nota && <p className="text-xs text-amber-700 mt-0.5 font-medium">Nota: {s.nota}</p>}
               </div>

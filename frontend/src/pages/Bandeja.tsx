@@ -28,6 +28,15 @@ interface Sencilla { id: number; fecha_solicitud: string; estado: string; monto_
 
 const fmt = (v: number) => `$${v.toLocaleString('es-CO')}`
 
+// Los timestamps llegan en UTC naive; parsearlos como UTC para mostrar la hora
+// local de Colombia (UTC-5). Sin esto, `new Date` los toma como hora local y la
+// muestra 5 horas adelantada.
+const parseUTC = (s: string) => {
+  const t = s.replace(' ', 'T').replace('+00:00', 'Z')
+  return new Date(t.endsWith('Z') ? t : t + 'Z')
+}
+const fmtFechaHora = (s: string) => parseUTC(s).toLocaleString('es-CO')
+
 // ─── Editor de denominaciones (mismo que vista barista) ───────────────────────
 function EditorSencilla({ sencilla, onAprobar, onCancelar }: {
   sencilla: Sencilla
@@ -240,7 +249,7 @@ export default function Bandeja() {
                   <div className="flex items-start justify-between mb-1">
                     <div>
                       <div className="flex items-center gap-2 mb-0.5">
-                        <p className="text-xs text-gray-400">{new Date(p.fecha_solicitud).toLocaleString('es-CO')}</p>
+                        <p className="text-xs text-gray-400">{fmtFechaHora(p.fecha_solicitud)}</p>
                         {p.tienda_nombre && (
                           <span className="text-xs bg-blue-50 text-blue-600 border border-blue-200 px-1.5 py-0.5 rounded-full font-semibold">{p.tienda_nombre}</span>
                         )}
@@ -332,7 +341,7 @@ export default function Bandeja() {
                     </div>
 
                     {/* Fecha */}
-                    <p className="text-xs text-gray-400 mt-1.5">{new Date(s.fecha_solicitud).toLocaleString('es-CO')}</p>
+                    <p className="text-xs text-gray-400 mt-1.5">{fmtFechaHora(s.fecha_solicitud)}</p>
 
                     {/* Botones acción (solo pendiente, sin editor abierto) */}
                     {s.estado === 'pendiente' && editando !== s.id && (

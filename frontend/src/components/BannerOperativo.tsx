@@ -1,4 +1,4 @@
-import { CheckCircle, AlertTriangle } from 'lucide-react'
+import { CheckCircle, AlertTriangle, PackageCheck } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import type { RutinaEstado } from '../hooks/useRutinasEstado'
 
@@ -6,6 +6,8 @@ interface Props {
   estados: RutinaEstado[]
   panelOpen: boolean
   onOpen: () => void
+  trasladosPend?: number
+  onRecibir?: () => void
 }
 
 const TRACKED = ['limpieza', 'surtido', 'vitrina'] as const
@@ -27,7 +29,7 @@ function ago(m: number | null): string {
   return r > 0 ? `${h}h ${r}m` : `${h}h`
 }
 
-export default function BannerOperativo({ estados, panelOpen, onOpen }: Props) {
+export default function BannerOperativo({ estados, panelOpen, onOpen, trasladosPend = 0, onRecibir }: Props) {
   const byKey = Object.fromEntries(estados.map(e => [e.clave, e]))
   const alertCount = estados.filter(e => e.track && e.status === 'alert').length
   const novedades = byKey['novedad']?.count ?? 0
@@ -73,6 +75,21 @@ export default function BannerOperativo({ estados, panelOpen, onOpen }: Props) {
             {mermas > 0 && <>Mer <strong style={{ color: dark.ink }}>{mermas}</strong></>}
           </span>
         </>
+      )}
+
+      {/* Traslados por recibir — pill tocable que abre el panel de Merma */}
+      {trasladosPend > 0 && (
+        <button
+          onClick={onRecibir}
+          className="flex-shrink-0 flex items-center gap-1 rounded-full font-bold transition-all active:scale-95"
+          style={{
+            padding: '5px 10px', fontSize: 11, whiteSpace: 'nowrap',
+            background: dark.amberTint,
+            color: dark.amber,
+          }}
+        >
+          <PackageCheck size={12} /> {trasladosPend} por recibir
+        </button>
       )}
 
       {/* Status pill */}

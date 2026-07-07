@@ -91,6 +91,17 @@ DEFAULTS = [
         "canal_push": True,
         "nivel": "advertencia",
     },
+    {
+        "tipo": "traslado_entrante",
+        "label": "Traslado entrante por recibir",
+        "descripcion": "Avisa a la sede destino cuando otra sede le envia un traslado de productos para recibir.",
+        "unidad": "",
+        "umbral": 0,
+        "activa": True,
+        "canal_bell": True,
+        "canal_push": True,
+        "nivel": "info",
+    },
 ]
 
 # Índice por tipo para mergear metadata estática rápido.

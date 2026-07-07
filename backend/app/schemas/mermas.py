@@ -11,6 +11,7 @@ class RegistrarMermaRequest(BaseModel):
     tipo: str = "consumo"                    # consumo | traslado | daño
     tienda_destino_id: Optional[int] = None  # solo para traslado
     quien: Optional[str] = None              # quién consumió (consumo dueños/reuniones)
+    confirmar: bool = False                  # traslado: confirma reenvío pese al guard anti-duplicado
 
 
 class MermaOut(BaseModel):

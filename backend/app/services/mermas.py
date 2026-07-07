@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import update as sa_update
 from fastapi import HTTPException
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.models.models import (Merma, Inventario, MovimientoInventario, TipoMovInvEnum,
                                 Tienda, Producto, ProductoInsumo)
 from app.services.inventario import consumir_fifo, registrar_movimiento
@@ -17,7 +17,7 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
                     cantidad: float, motivo: str, usuario_id: int,
                     tipo: str = "consumo", tienda_destino_id: int | None = None,
                     barista_id: int | None = None, barista_nombre: str | None = None,
-                    quien: str | None = None):
+                    quien: str | None = None, confirmar: bool = False):
 
     if tipo not in TIPOS_VALIDOS:
         raise HTTPException(400, f"Tipo inválido. Usa: {', '.join(TIPOS_VALIDOS)}")
@@ -30,6 +30,25 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
         tienda_destino = db.query(Tienda).filter_by(id=tienda_destino_id).first()
         if not tienda_destino:
             raise HTTPException(404, "Sede destino no encontrada")
+
+        # Guard anti-doble-envío: mismo producto+cantidad al mismo destino en los
+        # últimos 5 min y aún sin recibir => probable doble toque. Pide confirmar.
+        if not confirmar:
+            reciente = db.query(Merma).filter(
+                Merma.tipo == "traslado",
+                Merma.tienda_id == tienda_id,
+                Merma.tienda_destino_id == tienda_destino_id,
+                Merma.producto_id == producto_id,
+                Merma.cantidad == cantidad,
+                Merma.recibido == False,
+                Merma.fecha_registro >= datetime.utcnow() - timedelta(minutes=5),
+            ).first()
+            if reciente:
+                raise HTTPException(
+                    409,
+                    f"Ya enviaste {cantidad:g} de este producto a {tienda_destino.nombre} "
+                    f"hace un momento y sigue sin recibirse. ¿Confirmás enviarlo de nuevo?",
+                )
 
     producto = db.query(Producto).filter_by(id=producto_id).first()
     if not producto:
@@ -119,6 +138,21 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
                        "motivo": motivo, "tipo": tipo,
                        "tienda_destino_id": tienda_destino_id},
     )
+
+    # Avisar a la sede DESTINO que tiene un traslado por recibir (campana + push).
+    # Sin esto el pendiente quedaba invisible salvo que alguien abriera la pantalla
+    # de Merma en la sede correcta. Transacción-safe: la fila se ata a este commit.
+    if tipo == "traslado":
+        from app.services import notificaciones
+        origen = db.query(Tienda).filter_by(id=tienda_id).first()
+        origen_nombre = origen.nombre if origen else "otra sede"
+        msg = f"{producto.nombre}: {cantidad:g} en camino desde {origen_nombre}"
+        notificaciones.disparar(
+            db, tienda_id=tienda_destino_id, tipo="traslado_entrante",
+            mensaje=msg, nivel="info", referencia_id=merma.id,
+            push_titulo="Traslado por recibir", push_cuerpo=msg,
+        )
+
     db.commit()
     db.refresh(merma)
     logger.info(f"Merma [{tipo}] registrada: {cantidad} de producto {producto_id} en tienda {tienda_id}")

@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import { dark } from '../constants/darkTheme'
 import { CheckCircle2, Circle, Clock, AlertTriangle, Camera, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Sparkles, Brush } from 'lucide-react'
+import { BaristaAvatar } from '../components/BaristaAvatar'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 interface Sede { id: number; nombre: string }
@@ -44,22 +45,6 @@ const STATUS: Record<'ok' | 'warn' | 'alert', { dot: string; label: string; bg: 
   ok:    { dot: 'oklch(55% 0.16 145)', label: 'Al día',  bg: 'oklch(96% 0.04 145)', fg: 'oklch(35% 0.13 145)', Icon: CheckCircle2 },
   warn:  { dot: 'oklch(72% 0.15 65)',  label: 'Pronto',  bg: 'oklch(96% 0.06 70)',  fg: 'oklch(45% 0.14 55)',  Icon: Clock },
   alert: { dot: 'oklch(58% 0.19 25)',  label: 'Vencida', bg: 'oklch(96% 0.04 25)',  fg: 'oklch(48% 0.18 25)',  Icon: AlertTriangle },
-}
-
-// ─── Avatar de barista: color estable por nombre (hash→hue), 2 iniciales ───────
-const hueDe = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360; return h }
-const inicialesDe = (n: string) => { const p = n.trim().split(/\s+/); return (((p[0]?.[0] ?? '') + (p[1]?.[0] ?? '')).toUpperCase()) || '—' }
-function BaristaAvatar({ nombre, size = 22 }: { nombre: string; size?: number }) {
-  const h = hueDe(nombre)
-  return (
-    <span title={nombre} style={{
-      width: size, height: size, borderRadius: 999, flexShrink: 0,
-      background: `oklch(90% 0.05 ${h})`, color: `oklch(40% 0.13 ${h})`,
-      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: Math.round(size * 0.42), fontWeight: 800, letterSpacing: '-0.03em',
-      border: `1px solid oklch(80% 0.06 ${h})`,
-    }}>{inicialesDe(nombre)}</span>
-  )
 }
 
 const GREEN_TINT = 'oklch(96% 0.04 145)'

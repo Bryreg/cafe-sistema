@@ -72,6 +72,23 @@ input, select, textarea {
   background: oklch(35% 0.05 155);
 }
 
+/* ── Limpieza: micro-celebración al marcar / completar la semana ──────────── */
+@keyframes limpieza-pop {
+  0%   { transform: scale(0.6); }
+  60%  { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+@keyframes limpieza-confetti {
+  0%   { transform: translateY(-12vh) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(102vh) rotate(720deg); opacity: 0; }
+}
+.limpieza-pop { animation: limpieza-pop 300ms ease-out; }
+.limpieza-confetti-piece { animation: limpieza-confetti 3.2s linear forwards; }
+@media (prefers-reduced-motion: reduce) {
+  .limpieza-pop { animation: none; }
+  .limpieza-confetti-piece { display: none !important; }
+}
+
 /* ── News ticker ─────────────────────────────────────────────────────────── */
 @keyframes ticker-scroll {
   0%   { transform: translateX(0); }

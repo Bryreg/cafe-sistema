@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from datetime import datetime
 from app.models.models import (FacturaCompra, FacturaCompraItem, TipoPagoEnum,
                                CajaTurno, MovimientoCaja, EstadoTurnoEnum,
-                               LoteInventario, Producto)
+                               LoteInventario, Producto, Inventario)
 from app.services import inventario as inv_svc
 from app.services import audit
 
@@ -141,6 +141,18 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
         prod = db.query(Producto).filter_by(id=item.producto_id).first()
         if prod is not None and not (prod.proveedor or "").strip() and (data.proveedor or "").strip():
             prod.proveedor = data.proveedor.strip()
+        # Asegurar la fila de inventario en esta tienda: un producto nuevo para la
+        # sede puede no tenerla, y una ENTRADA debe poder crearla (igual que la
+        # recepción de mercancía). Sin esto, registrar_movimiento(entrada) tira
+        # "Producto no encontrado en inventario de esta tienda" y traba la factura.
+        inv = db.query(Inventario).filter(
+            Inventario.producto_id == item.producto_id,
+            Inventario.tienda_id == data.tienda_id,
+        ).first()
+        if not inv:
+            db.add(Inventario(producto_id=item.producto_id, tienda_id=data.tienda_id,
+                              stock_actual=0.0, stock_minimo=0.0))
+            db.flush()
         inv_svc.registrar_movimiento(
             db,
             producto_id=item.producto_id,

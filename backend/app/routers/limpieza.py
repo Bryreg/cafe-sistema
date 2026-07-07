@@ -157,6 +157,8 @@ def get_registros(
 class RegistrarTareaIn(BaseModel):
     tarea_key: str
     fecha: Optional[date] = None
+    barista_id: Optional[int] = None       # barista elegida en el hub ("¿quién lo hizo?")
+    barista_nombre: Optional[str] = None
 
 
 @router.post("/{tienda_id}/semanal", status_code=201)
@@ -201,8 +203,9 @@ def registrar_tarea(
         usuario_id=user.id,
         tarea_key=body.tarea_key,
         fecha=datetime.combine(fecha, datetime.min.time()),
-        barista_id=barista[0],
-        barista_nombre=barista[1],
+        # Barista elegida explícitamente en el hub; si no, la del header X-Barista-Id.
+        barista_id=body.barista_id if body.barista_id is not None else barista[0],
+        barista_nombre=(body.barista_nombre.strip() if body.barista_nombre else None) or barista[1],
     )
     db.add(registro)
     db.commit()

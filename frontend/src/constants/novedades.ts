@@ -16,6 +16,16 @@ export interface Novedad {
 export const NOVEDADES: Novedad[] = [
   // ── 7 de julio ──────────────────────────────────────────────────────────
   {
+    fecha: '2026-07-07', rol: 'todos', tipo: 'cambio',
+    titulo: 'Limpieza semanal: elegí quién la hizo al marcar',
+    detalle: 'Al marcar una tarea del aseo semanal desde el hub, ahora se abre "¿Quién lo hizo?" para elegir la barista — se acabó el "Kiosk". Queda registrado con el nombre real, la fecha y la hora.',
+  },
+  {
+    fecha: '2026-07-07', rol: 'admin', tipo: 'mejora',
+    titulo: 'Cumplimiento rediseñado: más visual y claro',
+    detalle: 'La pantalla de Cumplimiento se rediseñó para ver quién hizo qué y cuándo de un vistazo: KPIs arriba (rutinas de hoy, aseo de la semana, vencidas, actividad 7 días), tarjetas de estado por rutina con semáforo, una línea de tiempo del día con avatares de cada barista por hora, y sobre todo una MATRIZ del aseo profundo (las 13 tareas × las 4 semanas del mes) donde cada casillero muestra quién y a qué hora. Cada barista tiene su color e iniciales.',
+  },
+  {
     fecha: '2026-07-07', rol: 'admin', tipo: 'mejora',
     titulo: 'Cumplimiento: la limpieza semanal en la misma pantalla',
     detalle: 'El cockpit de Cumplimiento ahora también muestra las 13 tareas de la limpieza semanal (aseo profundo: pisos, congelador, trampa de grasas…) de la semana del día elegido, con su tilde, quién la hizo y a qué hora. Antes eso solo se veía en la pantalla aparte de Limpieza semanal.',

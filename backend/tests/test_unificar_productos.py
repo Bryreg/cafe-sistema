@@ -36,7 +36,8 @@ class UnificarProductosTest(unittest.TestCase):
         self.keeper = Producto(nombre="Bolsa Kraft", categoria=CategoriaProductoEnum.insumo,
                                unidad_medida="und", controla_stock=True, incluir_en_conteo=True)
         self.dup = Producto(nombre="BOLSA MEDIUM KRAFT", categoria=CategoriaProductoEnum.insumo,
-                            unidad_medida="und", controla_stock=True, incluir_en_conteo=True)
+                            unidad_medida="und", controla_stock=True, incluir_en_conteo=True,
+                            grupo_conteo="desechables")
         self.db.add_all([self.keeper, self.dup])
         self.db.flush()
         # keeper: Vida 100. dup: Vida 8 (positivo a mover), Palmetto -5 (fantasma a descartar).
@@ -74,6 +75,7 @@ class UnificarProductosTest(unittest.TestCase):
         self.db.refresh(self.dup)
         self.assertFalse(self.dup.incluir_en_conteo)                   # archivado
         self.assertFalse(self.dup.controla_stock)
+        self.assertIsNone(self.dup.grupo_conteo)                       # fuera del bucket desechables
 
     def test_keeper_en_archivados_falla(self):
         with self.assertRaises(Exception):

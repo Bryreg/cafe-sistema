@@ -593,6 +593,10 @@ def unificar_productos(db: Session, keeper_id: int, archive_ids: list[int],
                                      usuario_id=usuario_id, commit=False)
         arch.incluir_en_conteo = False
         arch.controla_stock = False
+        # También sacarlo del bucket de desechables (esa lista filtra por
+        # grupo_conteo, NO por incluir_en_conteo): sin esto el duplicado seguía
+        # apareciendo en el conteo de desechables.
+        arch.grupo_conteo = None
 
     audit.registrar(
         db, accion="unificar_productos", tabla="productos", registro_id=keeper_id,

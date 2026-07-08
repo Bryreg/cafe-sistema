@@ -378,13 +378,15 @@ export default function POS() {
               background: dark.bg,
               borderColor: dark.border,
               boxShadow: '-4px 0 20px rgba(0,0,0,0.06)',
+              // Panel a pantalla completa en móvil: dejar el contenido bajo el notch.
+              paddingTop: 'env(safe-area-inset-top, 0px)',
             }}
           >
-            {/* X única flotante — sirve para todos los paneles */}
+            {/* X única flotante — sirve para todos los paneles (baja con el notch) */}
             <button
               onClick={() => setActivePanel(null)}
-              className="absolute top-2.5 right-2.5 z-20 w-8 h-8 flex items-center justify-center rounded-full shadow-md"
-              style={{ background: 'rgba(255,255,255,0.92)', border: '1px solid rgba(0,0,0,0.08)', color: '#1c1917' }}
+              className="absolute right-2.5 z-20 w-8 h-8 flex items-center justify-center rounded-full shadow-md"
+              style={{ top: 'calc(env(safe-area-inset-top, 0px) + 0.625rem)', background: 'rgba(255,255,255,0.92)', border: '1px solid rgba(0,0,0,0.08)', color: '#1c1917' }}
               aria-label="Cerrar panel"
             >
               <X size={16} />

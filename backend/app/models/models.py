@@ -261,6 +261,10 @@ class Producto(Base):
     orden_conteo = Column(Integer, nullable=True)
     # NULL = conteo diario normal; 'desechables' = solo se cuenta cuando el admin lo pide.
     grupo_conteo = Column(String(20), nullable=True)
+    # Producto intercambiable de RESERVA: al consumir este insumo por receta, si su
+    # stock no alcanza, el resto se descuenta del sustituto (ej. Leche Entera →
+    # Deslactosada). NULL = sin sustituto (comportamiento normal).
+    sustituto_id = Column(Integer, ForeignKey("productos.id"), nullable=True)
     inventarios = relationship("Inventario", back_populates="producto")
     movimientos_inv = relationship("MovimientoInventario", back_populates="producto")
     pastelerias = relationship("PasteleriaDiaria", back_populates="producto")

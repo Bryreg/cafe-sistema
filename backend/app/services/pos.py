@@ -223,11 +223,13 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
     for prod, cantidad, _, _, _ in lineas:
         for r in insumos_por_prod.get(prod.id, []):
             try:
-                inv_svc.registrar_movimiento(
+                # consumir_insumo aplica la cascada a sustituto (ej. leche entera →
+                # deslactosada cuando la entera se agota).
+                inv_svc.consumir_insumo(
                     db, producto_id=r.insumo_id, tienda_id=tienda_id,
-                    tipo="salida", cantidad=r.cantidad * cantidad,
+                    cantidad=r.cantidad * cantidad,
                     motivo=f"Venta POS — insumo de {prod.nombre}",
-                    usuario_id=usuario_id, commit=False, allow_negative=True,
+                    usuario_id=usuario_id,
                 )
             except HTTPException as e:
                 if e.status_code == 404:

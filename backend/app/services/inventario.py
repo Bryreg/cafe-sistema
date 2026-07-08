@@ -225,6 +225,47 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
     return inv
 
 
+def consumir_insumo(db: Session, producto_id: int, tienda_id: int, cantidad: float,
+                    motivo: str, usuario_id: int, barista_id: int | None = None,
+                    barista_nombre: str | None = None, _visitados=None):
+    """Descuenta `cantidad` de un insumo por receta con CASCADA a su sustituto.
+    Si el insumo tiene sustituto_id y su stock no alcanza, saca lo disponible
+    (hasta 0) y el resto lo descuenta del sustituto (que puede tener el suyo →
+    cascada, con guard anti-ciclo). Sin sustituto, o si alcanza, o si no tiene
+    fila, se comporta como una salida normal con allow_negative (igual que antes).
+    NO hace commit."""
+    _visitados = _visitados or set()
+    prod = db.query(Producto).filter_by(id=producto_id).first()
+    sustituto_id = getattr(prod, "sustituto_id", None) if prod else None
+    inv = db.query(Inventario).filter(
+        Inventario.producto_id == producto_id, Inventario.tienda_id == tienda_id
+    ).first()
+    stock = float(inv.stock_actual) if inv else None
+
+    # Salida normal si: no hay sustituto, ciclo detectado, no hay fila, o alcanza.
+    if not sustituto_id or sustituto_id in _visitados or stock is None or stock >= cantidad:
+        registrar_movimiento(db, producto_id=producto_id, tienda_id=tienda_id,
+                             tipo="salida", cantidad=cantidad, motivo=motivo,
+                             usuario_id=usuario_id, commit=False, allow_negative=True,
+                             barista_id=barista_id, barista_nombre=barista_nombre)
+        return
+
+    # No alcanza: tomar lo disponible (hasta 0) y el resto del sustituto.
+    _visitados.add(producto_id)
+    tomar = max(0.0, stock)
+    if tomar > 0:
+        registrar_movimiento(db, producto_id=producto_id, tienda_id=tienda_id,
+                             tipo="salida", cantidad=tomar, motivo=motivo,
+                             usuario_id=usuario_id, commit=False, allow_negative=True,
+                             barista_id=barista_id, barista_nombre=barista_nombre)
+    resto = round(cantidad - tomar, 4)
+    if resto > 0:
+        consumir_insumo(db, sustituto_id, tienda_id, resto,
+                        f"{motivo} (reserva de #{producto_id})", usuario_id,
+                        barista_id=barista_id, barista_nombre=barista_nombre,
+                        _visitados=_visitados)
+
+
 def agregar_lote(db: Session, producto_id: int, tienda_id: int,
                  cantidad: float, usuario_id: int,
                  fecha_vencimiento: datetime | None = None,

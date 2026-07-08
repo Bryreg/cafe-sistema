@@ -178,6 +178,8 @@ with engine.connect() as _conn:
         # Grupo de conteo: NULL = conteo diario normal; 'desechables' = solo se cuenta
         # cuando el admin lo solicita (formato de desechables).
         "ALTER TABLE productos ADD COLUMN grupo_conteo VARCHAR(20)",
+        # Producto sustituto/reserva para consumo por receta (ej. leche entera → deslactosada).
+        "ALTER TABLE productos ADD COLUMN sustituto_id INTEGER",
         # Conteo de desechables: nuevo tipo en el enum nativo de Postgres.
         "ALTER TYPE tipoconteoenum ADD VALUE IF NOT EXISTS 'desechables'",
         "ALTER TYPE tipoconteoenum ADD VALUE IF NOT EXISTS 'existencia'",

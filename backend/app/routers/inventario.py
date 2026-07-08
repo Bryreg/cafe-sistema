@@ -175,13 +175,21 @@ def editar_producto(producto_id: int, data: ProductoUpdate, db: Session = Depend
         if data.grupo_conteo not in ("", "desechables"):
             raise HTTPException(400, "grupo_conteo debe ser desechables o vacío")
         p.grupo_conteo = data.grupo_conteo or None
+    if data.sustituto_id is not None:
+        if data.sustituto_id == 0:
+            p.sustituto_id = None
+        elif data.sustituto_id == p.id:
+            raise HTTPException(400, "Un producto no puede ser su propio sustituto")
+        else:
+            p.sustituto_id = data.sustituto_id
     db.commit()
     return {"id": p.id, "nombre": p.nombre, "categoria": p.categoria.value,
             "unidad_medida": p.unidad_medida, "controla_stock": p.controla_stock,
             "incluir_en_conteo": p.incluir_en_conteo,
             "fraccionable": p.fraccionable, "envase": p.envase,
             "contenido_por_unidad": p.contenido_por_unidad,
-            "orden_conteo": p.orden_conteo, "grupo_conteo": p.grupo_conteo}
+            "orden_conteo": p.orden_conteo, "grupo_conteo": p.grupo_conteo,
+            "sustituto_id": p.sustituto_id}
 
 @router.get("/productos/{producto_id}/insumos")
 def get_insumos_producto(producto_id: int, db: Session = Depends(get_db),

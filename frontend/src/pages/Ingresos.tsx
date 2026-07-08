@@ -707,6 +707,17 @@ function QuickAddPanel({
               {addEmpaques} empaque{Number(addEmpaques) !== 1 ? 's' : ''} = {Math.round(Number(addEmpaques) * cpe)} {addProducto.unidad_medida} ✓
             </p>
           )}
+          {/* Granel de presentación variable (sin empaque fijo): recordar SIEMPRE
+              que se registra el PESO en gr/ml, no la cantidad de frascos/bolsas. */}
+          {esGranel(addProducto.unidad_medida) && !conEmpaques && (
+            <div className="mb-2 px-2.5 py-2 rounded-lg flex items-start gap-1.5"
+              style={{ background: 'oklch(95% 0.045 70)', border: '1px solid oklch(85% 0.08 70)' }}>
+              <span className="text-[13px]">⚠️</span>
+              <p className="text-[11px] font-semibold" style={{ color: 'oklch(45% 0.12 65)' }}>
+                Registrá el PESO en {addProducto.unidad_medida} (pesá el frasco/bolsa), no la cantidad de envases.
+              </p>
+            </div>
+          )}
         </>
       )}
 

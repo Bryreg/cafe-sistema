@@ -284,14 +284,14 @@ export default function Ingresos() {
       </header>
 
       {/* ── Proveedor picker overlay ──
-          Embebido: `absolute` confinado al panel (el POS sigue visible al lado).
-          Standalone: `fixed` a pantalla completa. */}
+          SIEMPRE fixed a pantalla completa (z alto): embebido en un panel angosto
+          y bajo el notch no se podía seleccionar; full-screen garantiza el toque. */}
       {showPickerProv && (
         <div
-          className={`${embedded ? 'absolute' : 'fixed'} inset-0 z-50 flex flex-col`}
+          className="fixed inset-0 z-[70] flex flex-col"
           style={{ background: 'rgba(20,15,10,0.5)', backdropFilter: 'blur(2px)' }}
         >
-          <div className="bg-white p-4 border-b border-warm-200" style={{ paddingTop: embedded ? '1rem' : 'max(1rem, env(safe-area-inset-top))' }}>
+          <div className="bg-white p-4 border-b border-warm-200" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
             <div className="flex items-center justify-between mb-3">
               <p className="text-[10px] font-bold uppercase tracking-widest text-warm-400">Proveedor</p>
               <button onClick={() => { setShowPickerProv(false); setQueryProv('') }}
@@ -497,14 +497,13 @@ export default function Ingresos() {
             </div>
           </div>
 
-          {/* ── Campos opcionales ── */}
+          {/* ── Datos de la factura (a la vista, no ocultos) ── */}
           <div className="mx-4 mt-4">
-            <details className="bg-white border border-warm-100 rounded-2xl overflow-hidden">
-              <summary className="px-4 py-3 text-[12px] font-semibold text-warm-500 cursor-pointer list-none flex items-center justify-between select-none">
-                Datos adicionales
-                <ChevronDown size={14} className="text-warm-300" />
-              </summary>
-              <div className="px-4 pb-4 pt-3 space-y-3 border-t border-warm-100">
+            <div className="bg-white border border-warm-100 rounded-2xl overflow-hidden">
+              <p className="px-4 py-3 text-[12px] font-semibold text-warm-500 border-b border-warm-100">
+                Datos de la factura
+              </p>
+              <div className="px-4 pb-4 pt-3 space-y-3">
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-wide text-warm-400">N° Factura</label>
                   <input value={numeroFactura} onChange={e => setNumeroFactura(e.target.value)}
@@ -526,7 +525,7 @@ export default function Ingresos() {
                     className="w-full mt-1 border-2 border-warm-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-amber-400" />
                 </div>
               </div>
-            </details>
+            </div>
           </div>
 
           {/* Pago contado que supera la venta del día: saldría del sobre separado */}

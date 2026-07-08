@@ -180,6 +180,8 @@ with engine.connect() as _conn:
         "ALTER TABLE productos ADD COLUMN grupo_conteo VARCHAR(20)",
         # Producto sustituto/reserva para consumo por receta (ej. leche entera → deslactosada).
         "ALTER TABLE productos ADD COLUMN sustituto_id INTEGER",
+        # Gr/ml por empaque comercial: Recibir convierte "N botellas" → gramos.
+        "ALTER TABLE productos ADD COLUMN contenido_por_empaque FLOAT",
         # Conteo de desechables: nuevo tipo en el enum nativo de Postgres.
         "ALTER TYPE tipoconteoenum ADD VALUE IF NOT EXISTS 'desechables'",
         "ALTER TYPE tipoconteoenum ADD VALUE IF NOT EXISTS 'existencia'",

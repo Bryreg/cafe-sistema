@@ -221,6 +221,15 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
     for r in receta_rows:
         insumos_por_prod.setdefault(r.producto_id, []).append(r)
     for prod, cantidad, _, _, _ in lineas:
+        # Fuga de inventario: producto vendido SIN receta y SIN stock propio no
+        # descuenta nada. Avisar al admin (dedupe diario por producto) — la venta
+        # sigue normal, la alerta alimenta el reporte de cobertura de recetas.
+        if not prod.controla_stock and prod.id not in insumos_por_prod:
+            try:
+                from app.services import notificaciones
+                notificaciones.evaluar_venta_sin_descuento(db, tienda_id, prod.id, prod.nombre)
+            except Exception:  # noqa: BLE001 — una alerta nunca tumba la venta
+                pass
         for r in insumos_por_prod.get(prod.id, []):
             try:
                 # consumir_insumo aplica la cascada a sustituto (ej. leche entera →

@@ -135,6 +135,23 @@ def evaluar_ventas_dia(db: Session, tienda_id: int, total_dia: float) -> None:
         logger.warning("evaluar_ventas_dia fallo: %s", e)
 
 
+def evaluar_venta_sin_descuento(db: Session, tienda_id: int, producto_id: int,
+                                producto_nombre: str) -> None:
+    """Se vendió un producto sin receta y sin stock propio: la plata entra pero el
+    inventario no baja (fuga #3 de la auditoría). Una vez por día y por producto."""
+    try:
+        if _ya_disparo_hoy(db, tienda_id, "venta_sin_descuento", referencia_id=producto_id):
+            return
+        msg = f"{producto_nombre} se vende pero no descuenta ningún insumo (sin receta)"
+        disparar(
+            db, tienda_id, "venta_sin_descuento", msg, "advertencia",
+            referencia_id=producto_id,
+            push_titulo="Venta sin descuento", push_cuerpo=msg,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("evaluar_venta_sin_descuento fallo: %s", e)
+
+
 def evaluar_stock(db: Session, tienda_id: int, producto_id: int,
                   producto_nombre: str, estado: str) -> None:
     """Dispara alerta de stock para estado 'critico' o 'agotado'

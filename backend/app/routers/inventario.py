@@ -121,7 +121,9 @@ def productos(db: Session = Depends(get_db), user: Usuario = Depends(get_current
              # Para el modo "Existencia" del kiosko: distinguir lo que NO entra al
              # conteo diario (vasos, tapas, helado) — incluir_en_conteo False.
              "incluir_en_conteo": p.incluir_en_conteo is not False,
-             "grupo_conteo": p.grupo_conteo} for p in rows]
+             "grupo_conteo": p.grupo_conteo,
+             # Recibir: convertir "N empaques" → gr/ml (botella Baileys = 1000).
+             "contenido_por_empaque": p.contenido_por_empaque} for p in rows]
 
 @router.post("/productos")
 def crear_producto(data: ProductoCreate, db: Session = Depends(get_db),
@@ -182,6 +184,8 @@ def editar_producto(producto_id: int, data: ProductoUpdate, db: Session = Depend
             raise HTTPException(400, "Un producto no puede ser su propio sustituto")
         else:
             p.sustituto_id = data.sustituto_id
+    if data.contenido_por_empaque is not None:
+        p.contenido_por_empaque = data.contenido_por_empaque if data.contenido_por_empaque > 0 else None
     db.commit()
     return {"id": p.id, "nombre": p.nombre, "categoria": p.categoria.value,
             "unidad_medida": p.unidad_medida, "controla_stock": p.controla_stock,
@@ -189,7 +193,8 @@ def editar_producto(producto_id: int, data: ProductoUpdate, db: Session = Depend
             "fraccionable": p.fraccionable, "envase": p.envase,
             "contenido_por_unidad": p.contenido_por_unidad,
             "orden_conteo": p.orden_conteo, "grupo_conteo": p.grupo_conteo,
-            "sustituto_id": p.sustituto_id}
+            "sustituto_id": p.sustituto_id,
+            "contenido_por_empaque": p.contenido_por_empaque}
 
 @router.get("/productos/{producto_id}/insumos")
 def get_insumos_producto(producto_id: int, db: Session = Depends(get_db),
@@ -335,6 +340,31 @@ def lotes(tienda_id: int, producto_id: int, db: Session = Depends(get_db),
           user: Usuario = Depends(require_admin)):
     ensure_tienda_access(user, tienda_id)
     return svc.get_lotes(db, tienda_id, producto_id)
+
+
+@router.get("/cobertura")
+def cobertura_recetas(db: Session = Depends(get_db), admin: Usuario = Depends(require_admin)):
+    """Admin: agujeros del modelo relacional — (a) productos que se VENDEN en el POS
+    pero no descuentan nada (sin receta y sin stock propio); (b) insumos que controlan
+    stock pero NINGUNA receta los consume (se gastan físicamente y el sistema nunca
+    los baja). Ambos generan diferencias de conteo inexplicables."""
+    prods = db.query(Producto).all()
+    consumidos = {r.insumo_id for r in db.query(ProductoInsumo.insumo_id).distinct()}
+    con_receta = {r.producto_id for r in db.query(ProductoInsumo.producto_id).distinct()}
+    pos_sin_descuento = [
+        {"id": p.id, "nombre": p.nombre, "precio_venta": p.precio_venta}
+        for p in prods
+        if (p.precio_venta or 0) > 0 and not p.controla_stock and p.id not in con_receta
+    ]
+    insumos_sin_consumidor = [
+        {"id": p.id, "nombre": p.nombre, "unidad": p.unidad_medida}
+        for p in prods
+        if p.controla_stock and p.incluir_en_conteo is not False
+        and not (p.precio_venta or 0) and p.id not in consumidos
+        and p.grupo_conteo != "desechables"   # los desechables no se consumen por receta
+    ]
+    return {"pos_sin_descuento": pos_sin_descuento,
+            "insumos_sin_consumidor": insumos_sin_consumidor}
 
 
 class UnificarRequest(BaseModel):

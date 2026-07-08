@@ -124,13 +124,34 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
     db.add(factura)
     db.flush()
 
+    UNIDADES_GRANEL = {"gr", "g", "gramos", "ml"}
     for item in data.items:
         # Per-item lote takes precedence; fall back to factura-level for legacy clients
         numero_lote_item = item.numero_lote or data.numero_lote
+        prod = db.query(Producto).filter_by(id=item.producto_id).first()
+
+        # ── Conversión empaques → gr/ml ──────────────────────────────────────
+        # La fuga #1 de la auditoría: botella de Baileys registrada como "1 gr".
+        cantidad = item.cantidad
+        if getattr(item, "en_empaques", False):
+            cpe = float(prod.contenido_por_empaque or 0) if prod else 0
+            if cpe <= 0:
+                raise HTTPException(400, f"{prod.nombre if prod else 'El producto'} no tiene "
+                                          "configurado el contenido por empaque — registrá en gramos totales")
+            cantidad = round(item.cantidad * cpe, 2)
+        elif (prod and (prod.unidad_medida or "").lower() in UNIDADES_GRANEL
+              and (prod.contenido_por_empaque or 0) > 0 and item.cantidad < 50):
+            # Guard anti-unidades: producto en gramos con empaque configurado y una
+            # cantidad diminuta => casi seguro escribieron botellas/frascos.
+            raise HTTPException(400, (
+                f"{prod.nombre} se registra en {prod.unidad_medida} y pusiste {item.cantidad:g}. "
+                f"¿Eran empaques? Usá el campo de empaques (1 empaque = "
+                f"{prod.contenido_por_empaque:g} {prod.unidad_medida}) o escribí los gramos totales."))
+
         db.add(FacturaCompraItem(
             factura_id=factura.id,
             producto_id=item.producto_id,
-            cantidad=item.cantidad,
+            cantidad=cantidad,
             precio_unitario=item.precio_unitario,
             numero_lote=numero_lote_item,
             fecha_vencimiento=item.fecha_vencimiento,
@@ -138,7 +159,6 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
         # El proveedor de la compra alimenta al producto (si no tiene uno asignado):
         # así los pedidos se agrupan solos con los proveedores que las baristas
         # registran al Recibir. La asignación manual del admin nunca se pisa.
-        prod = db.query(Producto).filter_by(id=item.producto_id).first()
         if prod is not None and not (prod.proveedor or "").strip() and (data.proveedor or "").strip():
             prod.proveedor = data.proveedor.strip()
         # Asegurar la fila de inventario en esta tienda: un producto nuevo para la
@@ -158,7 +178,7 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
             producto_id=item.producto_id,
             tienda_id=data.tienda_id,
             tipo="entrada",
-            cantidad=item.cantidad,
+            cantidad=cantidad,
             motivo=f"Factura #{data.numero_factura or factura.id} — {data.proveedor}",
             usuario_id=usuario_id,
             fecha_vencimiento=item.fecha_vencimiento,

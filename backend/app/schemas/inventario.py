@@ -30,6 +30,7 @@ class ProductoUpdate(BaseModel):
     orden_conteo: Optional[int] = None            # posición fija en el conteo (-1 = quitar)
     grupo_conteo: Optional[str] = None            # "" (normal) | "desechables"
     sustituto_id: Optional[int] = None            # producto de reserva (0 = quitar)
+    contenido_por_empaque: Optional[float] = None # gr/ml por empaque comercial (0 = quitar)
 
 class InsumoRecetaItem(BaseModel):
     insumo_id: int

@@ -16,7 +16,11 @@ interface Producto {
   nombre: string
   categoria: string
   unidad_medida: string
+  contenido_por_empaque?: number | null
 }
+
+// Productos a granel: se registran en gr/ml, nunca en botellas o frascos.
+const esGranel = (u: string) => ['gr', 'g', 'gramos', 'ml'].includes((u || '').toLowerCase())
 
 interface ProveedorHistorial {
   proveedor: string
@@ -30,7 +34,9 @@ interface ItemForm {
   nombre: string
   unidad_medida: string
   categoria: string
-  cantidad: string
+  cantidad: string        // si en_empaques: nº de empaques; si no: gr/ml o unidades
+  en_empaques: boolean    // el backend convierte empaques → gr/ml (× contenido_por_empaque)
+  contenido_por_empaque?: number | null   // solo para mostrar la equivalencia
   numero_lote: string
   fecha_vencimiento: string
 }
@@ -78,9 +84,14 @@ export default function Ingresos() {
   const [showQuickAdd, setShowQuickAdd]   = useState(false)
   const [addQuery, setAddQuery]           = useState('')
   const [addProducto, setAddProducto]     = useState<Producto | null>(null)
-  const [addCantidad, setAddCantidad]     = useState('')
+  const [addCantidad, setAddCantidad]     = useState('')   // gr/ml o unidades directas
+  const [addEmpaques, setAddEmpaques]     = useState('')   // nº de empaques (granel con cpe)
   const [addLote, setAddLote]             = useState('')
   const [addVence, setAddVence]           = useState('')
+
+  // Al cambiar de producto dentro del quick-add, limpiar cantidad y empaques: sin
+  // esto un valor grande auto-calculado quedaba pegado al siguiente producto.
+  useEffect(() => { setAddCantidad(''); setAddEmpaques('') }, [addProducto?.id])
 
   // Data
   const [productos, setProductos] = useState<Producto[]>([])
@@ -124,20 +135,42 @@ export default function Ingresos() {
 
   // ── Abrir quick-add ───────────────────────────────────────────────────────
   const openQuickAdd = () => {
-    setAddQuery(''); setAddProducto(null); setAddCantidad('')
+    setAddQuery(''); setAddProducto(null); setAddCantidad(''); setAddEmpaques('')
     setAddLote(''); setAddVence('')
     setShowQuickAdd(true)
   }
 
   // ── Confirmar adición de ítem ──────────────────────────────────────────────
   const confirmarAdd = () => {
-    if (!addProducto || !addCantidad || Number(addCantidad) <= 0) return
+    if (!addProducto) return
+    const cpe = addProducto.contenido_por_empaque || 0
+    const granel = esGranel(addProducto.unidad_medida)
+    // Camino EMPAQUES: la barista contó botellas/frascos. Se manda el nº de
+    // empaques + en_empaques=true; el backend convierte a gr/ml (× cpe) y NO
+    // aplica el guard. No hay conversión en el cliente (evita valores fantasma).
+    const usaEmpaques = granel && cpe > 0 && Number(addEmpaques) > 0
+    const cantidadStr = usaEmpaques ? addEmpaques : addCantidad
+    if (!cantidadStr || Number(cantidadStr) <= 0) return
+
+    // Guard anti-unidades SOLO en el camino de gramos directos: un granel con
+    // valor diminuto = casi seguro contaron empaques (fuga #1 de la auditoría).
+    if (!usaEmpaques && granel && Number(addCantidad) < 50) {
+      if (cpe > 0) {
+        alert(`${addProducto.nombre} se registra en ${addProducto.unidad_medida}. ` +
+          `Si recibiste empaques, usá el campo "Empaques" (1 = ${cpe} ${addProducto.unidad_medida}).`)
+        return
+      }
+      if (!window.confirm(`¿Seguro que son ${addCantidad} ${addProducto.unidad_medida}? ` +
+        'Este producto se registra en gramos totales, no en botellas/bolsas.')) return
+    }
     setItems(prev => [...prev, {
       producto_id:       addProducto.id,
       nombre:            addProducto.nombre,
       unidad_medida:     addProducto.unidad_medida,
       categoria:         addProducto.categoria,
-      cantidad:          addCantidad,
+      cantidad:          cantidadStr,
+      en_empaques:       usaEmpaques,
+      contenido_por_empaque: cpe || null,
       numero_lote:       addLote,
       fecha_vencimiento: addVence,
     }])
@@ -172,6 +205,7 @@ export default function Ingresos() {
       items: items.map(it => ({
         producto_id:      it.producto_id,
         cantidad:         Number(it.cantidad),
+        en_empaques:      it.en_empaques,
         precio_unitario:  null,
         numero_lote:      it.numero_lote || null,
         fecha_vencimiento: it.fecha_vencimiento
@@ -209,7 +243,10 @@ export default function Ingresos() {
     (!addQuery || p.nombre.toLowerCase().includes(addQuery.toLowerCase()))
   )
 
-  const totalUnidades = items.reduce((s, i) => s + (Number(i.cantidad) || 0), 0)
+  // Para el contador del hero, los items en empaques aportan su magnitud convertida
+  // (count × cpe), no el conteo crudo — así no mezcla "2 botellas" con gramos.
+  const totalUnidades = items.reduce((s, i) =>
+    s + (i.en_empaques ? Number(i.cantidad) * (i.contenido_por_empaque || 0) : Number(i.cantidad) || 0), 0)
   const canSave       = !!proveedor && !!valorTotal && Number(valorTotal) > 0 && items.length > 0
 
   return (
@@ -379,8 +416,10 @@ export default function Ingresos() {
                       : <Box size={13} className="text-warm-400 shrink-0" />
                     }
                     <span className="flex-1 text-[13px] font-bold text-warm-800 truncate">{it.nombre}</span>
-                    <span className="text-[13px] font-bold text-warm-600 font-mono shrink-0">
-                      {it.cantidad} {it.unidad_medida}
+                    <span className="text-[13px] font-bold text-warm-600 font-mono shrink-0 text-right">
+                      {it.en_empaques
+                        ? `${it.cantidad} emp. = ${Math.round(Number(it.cantidad) * (it.contenido_por_empaque || 0) * 100) / 100} ${it.unidad_medida}`
+                        : `${it.cantidad} ${it.unidad_medida}`}
                     </span>
                     <button
                       onClick={() => quitarItem(idx)}
@@ -412,6 +451,7 @@ export default function Ingresos() {
               addQuery={addQuery}     setAddQuery={setAddQuery}
               addProducto={addProducto} setAddProducto={setAddProducto}
               addCantidad={addCantidad} setAddCantidad={setAddCantidad}
+              addEmpaques={addEmpaques} setAddEmpaques={setAddEmpaques}
               addLote={addLote}       setAddLote={setAddLote}
               addVence={addVence}     setAddVence={setAddVence}
               onCancel={() => setShowQuickAdd(false)}
@@ -577,6 +617,7 @@ interface QuickAddProps {
   addQuery: string;      setAddQuery: (v: string) => void
   addProducto: Producto | null; setAddProducto: (p: Producto | null) => void
   addCantidad: string;   setAddCantidad: (v: string) => void
+  addEmpaques: string;   setAddEmpaques: (v: string) => void
   addLote: string;       setAddLote: (v: string) => void
   addVence: string;      setAddVence: (v: string) => void
   onCancel: () => void
@@ -585,11 +626,18 @@ interface QuickAddProps {
 
 function QuickAddPanel({
   productos, addQuery, setAddQuery, addProducto, setAddProducto,
-  addCantidad, setAddCantidad, addLote, setAddLote, addVence, setAddVence,
+  addCantidad, setAddCantidad, addEmpaques, setAddEmpaques,
+  addLote, setAddLote, addVence, setAddVence,
   onCancel, onConfirm,
 }: QuickAddProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   useEffect(() => { inputRef.current?.focus() }, [])
+  // Empaques y cantidad son excluyentes: escribir en uno limpia el otro. NO se
+  // convierte en el cliente — el backend recibe el nº de empaques + en_empaques.
+  const cpe = addProducto?.contenido_por_empaque || 0
+  const conEmpaques = !!addProducto && esGranel(addProducto.unidad_medida) && cpe > 0
+  const onEmpaques = (v: string) => { setAddEmpaques(v); if (v) setAddCantidad('') }
+  const onCantidad = (v: string) => { setAddCantidad(v); if (v) setAddEmpaques('') }
 
   return (
     <div
@@ -639,14 +687,26 @@ function QuickAddPanel({
           </div>
           {/* Campos */}
           <div className="grid grid-cols-2 gap-2 mb-2">
+            {conEmpaques && (
+              <CompactInput
+                label={`Empaques (1 = ${cpe} ${addProducto.unidad_medida})`}
+                value={addEmpaques} onChange={onEmpaques}
+                type="number" placeholder="0"
+              />
+            )}
             <CompactInput
               label={`Cantidad (${addProducto.unidad_medida})`}
-              value={addCantidad} onChange={setAddCantidad}
+              value={addCantidad} onChange={onCantidad}
               type="number" placeholder="0"
             />
             <CompactInput label="Lote" value={addLote} onChange={setAddLote} placeholder="—" />
             <CompactInput label="Vence" value={addVence} onChange={setAddVence} type="date" placeholder="" />
           </div>
+          {conEmpaques && Number(addEmpaques) > 0 && (
+            <p className="text-[11px] font-semibold mb-2" style={{ color: 'oklch(35% 0.05 155)' }}>
+              {addEmpaques} empaque{Number(addEmpaques) !== 1 ? 's' : ''} = {Math.round(Number(addEmpaques) * cpe)} {addProducto.unidad_medida} ✓
+            </p>
+          )}
         </>
       )}
 
@@ -656,7 +716,7 @@ function QuickAddPanel({
           Cancelar
         </button>
         <button onClick={onConfirm}
-          disabled={!addProducto || !addCantidad}
+          disabled={!addProducto || (!addCantidad && !addEmpaques)}
           className="flex-[2] py-2.5 rounded-xl text-[12px] font-bold text-white disabled:opacity-40"
           style={{ background: 'oklch(35% 0.05 155)' }}>
           Agregar a la factura

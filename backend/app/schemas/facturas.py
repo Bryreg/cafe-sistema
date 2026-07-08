@@ -9,6 +9,9 @@ class FacturaItemCreate(BaseModel):
     precio_unitario: Optional[float] = None
     numero_lote: Optional[str] = None
     fecha_vencimiento: Optional[datetime] = None
+    # True = cantidad viene en EMPAQUES (botellas/frascos): el backend la convierte
+    # a gr/ml multiplicando por producto.contenido_por_empaque.
+    en_empaques: bool = False
 
 
 class FacturaCreate(BaseModel):

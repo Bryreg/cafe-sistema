@@ -257,6 +257,10 @@ class Producto(Base):
     # A granel en GRAMOS: gr que trae la unidad sellada (bolsa de café 2500). El conteo con
     # gramera = bolsas cerradas × contenido + gramos pesados de la abierta.
     contenido_por_unidad = Column(Numeric(12, 2, asdecimal=False), nullable=True)
+    # Gr/ml que trae UN empaque comercial (botella Baileys=1000, frasco salsa=1800).
+    # Lo usa Recibir para convertir "N empaques" → gramos. NO confundir con
+    # contenido_por_unidad (rendimiento de preparaciones / bolsa sellada del conteo).
+    contenido_por_empaque = Column(Numeric(12, 2, asdecimal=False), nullable=True)
     # Orden fijo del conteo/inventario (planilla de pedidos). NULL → al final, alfabético.
     orden_conteo = Column(Integer, nullable=True)
     # NULL = conteo diario normal; 'desechables' = solo se cuenta cuando el admin lo pide.

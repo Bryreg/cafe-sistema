@@ -184,6 +184,13 @@ def registrar_conteo(db: Session, tienda_id: int, tipo: str,
                      items: list[dict], usuario_id: int,
                      barista_id: int | None = None, barista_nombre: str | None = None,
                      es_atajo: bool = False):
+    if es_atajo:
+        # El atajo "Todo coincide" copiaba el stock del SISTEMA como conteo real y
+        # borró faltantes ya detectados (auditoría 8d: -10.065 gr el 5-jul). La UI
+        # actual ya no lo manda; esto bloquea kioskos con la app vieja en caché.
+        raise HTTPException(status_code=400, detail=(
+            "El atajo 'Todo coincide' fue eliminado: recargá la app del kiosko "
+            "(Ctrl+Shift+R) y registrá el conteo con la referencia por producto."))
     turno = get_turno_activo(db, tienda_id)
     if not turno:
         raise HTTPException(status_code=400, detail="No hay turno abierto")

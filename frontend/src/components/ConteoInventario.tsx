@@ -199,11 +199,27 @@ export default function ConteoInventario({ tipo }: Props) {
 
 
   const confirmar = async () => {
+    // Guard de magnitud (fuga #1 de la auditoría): producto en gramos con la
+    // referencia en miles y un valor diminuto = casi seguro contaron unidades
+    // (tarros/botellas) en vez de pesar. Confirmar antes de registrar.
+    const sospechosos = items.filter(i => {
+      const v = valorDe(conteos[i.producto_id]); const r = refDe(i.producto_id)
+      return ['gr', 'g', 'gramos', 'ml'].includes((i.unidad_medida || '').toLowerCase())
+        && v !== null && v > 0 && v < 20 && r !== null && r >= 500
+    })
+    if (sospechosos.length > 0) {
+      const lista = sospechosos.map(i =>
+        `· ${i.producto_nombre}: pusiste ${valorDe(conteos[i.producto_id])} y la referencia es ${refDe(i.producto_id)} ${i.unidad_medida}`
+      ).join('\n')
+      if (!window.confirm(`Estos productos se cuentan en GRAMOS y el valor parece de unidades:\n\n${lista}\n\n¿Registrar así de todas formas?`)) return
+    }
     setSaving(true); setError('')
     try {
+      // cantidad_real NUNCA cae al stock del sistema: canConfirm garantiza que todo
+      // está registrado; si algo faltara, cae a la referencia física (0 como último caso).
       const itemsList = items.map(i => ({
         producto_id: i.producto_id,
-        cantidad_real: getVal(i.producto_id, i.stock_actual),
+        cantidad_real: valorDe(conteos[i.producto_id]) ?? refDe(i.producto_id) ?? 0,
       }))
       await api.post('/conteos/', { tienda_id: user?.tienda_id, tipo, items: itemsList })
       localStorage.removeItem(draftKey)   // conteo confirmado: el borrador ya cumplió

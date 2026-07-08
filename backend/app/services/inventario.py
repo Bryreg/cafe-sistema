@@ -520,6 +520,87 @@ def registrar_preparacion(db: Session, producto_id: int, tienda_id: int, cantida
             "stock_actual": inv.stock_actual if inv else producido}
 
 
+def unificar_productos(db: Session, keeper_id: int, archive_ids: list[int],
+                       usuario_id: int, dry_run: bool = True) -> dict:
+    """Consolida productos DUPLICADOS en uno (keeper). Lee la tabla REAL de
+    Inventario (no las vistas filtradas). Por cada archivado y cada sede:
+      - stock POSITIVO → se mueve al keeper (creando su fila si falta) y el
+        archivado queda en 0.
+      - stock NEGATIVO (fantasma) → se descarta (archivado a 0), sin ensuciar al keeper.
+    Luego archiva cada duplicado: incluir_en_conteo=False + controla_stock=False.
+    Con dry_run=True NO escribe: devuelve el plan exacto para revisar. Solo admin."""
+    keeper = db.query(Producto).filter_by(id=keeper_id).first()
+    if not keeper:
+        raise HTTPException(404, f"Keeper {keeper_id} no encontrado")
+    if keeper_id in archive_ids:
+        raise HTTPException(400, "El keeper no puede estar en la lista de archivados")
+    tiendas = db.query(Tienda).all()
+
+    plan = []
+    for aid in archive_ids:
+        arch = db.query(Producto).filter_by(id=aid).first()
+        if not arch:
+            plan.append({"archive_id": aid, "warning": "producto no existe, se ignora"})
+            continue
+        for t in tiendas:
+            a_inv = db.query(Inventario).filter_by(producto_id=aid, tienda_id=t.id).first()
+            if not a_inv:
+                continue
+            cant = round(float(a_inv.stock_actual or 0), 3)
+            if cant > 0:
+                plan.append({"archive_id": aid, "nombre": arch.nombre, "tienda_id": t.id,
+                             "mover_al_keeper": cant})
+            elif cant < 0:
+                plan.append({"archive_id": aid, "nombre": arch.nombre, "tienda_id": t.id,
+                             "descartar_negativo": cant})
+        plan.append({"archive_id": aid, "nombre": arch.nombre,
+                     "accion": "archivar (incluir_en_conteo=False, controla_stock=False)"})
+
+    if dry_run:
+        return {"dry_run": True, "keeper_id": keeper_id, "keeper_nombre": keeper.nombre, "plan": plan}
+
+    # ── EJECUTAR ────────────────────────────────────────────────────────────────
+    movidos = []
+    for aid in archive_ids:
+        arch = db.query(Producto).filter_by(id=aid).first()
+        if not arch:
+            continue
+        motivo = f"Unificación: {arch.nombre} (#{aid}) → {keeper.nombre} (#{keeper_id})"
+        for t in tiendas:
+            a_inv = db.query(Inventario).filter_by(producto_id=aid, tienda_id=t.id).first()
+            if not a_inv:
+                continue
+            cant = round(float(a_inv.stock_actual or 0), 3)
+            if cant > 0:
+                # Asegurar fila del keeper en esta sede (registrar_movimiento la exige).
+                k_inv = db.query(Inventario).filter_by(producto_id=keeper_id, tienda_id=t.id).first()
+                if not k_inv:
+                    k_inv = Inventario(producto_id=keeper_id, tienda_id=t.id,
+                                       stock_actual=0.0, stock_minimo=0.0)
+                    db.add(k_inv)
+                    db.flush()
+                # Entrada al keeper (+stock +lote) y salida del archivado (→0, consume FIFO).
+                registrar_movimiento(db, producto_id=keeper_id, tienda_id=t.id, tipo="entrada",
+                                     cantidad=cant, motivo=motivo, usuario_id=usuario_id, commit=False)
+                registrar_movimiento(db, producto_id=aid, tienda_id=t.id, tipo="salida",
+                                     cantidad=cant, motivo=motivo, usuario_id=usuario_id,
+                                     commit=False, allow_negative=True)
+                movidos.append({"archive_id": aid, "tienda_id": t.id, "cantidad": cant})
+            elif cant < 0:
+                # Descartar el negativo fantasma: ajuste a 0 (no toca al keeper).
+                registrar_movimiento(db, producto_id=aid, tienda_id=t.id, tipo="ajuste",
+                                     cantidad=0, motivo=f"{motivo} — descartar negativo",
+                                     usuario_id=usuario_id, commit=False)
+        arch.incluir_en_conteo = False
+        arch.controla_stock = False
+
+    audit.registrar(
+        db, accion="unificar_productos", tabla="productos", registro_id=keeper_id,
+        usuario_id=usuario_id, tienda_id=None,
+        datos_despues={"keeper_id": keeper_id, "archivados": archive_ids, "movidos": movidos},
+    )
+    db.commit()
+    return {"dry_run": False, "keeper_id": keeper_id, "archivados": archive_ids, "movidos": movidos}
 
 
 def get_movimientos_inventario(db: Session, tienda_id: int, tipo: str | None = None,

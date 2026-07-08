@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, date
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
+from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.core.deps import ensure_tienda_access, get_current_user, require_admin, get_barista_actor
@@ -326,6 +327,21 @@ def lotes(tienda_id: int, producto_id: int, db: Session = Depends(get_db),
           user: Usuario = Depends(require_admin)):
     ensure_tienda_access(user, tienda_id)
     return svc.get_lotes(db, tienda_id, producto_id)
+
+
+class UnificarRequest(BaseModel):
+    keeper_id: int
+    archive_ids: list[int]
+    dry_run: bool = True
+
+
+@router.post("/unificar")
+def unificar(data: UnificarRequest, db: Session = Depends(get_db),
+             admin: Usuario = Depends(require_admin)):
+    """Admin: consolida productos duplicados en uno (keeper). dry_run=True (default)
+    solo devuelve el plan; dry_run=False ejecuta (mueve stock + archiva)."""
+    return svc.unificar_productos(db, data.keeper_id, data.archive_ids, admin.id,
+                                  dry_run=data.dry_run)
 
 
 @router.get("/pasteleria-impulso/{tienda_id}")

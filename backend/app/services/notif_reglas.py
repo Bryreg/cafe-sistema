@@ -102,6 +102,17 @@ DEFAULTS = [
         "canal_push": True,
         "nivel": "info",
     },
+    {
+        "tipo": "venta_sin_descuento",
+        "label": "Venta que no descuenta inventario",
+        "descripcion": "Avisa cuando se vende un producto sin receta y sin stock propio: la venta entra pero ningun insumo se descuenta (fuga de inventario).",
+        "unidad": "",
+        "umbral": 0,
+        "activa": True,
+        "canal_bell": True,
+        "canal_push": False,
+        "nivel": "advertencia",
+    },
 ]
 
 # Índice por tipo para mergear metadata estática rápido.

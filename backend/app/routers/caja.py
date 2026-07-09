@@ -55,6 +55,14 @@ def cerrar_administrativo(turno_id: int, db: Session = Depends(get_db),
     return svc.cerrar_turno_administrativo(db, turno_id, user.id)
 
 
+@router.delete("/{turno_id}/cancelar")
+def cancelar_turno(turno_id: int, db: Session = Depends(get_db),
+                   admin: Usuario = Depends(require_admin)):
+    """Admin: elimina un turno abierto por error/demo SIN actividad (0 ventas, 0
+    movimientos, sin cuadre). Rechaza si tiene cualquier actividad."""
+    return svc.cancelar_turno_vacio(db, turno_id, admin.id)
+
+
 @router.post("/{turno_id}/ajustar-apertura", response_model=TurnoOut)
 def ajustar_apertura(turno_id: int, data: AjustarAperturaRequest, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
     """Corrección admin: ajusta base real de la registradora y caja fuerte de un turno (con auditoría)."""

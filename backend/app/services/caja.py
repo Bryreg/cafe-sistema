@@ -511,6 +511,51 @@ def cerrar_turno_administrativo(db: Session, turno_id: int, usuario_id: int):
                        datafono_real=turno.total_tarjeta if turno.total_tarjeta else None)
 
 
+def cancelar_turno_vacio(db: Session, turno_id: int, usuario_id: int) -> dict:
+    """Elimina un turno ABIERTO SIN actividad (abierto por error o para demo): sin
+    ventas, sin movimientos de caja, sin conteos, sin entregas. Borra también sus
+    baristas asociados (cascade). Si tiene CUALQUIER actividad se rechaza — para eso
+    está el cierre normal/administrativo. Solo-admin."""
+    turno = db.query(CajaTurno).filter(CajaTurno.id == turno_id).first()
+    if not turno:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+    if turno.estado != EstadoTurnoEnum.abierto:
+        raise HTTPException(status_code=400, detail="Solo se puede cancelar un turno abierto")
+
+    actividad = []
+    if (turno.total_ventas or 0) or (turno.total_efectivo or 0) or (turno.total_tarjeta or 0):
+        actividad.append("ventas")
+    if turno.tiene_ventas or turno.tiene_conteo_apertura or turno.tiene_conteo_cierre:
+        actividad.append("cuadre/conteo")
+    if turno.movimientos:
+        actividad.append("movimientos de caja")
+    if turno.ventas:
+        actividad.append("ventas registradas")
+    if turno.conteos:
+        actividad.append("conteos")
+    if turno.entregas:
+        actividad.append("entregas")
+    if actividad:
+        raise HTTPException(status_code=400, detail=(
+            f"El turno tiene actividad ({', '.join(actividad)}); no se puede cancelar. "
+            "Usá el cierre normal o administrativo."))
+
+    audit.registrar(
+        db, accion="cancelar_turno_vacio", tabla="caja_turnos",
+        registro_id=turno_id, usuario_id=usuario_id, tienda_id=turno.tienda_id,
+        datos_antes={"fecha_apertura": str(turno.fecha_apertura),
+                     "baristas": [b.nombre_snapshot for b in turno.baristas_turno]},
+    )
+    try:
+        db.delete(turno)   # cascade → turno_baristas
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=400,
+                            detail="El turno tiene registros asociados; no se puede cancelar")
+    return {"cancelado": turno_id}
+
+
 def _msg_pagos_superan_venta(entrada_dia: float, egresos: float) -> str:
     """Cuadre con 'venta de ayer separada' cuando los pagos superan la venta del día:
     la plata que faltó salió físicamente del sobre separado, así que contar 'solo la

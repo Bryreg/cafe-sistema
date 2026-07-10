@@ -325,6 +325,9 @@ def registrar_cuadre_inicial(db: Session, turno_id: int, usuario_id: int,
 
     turno.base_real = efectivo_real
     turno.diferencia_apertura = diferencia
+    # Sobrante al abrir: plata extra sin dueño de días anteriores → debe bancarse
+    # con ESTE turno (entra al esperado a consignar). El faltante no: es novedad.
+    turno.sobrante_consignable = max(0.0, round(diferencia, 2))
     turno.justificacion_apertura = justificacion
     turno.tiene_cuadre_llegada = True
 

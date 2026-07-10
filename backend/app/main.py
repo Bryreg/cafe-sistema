@@ -182,6 +182,8 @@ with engine.connect() as _conn:
         "ALTER TABLE productos ADD COLUMN sustituto_id INTEGER",
         # Gr/ml por empaque comercial: Recibir convierte "N botellas" → gramos.
         "ALTER TABLE productos ADD COLUMN contenido_por_empaque FLOAT",
+        # Sobrante de apertura a bancar con el turno (solo turnos post-fix; viejos NULL).
+        "ALTER TABLE caja_turnos ADD COLUMN sobrante_consignable FLOAT",
         # Conteo de desechables: nuevo tipo en el enum nativo de Postgres.
         "ALTER TYPE tipoconteoenum ADD VALUE IF NOT EXISTS 'desechables'",
         "ALTER TYPE tipoconteoenum ADD VALUE IF NOT EXISTS 'existencia'",

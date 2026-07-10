@@ -31,7 +31,12 @@ def _saldos_consignacion(db: Session, tienda_id: int) -> list[dict]:
         movs = db.query(MovimientoCaja).filter(MovimientoCaja.caja_turno_id == t.id).all()
         egresos = sum(m.valor for m in movs if m.tipo == "egreso")
         ingresos = sum(m.valor for m in movs if m.tipo == "ingreso")
-        esperado = (t.total_efectivo or 0) + ingresos - egresos + (t.diferencia_cierre or 0)
+        # + SOBRANTE de apertura (sobrante_consignable, solo turnos post-fix): plata
+        # extra encontrada al abrir que no pertenece a ningún día anterior — se banca
+        # con este turno. Sin este término se absorbía en la base y se arrastraba
+        # indefinidamente (Palmetto +$24.600). El faltante NO entra (novedad).
+        esperado = ((t.total_efectivo or 0) + ingresos - egresos
+                    + (t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0))
         consignado = sum(c.valor for c in _consigs_del_turno(db, t))
         saldos.append({"turno": t, "esperado": esperado, "consignado": consignado,
                        "saldo": esperado - consignado})
@@ -148,9 +153,13 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
         consigs = sorted(_consigs_del_turno(db, t), key=lambda c: c.fecha)
         total_consignado = sum(c.valor for c in consigs)
 
-        # Fórmula: cash vendido ± movimientos + diferencia del cierre = lo que debe
-        # consignarse (= la base con la que arranca el día siguiente).
-        esperado = (t.total_efectivo or 0) + total_ingresos_mov - total_egresos + (t.diferencia_cierre or 0)
+        # Fórmula: cash vendido ± movimientos + diferencia del cierre + sobrante de
+        # apertura (sobrante_consignable, solo turnos post-fix) = lo que debe
+        # consignarse (= la base del día siguiente). El sobrante es plata extra sin
+        # dueño de días anteriores: se banca con este turno — sin él se arrastraba
+        # en el cajón (caso Palmetto +$24.600).
+        esperado = ((t.total_efectivo or 0) + total_ingresos_mov - total_egresos
+                    + (t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0))
         diferencia = total_consignado - esperado
 
         result.append({

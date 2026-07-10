@@ -185,6 +185,11 @@ class CajaTurno(Base):
     # el cuadre de la registradora. La base es SOLO el efectivo operativo de la caja.
     caja_fuerte = Column(Numeric(12, 2, asdecimal=False), nullable=True, default=0.0)
     diferencia_apertura = Column(Numeric(12, 2, asdecimal=False), default=0.0)
+    # SOBRANTE de apertura que debe bancarse con este turno (max(0, diferencia)).
+    # Columna aparte (no derivar de diferencia_apertura): solo se llena desde el
+    # fix de jul-2026 — los turnos viejos quedan NULL para no reclamar sobrantes
+    # arrastrados N veces (turnos 38/40 mismo +24.600) ni la carga inicial (+673k).
+    sobrante_consignable = Column(Numeric(12, 2, asdecimal=False), nullable=True)
     justificacion_apertura = Column(Text, nullable=True)
     # Totales calculados automáticamente desde VentaDiaria
     total_ventas = Column(Numeric(12, 2, asdecimal=False), default=0.0)

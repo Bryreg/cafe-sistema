@@ -124,6 +124,10 @@ async def registrar_entrega(
     ventas_tarjeta_bold: float = Form(...),
     base_separada: bool = Form(False),
     es_salida: bool = Form(False),  # True cuando el cuadre viene del flujo de SALIDA de barista
+    # Flujo de salida: quién(es) SALE(N). Sin esto el cuadre se atribuía a la
+    # barista activa del header del kiosko (X-Barista-Id), que puede ser otra —
+    # caso real: Luisa contó y salió, pero el timeline decía "Salida Esther".
+    barista_salida_nombre: Optional[str] = Form(None),
     imagen: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
@@ -131,8 +135,18 @@ async def registrar_entrega(
 ):
     ensure_turno_access(db, user, turno_id)
     imagen_url = await upload_imagen(imagen)
+    barista_id, barista_nombre = barista[0], barista[1]
+    if es_salida and barista_salida_nombre and barista_salida_nombre.strip():
+        barista_nombre = barista_salida_nombre.strip()
+        # Resolver el id solo si el nombre matchea UNA barista del turno (si salen
+        # varias juntas viaja "A y B": queda el nombre compuesto, sin id).
+        tb = db.query(TurnoBarista).filter(
+            TurnoBarista.turno_id == turno_id,
+            TurnoBarista.nombre_snapshot == barista_nombre,
+        ).first()
+        barista_id = tb.usuario_id if tb else None
     return svc.registrar_entrega(db, turno_id, user.id, efectivo_real, ventas_tarjeta_bold, imagen_url,
-                                 barista_id=barista[0], barista_nombre=barista[1],
+                                 barista_id=barista_id, barista_nombre=barista_nombre,
                                  base_separada=base_separada,
                                  tipo_cuadre="salida_barista" if es_salida else "entrega")
 

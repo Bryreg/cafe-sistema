@@ -61,6 +61,9 @@ export default function PanelSalida() {
       // Este panel es exclusivamente el flujo de SALIDA: el cuadre se guarda como
       // 'salida_barista' para que el timeline lo rotule "Salida" y no "Llegada".
       fd1.append('es_salida', 'true')
+      // El cuadre se atribuye a quien SALE (lo elegido en el paso 1), no a la
+      // barista activa del header del kiosko, que puede ser otra persona.
+      fd1.append('barista_salida_nombre', selected.join(' y '))
       if (imagen) fd1.append('imagen', imagen)
       await api.post(`/caja/${turno.id}/entrega`, fd1)
 

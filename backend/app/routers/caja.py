@@ -63,6 +63,14 @@ def cancelar_turno(turno_id: int, db: Session = Depends(get_db),
     return svc.cancelar_turno_vacio(db, turno_id, admin.id)
 
 
+@router.post("/{turno_id}/reabrir-cierre", response_model=TurnoOut)
+def reabrir_conteo_cierre(turno_id: int, db: Session = Depends(get_db),
+                          admin: Usuario = Depends(require_admin)):
+    """Admin: revierte un conteo de cierre adelantado — el POS vuelve a facturar y
+    el conteo real se registra de nuevo al cierre."""
+    return svc.reabrir_conteo_cierre(db, turno_id, admin.id)
+
+
 @router.post("/{turno_id}/ajustar-apertura", response_model=TurnoOut)
 def ajustar_apertura(turno_id: int, data: AjustarAperturaRequest, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
     """Corrección admin: ajusta base real de la registradora y caja fuerte de un turno (con auditoría)."""

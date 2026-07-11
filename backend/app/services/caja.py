@@ -514,6 +514,32 @@ def cerrar_turno_administrativo(db: Session, turno_id: int, usuario_id: int):
                        datafono_real=turno.total_tarjeta if turno.total_tarjeta else None)
 
 
+def reabrir_conteo_cierre(db: Session, turno_id: int, usuario_id: int):
+    """El conteo de cierre CONGELA las ventas del turno (pos.py bloquea facturar).
+    Si la sede lo registró antes de tiempo (adelantaron el conteo y el POS quedó
+    bloqueado), el admin lo reabre: el turno vuelve a vender y el conteo REAL debe
+    registrarse de nuevo al cierre (el guard de registrar_conteo es por flag, y la
+    referencia/conciliación toman el conteo más reciente). Solo-admin."""
+    turno = db.query(CajaTurno).filter(
+        CajaTurno.id == turno_id,
+        CajaTurno.estado == EstadoTurnoEnum.abierto,
+    ).first()
+    if not turno:
+        raise HTTPException(status_code=404, detail="Turno no encontrado o ya cerrado")
+    if not turno.tiene_conteo_cierre:
+        raise HTTPException(status_code=400, detail="El turno no tiene conteo de cierre registrado")
+
+    turno.tiene_conteo_cierre = False
+    turno.ts_conteo_cierre = None
+    audit.registrar(
+        db, accion="reabrir_conteo_cierre", tabla="caja_turnos",
+        registro_id=turno_id, usuario_id=usuario_id, tienda_id=turno.tienda_id,
+        datos_despues={"motivo": "conteo de cierre adelantado — se reabre la venta; el conteo real se registra al cierre"},
+    )
+    db.commit()
+    return get_turno_activo(db, turno.tienda_id)
+
+
 def cancelar_turno_vacio(db: Session, turno_id: int, usuario_id: int) -> dict:
     """Elimina un turno ABIERTO SIN actividad (abierto por error o para demo): sin
     ventas, sin movimientos de caja, sin conteos, sin entregas. Borra también sus

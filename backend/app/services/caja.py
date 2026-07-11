@@ -520,21 +520,34 @@ def reabrir_conteo_cierre(db: Session, turno_id: int, usuario_id: int):
     bloqueado), el admin lo reabre: el turno vuelve a vender y el conteo REAL debe
     registrarse de nuevo al cierre (el guard de registrar_conteo es por flag, y la
     referencia/conciliación toman el conteo más reciente). Solo-admin."""
+    from app.models.models import ConteoFisico, TipoConteoEnum
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
         CajaTurno.estado == EstadoTurnoEnum.abierto,
     ).first()
     if not turno:
         raise HTTPException(status_code=404, detail="Turno no encontrado o ya cerrado")
-    if not turno.tiene_conteo_cierre:
+
+    # El índice único permite UN conteo de cierre por turno: el adelantado se
+    # RECLASIFICA como 'existencia' (queda como registro histórico, visible en el
+    # monitor) para liberar el lugar del cierre real. Sin esto, el nuevo conteo
+    # chocaba contra el índice aunque el flag estuviera reabierto.
+    adelantados = db.query(ConteoFisico).filter(
+        ConteoFisico.turno_id == turno_id,
+        ConteoFisico.tipo == TipoConteoEnum.cierre,
+    ).all()
+    if not turno.tiene_conteo_cierre and not adelantados:
         raise HTTPException(status_code=400, detail="El turno no tiene conteo de cierre registrado")
+    for c in adelantados:
+        c.tipo = TipoConteoEnum.existencia
 
     turno.tiene_conteo_cierre = False
     turno.ts_conteo_cierre = None
     audit.registrar(
         db, accion="reabrir_conteo_cierre", tabla="caja_turnos",
         registro_id=turno_id, usuario_id=usuario_id, tienda_id=turno.tienda_id,
-        datos_despues={"motivo": "conteo de cierre adelantado — se reabre la venta; el conteo real se registra al cierre"},
+        datos_despues={"motivo": "conteo de cierre adelantado — se reabre la venta; el conteo real se registra al cierre",
+                       "conteos_reclasificados": [c.id for c in adelantados]},
     )
     db.commit()
     return get_turno_activo(db, turno.tienda_id)

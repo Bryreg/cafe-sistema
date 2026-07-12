@@ -147,6 +147,13 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float | None, justificaci
     #    registrar_cuadre_inicial. El POS queda bloqueado hasta entonces.
     #  - base_real con valor (legacy/tests): cuadre unificado al abrir, comportamiento previo.
     cuadre_unificado = base_real is not None
+    # Un turno DEBE tener al menos una barista: es quien lo opera y a quien se
+    # atribuyen las operaciones (venta, merma, recepción). Sin roster, la validación
+    # require_barista_en_turno dejaría el turno inoperable. La barista que abre se
+    # tilda a sí misma.
+    if not barista_ids:
+        raise HTTPException(status_code=400,
+                            detail="Seleccioná al menos una barista para abrir el turno.")
     if cuadre_unificado and base_real < 0:
         raise HTTPException(status_code=400, detail="base_real no puede ser negativa")
     if caja_fuerte is not None and caja_fuerte < 0:

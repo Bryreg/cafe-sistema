@@ -632,11 +632,11 @@ export default function GestionTurno() {
 
             <button
               onClick={abrirTurno}
-              disabled={saving}
+              disabled={saving || selected.length === 0}
               className="w-full py-4 rounded-2xl font-bold text-[15px] text-white disabled:opacity-50 flex items-center justify-center gap-2"
               style={{ background: dark.green }}>
               <Check size={18} strokeWidth={2.5} />
-              {saving ? 'Abriendo...' : 'Confirmar apertura'}
+              {saving ? 'Abriendo...' : selected.length === 0 ? 'Elegí quién entra al turno' : 'Confirmar apertura'}
             </button>
           </div>
         )}

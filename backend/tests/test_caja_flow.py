@@ -210,6 +210,7 @@ class CajaFlowTests(BackendTestCase):
                 "tienda_id": self.tienda_1.id,
                 "base_real": 95000.0,
                 "justificacion_apertura": "Diferencia explicada",
+                "barista_ids": [self.barista_1.id],
             },
         )
 
@@ -238,6 +239,7 @@ class CajaFlowTests(BackendTestCase):
                 "tienda_id": self.tienda_1.id,
                 "base_real": 75000.0,
                 "justificacion_apertura": None,
+                "barista_ids": [self.barista_1.id],
             },
         )
 

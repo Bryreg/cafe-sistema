@@ -5,7 +5,7 @@ from typing import Optional
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
-from app.core.deps import ensure_tienda_access, get_current_user, require_admin, get_barista_actor
+from app.core.deps import ensure_tienda_access, get_current_user, require_admin, get_barista_actor, require_barista_en_turno
 from app.models.models import Usuario, Producto, ProductoInsumo, Inventario, Tienda, CategoriaProductoEnum, LoteInventario
 from app.schemas.inventario import (
     MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate, UmbralesStockUpdate,
@@ -22,7 +22,7 @@ def get_inventario(tienda_id: int, db: Session = Depends(get_db), user: Usuario 
 
 @router.post("/movimiento")
 def movimiento(data: MovimientoInvRequest, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user),
-               barista: tuple = Depends(get_barista_actor)):
+               barista: tuple = Depends(require_barista_en_turno)):
     ensure_tienda_access(user, data.tienda_id)
     # El AJUSTE reescribe el stock a un valor absoluto y borra la evidencia del
     # doble conteo. Es una herramienta de correccion, no de operacion: solo admin.
@@ -57,7 +57,7 @@ def preparables(tienda_id: int, db: Session = Depends(get_db),
 @router.post("/preparaciones")
 def registrar_preparacion(data: PreparacionRequest, db: Session = Depends(get_db),
                           user: Usuario = Depends(get_current_user),
-                          barista: tuple = Depends(get_barista_actor)):
+                          barista: tuple = Depends(require_barista_en_turno)):
     """Barista registra una preparación: descuenta insumos de la receta y suma el rendimiento."""
     ensure_tienda_access(user, data.tienda_id)
     return svc.registrar_preparacion(db, data.producto_id, data.tienda_id, data.cantidad,

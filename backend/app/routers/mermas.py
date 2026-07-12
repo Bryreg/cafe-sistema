@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
-from app.core.deps import ensure_tienda_access, get_current_user, get_barista_actor, require_admin
+from app.core.deps import ensure_tienda_access, get_current_user, require_barista_en_turno, require_admin
 from app.models.models import Usuario, Tienda
 from app.schemas.mermas import RegistrarMermaRequest, AdminTrasladoRequest, MermaOut
 from app.services import mermas as svc
@@ -20,7 +20,7 @@ def listar_sedes(db: Session = Depends(get_db), user: Usuario = Depends(get_curr
 @router.post("/", response_model=MermaOut)
 def registrar(data: RegistrarMermaRequest, db: Session = Depends(get_db),
               user: Usuario = Depends(get_current_user),
-              barista: tuple = Depends(get_barista_actor)):
+              barista: tuple = Depends(require_barista_en_turno)):
     ensure_tienda_access(user, data.tienda_id)
     return svc.registrar_merma(
         db, data.tienda_id, data.producto_id, data.cantidad, data.motivo,

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.core.deps import ensure_tienda_access, get_current_user, require_admin, get_barista_actor
+from app.core.deps import ensure_tienda_access, get_current_user, require_admin, require_barista_en_turno
 from app.models.models import Usuario
 from app.schemas.facturas import FacturaCreate
 from app.services import facturas as svc
@@ -21,7 +21,7 @@ async def crear_factura(
     imagen: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     user: Usuario = Depends(get_current_user),
-    barista: tuple = Depends(get_barista_actor),
+    barista: tuple = Depends(require_barista_en_turno),
 ):
     try:
         payload = FacturaCreate(**json.loads(data))

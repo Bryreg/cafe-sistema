@@ -145,9 +145,10 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
 # ─── Margen por producto ──────────────────────────────────────────────────────
 
 def _costos_insumos(db) -> tuple[dict, dict]:
-    """Costo por unidad de inventario de cada producto comprado, a partir de los
-    precio_unitario de FacturaCompraItem (los llena el escaneo / backfill).
-    Devuelve (promedio ponderado por cantidad, último costo conocido)."""
+    """Costo por unidad de inventario de cada producto. Prioridad:
+      1) Producto.precio_costo (costo OFICIAL fijado a mano) — si existe, MANDA.
+      2) promedio ponderado de FacturaCompraItem (lo llena el escaneo / backfill).
+    Devuelve (costo por producto, último costo de factura conocido)."""
     rows = (
         db.query(FacturaCompraItem.producto_id, FacturaCompraItem.cantidad,
                  FacturaCompraItem.precio_unitario, FacturaCompra.fecha_recibido)
@@ -164,9 +165,13 @@ def _costos_insumos(db) -> tuple[dict, dict]:
         a["cant"] += float(cant)
         if a["ultima_fecha"] is None or (fecha and fecha > a["ultima_fecha"]):
             a["ultima_fecha"], a["ultimo"] = fecha, float(precio)
-    promedio = {pid: a["plata"] / a["cant"] for pid, a in acum.items() if a["cant"] > 0}
+    costo = {pid: a["plata"] / a["cant"] for pid, a in acum.items() if a["cant"] > 0}
     ultimo = {pid: a["ultimo"] for pid, a in acum.items() if a["ultimo"] is not None}
-    return promedio, ultimo
+    # El costo oficial a mano pisa el promedio de facturas (lecturas con ruido).
+    for pid, pc in db.query(Producto.id, Producto.precio_costo).filter(
+            Producto.precio_costo.isnot(None), Producto.precio_costo > 0).all():
+        costo[pid] = float(pc)
+    return costo, ultimo
 
 
 def get_rentabilidad_productos(db) -> dict:

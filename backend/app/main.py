@@ -204,6 +204,9 @@ with engine.connect() as _conn:
         # Vínculo estructural egreso↔factura de proveedor (antes solo texto del concepto,
         # que se rompía al renombrar proveedor/número). Lo usa rentabilidad y eliminar_factura.
         "ALTER TABLE movimientos_caja ADD COLUMN factura_id INTEGER",
+        # Costo oficial por unidad fijado a mano (verificador de facturas). Manda sobre
+        # el promedio de facturas en rentabilidad.
+        "ALTER TABLE productos ADD COLUMN precio_costo FLOAT",
     ]:
         try:
             _conn.execute(_text(_sql))

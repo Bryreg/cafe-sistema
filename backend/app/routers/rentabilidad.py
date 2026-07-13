@@ -1,18 +1,44 @@
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_admin
 from app.core.tz import hoy_col
 from app.database import get_db
-from app.models.models import Usuario
+from app.models.models import Producto, Usuario
 from app.services import factura_ocr
 from app.services import rentabilidad as svc
 
 router = APIRouter(prefix="/rentabilidad", tags=["rentabilidad"])
+
+
+class CostoInsumoIn(BaseModel):
+    producto_id: int
+    costo: Optional[float] = None  # None = limpiar el costo oficial (vuelve al promedio)
+
+
+@router.post("/costo-insumo")
+def set_costo_insumo(
+    data: CostoInsumoIn,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Fija (o limpia) el costo OFICIAL por unidad de un insumo/producto. Este valor
+    manda sobre el promedio de facturas en rentabilidad — así el costo confirmado a
+    mano en el verificador no se ensucia con lecturas automáticas ruidosas."""
+    p = db.query(Producto).filter(Producto.id == data.producto_id).first()
+    if not p:
+        raise HTTPException(404, "Producto no encontrado")
+    if data.costo is not None and data.costo < 0:
+        raise HTTPException(400, "El costo no puede ser negativo")
+    p.precio_costo = data.costo
+    db.commit()
+    return {"producto_id": p.id, "nombre": p.nombre,
+            "unidad_medida": p.unidad_medida, "precio_costo": p.precio_costo}
 
 
 @router.get("/por-producto")

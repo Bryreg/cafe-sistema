@@ -659,65 +659,127 @@ def analizar_factura_foto(db, tienda_id: int, imagen_bytes: bytes, usuario_id: i
 
 # ─── Backfill: leer las fotos de facturas YA registradas para sacar costos ───
 
+# Costo por gr/ml por encima de esto = casi seguro una cantidad legacy mal
+# registrada (la "botella = 1 gr" de la auditoría → $50.000/gr). Nada real en un
+# café supera esto por gramo/ml (el café ronda $50/gr, la leche $2,5/ml; hasta
+# una esencia cara ~$500/ml queda debajo).
+_UMBRAL_COSTO_GRANEL = 1000.0
+
+
+def _tokens_nombre(s: str) -> set:
+    s = (s or "").lower()
+    for a, b in (("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u"), ("ñ", "n")):
+        s = s.replace(a, b)
+    # Descarta palabras muy cortas (de, x, ml, gr...) que ensucian el overlap.
+    return {t for t in re.findall(r"[a-z0-9]+", s) if len(t) >= 3}
+
+
+def _match_por_nombre(desc: str, candidatos: list):
+    """Cuando el modelo no asigna producto_id, intenta pegar el renglón a uno de
+    los productos de ESTA factura por solapamiento de palabras del nombre. Solo
+    devuelve un match si es CLARO y NO ambiguo: si dos productos empatan (ej.
+    'Leche entera' vs 'Leche deslactosada' con desc 'LECHE'), no adivina."""
+    td = _tokens_nombre(desc)
+    if not td:
+        return None
+    puntuados = []
+    for p in candidatos:
+        tp = _tokens_nombre(p.nombre)
+        if not tp:
+            continue
+        score = len(td & tp) / max(1, min(len(td), len(tp)))
+        if score > 0:
+            puntuados.append((score, p))
+    if not puntuados:
+        return None
+    puntuados.sort(key=lambda x: -x[0])
+    if puntuados[0][0] < 0.6:
+        return None
+    # Ambiguo (el segundo casi tan bueno) → mejor no escribir.
+    if len(puntuados) > 1 and puntuados[1][0] >= puntuados[0][0] - 0.15:
+        return None
+    return puntuados[0][1]
+
+
 def _precios_para_factura(items_extraidos: list[dict], items_db: list,
                           valor_total_db: float, por_id: dict) -> tuple[dict, list[str]]:
-    """Empareja renglones extraídos con los items guardados de la MISMA factura
-    y deriva el costo por unidad ALMACENADA:
-        precio_unitario = subtotal del renglón / cantidad guardada.
-    REGLA DE ORO: solo se escribe si la cantidad de la factura, convertida a la
-    unidad del inventario, COINCIDE (±25%) con la cantidad guardada. Esto evita
-    dos desastres: dividir por cantidades mal registradas de la época sin guard
-    ("1 gr" de Baileys → $80.000/gr) y cruzar renglones cuando el mismo producto
-    aparece dos veces en presentaciones distintas.
-    Devuelve ({item_db_id: precio}, advertencias). Solo considera items sin precio."""
+    """Deriva el costo por unidad ALMACENADA de cada ítem guardado sin precio:
+        precio_unitario = subtotal del renglón / cantidad GUARDADA.
+    La cantidad guardada es la fuente de verdad (el inventario depende de ella),
+    así que NO se valida contra la cantidad de la factura (el modelo la lee con
+    ruido). Emparejamos por producto_id (o por nombre si el modelo no lo asignó).
+    Guardias contra basura:
+      - el subtotal no puede superar el total de la factura;
+      - si el renglón trae cantidad Y precio, deben cuadrar con el subtotal;
+      - granel: el costo por gr/ml no puede ser absurdo (atrapa cantidades legacy
+        mal registradas, ej. una botella guardada como "1 gr");
+      - duplicados del mismo producto se saltan (no se pueden repartir sin riesgo).
+    Devuelve ({item_db_id: precio}, advertencias). Solo toca items sin precio."""
     advertencias: list[str] = []
     disponibles = [it for it in items_db
                    if it.precio_unitario is None and float(it.cantidad or 0) > 0]
+    prods_fac = {it.producto_id: por_id[it.producto_id]
+                 for it in disponibles if it.producto_id in por_id}
     asignados: dict[int, float] = {}
     for ext in items_extraidos or []:
         pid = ext.get("producto_id")
         prod = por_id.get(pid)
-        if not pid or prod is None:
-            continue
-        desc = (ext.get("descripcion") or "").strip() or f"producto {pid}"
+        desc = (ext.get("descripcion") or "").strip()
+        if prod is None:
+            # El modelo no asignó (o asignó mal) el id → intentar por nombre.
+            prod = _match_por_nombre(desc, list(prods_fac.values()))
+            if prod is None:
+                continue
+            pid = prod.id
+        etq = desc or prod.nombre
 
         total_linea = ext.get("subtotal")
+        c, p = ext.get("cantidad"), ext.get("precio_unitario")
+        tiene_cp = (isinstance(c, (int, float)) and isinstance(p, (int, float))
+                    and c > 0 and p > 0)
         if not isinstance(total_linea, (int, float)) or total_linea <= 0:
-            c, p = ext.get("cantidad"), ext.get("precio_unitario")
-            if (isinstance(c, (int, float)) and isinstance(p, (int, float))
-                    and c > 0 and p > 0):
+            if tiene_cp:
                 total_linea = c * p
             else:
-                advertencias.append(f"{desc}: sin subtotal ni precio legible")
+                advertencias.append(f"{etq}: sin subtotal ni precio legible")
                 continue
         if valor_total_db > 0 and total_linea > valor_total_db * 1.05:
-            advertencias.append(f"{desc}: el subtotal leído supera el total de la factura — ignorado")
+            advertencias.append(f"{etq}: el subtotal leído supera el total de la factura — ignorado")
+            continue
+        # Coherencia del renglón: cantidad × precio debería dar el subtotal.
+        if tiene_cp and abs(c * p - total_linea) / total_linea > 0.30:
+            advertencias.append(f"{etq}: cantidad × precio no cuadra con el subtotal — a mano")
             continue
 
-        # Cantidad de la factura → unidad del inventario (mismo conversor del escaneo).
-        cant_conv, en_emp, _factor, _adv = _convertir_cantidad(
-            prod, ext.get("cantidad"), ext.get("unidad"))
-        if cant_conv is None:
-            advertencias.append(f"{desc}: no pude convertir la cantidad de la factura — ese precio va a mano")
-            continue
-        cpe = float(getattr(prod, "contenido_por_empaque", 0) or 0)
-        equivalente = cant_conv * cpe if en_emp else cant_conv
-
-        # Emparejar con el item guardado cuya cantidad coincide (el más cercano).
         candidatos = [it for it in disponibles
-                      if it.producto_id == pid and it.id not in asignados
-                      and abs(float(it.cantidad) - equivalente) / max(float(it.cantidad), equivalente) <= 0.25]
+                      if it.producto_id == pid and it.id not in asignados]
         if not candidatos:
-            advertencias.append(
-                f"{desc}: la cantidad guardada no coincide con la de la factura "
-                f"({equivalente:g} {prod.unidad_medida}) — revisá ese ítem a mano")
             continue
-        destino = min(candidatos, key=lambda it: abs(float(it.cantidad) - equivalente))
+        if len(candidatos) > 1:
+            advertencias.append(f"{etq}: aparece más de una vez en la factura — cargá su costo a mano")
+            continue
+        destino = candidatos[0]
+
         precio = round(float(total_linea) / float(destino.cantidad), 4)
+        # Guardián universal: nadie compra un producto MÁS CARO de lo que lo
+        # vende. Si el costo supera el precio de venta, la cantidad guardada está
+        # mal (ej. una caja de 24 registrada como 1). Cubre productos por unidad,
+        # donde el techo de granel no aplica.
+        pv = float(getattr(prod, "precio_venta", 0) or 0)
+        if pv > 0 and precio > pv * 1.2:
+            advertencias.append(
+                f"{etq}: el costo daría ${precio:,.0f} pero se vende a ${pv:,.0f} — "
+                "la cantidad guardada parece mal registrada; revisá a mano")
+            continue
+        granel = (prod.unidad_medida or "").lower() in UNIDADES_GRANEL_PROD
+        if granel and precio > _UMBRAL_COSTO_GRANEL:
+            advertencias.append(
+                f"{etq}: el costo daría ${precio:,.0f} por {prod.unidad_medida} — "
+                "la cantidad guardada parece mal registrada; revisá a mano")
+            continue
         if precio < 0.01:
-            # La columna guarda 2 decimales: un precio sub-centavo se volvería 0.00
-            # y el ítem quedaría "con precio" pero inservible.
-            advertencias.append(f"{desc}: el precio por unidad da menos de $0,01 — revisá las cifras")
+            # La columna guarda 2 decimales: un precio sub-centavo se volvería 0.00.
+            advertencias.append(f"{etq}: el precio por unidad da menos de $0,01 — revisá las cifras")
             continue
         asignados[destino.id] = precio
     return asignados, advertencias
@@ -776,6 +838,7 @@ def backfill_costos_facturas(db, usuario_id: int, limite: int = 2) -> dict:
         SimpleNamespace(
             id=p.id, nombre=p.nombre, unidad_medida=p.unidad_medida,
             contenido_por_empaque=float(p.contenido_por_empaque or 0) or None,
+            precio_venta=float(p.precio_venta or 0),
             categoria=getattr(p.categoria, "value", None) or str(p.categoria or ""),
         )
         for p in db.query(Producto).order_by(Producto.nombre).all()
@@ -791,6 +854,12 @@ def backfill_costos_facturas(db, usuario_id: int, limite: int = 2) -> dict:
         info = {"factura_id": c["id"], "proveedor": c["proveedor"],
                 "items_actualizados": 0, "advertencias": []}
         detalle.append(info)
+        # Sin total guardado no hay contra qué validar el subtotal leído: los
+        # guardias de plata quedarían apagados, así que ni la leemos.
+        if c["valor_total"] <= 0:
+            info["advertencias"].append("la factura guardada no tiene total — cargá sus costos a mano")
+            _backfill_no_legibles.add(c["id"])
+            continue
         if not c["imagen_url"].startswith("http"):
             info["advertencias"].append("la foto no está en la nube — no se puede leer")
             _backfill_no_legibles.add(c["id"])

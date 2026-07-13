@@ -182,12 +182,38 @@ _GEMINI_SCHEMA = {
                  "valor_total", "tipo_pago", "items", "advertencias"],
 }
 
-_MSG_SIN_KEY = ("El escaneo de facturas no está configurado: agregá GEMINI_API_KEY "
-                "(gratis en aistudio.google.com) o ANTHROPIC_API_KEY en el servidor.")
+_MSG_SIN_KEY = ("El escaneo de facturas no está configurado: agregá GROQ_API_KEY "
+                "(gratis en console.groq.com), o GEMINI_API_KEY / ANTHROPIC_API_KEY, "
+                "en el servidor.")
+
+# Groq usa response_format=json_object (no schema): la forma exacta va en el prompt.
+_ESQUEMA_TXT = """Respondé SOLO con un objeto JSON con exactamente esta forma (sin texto
+extra, sin markdown). Usá null donde no puedas leer con certeza:
+{
+  "error": string|null,
+  "proveedor": string|null,
+  "numero_factura": string|null,
+  "fecha_factura": "YYYY-MM-DD"|null,
+  "valor_total": number|null,
+  "tipo_pago": "contado"|"credito"|"transferencia"|null,
+  "items": [
+    {
+      "descripcion": string,
+      "cantidad": number|null,
+      "unidad": string|null,
+      "precio_unitario": number|null,
+      "subtotal": number|null,
+      "numero_lote": string|null,
+      "fecha_vencimiento": "YYYY-MM-DD"|null,
+      "producto_id": integer|null
+    }
+  ],
+  "advertencias": [string]
+}"""
 
 
 def hay_proveedor_ocr() -> bool:
-    return bool(settings.GEMINI_API_KEY or settings.ANTHROPIC_API_KEY)
+    return bool(settings.GROQ_API_KEY or settings.GEMINI_API_KEY or settings.ANTHROPIC_API_KEY)
 
 
 def _catalogo_txt(productos: list) -> str:
@@ -209,12 +235,78 @@ def _user_text(catalogo: str, fecha_hoy: date) -> str:
 
 
 def _extraer(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
-    """Dispatcher de proveedor: Gemini primero (cuota gratis), Claude si no."""
+    """Dispatcher de proveedor, por preferencia: Groq (gratis) → Gemini → Claude."""
+    if settings.GROQ_API_KEY:
+        return _extraer_con_groq(imagen_jpeg, catalogo, fecha_hoy)
     if settings.GEMINI_API_KEY:
         return _extraer_con_gemini(imagen_jpeg, catalogo, fecha_hoy)
     if settings.ANTHROPIC_API_KEY:
         return _extraer_con_claude(imagen_jpeg, catalogo, fecha_hoy)
     raise HTTPException(503, _MSG_SIN_KEY)
+
+
+def _reducir_para_groq(jpeg: bytes, limite: int = 2_800_000) -> bytes:
+    """Groq topea la imagen base64 en 4MB. base64 ≈ 1.33× el binario, así que el
+    JPEG debe quedar por debajo de ~2.8MB. Si se pasa, se recomprime más chico."""
+    if len(jpeg) <= limite:
+        return jpeg
+    for lado, q in ((1600, 78), (1280, 72), (1024, 65)):
+        jpeg = _compress(jpeg, max_side=lado, quality=q)
+        if len(jpeg) <= limite:
+            break
+    return jpeg
+
+
+def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
+    import httpx
+
+    jpeg = _reducir_para_groq(imagen_jpeg)
+    b64 = base64.standard_b64encode(jpeg).decode("utf-8")
+    # Los modelos de visión de Llama tuvieron el bug de rechazar un mensaje
+    # `system` cuando venía una imagen: mandamos TODO en un solo turno de usuario.
+    prompt = f"{_SYSTEM}\n\n{_user_text(catalogo, fecha_hoy)}\n\n{_ESQUEMA_TXT}"
+    body = {
+        "model": settings.GROQ_MODEL,
+        "temperature": 0,
+        "max_tokens": 8000,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ]},
+        ],
+    }
+    try:
+        r = httpx.post("https://api.groq.com/openai/v1/chat/completions", json=body,
+                       headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+                       timeout=120.0)
+    except httpx.HTTPError as e:
+        logger.error("Error de red contra Groq: %s", e)
+        raise HTTPException(502, "No se pudo contactar el servicio de escaneo — intentá de nuevo en un rato.")
+
+    if r.status_code == 429:
+        raise HTTPException(503, "Se alcanzó el límite gratis de escaneo por ahora — esperá un minuto y volvé a intentar.")
+    if r.status_code in (401, 403):
+        logger.error("Groq rechazó la key (%s): %s", r.status_code, r.text[:500])
+        raise HTTPException(503, "La clave de la API de escaneo no es válida — revisá GROQ_API_KEY en el servidor.")
+    if r.status_code != 200:
+        logger.error("Groq HTTP %s: %s", r.status_code, r.text[:500])
+        raise HTTPException(502, "El servicio de escaneo falló — intentá de nuevo más tarde.")
+
+    data = r.json()
+    choices = data.get("choices") or []
+    if not choices:
+        logger.error("Groq sin choices: %s", json.dumps(data)[:500])
+        raise HTTPException(422, "El servicio no pudo procesar esta imagen — llenala manual.")
+    if choices[0].get("finish_reason") == "length":
+        raise HTTPException(502, "La factura es demasiado larga para leerla completa — llenala manual.")
+    texto = (choices[0].get("message") or {}).get("content") or ""
+    try:
+        return json.loads(texto)
+    except (json.JSONDecodeError, ValueError):
+        logger.error("Respuesta de Groq no parseable: %r", texto[:500])
+        raise HTTPException(502, "No se pudo interpretar la lectura de la factura — llenala manual.")
 
 
 def _modelos_gemini() -> list[str]:

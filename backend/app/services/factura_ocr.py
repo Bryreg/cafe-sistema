@@ -245,16 +245,17 @@ def _extraer(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
     raise HTTPException(503, _MSG_SIN_KEY)
 
 
-def _reducir_para_groq(jpeg: bytes, limite: int = 2_800_000) -> bytes:
-    """Groq topea la imagen base64 en 4MB. base64 ≈ 1.33× el binario, así que el
-    JPEG debe quedar por debajo de ~2.8MB. Si se pasa, se recomprime más chico."""
-    if len(jpeg) <= limite:
-        return jpeg
-    for lado, q in ((1600, 78), (1280, 72), (1024, 65)):
-        jpeg = _compress(jpeg, max_side=lado, quality=q)
-        if len(jpeg) <= limite:
+def _reducir_para_groq(jpeg: bytes, max_side: int = 1280, quality: int = 78,
+                       limite: int = 2_800_000) -> bytes:
+    """Groq cobra por tokens de imagen: bajarla a ~1280px recorta el gasto sin
+    perder legibilidad de una factura. También respeta el tope de 4MB base64
+    (base64 ≈ 1.33× el binario → el JPEG debe quedar bajo ~2.8MB)."""
+    out = _compress(jpeg, max_side=max_side, quality=quality)
+    for lado, q in ((1024, 72), (900, 66)):
+        if len(out) <= limite:
             break
-    return jpeg
+        out = _compress(out, max_side=lado, quality=q)
+    return out
 
 
 def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
@@ -268,7 +269,7 @@ def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dic
     body = {
         "model": settings.GROQ_MODEL,
         "temperature": 0,
-        "max_tokens": 8000,
+        "max_tokens": 4000,
         "response_format": {"type": "json_object"},
         "messages": [
             {"role": "user", "content": [
@@ -780,7 +781,6 @@ def backfill_costos_facturas(db, usuario_id: int, limite: int = 2) -> dict:
         for p in db.query(Producto).order_by(Producto.nombre).all()
     ]
     db.rollback()
-    catalogo = _catalogo_txt(productos)
     por_id = {p.id: p for p in productos}
 
     # ── Fase larga (sin conexión de DB): descargar + leer + emparejar ────────
@@ -804,8 +804,18 @@ def backfill_costos_facturas(db, usuario_id: int, limite: int = 2) -> dict:
             _backfill_no_legibles.add(c["id"])
             continue
 
+        # Catálogo ACOTADO a los productos de ESTA factura (ya los conocemos):
+        # baja el gasto de tokens de ~2.500 a ~200 por lectura vs mandar los 115,
+        # y de paso el modelo empareja mejor con menos distractores.
+        ids_fac = {i.producto_id for i in c["items"] if i.producto_id in por_id}
+        if not ids_fac:
+            info["advertencias"].append("la factura no tiene productos identificados — nada que costear")
+            _backfill_no_legibles.add(c["id"])
+            continue
+        cat_fac = _catalogo_txt([por_id[pid] for pid in ids_fac])
+
         try:
-            extraccion = _extraer(jpeg, catalogo, hoy_col())
+            extraccion = _extraer(jpeg, cat_fac, hoy_col())
         except HTTPException as e:
             # Cuota agotada / key inválida: cortar el lote (lo leído hasta acá se guarda).
             detenido_por = str(e.detail)

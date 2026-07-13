@@ -21,9 +21,12 @@ class Settings(BaseSettings):
     ENV: str = "development"
     CLOUDINARY_URL: str = ""   # cloudinary://api_key:api_secret@cloud_name
     KIOSK_PIN: str = ""        # PIN para activar modo kiosko; vacío = deshabilitado
-    # Escaneo de facturas (vision). Proveedor preferido: Gemini (tiene cuota
-    # GRATIS diaria de sobra para un café); Claude queda como alternativa paga.
+    # Escaneo de facturas (vision). Proveedor preferido: Groq (gratis DE VERDAD,
+    # sin tarjeta ni proyecto con facturación — no tiene la trampa de Gemini).
+    # Orden de preferencia: Groq → Gemini → Claude, según qué key esté puesta.
     # Sin ninguna key el endpoint responde 503 y el form sigue funcionando manual.
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
     GEMINI_API_KEY: str = ""
     # Si este modelo no tiene cuota gratis, el código prueba solo una cadena de
     # modelos Flash alternativos (ver factura_ocr._modelos_gemini).

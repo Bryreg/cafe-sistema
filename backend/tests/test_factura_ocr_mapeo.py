@@ -4,10 +4,12 @@ magnitud equivocada — todo lo dudoso debe salir como advertencia, nunca como
 una cantidad adivinada."""
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
+from app.services import factura_ocr
 from app.services.factura_ocr import (
-    _convertir_cantidad, _fecha_iso, _precios_para_factura, _validar_suma,
-    mapear_items,
+    _convertir_cantidad, _extraer, _fecha_iso, _precios_para_factura,
+    _reducir_para_groq, _validar_suma, hay_proveedor_ocr, mapear_items,
 )
 
 
@@ -276,6 +278,47 @@ class PreciosParaFacturaTest(unittest.TestCase):
         precios, advs = _precios_para_factura(ext, [item_db(1, 7, 1000)], 100000, self.por_id())
         self.assertEqual(precios, {})
         self.assertEqual(len(advs), 1)  # solo Y advierte (X ni siquiera matchea)
+
+
+class ProveedorDispatchTest(unittest.TestCase):
+    """Preferencia de proveedor Groq → Gemini → Claude según la key disponible."""
+
+    def test_reducir_para_groq_deja_pasar_lo_chico(self):
+        chico = b"x" * 1000
+        self.assertIs(_reducir_para_groq(chico), chico)
+
+    def test_dispatcher_prefiere_groq(self):
+        with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", "gk"), \
+             mock.patch.object(factura_ocr.settings, "GEMINI_API_KEY", "gm"), \
+             mock.patch.object(factura_ocr.settings, "ANTHROPIC_API_KEY", "ak"), \
+             mock.patch.object(factura_ocr, "_extraer_con_groq", return_value={"via": "groq"}) as mg, \
+             mock.patch.object(factura_ocr, "_extraer_con_gemini") as mgem, \
+             mock.patch.object(factura_ocr, "_extraer_con_claude") as mcl:
+            from datetime import date
+            out = _extraer(b"jpeg", "cat", date(2026, 7, 14))
+            self.assertEqual(out, {"via": "groq"})
+            mg.assert_called_once()
+            mgem.assert_not_called()
+            mcl.assert_not_called()
+
+    def test_dispatcher_cae_a_gemini_sin_groq(self):
+        with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", ""), \
+             mock.patch.object(factura_ocr.settings, "GEMINI_API_KEY", "gm"), \
+             mock.patch.object(factura_ocr, "_extraer_con_gemini", return_value={"via": "gemini"}) as mgem:
+            from datetime import date
+            out = _extraer(b"jpeg", "cat", date(2026, 7, 14))
+            self.assertEqual(out, {"via": "gemini"})
+            mgem.assert_called_once()
+
+    def test_hay_proveedor_ocr(self):
+        with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", ""), \
+             mock.patch.object(factura_ocr.settings, "GEMINI_API_KEY", ""), \
+             mock.patch.object(factura_ocr.settings, "ANTHROPIC_API_KEY", ""):
+            self.assertFalse(hay_proveedor_ocr())
+        with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", "gk"), \
+             mock.patch.object(factura_ocr.settings, "GEMINI_API_KEY", ""), \
+             mock.patch.object(factura_ocr.settings, "ANTHROPIC_API_KEY", ""):
+            self.assertTrue(hay_proveedor_ocr())
 
 
 class HelpersTest(unittest.TestCase):

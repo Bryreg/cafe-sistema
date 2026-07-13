@@ -287,7 +287,17 @@ def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dic
         raise HTTPException(502, "No se pudo contactar el servicio de escaneo — intentá de nuevo en un rato.")
 
     if r.status_code == 429:
-        raise HTTPException(503, "Se alcanzó el límite gratis de escaneo por ahora — esperá un minuto y volvé a intentar.")
+        try:
+            raw = ((r.json().get("error") or {}).get("message", "") or r.text)
+        except ValueError:
+            raw = r.text
+        logger.warning("Groq 429: %s", raw[:300])
+        # Distinguir cuota DIARIA (hay que esperar a mañana) de límite por minuto.
+        low = raw.lower()
+        es_dia = "per day" in low or "tpd" in low or "rpd" in low or "day" in low
+        if es_dia:
+            raise HTTPException(503, f"Se agotó la cuota gratis de escaneo del DÍA — seguí mañana. (Groq: {raw[:160]})")
+        raise HTTPException(503, f"Se alcanzó el límite por minuto — esperá un minuto. (Groq: {raw[:160]})")
     if r.status_code in (401, 403):
         logger.error("Groq rechazó la key (%s): %s", r.status_code, r.text[:500])
         raise HTTPException(503, "La clave de la API de escaneo no es válida — revisá GROQ_API_KEY en el servidor.")

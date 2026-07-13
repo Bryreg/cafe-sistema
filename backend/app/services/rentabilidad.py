@@ -19,7 +19,7 @@ from sqlalchemy import func, not_, or_
 from app.core.tz import dia_col, hoy_col, rango_col_utc
 from app.models.models import (
     CajaTurno, FacturaCompra, FacturaCompraItem, MovimientoCaja, Producto,
-    ProductoInsumo, Ticket, TicketItem, Tienda, TipoMovCajaEnum,
+    ProductoInsumo, ProductoDesechable, Ticket, TicketItem, Tienda, TipoMovCajaEnum,
 )
 
 # Patrones de concepto que crea services/facturas.py para pagos a proveedor.
@@ -187,6 +187,12 @@ def get_rentabilidad_productos(db) -> dict:
     for pi in db.query(ProductoInsumo).all():
         recetas[pi.producto_id].append(pi)
 
+    # Desechables (capa de costo aparte, NO descuenta inventario). Se suman al
+    # costo de receta para dar el "costo completo" del producto para llevar.
+    desechables: dict[int, list] = defaultdict(list)
+    for pd in db.query(ProductoDesechable).all():
+        desechables[pd.producto_id].append(pd)
+
     # Ventas últimos 30 días (Colombia) para ordenar por relevancia real.
     d_utc, h_utc = rango_col_utc(hoy_col() - timedelta(days=29), hoy_col())
     ventas_rows = (
@@ -237,6 +243,27 @@ def get_rentabilidad_productos(db) -> dict:
                 if costo is None:
                     faltantes.append(p.nombre)
 
+        # Desechables: capa de costo aparte (vaso/tapa/servilleta/azúcar…) que NO
+        # descuenta inventario. Se suma al costo de receta para el "costo completo"
+        # del producto para llevar. Solo aplica a lo que tenga desechables cargados.
+        lista_desech = desechables.get(p.id, [])
+        costo_desech = 0.0
+        desech_faltan: list[str] = []
+        for pd in lista_desech:
+            c = costo_prom.get(pd.insumo_id)
+            if c is None:
+                ins = por_id.get(pd.insumo_id)
+                desech_faltan.append(ins.nombre if ins else f"insumo {pd.insumo_id}")
+            else:
+                costo_desech += float(pd.cantidad) * c
+        tiene_desech = bool(lista_desech)
+        if costo is not None and tiene_desech:
+            costo_full = round(costo + costo_desech, 2)
+            margen_full = round(precio_venta - costo_full, 2)
+        else:
+            costo_full = round(costo, 2) if costo is not None else None
+            margen_full = round(precio_venta - costo, 2) if costo is not None else None
+
         v = ventas_30d.get(p.id, {"unidades": 0, "plata": 0.0})
         completo = costo is not None and not faltantes
         margen = round(precio_venta - costo, 2) if costo is not None else None
@@ -251,6 +278,13 @@ def get_rentabilidad_productos(db) -> dict:
             "insumos_sin_costo": faltantes,
             "margen": margen,
             "pct_margen": round(margen / precio_venta * 100, 1) if margen is not None else None,
+            # Costo completo (receta + desechables para llevar). costo_desechables
+            # es None si al producto no se le cargó ningún desechable todavía.
+            "costo_desechables": round(costo_desech, 2) if tiene_desech else None,
+            "costo_con_desechables": costo_full,
+            "desechables_sin_costo": desech_faltan,
+            "margen_con_desechables": margen_full,
+            "pct_margen_con_desechables": round(margen_full / precio_venta * 100, 1) if margen_full is not None else None,
             "unidades_30d": v["unidades"],
             "venta_30d": round(v["plata"], 2),
         })

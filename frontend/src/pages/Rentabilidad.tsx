@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import api from '../api/client'
 import {
   TrendingUp, TrendingDown, ShoppingCart, Wallet, Receipt, Info,
-  Coffee, ScanLine, Loader2,
+  Coffee, ScanLine, Loader2, Sparkles, Award, AlertTriangle, ArrowUpRight,
+  Layers,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -28,6 +29,10 @@ interface ProdMargen {
   producto_id: number; nombre: string; categoria: string; tipo: string
   precio_venta: number; costo: number | null; costo_completo: boolean
   insumos_sin_costo: string[]; margen: number | null; pct_margen: number | null
+  // Costo completo = receta + desechables para llevar (capa aparte, no toca inventario).
+  costo_desechables: number | null; costo_con_desechables: number | null
+  desechables_sin_costo: string[]; margen_con_desechables: number | null
+  pct_margen_con_desechables: number | null
   unidades_30d: number; venta_30d: number
 }
 interface PorProductoData {
@@ -88,6 +93,40 @@ function Kpi({ label, value, sub, Icon, tint }: {
   )
 }
 
+// ─── Barra horizontal para rankings (categoría / producto) ──────────────────────
+function Bar({ label, value, max, right, tint, sub }: {
+  label: string; value: number; max: number; right: string; tint: string; sub?: string
+}) {
+  const pct = max > 0 ? Math.max(3, Math.round((value / max) * 100)) : 0
+  return (
+    <div className="flex items-center gap-3 px-4 py-1.5">
+      <div className="w-36 sm:w-44 shrink-0 min-w-0">
+        <p className="text-sm font-semibold text-gray-700 truncate">{label}</p>
+        {sub && <p className="text-[11px] text-gray-400 truncate">{sub}</p>}
+      </div>
+      <div className="flex-1 h-4 rounded-full bg-gray-100 overflow-hidden">
+        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: tint }} />
+      </div>
+      <span className="w-24 shrink-0 text-right text-sm font-mono font-bold text-gray-700">{right}</span>
+    </div>
+  )
+}
+
+// ─── Tarjeta de insight automático ──────────────────────────────────────────────
+function InsightCard({ Icon, tint, bg, title, children }: {
+  Icon: typeof Wallet; tint: string; bg: string; title: string; children: ReactNode
+}) {
+  return (
+    <div className="rounded-2xl border p-4" style={{ borderColor: tint + '40', background: bg }}>
+      <div className="flex items-center gap-2 mb-1.5">
+        <Icon size={15} style={{ color: tint }} />
+        <p className="text-[11px] font-bold uppercase tracking-wide" style={{ color: tint }}>{title}</p>
+      </div>
+      <p className="text-sm text-gray-700 leading-snug">{children}</p>
+    </div>
+  )
+}
+
 // ─── Página ───────────────────────────────────────────────────────────────────
 export default function Rentabilidad() {
   const [periodo, setPeriodo] = useState<Periodo>('mes')
@@ -101,6 +140,9 @@ export default function Rentabilidad() {
   const [leyendo, setLeyendo] = useState(false)
   const [leyendoMsg, setLeyendoMsg] = useState('')
   const pararRef = useRef(false)
+  // Filtro por categoría y criterio de orden de la tabla de márgenes.
+  const [prodCat, setProdCat] = useState<string>('todas')
+  const [prodSort, setProdSort] = useState<'utilidad' | 'margen' | 'unidades'>('utilidad')
 
   const fetchProductos = () =>
     api.get<PorProductoData>('/rentabilidad/por-producto')
@@ -159,6 +201,71 @@ export default function Rentabilidad() {
 
   const r = data?.resumen
   const margenPositivo = (r?.margen_neto ?? 0) >= 0
+
+  // ── Margen por producto: utilidad aportada (margen × volumen), filtro y orden ──
+  // La "utilidad 30d" usa el margen de RECETA (en el punto). Es lo más accionable:
+  // un producto de margen medio pero mucho volumen aporta más plata que uno de
+  // margen alto que casi no rota (el Americano vs. una bebida cara que no vende).
+  const prodUtil = (p: ProdMargen) => (p.margen ?? 0) * p.unidades_30d
+  const prodCats = prodData
+    ? ['todas', ...Array.from(new Set(prodData.productos.map(p => p.categoria).filter(Boolean)))]
+    : ['todas']
+  const prodFiltered = (prodData?.productos ?? [])
+    .filter(p => prodCat === 'todas' || p.categoria === prodCat)
+  const prodSorted = [...prodFiltered].sort((a, b) => {
+    if (prodSort === 'unidades') return b.unidades_30d - a.unidades_30d
+    if (prodSort === 'margen') return (b.pct_margen ?? -Infinity) - (a.pct_margen ?? -Infinity)
+    return prodUtil(b) - prodUtil(a)  // 'utilidad' (default)
+  })
+  const totalUtil = prodFiltered.reduce((s, p) => s + prodUtil(p), 0)
+
+  // ── Análisis de negocio (todo client-side desde por-producto) ──────────────────
+  // Base: productos que se vendieron y tienen margen calculado.
+  const prodsSold = (prodData?.productos ?? []).filter(p => p.unidades_30d > 0 && p.margen != null)
+  const utilTotalNeg = prodsSold.reduce((s, p) => s + prodUtil(p), 0)  // utilidad total del mix
+
+  // Rollup por categoría: de dónde viene realmente la plata.
+  const catMap = new Map<string, { venta: number; contrib: number; unidades: number }>()
+  for (const p of prodsSold) {
+    const k = p.categoria || 'otros'
+    const e = catMap.get(k) ?? { venta: 0, contrib: 0, unidades: 0 }
+    e.venta += p.venta_30d; e.contrib += prodUtil(p); e.unidades += p.unidades_30d
+    catMap.set(k, e)
+  }
+  const catRollup = [...catMap.entries()]
+    .map(([cat, v]) => ({ cat, ...v, pct: v.venta > 0 ? Math.round((v.contrib / v.venta) * 100) : 0 }))
+    .sort((a, b) => b.contrib - a.contrib)
+  const maxCatContrib = Math.max(1, ...catRollup.map(c => c.contrib))
+
+  // Top productos por utilidad aportada (Pareto: los que sostienen el negocio).
+  const topUtil = [...prodsSold].sort((a, b) => prodUtil(b) - prodUtil(a)).slice(0, 10)
+  const maxTopUtil = Math.max(1, ...topUtil.map(prodUtil))
+
+  // Oportunidades de precio: costo completo conocido, margen < 60%, con volumen real.
+  // Sugerido = precio que llega a 68% de margen, redondeado a $100.
+  const TARGET_MARGEN = 0.68
+  const pricingOps = prodsSold
+    .filter(p => p.costo_completo && p.pct_margen != null && p.pct_margen < 60 && p.costo != null)
+    .map(p => {
+      const sugerido = Math.round((p.costo! / (1 - TARGET_MARGEN)) / 100) * 100
+      const ganancia = Math.max(0, (sugerido - p.precio_venta) * p.unidades_30d)
+      return { p, sugerido, ganancia }
+    })
+    .filter(x => x.ganancia > 0 && x.sugerido > x.p.precio_venta)
+    .sort((a, b) => b.ganancia - a.ganancia)
+    .slice(0, 6)
+
+  // Impacto de desechables (cuántos puntos de margen se comen para llevar).
+  const conDesech = prodsSold.filter(p => p.pct_margen != null && p.pct_margen_con_desechables != null
+    && p.costo_con_desechables !== p.costo)
+  const dropPromedio = conDesech.length
+    ? Math.round(conDesech.reduce((s, p) => s + (p.pct_margen! - p.pct_margen_con_desechables!), 0) / conDesech.length)
+    : 0
+
+  // Insights automáticos.
+  const joya = topUtil[0]
+  const oportunidad = pricingOps[0]
+  const catEstrella = catRollup[0]
 
   return (
     <div className="space-y-4">
@@ -309,12 +416,113 @@ export default function Rentabilidad() {
         </>
       )}
 
+      {/* ── Insights automáticos: qué le dice esto del negocio ── */}
+      {prodData && prodsSold.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {joya && (
+            <InsightCard Icon={Award} tint="#2d5a3f" bg="#f2faf5" title="Joya del negocio">
+              <b>{joya.nombre}</b> te deja <b>{fmt(prodUtil(joya))}/mes</b> ({joya.unidades_30d} vend · {joya.pct_margen}% margen). Es lo que más plata aporta — cuidá su stock y calidad.
+            </InsightCard>
+          )}
+          {oportunidad && (
+            <InsightCard Icon={ArrowUpRight} tint="#b45309" bg="#fffbeb" title="Oportunidad de precio">
+              <b>{oportunidad.p.nombre}</b> rinde solo <b>{oportunidad.p.pct_margen}%</b>. Subiéndolo a <b>{fmt(oportunidad.sugerido)}</b> ganás <b>~{fmt(oportunidad.ganancia)}/mes</b> más.
+            </InsightCard>
+          )}
+          {catEstrella && (
+            <InsightCard Icon={Layers} tint="#7c3aed" bg="#faf5ff" title="De dónde viene la plata">
+              Los <b className="capitalize">{catEstrella.cat}</b> aportan <b>{utilTotalNeg > 0 ? Math.round((catEstrella.contrib / utilTotalNeg) * 100) : 0}%</b> de tu utilidad ({fmt(catEstrella.contrib)}/mes).
+            </InsightCard>
+          )}
+          {dropPromedio > 0 && (
+            <InsightCard Icon={AlertTriangle} tint="#9f1239" bg="#fef2f2" title="Peso de los desechables">
+              Para llevar, los desechables te comen <b>~{dropPromedio} puntos</b> de margen. En el punto (cristalería) ganás más.
+            </InsightCard>
+          )}
+        </div>
+      )}
+
+      {/* ── Utilidad por categoría + Top que sostienen el negocio ── */}
+      {prodData && catRollup.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+            <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
+              <Layers size={15} className="text-forest" /> Utilidad por categoría
+              <span className="text-xs font-normal text-gray-400">· 30 días</span>
+            </p>
+            <div className="py-2">
+              {catRollup.map(c => (
+                <Bar key={c.cat} label={c.cat.charAt(0).toUpperCase() + c.cat.slice(1)}
+                  sub={`${fmt(c.venta)} venta · ${c.pct}% margen`}
+                  value={c.contrib} max={maxCatContrib} right={fmt(c.contrib)} tint="#2d5a3f" />
+              ))}
+            </div>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+            <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
+              <Sparkles size={15} className="text-forest" /> Top 10 que sostienen el negocio
+            </p>
+            <div className="py-2">
+              {topUtil.map(p => (
+                <Bar key={p.producto_id} label={p.nombre} sub={`${p.unidades_30d} vend · ${p.pct_margen}%`}
+                  value={prodUtil(p)} max={maxTopUtil} right={fmt(prodUtil(p))} tint="oklch(55% 0.12 65)" />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Oportunidades de precio ── */}
+      {prodData && pricingOps.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+          <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
+            <ArrowUpRight size={15} className="text-amber-600" /> Oportunidades de precio
+            <span className="text-xs font-normal text-gray-400">· margen bajo con volumen</span>
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                  <th className="text-left px-4 py-2 font-bold">Producto</th>
+                  <th className="text-right px-3 py-2 font-bold">Hoy</th>
+                  <th className="text-right px-3 py-2 font-bold">Margen</th>
+                  <th className="text-right px-3 py-2 font-bold">Sugerido</th>
+                  <th className="text-right px-4 py-2 font-bold">Ganás/mes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pricingOps.map(({ p, sugerido, ganancia }) => (
+                  <tr key={p.producto_id} className="border-b border-gray-50 last:border-0">
+                    <td className="px-4 py-2 font-semibold text-gray-700">
+                      {p.nombre}
+                      <span className="text-[11px] text-gray-400 font-normal"> · {p.unidades_30d} vend</span>
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-500">{fmt(p.precio_venta)}</td>
+                    <td className="px-3 py-2 text-right font-mono font-bold text-red-600">{p.pct_margen}%</td>
+                    <td className="px-3 py-2 text-right font-mono font-bold text-forest">{fmt(sugerido)}</td>
+                    <td className="px-4 py-2 text-right font-mono font-bold text-green-700">+{fmt(ganancia)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="px-4 py-2 text-[11px] text-gray-400 border-t border-gray-100">
+            Sugerido = precio para llegar a ~68% de margen (redondeado a $100). Estimación sobre ventas de 30 días; el margen usa el costo completo confirmado.
+          </p>
+        </div>
+      )}
+
       {/* ── Margen por producto ── */}
       {prodData && (
         <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-gray-100">
             <p className="flex items-center gap-2 text-sm font-bold text-gray-700">
               <Coffee size={15} className="text-forest" /> Margen por producto
+              {totalUtil > 0 && (
+                <span className="text-xs font-semibold text-gray-400">
+                  · aporta {fmt(totalUtil)}/mes
+                </span>
+              )}
             </p>
             <div className="ml-auto flex items-center gap-2">
               {leyendo ? (
@@ -343,6 +551,31 @@ export default function Rentabilidad() {
             </div>
           </div>
 
+          {/* Filtro por categoría + criterio de orden */}
+          {prodData.productos.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-gray-100 bg-gray-50/60">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {prodCats.map(c => (
+                  <button key={c} onClick={() => setProdCat(c)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold capitalize border transition-colors ${
+                      prodCat === c ? 'bg-forest text-white border-forest' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                    {c}
+                  </button>
+                ))}
+              </div>
+              <div className="ml-auto flex items-center gap-1.5 text-xs">
+                <span className="text-gray-400 font-semibold">Ordenar por:</span>
+                {(([['utilidad', 'Utilidad'], ['margen', 'Margen %'], ['unidades', 'Más vendidos']]) as [typeof prodSort, string][]).map(([s, lbl]) => (
+                  <button key={s} onClick={() => setProdSort(s)}
+                    className={`px-2 py-1 rounded-lg font-semibold border transition-colors ${
+                      prodSort === s ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {prodData.productos.length === 0 ? (
             <p className="px-4 py-6 text-sm text-gray-400">Sin productos de venta con precio configurado.</p>
           ) : (
@@ -351,48 +584,78 @@ export default function Rentabilidad() {
                 <thead>
                   <tr className="text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
                     <th className="text-left px-4 py-2 font-bold">Producto</th>
-                    <th className="text-right px-3 py-2 font-bold">Vendidos 30d</th>
+                    <th className="text-right px-3 py-2 font-bold">Vend 30d</th>
                     <th className="text-right px-3 py-2 font-bold">Precio</th>
                     <th className="text-right px-3 py-2 font-bold">Costo</th>
-                    <th className="text-right px-4 py-2 font-bold">Margen</th>
-                    <th className="text-right px-4 py-2 font-bold">%</th>
+                    <th className="text-right px-3 py-2 font-bold">Margen</th>
+                    <th className="text-right px-4 py-2 font-bold">Utilidad 30d</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {prodData.productos.map(p => (
-                    <tr key={p.producto_id} className="border-b border-gray-50 last:border-0">
-                      <td className="px-4 py-2">
-                        <p className="font-semibold text-gray-700">{p.nombre}</p>
-                        {!p.costo_completo && p.insumos_sin_costo.length > 0 && (
-                          <p className="text-[11px] text-amber-600">
-                            falta costo de: {p.insumos_sin_costo.slice(0, 3).join(', ')}
-                            {p.insumos_sin_costo.length > 3 ? '…' : ''}
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono text-gray-500">
-                        {p.unidades_30d > 0 ? p.unidades_30d : '—'}
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono text-gray-700">{fmt(p.precio_venta)}</td>
-                      <td className={`px-3 py-2 text-right font-mono ${p.costo_completo ? 'text-gray-500' : 'text-amber-600'}`}>
-                        {p.costo != null ? `${p.costo_completo ? '' : '≥ '}${fmt(p.costo)}` : '—'}
-                      </td>
-                      <td className={`px-4 py-2 text-right font-mono font-bold ${
-                        p.margen == null ? 'text-gray-300' : p.margen >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                        {p.margen != null ? fmt(p.margen) : '—'}
-                      </td>
-                      <td className={`px-4 py-2 text-right font-mono ${p.costo_completo ? 'text-gray-400' : 'text-amber-600'}`}>
-                        {p.pct_margen != null ? `${p.pct_margen}%${p.costo_completo ? '' : ' *'}` : '—'}
-                      </td>
-                    </tr>
-                  ))}
+                  {prodSorted.map(p => {
+                    const util = prodUtil(p)
+                    const hayDesech = p.costo_con_desechables != null && p.costo != null
+                      && p.costo_con_desechables !== p.costo
+                    const pctColor = p.pct_margen == null ? 'text-gray-300'
+                      : p.pct_margen >= 60 ? 'text-green-700'
+                      : p.pct_margen >= 40 ? 'text-amber-600' : 'text-red-600'
+                    return (
+                      <tr key={p.producto_id} className="border-b border-gray-50 last:border-0">
+                        <td className="px-4 py-2">
+                          <p className="font-semibold text-gray-700">{p.nombre}</p>
+                          {!p.costo_completo && p.insumos_sin_costo.length > 0 && (
+                            <p className="text-[11px] text-amber-600">
+                              falta costo de: {p.insumos_sin_costo.slice(0, 3).join(', ')}
+                              {p.insumos_sin_costo.length > 3 ? '…' : ''}
+                            </p>
+                          )}
+                          {p.desechables_sin_costo && p.desechables_sin_costo.length > 0 && (
+                            <p className="text-[11px] text-gray-400">
+                              falta desechable: {p.desechables_sin_costo.slice(0, 2).join(', ')}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-500">
+                          {p.unidades_30d > 0 ? p.unidades_30d : '—'}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-700">{fmt(p.precio_venta)}</td>
+                        <td className="px-3 py-2 text-right font-mono">
+                          <span className={p.costo_completo ? 'text-gray-500' : 'text-amber-600'}>
+                            {p.costo != null ? `${p.costo_completo ? '' : '≥ '}${fmt(p.costo)}` : '—'}
+                          </span>
+                          {hayDesech && (
+                            <span className="block text-[11px] text-orange-500">
+                              p/llevar {fmt(p.costo_con_desechables!)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono">
+                          <span className={`font-bold ${pctColor}`}>
+                            {p.pct_margen != null ? `${p.pct_margen}%${p.costo_completo ? '' : ' *'}` : '—'}
+                          </span>
+                          {hayDesech && p.pct_margen_con_desechables != null && (
+                            <span className="block text-[11px] text-orange-500">
+                              llevar {p.pct_margen_con_desechables}%
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono font-bold text-gray-800">
+                          {p.unidades_30d > 0 && p.margen != null ? fmt(util) : '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
           )}
           <div className="flex items-start gap-2 px-4 py-3 bg-gray-50 border-t border-gray-100">
             <Info size={13} className="text-gray-400 shrink-0 mt-0.5" />
-            <p className="text-[11px] text-gray-500 leading-relaxed">{prodData.nota}</p>
+            <p className="text-[11px] text-gray-500 leading-relaxed">
+              <b>Utilidad 30d</b> = margen × unidades vendidas: lo que cada producto APORTA al mes.{' '}
+              <b>p/llevar</b> suma los desechables (vaso, tapa, servilleta…); el margen en el punto
+              es mayor porque ahí se usa cristalería. {prodData.nota}
+            </p>
           </div>
         </div>
       )}

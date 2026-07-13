@@ -802,6 +802,25 @@ class ProductoInsumo(Base):
     )
 
 
+class ProductoDesechable(Base):
+    """Receta de desechables SOLO para costeo de rentabilidad: los empaques que
+    lleva un producto cuando es 'para llevar' (vaso, tapa, servilleta, azúcar,
+    mezclador, pitillo). A diferencia de ProductoInsumo, esto NO descuenta
+    inventario en la venta ni se toca en el POS — es una capa de costo aparte
+    que se suma únicamente al margen por producto en rentabilidad (en el punto
+    se usa cristalería y no todos piden azúcar, por eso no va en la receta real).
+    Sin relationships: dos FKs a productos dispararían AmbiguousForeignKeysError;
+    se consulta con joins explícitos, igual que ProductoInsumo."""
+    __tablename__ = "producto_desechables"
+    id          = Column(Integer, primary_key=True)
+    producto_id = Column(Integer, ForeignKey("productos.id", ondelete="CASCADE"), nullable=False, index=True)
+    insumo_id   = Column(Integer, ForeignKey("productos.id", ondelete="RESTRICT"), nullable=False)
+    cantidad    = Column(Float, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("producto_id", "insumo_id", name="uq_producto_desechable"),
+    )
+
+
 class Notificacion(Base):
     """Etapa 7: Notificaciones operativas internas para el admin."""
     __tablename__ = "notificaciones"

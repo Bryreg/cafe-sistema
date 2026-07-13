@@ -11,6 +11,14 @@ import uuid
 
 from app.config import settings
 
+# iPhone photos arrive as HEIC when picked from the gallery; Pillow needs the
+# HEIF plugin to open them. Optional: without it, HEIC uploads fail with 400.
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
+
 
 def _compress(data: bytes, max_side: int = 1280, quality: int = 75) -> bytes:
     from PIL import Image

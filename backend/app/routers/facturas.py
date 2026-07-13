@@ -1,6 +1,7 @@
 import json
 from datetime import date, datetime, time
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -9,6 +10,7 @@ from app.core.deps import ensure_tienda_access, get_current_user, require_admin,
 from app.models.models import Usuario
 from app.schemas.facturas import FacturaCreate
 from app.services import facturas as svc
+from app.services import factura_ocr
 from app.core.storage import upload_imagen
 from app.core.tz import inicio_dia_col_utc, fin_dia_col_utc
 
@@ -33,6 +35,32 @@ async def crear_factura(
     imagen_url = await upload_imagen(imagen, max_side=1600, quality=85)
     return svc.crear_factura(db, payload, imagen_url, user.id,
                              barista_id=barista[0], barista_nombre=barista[1])
+
+
+_MAX_FOTO_BYTES = 15 * 1024 * 1024
+
+
+@router.post("/analizar-foto")
+async def analizar_foto(
+    tienda_id: int = Form(...),
+    imagen: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(get_current_user),
+):
+    """Lee una foto de factura con Claude vision y devuelve los datos extraídos
+    ya cruzados con el catálogo, listos para prellenar el form de Ingresos.
+    No modifica nada: el registro sigue pasando por POST /facturas/."""
+    ensure_tienda_access(user, tienda_id)
+    # Leer con tope de tamaño: sin esto un upload gigante se carga entero en RAM.
+    data = bytearray()
+    while chunk := await imagen.read(1024 * 1024):
+        data.extend(chunk)
+        if len(data) > _MAX_FOTO_BYTES:
+            raise HTTPException(413, "La foto pesa demasiado (máx. 15 MB) — sacala de nuevo.")
+    # La llamada al modelo tarda varios segundos: correrla en threadpool para
+    # no bloquear el event loop del server.
+    return await run_in_threadpool(
+        factura_ocr.analizar_factura_foto, db, tienda_id, bytes(data), user.id)
 
 
 # Must be before /{factura_id} to avoid route conflict

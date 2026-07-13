@@ -1,7 +1,8 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from fastapi import HTTPException
 from datetime import datetime
+from app.core.tz import inicio_dia_col_utc
 from app.models.models import (FacturaCompra, FacturaCompraItem, TipoPagoEnum,
                                CajaTurno, MovimientoCaja, EstadoTurnoEnum,
                                LoteInventario, Producto, Inventario)
@@ -39,7 +40,10 @@ def eliminar_factura(db: Session, factura_id: int, usuario_id: int) -> dict:
         lote.fecha_agotado = datetime.utcnow()
         lote.factura_id = None
 
-    # 3) Egresos de caja de esta factura (concepto exacto que escriben crear/pago)
+    # 3) Egresos de caja de esta factura: por factura_id (vínculo estructural) y,
+    #    como fallback para movimientos anteriores a esa columna, el concepto
+    #    exacto. Solo con el texto, renombrar el proveedor o corregir el número
+    #    dejaba el egreso huérfano y la plata desaparecía de los reportes.
     concepto = f"Pago proveedor: {f.proveedor}"
     if f.numero_factura:
         concepto += f" — Fact. {f.numero_factura}"
@@ -47,7 +51,8 @@ def eliminar_factura(db: Session, factura_id: int, usuario_id: int) -> dict:
         db.query(MovimientoCaja)
         .join(CajaTurno, CajaTurno.id == MovimientoCaja.caja_turno_id)
         .filter(MovimientoCaja.tipo == "egreso",
-                MovimientoCaja.concepto == concepto,
+                or_(MovimientoCaja.factura_id == f.id,
+                    MovimientoCaja.concepto == concepto),
                 CajaTurno.tienda_id == f.tienda_id)
         .order_by(MovimientoCaja.fecha.desc())
         .all()
@@ -74,7 +79,7 @@ def eliminar_factura(db: Session, factura_id: int, usuario_id: int) -> dict:
                 db.add(MovimientoCaja(
                     caja_turno_id=activo.id, tipo="ingreso",
                     concepto=f"Reverso {concepto}", valor=mov.valor,
-                    usuario_id=usuario_id,
+                    usuario_id=usuario_id, factura_id=f.id,
                 ))
 
     audit.registrar(
@@ -205,6 +210,7 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
                 usuario_id=usuario_id,
                 barista_id=barista_id,
                 barista_nombre=barista_nombre,
+                factura_id=factura.id,
             ))
 
     audit.registrar(
@@ -336,7 +342,11 @@ def editar_factura(db: Session, factura_id: int, usuario_id: int, *,
     if numero_factura is not None:
         f.numero_factura = numero_factura.strip() or None
     if fecha_recibido is not None:
-        f.fecha_recibido = fecha_recibido
+        # Llega como date (solo día). Guardar el instante UTC de la medianoche
+        # COLOMBIA de ese día, igual que el alta. Asignar el date pelado creaba
+        # las 00:00 UTC (19:00 del día anterior en Colombia), corriendo la
+        # compra un día hacia atrás en rentabilidad y los reportes por mes.
+        f.fecha_recibido = inicio_dia_col_utc(fecha_recibido)
     if tipo_pago is not None:
         if tipo_pago not in tipo_map:
             raise HTTPException(400, "tipo_pago inválido: contado | credito | transferencia")
@@ -420,6 +430,7 @@ def editar_factura(db: Session, factura_id: int, usuario_id: int, *,
                 caja_turno_id=turno_activo.id,
                 tipo="egreso" if delta_caja > 0 else "ingreso",
                 concepto=concepto, valor=abs(delta_caja), usuario_id=usuario_id,
+                factura_id=f.id,
             ))
 
     audit.registrar(
@@ -468,6 +479,7 @@ def registrar_pago(db: Session, factura_id: int, monto: float, forma_pago: str |
                 concepto=concepto,
                 valor=float(monto),
                 usuario_id=usuario_id,
+                factura_id=f.id,
             ))
 
     audit.registrar(

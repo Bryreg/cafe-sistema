@@ -13,6 +13,7 @@ from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
                           auditorias, pos, rutinas, novedades, temperaturas, recepciones,
                           inventario_mensual, dashboard_ejecutivo)
 from app.routers import config_ticket
+from app.routers import rentabilidad
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -200,6 +201,9 @@ with engine.connect() as _conn:
         "ALTER TABLE solicitudes_pedido_items ADD COLUMN unidad_solicitada VARCHAR(20)",
         # Huella del atajo "Todo coincide con sistema": distingue conteo fisico real de un eco.
         "ALTER TABLE conteos_fisicos ADD COLUMN es_atajo BOOLEAN DEFAULT FALSE",
+        # Vínculo estructural egreso↔factura de proveedor (antes solo texto del concepto,
+        # que se rompía al renombrar proveedor/número). Lo usa rentabilidad y eliminar_factura.
+        "ALTER TABLE movimientos_caja ADD COLUMN factura_id INTEGER",
     ]:
         try:
             _conn.execute(_text(_sql))
@@ -731,6 +735,7 @@ app.include_router(recepciones.router, prefix="/api/v1")
 app.include_router(inventario_mensual.router, prefix="/api/v1")
 app.include_router(dashboard_ejecutivo.router, prefix="/api/v1")
 app.include_router(config_ticket.router,     prefix="/api/v1")
+app.include_router(rentabilidad.router,      prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────
 _frontend_dist = os.path.abspath(

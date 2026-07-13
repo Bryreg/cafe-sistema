@@ -241,6 +241,11 @@ class MovimientoCaja(Base):
     # para no introducir un segundo ForeignKey a usuarios (AmbiguousForeignKeysError).
     barista_id = Column(Integer, nullable=True)
     barista_nombre = Column(String(100), nullable=True)
+    # Factura de proveedor que originó este movimiento (pago/reverso/ajuste). Columna
+    # PLANA sin FK: la factura puede eliminarse y el movimiento compensatorio queda.
+    # Antes el vínculo era solo el texto del concepto, que se rompía al renombrar
+    # el proveedor o corregir el número de factura.
+    factura_id = Column(Integer, nullable=True)
     turno = relationship("CajaTurno", back_populates="movimientos")
     usuario = relationship("Usuario", back_populates="movimientos_caja")
 

@@ -6,7 +6,7 @@ import api from '../api/client'
 import { conMiles, soloDigitos } from '../utils/plata'
 import {
   ArrowLeft, ChevronDown, ChevronRight, Search, Plus, X,
-  Check, Trash2, Croissant, Box, Upload,
+  Check, Trash2, Croissant, Box, Upload, ScanLine, Loader2, AlertTriangle,
 } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -39,6 +39,34 @@ interface ItemForm {
   contenido_por_empaque?: number | null   // solo para mostrar la equivalencia
   numero_lote: string
   fecha_vencimiento: string
+  // Solo lo llena el escaneo (ya ajustado a la unidad final del inventario);
+  // la carga manual lo deja en null, igual que siempre.
+  precio_unitario?: number | null
+}
+
+// Respuesta de POST /facturas/analizar-foto (extracción + mapeo al catálogo).
+interface ScanItem {
+  descripcion: string
+  producto_id: number | null
+  producto_nombre: string | null
+  unidad_medida: string | null
+  categoria: string | null
+  contenido_por_empaque: number | null
+  cantidad: number | null
+  en_empaques: boolean
+  precio_unitario: number | null
+  numero_lote: string | null
+  fecha_vencimiento: string | null
+  advertencia: string | null
+}
+interface ScanResult {
+  proveedor: string | null
+  numero_factura: string | null
+  fecha_factura: string | null
+  valor_total: number | null
+  tipo_pago: string | null
+  items: ScanItem[]
+  advertencias: string[]
 }
 
 // Hora LOCAL: toISOString es UTC y despues de las 19:00 Colombia devuelve manana.
@@ -74,6 +102,11 @@ export default function Ingresos() {
   const [preview, setPreview]             = useState<string | null>(null)
   const fileRef                           = useRef<HTMLInputElement>(null)
   const [items, setItems]                 = useState<ItemForm[]>([])
+
+  // Escaneo de factura (foto → Claude → prefill del form)
+  const scanRef                             = useRef<HTMLInputElement>(null)
+  const [escaneando, setEscaneando]         = useState(false)
+  const [scanWarnings, setScanWarnings]     = useState<string[]>([])
 
   // Proveedor picker
   const [showPickerProv, setShowPickerProv] = useState(false)
@@ -133,6 +166,75 @@ export default function Ingresos() {
     if (fileRef.current) fileRef.current.value = ''
   }
 
+  // ── Escaneo: foto → extracción → prefill ──────────────────────────────────
+  const aplicarExtraccion = (d: ScanResult) => {
+    const warns: string[] = [...(d.advertencias || [])]
+    if (d.proveedor) setProveedor(d.proveedor)
+    if (d.numero_factura) setNumeroFactura(d.numero_factura)
+    // La fecha impresa en la factura NO es la fecha de recibido (crédito, entregas
+    // tardías): solo se usa si coincide con hoy; si no, se avisa y queda hoy.
+    if (d.fecha_factura && d.fecha_factura !== hoy()) {
+      warns.push(`La factura tiene fecha ${d.fecha_factura} — dejé "Fecha recibido" en hoy; cambiala solo si la mercancía llegó ese día.`)
+    }
+    if (d.valor_total != null && d.valor_total > 0) setValorTotal(String(Math.round(d.valor_total)))
+    if (d.tipo_pago === 'contado' || d.tipo_pago === 'credito' || d.tipo_pago === 'transferencia') {
+      setTipoPago(d.tipo_pago)
+    }
+    const nuevos: ItemForm[] = []
+    for (const it of d.items || []) {
+      if (it.advertencia) warns.push(`${it.producto_nombre || it.descripcion}: ${it.advertencia}`)
+      // Solo entran al form los items con producto identificado Y cantidad
+      // convertida sin dudas; el resto queda en advertencias para carga manual.
+      if (!it.producto_id || it.cantidad == null || it.cantidad <= 0) continue
+      nuevos.push({
+        producto_id:       it.producto_id,
+        nombre:            it.producto_nombre || it.descripcion,
+        unidad_medida:     it.unidad_medida || '',
+        categoria:         it.categoria || '',
+        cantidad:          String(it.cantidad),
+        en_empaques:       !!it.en_empaques,
+        contenido_por_empaque: it.contenido_por_empaque ?? null,
+        numero_lote:       it.numero_lote || '',
+        fecha_vencimiento: it.fecha_vencimiento || '',
+        precio_unitario:   it.precio_unitario ?? null,
+      })
+    }
+    if (nuevos.length > 0) setItems(nuevos)
+    else warns.push('No pude armar ningún producto desde la foto — agregalos manual.')
+    setScanWarnings(warns)
+  }
+
+  const escanearFactura = async (f: File) => {
+    if (!user?.tienda_id) return
+    if (items.length > 0 &&
+        !window.confirm('El escaneo va a reemplazar los productos que ya agregaste. ¿Seguir?')) return
+    setError(''); setScanWarnings([]); setEscaneando(true)
+    // La misma foto queda adjunta a la factura que se va a registrar.
+    if (preview) URL.revokeObjectURL(preview)
+    setImagen(f)
+    setPreview(URL.createObjectURL(f))
+    const fd = new FormData()
+    fd.append('tienda_id', String(user.tienda_id))
+    fd.append('imagen', f)
+    try {
+      const r = await api.post<ScanResult>('/facturas/analizar-foto', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000,
+      })
+      aplicarExtraccion(r.data)
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'No se pudo leer la factura — llenala manual.')
+    } finally {
+      setEscaneando(false)
+      if (scanRef.current) scanRef.current.value = ''
+    }
+  }
+
+  const onScanFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (f) escanearFactura(f)
+  }
+
   // ── Abrir quick-add ───────────────────────────────────────────────────────
   const openQuickAdd = () => {
     setAddQuery(''); setAddProducto(null); setAddCantidad(''); setAddEmpaques('')
@@ -185,6 +287,7 @@ export default function Ingresos() {
 
   // ── Guardar factura ────────────────────────────────────────────────────────
   const guardar = async () => {
+    if (escaneando) return
     if (!proveedor.trim()) return setError('Selecciona o escribe el proveedor')
     if (!valorTotal || Number(valorTotal) <= 0) return setError('El valor total debe ser mayor a 0')
     if (items.length === 0) return setError('Agrega al menos un producto')
@@ -206,7 +309,7 @@ export default function Ingresos() {
         producto_id:      it.producto_id,
         cantidad:         Number(it.cantidad),
         en_empaques:      it.en_empaques,
-        precio_unitario:  null,
+        precio_unitario:  it.precio_unitario ?? null,
         numero_lote:      it.numero_lote || null,
         fecha_vencimiento: it.fecha_vencimiento
           ? new Date(it.fecha_vencimiento + 'T00:00:00').toISOString()
@@ -227,6 +330,7 @@ export default function Ingresos() {
       setImagen(null); setPreview(null)
       if (fileRef.current) fileRef.current.value = ''
       setItems([])
+      setScanWarnings([])
       setTimeout(() => setExito(false), 3000)
     } catch (e: any) {
       setError(e.response?.data?.detail || 'Error al guardar')
@@ -428,14 +532,17 @@ export default function Ingresos() {
                       <Trash2 size={12} />
                     </button>
                   </div>
-                  {/* Fila 2: chips lote + vence */}
-                  {(it.numero_lote || it.fecha_vencimiento) && (
+                  {/* Fila 2: chips lote + vence + precio (escaneo) */}
+                  {(it.numero_lote || it.fecha_vencimiento || it.precio_unitario != null) && (
                     <div className="grid grid-cols-2 gap-1.5">
                       {it.numero_lote && (
                         <FieldChip label="Lote" value={it.numero_lote} />
                       )}
                       {it.fecha_vencimiento && (
                         <FieldChip label="Vence" value={it.fecha_vencimiento.slice(5).replace('-', '/')} />
+                      )}
+                      {it.precio_unitario != null && (
+                        <FieldChip label={`$/${it.unidad_medida}`} value={'$' + Number(it.precio_unitario).toLocaleString('es-CO')} />
                       )}
                     </div>
                   )}
@@ -458,13 +565,51 @@ export default function Ingresos() {
               onConfirm={confirmarAdd}
             />
           ) : (
-            <button
-              onClick={openQuickAdd}
-              className="flex items-center justify-center gap-2 mx-4 mt-3 px-4 py-3.5 w-[calc(100%-2rem)] border-2 border-dashed border-warm-200 rounded-2xl text-[13px] font-semibold text-warm-400 hover:border-amber-400 hover:bg-amber-50 hover:text-amber-600 transition-colors bg-white active:scale-95"
-            >
-              <Plus size={14} />
-              Agregar {items.length === 0 ? 'primer' : 'otro'} producto
-            </button>
+            <>
+              {items.length === 0 && !escaneando && (
+                <button
+                  onClick={() => scanRef.current?.click()}
+                  className="flex items-center justify-center gap-2 mx-4 mt-3 px-4 py-3.5 w-[calc(100%-2rem)] rounded-2xl text-[13px] font-bold text-white transition-colors active:scale-95"
+                  style={{ background: 'oklch(55% 0.12 65)', boxShadow: '0 4px 12px oklch(55% 0.12 65 / 0.3)' }}
+                >
+                  <ScanLine size={15} />
+                  Escanear factura con la cámara
+                </button>
+              )}
+              {escaneando && (
+                <div className="flex items-center justify-center gap-2.5 mx-4 mt-3 px-4 py-3.5 w-[calc(100%-2rem)] rounded-2xl bg-amber-50 border border-amber-200 text-[13px] font-semibold text-amber-700">
+                  <Loader2 size={15} className="animate-spin" />
+                  Leyendo la factura… esto tarda unos segundos
+                </div>
+              )}
+              <button
+                onClick={openQuickAdd}
+                disabled={escaneando}
+                className="flex items-center justify-center gap-2 mx-4 mt-3 px-4 py-3.5 w-[calc(100%-2rem)] border-2 border-dashed border-warm-200 rounded-2xl text-[13px] font-semibold text-warm-400 hover:border-amber-400 hover:bg-amber-50 hover:text-amber-600 transition-colors bg-white active:scale-95 disabled:opacity-40"
+              >
+                <Plus size={14} />
+                Agregar {items.length === 0 ? 'producto manual' : 'otro producto'}
+              </button>
+            </>
+          )}
+
+          {/* ── Advertencias del escaneo ── */}
+          {scanWarnings.length > 0 && (
+            <div className="mx-4 mt-3 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+              <div className="flex items-center justify-between mb-1">
+                <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-amber-700">
+                  <AlertTriangle size={12} /> Revisá antes de registrar
+                </p>
+                <button onClick={() => setScanWarnings([])} className="p-1 text-amber-400 hover:text-amber-600">
+                  <X size={13} />
+                </button>
+              </div>
+              <ul className="space-y-1">
+                {scanWarnings.map((w, i) => (
+                  <li key={i} className="text-[12px] text-amber-800 leading-snug">• {w}</li>
+                ))}
+              </ul>
+            </div>
           )}
 
           {/* ── Foto de la factura ── */}
@@ -475,15 +620,26 @@ export default function Ingresos() {
                 <span className="ml-1.5 text-xs font-normal text-warm-400">(opcional)</span>
               </p>
               <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
+              <input ref={scanRef} type="file" accept="image/*" capture="environment" onChange={onScanFile} className="hidden" />
               {preview ? (
-                <div className="relative">
-                  <img src={preview} alt="preview" className="w-full h-36 object-cover rounded-xl border-2 border-amber-300" />
-                  <button
-                    onClick={quitarFoto}
-                    className="absolute top-2 right-2 bg-black/60 text-white rounded-full w-7 h-7 flex items-center justify-center"
-                  >
-                    <X size={13} />
-                  </button>
+                <div className="space-y-2">
+                  <div className="relative">
+                    <img src={preview} alt="preview" className="w-full h-36 object-cover rounded-xl border-2 border-amber-300" />
+                    <button
+                      onClick={quitarFoto}
+                      className="absolute top-2 right-2 bg-black/60 text-white rounded-full w-7 h-7 flex items-center justify-center"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                  {!escaneando && imagen && (
+                    <button
+                      onClick={() => escanearFactura(imagen)}
+                      className="flex items-center justify-center gap-1.5 w-full py-2 rounded-xl border border-amber-300 text-[12px] font-bold text-amber-700 hover:bg-amber-50 transition-colors"
+                    >
+                      <ScanLine size={13} /> Escanear esta foto y llenar el form
+                    </button>
+                  )}
                 </div>
               ) : (
                 <button
@@ -565,7 +721,7 @@ export default function Ingresos() {
         <div className="max-w-lg mx-auto">
           <button
             onClick={guardar}
-            disabled={saving || !canSave}
+            disabled={saving || escaneando || !canSave}
             className="w-full py-4 rounded-2xl text-[15px] font-bold text-white disabled:opacity-40 transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
             style={{
               background: 'oklch(35% 0.05 155)',

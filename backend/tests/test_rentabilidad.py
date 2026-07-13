@@ -237,6 +237,32 @@ class RentabilidadTest(unittest.TestCase):
         # Orden: el más vendido primero.
         self.assertEqual(r["productos"][0]["nombre"], "Capuchino")
 
+    def test_precio_costo_oficial_manda_sobre_promedio_de_facturas(self):
+        from app.services.rentabilidad import _costos_insumos
+        cafe = Producto(nombre="Café insumo", categoria=CategoriaProductoEnum.insumo,
+                        unidad_medida="gr", precio_venta=0)
+        self.db.add(cafe)
+        self.db.flush()
+        # Dos facturas con costos ruidosos (promedio ~$45/gr).
+        for vt, precio in ((100000, 40.0), (100000, 50.0)):
+            f = FacturaCompra(tienda_id=self.t1.id, proveedor="X", valor_total=vt,
+                              tipo_pago=TipoPagoEnum.credito, usuario_id=self.u.id,
+                              fecha_recibido=self.ahora)
+            self.db.add(f)
+            self.db.flush()
+            self.db.add(FacturaCompraItem(factura_id=f.id, producto_id=cafe.id,
+                                          cantidad=1000, precio_unitario=precio))
+        self.db.commit()
+
+        costo, _ = _costos_insumos(self.db)
+        self.assertAlmostEqual(costo[cafe.id], 45.0)  # promedio de facturas
+
+        # Fijar el costo oficial → debe mandar sobre el promedio.
+        cafe.precio_costo = 65.72
+        self.db.commit()
+        costo, _ = _costos_insumos(self.db)
+        self.assertAlmostEqual(costo[cafe.id], 65.72)
+
     def test_editar_factura_guarda_fecha_como_medianoche_colombia(self):
         # Regresión: editar guardaba el date pelado (00:00 UTC) y la compra se
         # corría un día hacia atrás en los reportes.

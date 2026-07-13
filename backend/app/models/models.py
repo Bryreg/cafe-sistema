@@ -275,6 +275,10 @@ class Producto(Base):
     orden_conteo = Column(Integer, nullable=True)
     # NULL = conteo diario normal; 'desechables' = solo se cuenta cuando el admin lo pide.
     grupo_conteo = Column(String(20), nullable=True)
+    # Costo OFICIAL por unidad de inventario (lo fija el dueño, ej. en el verificador
+    # de facturas). Manda sobre el promedio de FacturaCompraItem en rentabilidad:
+    # las lecturas automáticas con ruido no ensucian un costo confirmado a mano.
+    precio_costo = Column(Numeric(12, 4, asdecimal=False), nullable=True)
     # Producto intercambiable de RESERVA: al consumir este insumo por receta, si su
     # stock no alcanza, el resto se descuenta del sustituto (ej. Leche Entera →
     # Deslactosada). NULL = sin sustituto (comportamiento normal).

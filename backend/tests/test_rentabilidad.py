@@ -13,7 +13,8 @@ from app.core.tz import hoy_col, inicio_dia_col_utc
 from app.database import Base
 from app.models.models import (
     CajaTurno, CategoriaProductoEnum, EstadoTurnoEnum, FacturaCompra,
-    FacturaCompraItem, MovimientoCaja, Producto, ProductoInsumo, Ticket,
+    FacturaCompraItem, MovimientoCaja, Producto, ProductoInsumo,
+    ProductoDesechable, Ticket,
     TicketItem, Tienda, TipoPagoEnum, Usuario, RolEnum,
 )
 from app.services.rentabilidad import get_rentabilidad, get_rentabilidad_productos
@@ -277,6 +278,63 @@ class RentabilidadTest(unittest.TestCase):
         editar_factura(self.db, f.id, self.u.id, fecha_recibido=date(2026, 7, 10))
         self.db.refresh(f)
         self.assertEqual(f.fecha_recibido, inicio_dia_col_utc(date(2026, 7, 10)))
+
+
+    def test_costo_con_desechables_capa_aparte(self):
+        # Insumo café $40/gr; desechables: vaso $430/und y tapa SIN costo.
+        cafe = Producto(nombre="Café D", categoria=CategoriaProductoEnum.insumo,
+                        unidad_medida="gr", precio_venta=0)
+        vaso = Producto(nombre="Vaso 9oz", categoria=CategoriaProductoEnum.insumo,
+                        unidad_medida="und", precio_venta=0)
+        tapa = Producto(nombre="Tapa", categoria=CategoriaProductoEnum.insumo,
+                        unidad_medida="und", precio_venta=0)
+        latte = Producto(nombre="Latte", categoria=CategoriaProductoEnum.bebida,
+                         unidad_medida="unidad", precio_venta=8000)
+        # Producto con receta pero SIN desechables cargados.
+        expreso = Producto(nombre="Expreso", categoria=CategoriaProductoEnum.bebida,
+                           unidad_medida="unidad", precio_venta=3000)
+        self.db.add_all([cafe, vaso, tapa, latte, expreso])
+        self.db.flush()
+
+        # vaso con precio_costo oficial; café por factura; tapa sin costo.
+        vaso.precio_costo = 430.0
+        fact = FacturaCompra(tienda_id=self.t1.id, proveedor="P", valor_total=1,
+                             tipo_pago=TipoPagoEnum.credito, usuario_id=self.u.id,
+                             fecha_recibido=self.ahora)
+        self.db.add(fact)
+        self.db.flush()
+        self.db.add_all([
+            FacturaCompraItem(factura_id=fact.id, producto_id=cafe.id,
+                              cantidad=1000, precio_unitario=40),
+            # receta real (POS): 20 gr café en el latte y en el expreso.
+            ProductoInsumo(producto_id=latte.id, insumo_id=cafe.id, cantidad=20),
+            ProductoInsumo(producto_id=expreso.id, insumo_id=cafe.id, cantidad=20),
+            # desechables (capa aparte, NO descuenta inventario): 1 vaso + 1 tapa.
+            ProductoDesechable(producto_id=latte.id, insumo_id=vaso.id, cantidad=1),
+            ProductoDesechable(producto_id=latte.id, insumo_id=tapa.id, cantidad=1),
+        ])
+        self.db.commit()
+
+        r = get_rentabilidad_productos(self.db)
+        por_nombre = {p["nombre"]: p for p in r["productos"]}
+
+        latte_r = por_nombre["Latte"]
+        # costo de receta (POS) NO cambia: solo el café.
+        self.assertAlmostEqual(latte_r["costo"], 20 * 40)              # 800
+        # desechables suman aparte: solo el vaso (la tapa no tiene costo).
+        self.assertAlmostEqual(latte_r["costo_desechables"], 430)
+        self.assertIn("Tapa", latte_r["desechables_sin_costo"])
+        self.assertAlmostEqual(latte_r["costo_con_desechables"], 800 + 430)  # 1230
+        self.assertAlmostEqual(latte_r["margen_con_desechables"], 8000 - 1230)
+        # el margen "de receta" queda intacto para comparar.
+        self.assertAlmostEqual(latte_r["margen"], 8000 - 800)
+
+        # Producto sin desechables cargados: costo_desechables None y el costo
+        # completo cae de vuelta al costo de receta.
+        exp_r = por_nombre["Expreso"]
+        self.assertIsNone(exp_r["costo_desechables"])
+        self.assertAlmostEqual(exp_r["costo_con_desechables"], exp_r["costo"])
+        self.assertAlmostEqual(exp_r["margen_con_desechables"], exp_r["margen"])
 
 
 if __name__ == "__main__":

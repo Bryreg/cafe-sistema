@@ -6,10 +6,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.core.deps import ensure_tienda_access, get_current_user, require_admin, get_barista_actor, require_barista_en_turno
-from app.models.models import Usuario, Producto, ProductoInsumo, Inventario, Tienda, CategoriaProductoEnum, LoteInventario
+from app.models.models import Usuario, Producto, ProductoInsumo, ProductoDesechable, Inventario, Tienda, CategoriaProductoEnum, LoteInventario
 from app.schemas.inventario import (
     MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate, UmbralesStockUpdate,
-    InsumosProductoUpdate, PreparacionRequest,
+    InsumosProductoUpdate, DesechablesProductoUpdate, PreparacionRequest,
 )
 from app.services import inventario as svc
 
@@ -234,6 +234,47 @@ def set_insumos_producto(producto_id: int, data: InsumosProductoUpdate,
         db.add(ProductoInsumo(producto_id=producto_id, insumo_id=it.insumo_id, cantidad=it.cantidad))
     db.commit()
     return {"producto_id": producto_id, "n_insumos": len(data.items)}
+
+@router.get("/productos/{producto_id}/desechables")
+def get_desechables_producto(producto_id: int, db: Session = Depends(get_db),
+                             user: Usuario = Depends(get_current_user)):
+    """Desechables (vaso, tapa, servilleta, azúcar…) que lleva el producto para
+    llevar. Capa de costo SOLO para rentabilidad: NO descuenta inventario."""
+    rows = (
+        db.query(ProductoDesechable, Producto)
+        .join(Producto, Producto.id == ProductoDesechable.insumo_id)
+        .filter(ProductoDesechable.producto_id == producto_id)
+        .order_by(Producto.nombre)
+        .all()
+    )
+    return [{"insumo_id": pd.insumo_id, "nombre": prod.nombre,
+             "unidad_medida": prod.unidad_medida, "cantidad": pd.cantidad}
+            for pd, prod in rows]
+
+@router.put("/productos/{producto_id}/desechables")
+def set_desechables_producto(producto_id: int, data: DesechablesProductoUpdate,
+                             db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    """Reemplaza la lista de desechables del producto (insumo+cantidad). Solo
+    afecta el costo en rentabilidad, nunca el inventario del POS."""
+    p = db.query(Producto).filter_by(id=producto_id).first()
+    if not p:
+        raise HTTPException(404, "Producto no encontrado")
+    vistos: set[int] = set()
+    for it in data.items:
+        if it.insumo_id == producto_id:
+            raise HTTPException(400, "Un producto no puede ser desechable de sí mismo")
+        if it.cantidad <= 0:
+            raise HTTPException(400, "La cantidad de cada desechable debe ser mayor a 0")
+        if it.insumo_id in vistos:
+            raise HTTPException(400, "Desechable repetido")
+        vistos.add(it.insumo_id)
+        if not db.query(Producto.id).filter_by(id=it.insumo_id).first():
+            raise HTTPException(400, f"Desechable {it.insumo_id} no existe")
+    db.query(ProductoDesechable).filter_by(producto_id=producto_id).delete()
+    for it in data.items:
+        db.add(ProductoDesechable(producto_id=producto_id, insumo_id=it.insumo_id, cantidad=it.cantidad))
+    db.commit()
+    return {"producto_id": producto_id, "n_desechables": len(data.items)}
 
 @router.patch("/tienda/{tienda_id}/producto/{producto_id}/minimo")
 def actualizar_minimo(tienda_id: int, producto_id: int, data: StockMinimoUpdate,

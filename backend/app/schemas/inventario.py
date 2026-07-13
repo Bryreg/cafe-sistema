@@ -39,6 +39,10 @@ class InsumoRecetaItem(BaseModel):
 class InsumosProductoUpdate(BaseModel):
     items: list[InsumoRecetaItem]
 
+class DesechablesProductoUpdate(BaseModel):
+    """Receta de desechables (solo costeo de rentabilidad, no toca inventario)."""
+    items: list[InsumoRecetaItem]
+
 class PreparacionRequest(BaseModel):
     producto_id: int
     tienda_id: int

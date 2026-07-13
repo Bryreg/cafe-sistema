@@ -431,7 +431,7 @@ export default function Rentabilidad() {
           )}
           {catEstrella && (
             <InsightCard Icon={Layers} tint="#7c3aed" bg="#faf5ff" title="De dónde viene la plata">
-              Los <b className="capitalize">{catEstrella.cat}</b> aportan <b>{utilTotalNeg > 0 ? Math.round((catEstrella.contrib / utilTotalNeg) * 100) : 0}%</b> de tu utilidad ({fmt(catEstrella.contrib)}/mes).
+              La categoría <b className="capitalize">{catEstrella.cat}</b> aporta <b>{utilTotalNeg > 0 ? Math.round((catEstrella.contrib / utilTotalNeg) * 100) : 0}%</b> de tu utilidad ({fmt(catEstrella.contrib)}/mes).
             </InsightCard>
           )}
           {dropPromedio > 0 && (

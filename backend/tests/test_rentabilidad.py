@@ -12,10 +12,11 @@ from sqlalchemy.orm import sessionmaker
 from app.core.tz import hoy_col, inicio_dia_col_utc
 from app.database import Base
 from app.models.models import (
-    CajaTurno, EstadoTurnoEnum, FacturaCompra, MovimientoCaja, Ticket,
-    Tienda, TipoPagoEnum, Usuario, RolEnum,
+    CajaTurno, CategoriaProductoEnum, EstadoTurnoEnum, FacturaCompra,
+    FacturaCompraItem, MovimientoCaja, Producto, ProductoInsumo, Ticket,
+    TicketItem, Tienda, TipoPagoEnum, Usuario, RolEnum,
 )
-from app.services.rentabilidad import get_rentabilidad
+from app.services.rentabilidad import get_rentabilidad, get_rentabilidad_productos
 
 
 class RentabilidadTest(unittest.TestCase):
@@ -163,6 +164,78 @@ class RentabilidadTest(unittest.TestCase):
         self.db.commit()
         out = eliminar_factura(self.db, f.id, self.u.id)
         self.assertEqual(out["egresos_revertidos"], 30000)
+
+    def test_margen_por_producto_receta_y_reventa(self):
+        # Insumos: leche $2.5/ml y café $40/gr (vía items de factura con precio).
+        leche = Producto(nombre="Leche entera", categoria=CategoriaProductoEnum.insumo,
+                         unidad_medida="ml", precio_venta=0)
+        cafe = Producto(nombre="Café", categoria=CategoriaProductoEnum.insumo,
+                        unidad_medida="gr", precio_venta=0)
+        # Venta con receta: capuchino $8.000 = 180 ml leche + 18 gr café.
+        capu = Producto(nombre="Capuchino", categoria=CategoriaProductoEnum.bebida,
+                        unidad_medida="unidad", precio_venta=8000)
+        # Reventa: gaseosa comprada a $2.000, vendida a $5.000.
+        gaseosa = Producto(nombre="Gaseosa", categoria=CategoriaProductoEnum.bebida,
+                           unidad_medida="unidad", precio_venta=5000)
+        # Receta con insumo SIN costo conocido.
+        te = Producto(nombre="Té", categoria=CategoriaProductoEnum.bebida,
+                      unidad_medida="unidad", precio_venta=4000)
+        bolsa_te = Producto(nombre="Bolsa de té", categoria=CategoriaProductoEnum.insumo,
+                            unidad_medida="unidad", precio_venta=0)
+        self.db.add_all([leche, cafe, capu, gaseosa, te, bolsa_te])
+        self.db.flush()
+
+        fact = FacturaCompra(tienda_id=self.t1.id, proveedor="Prov",
+                             valor_total=999999, tipo_pago=TipoPagoEnum.credito,
+                             usuario_id=self.u.id, fecha_recibido=self.ahora)
+        self.db.add(fact)
+        self.db.flush()
+        self.db.add_all([
+            FacturaCompraItem(factura_id=fact.id, producto_id=leche.id,
+                              cantidad=10000, precio_unitario=2.5),
+            FacturaCompraItem(factura_id=fact.id, producto_id=cafe.id,
+                              cantidad=1000, precio_unitario=40),
+            FacturaCompraItem(factura_id=fact.id, producto_id=gaseosa.id,
+                              cantidad=10, precio_unitario=2000),
+            ProductoInsumo(producto_id=capu.id, insumo_id=leche.id, cantidad=180),
+            ProductoInsumo(producto_id=capu.id, insumo_id=cafe.id, cantidad=18),
+            ProductoInsumo(producto_id=te.id, insumo_id=bolsa_te.id, cantidad=1),
+        ])
+        # Ventas 30d para el orden por relevancia.
+        tk = Ticket(tienda_id=self.t1.id, caja_turno_id=self.turno1.id,
+                    usuario_id=self.u.id, fecha=self.ahora, total=8000,
+                    estado="completado", metodo_pago="efectivo")
+        self.db.add(tk)
+        self.db.flush()
+        self.db.add(TicketItem(ticket_id=tk.id, producto_id=capu.id,
+                               nombre_producto="Capuchino", cantidad=2,
+                               precio_unitario=8000, subtotal=16000))
+        self.db.commit()
+
+        r = get_rentabilidad_productos(self.db)
+        por_nombre = {p["nombre"]: p for p in r["productos"]}
+
+        c = por_nombre["Capuchino"]
+        self.assertEqual(c["tipo"], "receta")
+        self.assertAlmostEqual(c["costo"], 180 * 2.5 + 18 * 40)   # 450 + 720 = 1170
+        self.assertAlmostEqual(c["margen"], 8000 - 1170)
+        self.assertTrue(c["costo_completo"])
+        self.assertEqual(c["unidades_30d"], 2)
+
+        g = por_nombre["Gaseosa"]
+        self.assertEqual(g["tipo"], "reventa")
+        self.assertAlmostEqual(g["costo"], 2000)
+        self.assertAlmostEqual(g["margen"], 3000)
+
+        t = por_nombre["Té"]
+        self.assertFalse(t["costo_completo"])
+        self.assertIn("Bolsa de té", t["insumos_sin_costo"])
+        self.assertIsNone(t["costo"])  # ningún insumo con costo → sin margen
+
+        # Insumos puros (precio_venta=0) no aparecen en la tabla.
+        self.assertNotIn("Leche entera", por_nombre)
+        # Orden: el más vendido primero.
+        self.assertEqual(r["productos"][0]["nombre"], "Capuchino")
 
     def test_editar_factura_guarda_fecha_como_medianoche_colombia(self):
         # Regresión: editar guardaba el date pelado (00:00 UTC) y la compra se

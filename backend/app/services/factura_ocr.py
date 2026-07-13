@@ -25,7 +25,8 @@ from fastapi import HTTPException
 from app.config import settings
 from app.core.storage import _compress
 from app.core.tz import hoy_col
-from app.models.models import Producto
+from app.models.models import FacturaCompra, FacturaCompraItem, Producto
+from app.services import audit
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,51 @@ Reglas:
   extraé únicamente los campos pedidos."""
 
 
+# El mismo schema en el dialecto de Gemini (OpenAPI-subset: mayúsculas + nullable).
+def _gemini_nullable(tipo: str) -> dict:
+    return {"type": tipo, "nullable": True}
+
+
+_GEMINI_ITEM = {
+    "type": "OBJECT",
+    "properties": {
+        "descripcion": {"type": "STRING"},
+        "cantidad": _gemini_nullable("NUMBER"),
+        "unidad": _gemini_nullable("STRING"),
+        "precio_unitario": _gemini_nullable("NUMBER"),
+        "subtotal": _gemini_nullable("NUMBER"),
+        "numero_lote": _gemini_nullable("STRING"),
+        "fecha_vencimiento": _gemini_nullable("STRING"),
+        "producto_id": _gemini_nullable("INTEGER"),
+    },
+    "required": ["descripcion", "cantidad", "unidad", "precio_unitario",
+                 "subtotal", "numero_lote", "fecha_vencimiento", "producto_id"],
+}
+
+_GEMINI_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "error": _gemini_nullable("STRING"),
+        "proveedor": _gemini_nullable("STRING"),
+        "numero_factura": _gemini_nullable("STRING"),
+        "fecha_factura": _gemini_nullable("STRING"),
+        "valor_total": _gemini_nullable("NUMBER"),
+        "tipo_pago": _gemini_nullable("STRING"),
+        "items": {"type": "ARRAY", "items": _GEMINI_ITEM},
+        "advertencias": {"type": "ARRAY", "items": {"type": "STRING"}},
+    },
+    "required": ["error", "proveedor", "numero_factura", "fecha_factura",
+                 "valor_total", "tipo_pago", "items", "advertencias"],
+}
+
+_MSG_SIN_KEY = ("El escaneo de facturas no está configurado: agregá GEMINI_API_KEY "
+                "(gratis en aistudio.google.com) o ANTHROPIC_API_KEY en el servidor.")
+
+
+def hay_proveedor_ocr() -> bool:
+    return bool(settings.GEMINI_API_KEY or settings.ANTHROPIC_API_KEY)
+
+
 def _catalogo_txt(productos: list) -> str:
     lineas = []
     for p in productos:
@@ -153,6 +199,82 @@ def _catalogo_txt(productos: list) -> str:
     return "\n".join(lineas)
 
 
+def _user_text(catalogo: str, fecha_hoy: date) -> str:
+    return (
+        f"Fecha de hoy (para inferir años faltantes): {fecha_hoy.isoformat()}\n\n"
+        "CATÁLOGO de productos del inventario (id | nombre | unidad):\n"
+        f"{catalogo}\n\n"
+        "Extraé los datos de esta factura de compra."
+    )
+
+
+def _extraer(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
+    """Dispatcher de proveedor: Gemini primero (cuota gratis), Claude si no."""
+    if settings.GEMINI_API_KEY:
+        return _extraer_con_gemini(imagen_jpeg, catalogo, fecha_hoy)
+    if settings.ANTHROPIC_API_KEY:
+        return _extraer_con_claude(imagen_jpeg, catalogo, fecha_hoy)
+    raise HTTPException(503, _MSG_SIN_KEY)
+
+
+def _extraer_con_gemini(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
+    import httpx
+
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{settings.GEMINI_MODEL}:generateContent")
+    body = {
+        "system_instruction": {"parts": [{"text": _SYSTEM}]},
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": base64.standard_b64encode(imagen_jpeg).decode("utf-8"),
+                }},
+                {"text": _user_text(catalogo, fecha_hoy)},
+            ],
+        }],
+        "generationConfig": {
+            "temperature": 0,
+            "maxOutputTokens": 16384,
+            "responseMimeType": "application/json",
+            "responseSchema": _GEMINI_SCHEMA,
+        },
+    }
+    try:
+        r = httpx.post(url, json=body,
+                       headers={"x-goog-api-key": settings.GEMINI_API_KEY},
+                       timeout=120.0)
+    except httpx.HTTPError as e:
+        logger.error("Error de red contra Gemini: %s", e)
+        raise HTTPException(502, "No se pudo contactar el servicio de escaneo — intentá de nuevo en un rato.")
+
+    if r.status_code == 429:
+        raise HTTPException(503, "Se agotó la cuota gratis de escaneo por ahora — esperá unos minutos (o hasta mañana) y volvé a intentar.")
+    if r.status_code in (400, 401, 403):
+        logger.error("Gemini rechazó la petición (%s): %s", r.status_code, r.text[:500])
+        raise HTTPException(503, "La clave de la API de escaneo no es válida — revisá GEMINI_API_KEY en el servidor.")
+    if r.status_code != 200:
+        logger.error("Gemini HTTP %s: %s", r.status_code, r.text[:500])
+        raise HTTPException(502, "El servicio de escaneo falló — intentá de nuevo más tarde.")
+
+    data = r.json()
+    candidatos = data.get("candidates") or []
+    if not candidatos:
+        logger.error("Gemini sin candidatos: %s", json.dumps(data)[:500])
+        raise HTTPException(422, "El servicio no pudo procesar esta imagen — llenala manual.")
+    if candidatos[0].get("finishReason") == "MAX_TOKENS":
+        raise HTTPException(502, "La factura es demasiado larga para leerla completa — llenala manual.")
+
+    partes = (candidatos[0].get("content") or {}).get("parts") or []
+    texto = "".join(p.get("text", "") for p in partes)
+    try:
+        return json.loads(texto)
+    except (json.JSONDecodeError, ValueError):
+        logger.error("Respuesta de Gemini no parseable: %r", texto[:500])
+        raise HTTPException(502, "No se pudo interpretar la lectura de la factura — llenala manual.")
+
+
 def _extraer_con_claude(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
     import anthropic
 
@@ -160,12 +282,7 @@ def _extraer_con_claude(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> d
         api_key=settings.ANTHROPIC_API_KEY, timeout=120.0, max_retries=1,
     )
     b64 = base64.standard_b64encode(imagen_jpeg).decode("utf-8")
-    user_text = (
-        f"Fecha de hoy (para inferir años faltantes): {fecha_hoy.isoformat()}\n\n"
-        "CATÁLOGO de productos del inventario (id | nombre | unidad):\n"
-        f"{catalogo}\n\n"
-        "Extraé los datos de esta factura de compra."
-    )
+    user_text = _user_text(catalogo, fecha_hoy)
     try:
         resp = client.messages.create(
             model=settings.OCR_MODEL,
@@ -376,8 +493,8 @@ def _validar_suma(extraccion: dict, advertencias: list[str]) -> None:
 
 def analizar_factura_foto(db, tienda_id: int, imagen_bytes: bytes, usuario_id: int) -> dict:
     """Punto de entrada del endpoint: imagen → extracción → mapeo al catálogo."""
-    if not settings.ANTHROPIC_API_KEY:
-        raise HTTPException(503, "El escaneo de facturas no está configurado en el servidor (falta ANTHROPIC_API_KEY).")
+    if not hay_proveedor_ocr():
+        raise HTTPException(503, _MSG_SIN_KEY)
     _check_rate_limit(usuario_id)
     if not imagen_bytes:
         raise HTTPException(400, "La imagen llegó vacía — sacá la foto de nuevo.")
@@ -399,7 +516,7 @@ def analizar_factura_foto(db, tienda_id: int, imagen_bytes: bytes, usuario_id: i
     ]
     db.rollback()
 
-    extraccion = _extraer_con_claude(jpeg, _catalogo_txt(productos), hoy_col())
+    extraccion = _extraer(jpeg, _catalogo_txt(productos), hoy_col())
 
     if extraccion.get("error"):
         raise HTTPException(422, f"No se pudo leer la factura: {extraccion['error']}")
@@ -424,3 +541,213 @@ def analizar_factura_foto(db, tienda_id: int, imagen_bytes: bytes, usuario_id: i
         "items": mapear_items(extraccion, productos),
         "advertencias": advertencias,
     }
+
+
+# ─── Backfill: leer las fotos de facturas YA registradas para sacar costos ───
+
+def _precios_para_factura(items_extraidos: list[dict], items_db: list,
+                          valor_total_db: float, por_id: dict) -> tuple[dict, list[str]]:
+    """Empareja renglones extraídos con los items guardados de la MISMA factura
+    y deriva el costo por unidad ALMACENADA:
+        precio_unitario = subtotal del renglón / cantidad guardada.
+    REGLA DE ORO: solo se escribe si la cantidad de la factura, convertida a la
+    unidad del inventario, COINCIDE (±25%) con la cantidad guardada. Esto evita
+    dos desastres: dividir por cantidades mal registradas de la época sin guard
+    ("1 gr" de Baileys → $80.000/gr) y cruzar renglones cuando el mismo producto
+    aparece dos veces en presentaciones distintas.
+    Devuelve ({item_db_id: precio}, advertencias). Solo considera items sin precio."""
+    advertencias: list[str] = []
+    disponibles = [it for it in items_db
+                   if it.precio_unitario is None and float(it.cantidad or 0) > 0]
+    asignados: dict[int, float] = {}
+    for ext in items_extraidos or []:
+        pid = ext.get("producto_id")
+        prod = por_id.get(pid)
+        if not pid or prod is None:
+            continue
+        desc = (ext.get("descripcion") or "").strip() or f"producto {pid}"
+
+        total_linea = ext.get("subtotal")
+        if not isinstance(total_linea, (int, float)) or total_linea <= 0:
+            c, p = ext.get("cantidad"), ext.get("precio_unitario")
+            if (isinstance(c, (int, float)) and isinstance(p, (int, float))
+                    and c > 0 and p > 0):
+                total_linea = c * p
+            else:
+                advertencias.append(f"{desc}: sin subtotal ni precio legible")
+                continue
+        if valor_total_db > 0 and total_linea > valor_total_db * 1.05:
+            advertencias.append(f"{desc}: el subtotal leído supera el total de la factura — ignorado")
+            continue
+
+        # Cantidad de la factura → unidad del inventario (mismo conversor del escaneo).
+        cant_conv, en_emp, _factor, _adv = _convertir_cantidad(
+            prod, ext.get("cantidad"), ext.get("unidad"))
+        if cant_conv is None:
+            advertencias.append(f"{desc}: no pude convertir la cantidad de la factura — ese precio va a mano")
+            continue
+        cpe = float(getattr(prod, "contenido_por_empaque", 0) or 0)
+        equivalente = cant_conv * cpe if en_emp else cant_conv
+
+        # Emparejar con el item guardado cuya cantidad coincide (el más cercano).
+        candidatos = [it for it in disponibles
+                      if it.producto_id == pid and it.id not in asignados
+                      and abs(float(it.cantidad) - equivalente) / max(float(it.cantidad), equivalente) <= 0.25]
+        if not candidatos:
+            advertencias.append(
+                f"{desc}: la cantidad guardada no coincide con la de la factura "
+                f"({equivalente:g} {prod.unidad_medida}) — revisá ese ítem a mano")
+            continue
+        destino = min(candidatos, key=lambda it: abs(float(it.cantidad) - equivalente))
+        precio = round(float(total_linea) / float(destino.cantidad), 4)
+        if precio < 0.01:
+            # La columna guarda 2 decimales: un precio sub-centavo se volvería 0.00
+            # y el ítem quedaría "con precio" pero inservible.
+            advertencias.append(f"{desc}: el precio por unidad da menos de $0,01 — revisá las cifras")
+            continue
+        asignados[destino.id] = precio
+    return asignados, advertencias
+
+
+def facturas_pendientes_de_costos(db) -> int:
+    """Cuántas facturas con foto tienen items sin precio (candidatas a backfill)."""
+    return (
+        db.query(FacturaCompra.id)
+        .join(FacturaCompraItem, FacturaCompraItem.factura_id == FacturaCompra.id)
+        .filter(FacturaCompra.imagen_url.isnot(None),
+                FacturaCompra.imagen_url != "",
+                FacturaCompraItem.precio_unitario.is_(None))
+        .distinct()
+        .count()
+    )
+
+
+# Facturas que ya fallaron en esta corrida del server (foto rota, total que no
+# cuadra, ilegible): se saltan para no bloquear a las demás ni quemar cuota
+# releyendo lo mismo. En memoria a propósito — un redeploy da otra oportunidad.
+_backfill_no_legibles: set[int] = set()
+
+
+def backfill_costos_facturas(db, usuario_id: int, limite: int = 2) -> dict:
+    """Procesa un lote de facturas guardadas: baja la foto, la lee con el modelo
+    y rellena precio_unitario de los items que estén en NULL (nunca pisa valores).
+    Lotes chicos a propósito: cada foto tarda 10-30s y la cuota gratis es por minuto."""
+    if not hay_proveedor_ocr():
+        raise HTTPException(503, _MSG_SIN_KEY)
+    import httpx
+
+    q = (
+        db.query(FacturaCompra)
+        .join(FacturaCompraItem, FacturaCompraItem.factura_id == FacturaCompra.id)
+        .filter(FacturaCompra.imagen_url.isnot(None),
+                FacturaCompra.imagen_url != "",
+                FacturaCompraItem.precio_unitario.is_(None))
+    )
+    if _backfill_no_legibles:
+        q = q.filter(FacturaCompra.id.notin_(_backfill_no_legibles))
+    candidatas = (q.distinct().order_by(FacturaCompra.id.desc())
+                  .limit(max(1, min(limite, 5))).all())
+
+    # Materializar TODO lo necesario y soltar la conexión del pool: el lote pasa
+    # minutos entre descargas y llamadas al modelo (mismo patrón que el escaneo).
+    datos = [{
+        "id": f.id, "tienda_id": f.tienda_id, "proveedor": f.proveedor,
+        "imagen_url": f.imagen_url or "", "valor_total": float(f.valor_total or 0),
+        "items": [SimpleNamespace(id=i.id, producto_id=i.producto_id,
+                                  cantidad=float(i.cantidad or 0),
+                                  precio_unitario=i.precio_unitario)
+                  for i in f.items],
+    } for f in candidatas]
+    productos = [
+        SimpleNamespace(
+            id=p.id, nombre=p.nombre, unidad_medida=p.unidad_medida,
+            contenido_por_empaque=float(p.contenido_por_empaque or 0) or None,
+            categoria=getattr(p.categoria, "value", None) or str(p.categoria or ""),
+        )
+        for p in db.query(Producto).order_by(Producto.nombre).all()
+    ]
+    db.rollback()
+    catalogo = _catalogo_txt(productos)
+    por_id = {p.id: p for p in productos}
+
+    # ── Fase larga (sin conexión de DB): descargar + leer + emparejar ────────
+    detalle = []
+    resultados: list[tuple[dict, dict]] = []  # (data_factura, precios)
+    detenido_por = None
+    for c in datos:
+        info = {"factura_id": c["id"], "proveedor": c["proveedor"],
+                "items_actualizados": 0, "advertencias": []}
+        detalle.append(info)
+        if not c["imagen_url"].startswith("http"):
+            info["advertencias"].append("la foto no está en la nube — no se puede leer")
+            _backfill_no_legibles.add(c["id"])
+            continue
+        try:
+            img = httpx.get(c["imagen_url"], timeout=60.0, follow_redirects=True).content
+            jpeg = _compress(img, max_side=2000, quality=85)
+        except Exception as e:
+            logger.warning("Backfill: no se pudo bajar/leer la foto de factura %s: %s", c["id"], e)
+            info["advertencias"].append("no se pudo descargar o abrir la foto")
+            _backfill_no_legibles.add(c["id"])
+            continue
+
+        try:
+            extraccion = _extraer(jpeg, catalogo, hoy_col())
+        except HTTPException as e:
+            # Cuota agotada / key inválida: cortar el lote (lo leído hasta acá se guarda).
+            detenido_por = str(e.detail)
+            info["advertencias"].append(detenido_por)
+            break
+
+        if extraccion.get("error"):
+            info["advertencias"].append(f"no se pudo leer: {extraccion['error']}")
+            _backfill_no_legibles.add(c["id"])
+            continue
+
+        # Gate obligatorio: sin total legible que cuadre con el guardado, la
+        # lectura no es confiable (o la foto no corresponde) — no se escribe.
+        vt_leido = extraccion.get("valor_total")
+        if not isinstance(vt_leido, (int, float)) or vt_leido <= 0:
+            info["advertencias"].append("no se pudo leer el total de la factura — no escribo precios")
+            _backfill_no_legibles.add(c["id"])
+            continue
+        if c["valor_total"] > 0 and abs(vt_leido - c["valor_total"]) / c["valor_total"] > 0.25:
+            info["advertencias"].append(
+                f"el total leído (${vt_leido:,.0f}) difiere del guardado (${c['valor_total']:,.0f}) — revisá a mano")
+            _backfill_no_legibles.add(c["id"])
+            continue
+
+        precios, advs = _precios_para_factura(
+            extraccion.get("items") or [], c["items"], c["valor_total"], por_id)
+        info["advertencias"].extend(advs)
+        if precios:
+            info["items_actualizados"] = len(precios)
+            resultados.append((c, precios))
+        else:
+            _backfill_no_legibles.add(c["id"])
+
+    # ── Fase corta de escritura: una sola transacción ─────────────────────────
+    total_actualizados = 0
+    for c, precios in resultados:
+        filas = (db.query(FacturaCompraItem)
+                 .filter(FacturaCompraItem.id.in_(list(precios.keys())),
+                         FacturaCompraItem.precio_unitario.is_(None))
+                 .all())
+        for fila in filas:
+            fila.precio_unitario = precios[fila.id]
+            total_actualizados += 1
+        if filas:
+            audit.registrar(
+                db, accion="backfill_costos", tabla="facturas_compra",
+                registro_id=c["id"], usuario_id=usuario_id, tienda_id=c["tienda_id"],
+                datos_despues={"items_actualizados": len(filas),
+                               "precios": {str(f.id): float(f.precio_unitario) for f in filas}},
+            )
+    db.commit()
+
+    out = {"procesadas": len(detalle), "items_actualizados": total_actualizados,
+           "pendientes": facturas_pendientes_de_costos(db),
+           "no_legibles": len(_backfill_no_legibles), "detalle": detalle}
+    if detenido_por:
+        out["detenido_por"] = detenido_por
+    return out

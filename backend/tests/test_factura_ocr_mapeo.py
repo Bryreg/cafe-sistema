@@ -6,7 +6,8 @@ import unittest
 from types import SimpleNamespace
 
 from app.services.factura_ocr import (
-    _convertir_cantidad, _fecha_iso, _validar_suma, mapear_items,
+    _convertir_cantidad, _fecha_iso, _precios_para_factura, _validar_suma,
+    mapear_items,
 )
 
 
@@ -189,6 +190,92 @@ class MapearItemsTest(unittest.TestCase):
         }]}
         it = mapear_items(extr, [prod(id=1, unidad="unidad")])[0]
         self.assertIsNone(it["fecha_vencimiento"])
+
+
+def item_db(id, producto_id, cantidad, precio=None):
+    return SimpleNamespace(id=id, producto_id=producto_id,
+                           cantidad=cantidad, precio_unitario=precio)
+
+
+class PreciosParaFacturaTest(unittest.TestCase):
+    """Backfill: derivar costo por unidad ALMACENADA desde el renglón leído.
+    Regla de oro: solo se escribe si la cantidad de la factura coincide con la
+    guardada — sin coincidencia, el precio va a mano."""
+
+    LECHE = prod(id=3, nombre="Leche", unidad="ml", cpe=6600)
+    CAFE = prod(id=7, nombre="Café", unidad="gr")
+
+    def por_id(self):
+        return {3: self.LECHE, 7: self.CAFE}
+
+    def test_subtotal_sobre_cantidad_guardada(self):
+        # Factura decía "2 CAJA = $33.000"; guardado hay 13.200 ml (2×6.600) ✓.
+        ext = [{"descripcion": "LECHE X6", "producto_id": 3, "cantidad": 2,
+                "unidad": "caja", "precio_unitario": 16500, "subtotal": 33000}]
+        precios, advs = _precios_para_factura(ext, [item_db(10, 3, 13200)], 50000, self.por_id())
+        self.assertEqual(precios, {10: 2.5})  # $/ml
+        self.assertEqual(advs, [])
+
+    def test_sin_subtotal_usa_cantidad_por_precio(self):
+        ext = [{"descripcion": "CAFE", "producto_id": 7, "cantidad": 2,
+                "unidad": "kg", "precio_unitario": 40000, "subtotal": None}]
+        precios, advs = _precios_para_factura(ext, [item_db(1, 7, 2000)], 100000, self.por_id())
+        self.assertEqual(precios, {1: 40.0})  # $/gr
+
+    def test_no_pisa_precio_existente(self):
+        ext = [{"descripcion": "CAFE", "producto_id": 7, "cantidad": 1,
+                "unidad": "kg", "precio_unitario": 40000, "subtotal": 40000}]
+        precios, _ = _precios_para_factura(ext, [item_db(1, 7, 1000, precio=35.0)], 100000, self.por_id())
+        self.assertEqual(precios, {})
+
+    def test_subtotal_mayor_al_total_se_ignora(self):
+        ext = [{"descripcion": "CAFE", "producto_id": 7, "cantidad": 1,
+                "unidad": "kg", "precio_unitario": 900000, "subtotal": 900000}]
+        precios, advs = _precios_para_factura(ext, [item_db(1, 7, 1000)], 100000, self.por_id())
+        self.assertEqual(precios, {})
+        self.assertEqual(len(advs), 1)
+
+    def test_dos_renglones_mismo_producto_distinta_presentacion(self):
+        # 2.5 kg ($90.000) y 0.5 kg ($18.000): cada subtotal debe caer en el item
+        # con la cantidad que le corresponde, sin importar el orden.
+        ext = [
+            {"descripcion": "CAFE 500G", "producto_id": 7, "cantidad": 0.5,
+             "unidad": "kg", "precio_unitario": None, "subtotal": 18000},
+            {"descripcion": "CAFE 2500G", "producto_id": 7, "cantidad": 2.5,
+             "unidad": "kg", "precio_unitario": None, "subtotal": 90000},
+        ]
+        items = [item_db(1, 7, 2500), item_db(2, 7, 500)]  # orden invertido a propósito
+        precios, advs = _precios_para_factura(ext, items, 120000, self.por_id())
+        self.assertEqual(precios, {2: 36.0, 1: 36.0})
+        self.assertEqual(advs, [])
+
+    def test_cantidad_guardada_que_no_coincide_no_escribe(self):
+        # Caso legacy "fuga #1": botella registrada como 1 gr. La factura dice
+        # "1 und" (= 6.600 ml) pero el sistema guardó 1 → NO dividir $80.000/1.
+        ext = [{"descripcion": "BAILEYS", "producto_id": 3, "cantidad": 1,
+                "unidad": "und", "precio_unitario": 80000, "subtotal": 80000}]
+        precios, advs = _precios_para_factura(ext, [item_db(1, 3, 1)], 100000, self.por_id())
+        self.assertEqual(precios, {})
+        self.assertEqual(len(advs), 1)
+        self.assertIn("no coincide", advs[0])
+
+    def test_cantidad_de_factura_inconvertible_no_escribe(self):
+        ext = [{"descripcion": "CAFE", "producto_id": 7, "cantidad": None,
+                "unidad": "kg", "precio_unitario": 40000, "subtotal": 40000}]
+        precios, advs = _precios_para_factura(ext, [item_db(1, 7, 1000)], 100000, self.por_id())
+        self.assertEqual(precios, {})
+        self.assertEqual(len(advs), 1)
+
+    def test_sin_producto_id_o_sin_cifras_no_asigna(self):
+        ext = [
+            {"descripcion": "X", "producto_id": None, "cantidad": 1,
+             "unidad": None, "precio_unitario": 100, "subtotal": 100},
+            {"descripcion": "Y", "producto_id": 7, "cantidad": None,
+             "unidad": None, "precio_unitario": None, "subtotal": None},
+        ]
+        precios, advs = _precios_para_factura(ext, [item_db(1, 7, 1000)], 100000, self.por_id())
+        self.assertEqual(precios, {})
+        self.assertEqual(len(advs), 1)  # solo Y advierte (X ni siquiera matchea)
 
 
 class HelpersTest(unittest.TestCase):

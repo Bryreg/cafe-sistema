@@ -283,9 +283,16 @@ class PreciosParaFacturaTest(unittest.TestCase):
 class ProveedorDispatchTest(unittest.TestCase):
     """Preferencia de proveedor Groq → Gemini → Claude según la key disponible."""
 
-    def test_reducir_para_groq_deja_pasar_lo_chico(self):
-        chico = b"x" * 1000
-        self.assertIs(_reducir_para_groq(chico), chico)
+    def test_reducir_para_groq_achica_la_imagen(self):
+        import io
+        from PIL import Image
+        # Imagen grande (2400px) → debe salir a ≤1280px y como JPEG válido.
+        buf = io.BytesIO()
+        Image.new("RGB", (2400, 1800), (200, 180, 120)).save(buf, format="JPEG", quality=90)
+        out = _reducir_para_groq(buf.getvalue())
+        w, h = Image.open(io.BytesIO(out)).size
+        self.assertLessEqual(max(w, h), 1280)
+        self.assertLessEqual(len(out), 2_800_000)
 
     def test_dispatcher_prefiere_groq(self):
         with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", "gk"), \

@@ -217,11 +217,19 @@ def _extraer(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
     raise HTTPException(503, _MSG_SIN_KEY)
 
 
+def _modelos_gemini() -> list[str]:
+    """Cadena de modelos a probar en orden. Google mueve el tier gratis entre
+    modelos cada tanto (2.5-flash quedó sin cuota gratis para proyectos nuevos):
+    si el configurado responde 429/404, se prueba el siguiente."""
+    cadena = [settings.GEMINI_MODEL, "gemini-3.5-flash", "gemini-3-flash",
+              "gemini-3.1-flash-lite", "gemini-2.5-flash"]
+    vistos: set[str] = set()
+    return [m for m in cadena if m and not (m in vistos or vistos.add(m))]
+
+
 def _extraer_con_gemini(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
     import httpx
 
-    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{settings.GEMINI_MODEL}:generateContent")
     body = {
         "system_instruction": {"parts": [{"text": _SYSTEM}]},
         "contents": [{
@@ -241,38 +249,51 @@ def _extraer_con_gemini(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> d
             "responseSchema": _GEMINI_SCHEMA,
         },
     }
-    try:
-        r = httpx.post(url, json=body,
-                       headers={"x-goog-api-key": settings.GEMINI_API_KEY},
-                       timeout=120.0)
-    except httpx.HTTPError as e:
-        logger.error("Error de red contra Gemini: %s", e)
-        raise HTTPException(502, "No se pudo contactar el servicio de escaneo — intentá de nuevo en un rato.")
 
-    if r.status_code == 429:
-        raise HTTPException(503, "Se agotó la cuota gratis de escaneo por ahora — esperá unos minutos (o hasta mañana) y volvé a intentar.")
-    if r.status_code in (400, 401, 403):
-        logger.error("Gemini rechazó la petición (%s): %s", r.status_code, r.text[:500])
-        raise HTTPException(503, "La clave de la API de escaneo no es válida — revisá GEMINI_API_KEY en el servidor.")
-    if r.status_code != 200:
-        logger.error("Gemini HTTP %s: %s", r.status_code, r.text[:500])
-        raise HTTPException(502, "El servicio de escaneo falló — intentá de nuevo más tarde.")
+    ultimo_error = ""
+    for modelo in _modelos_gemini():
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{modelo}:generateContent")
+        try:
+            r = httpx.post(url, json=body,
+                           headers={"x-goog-api-key": settings.GEMINI_API_KEY},
+                           timeout=120.0)
+        except httpx.HTTPError as e:
+            logger.error("Error de red contra Gemini (%s): %s", modelo, e)
+            raise HTTPException(502, "No se pudo contactar el servicio de escaneo — intentá de nuevo en un rato.")
 
-    data = r.json()
-    candidatos = data.get("candidates") or []
-    if not candidatos:
-        logger.error("Gemini sin candidatos: %s", json.dumps(data)[:500])
-        raise HTTPException(422, "El servicio no pudo procesar esta imagen — llenala manual.")
-    if candidatos[0].get("finishReason") == "MAX_TOKENS":
-        raise HTTPException(502, "La factura es demasiado larga para leerla completa — llenala manual.")
+        if r.status_code == 200:
+            data = r.json()
+            candidatos = data.get("candidates") or []
+            if not candidatos:
+                logger.error("Gemini (%s) sin candidatos: %s", modelo, json.dumps(data)[:500])
+                raise HTTPException(422, "El servicio no pudo procesar esta imagen — llenala manual.")
+            if candidatos[0].get("finishReason") == "MAX_TOKENS":
+                raise HTTPException(502, "La factura es demasiado larga para leerla completa — llenala manual.")
+            partes = (candidatos[0].get("content") or {}).get("parts") or []
+            texto = "".join(p.get("text", "") for p in partes)
+            try:
+                out = json.loads(texto)
+            except (json.JSONDecodeError, ValueError):
+                logger.error("Respuesta de Gemini (%s) no parseable: %r", modelo, texto[:500])
+                raise HTTPException(502, "No se pudo interpretar la lectura de la factura — llenala manual.")
+            logger.info("Escaneo OK con %s", modelo)
+            return out
 
-    partes = (candidatos[0].get("content") or {}).get("parts") or []
-    texto = "".join(p.get("text", "") for p in partes)
-    try:
-        return json.loads(texto)
-    except (json.JSONDecodeError, ValueError):
-        logger.error("Respuesta de Gemini no parseable: %r", texto[:500])
-        raise HTTPException(502, "No se pudo interpretar la lectura de la factura — llenala manual.")
+        if r.status_code in (401, 403):
+            logger.error("Gemini rechazó la key (%s): %s", r.status_code, r.text[:500])
+            raise HTTPException(503, "La clave de la API de escaneo no es válida — revisá GEMINI_API_KEY en el servidor.")
+
+        # 429 (sin cuota en ese modelo), 404 (modelo inexistente) o 400: probar
+        # el siguiente de la cadena, guardando el motivo real para diagnosticar.
+        try:
+            ultimo_error = (r.json().get("error") or {}).get("message", "") or r.text
+        except ValueError:
+            ultimo_error = r.text
+        logger.warning("Gemini %s → HTTP %s: %s", modelo, r.status_code, ultimo_error[:300])
+
+    raise HTTPException(503, ("El escaneo gratis no tiene cuota disponible en ninguno de los "
+                              f"modelos probados. Detalle de Google: {ultimo_error[:250]}"))
 
 
 def _extraer_con_claude(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:

@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     # GRATIS diaria de sobra para un café); Claude queda como alternativa paga.
     # Sin ninguna key el endpoint responde 503 y el form sigue funcionando manual.
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    # Si este modelo no tiene cuota gratis, el código prueba solo una cadena de
+    # modelos Flash alternativos (ver factura_ocr._modelos_gemini).
+    GEMINI_MODEL: str = "gemini-3.5-flash"
     ANTHROPIC_API_KEY: str = ""
     OCR_MODEL: str = "claude-opus-4-8"
 

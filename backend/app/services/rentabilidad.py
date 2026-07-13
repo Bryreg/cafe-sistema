@@ -12,13 +12,14 @@ Cruza las tres fuentes de dinero del sistema, cada una en su base:
 margen_bruto = ventas - compras;  margen_neto = margen_bruto - gastos.
 """
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import func, not_, or_
 
-from app.core.tz import dia_col, rango_col_utc
+from app.core.tz import dia_col, hoy_col, rango_col_utc
 from app.models.models import (
-    CajaTurno, FacturaCompra, MovimientoCaja, Ticket, Tienda, TipoMovCajaEnum,
+    CajaTurno, FacturaCompra, FacturaCompraItem, MovimientoCaja, Producto,
+    ProductoInsumo, Ticket, TicketItem, Tienda, TipoMovCajaEnum,
 )
 
 # Patrones de concepto que crea services/facturas.py para pagos a proveedor.
@@ -137,5 +138,126 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             "un mes donde se stockea fuerte se ve con menos margen del real. "
             "Gastos = egresos de caja manuales; los pagos a proveedor por caja se excluyen "
             "porque ya están dentro de Compras."
+        ),
+    }
+
+
+# ─── Margen por producto ──────────────────────────────────────────────────────
+
+def _costos_insumos(db) -> tuple[dict, dict]:
+    """Costo por unidad de inventario de cada producto comprado, a partir de los
+    precio_unitario de FacturaCompraItem (los llena el escaneo / backfill).
+    Devuelve (promedio ponderado por cantidad, último costo conocido)."""
+    rows = (
+        db.query(FacturaCompraItem.producto_id, FacturaCompraItem.cantidad,
+                 FacturaCompraItem.precio_unitario, FacturaCompra.fecha_recibido)
+        .join(FacturaCompra, FacturaCompra.id == FacturaCompraItem.factura_id)
+        .filter(FacturaCompraItem.precio_unitario.isnot(None),
+                FacturaCompraItem.precio_unitario > 0,
+                FacturaCompraItem.cantidad > 0)
+        .all()
+    )
+    acum: dict[int, dict] = defaultdict(lambda: {"plata": 0.0, "cant": 0.0, "ultimo": None, "ultima_fecha": None})
+    for pid, cant, precio, fecha in rows:
+        a = acum[pid]
+        a["plata"] += float(cant) * float(precio)
+        a["cant"] += float(cant)
+        if a["ultima_fecha"] is None or (fecha and fecha > a["ultima_fecha"]):
+            a["ultima_fecha"], a["ultimo"] = fecha, float(precio)
+    promedio = {pid: a["plata"] / a["cant"] for pid, a in acum.items() if a["cant"] > 0}
+    ultimo = {pid: a["ultimo"] for pid, a in acum.items() if a["ultimo"] is not None}
+    return promedio, ultimo
+
+
+def get_rentabilidad_productos(db) -> dict:
+    """Margen por producto de venta: precio_venta vs costo de sus insumos.
+    - Producto con receta (ProductoInsumo): costo = Σ cantidad_insumo × costo_insumo.
+    - Producto sin receta (reventa): costo = su propio costo de compra.
+    Los costos salen de las facturas escaneadas; lo que falte se reporta."""
+    costo_prom, _costo_ult = _costos_insumos(db)
+    productos = db.query(Producto).all()
+    por_id = {p.id: p for p in productos}
+
+    recetas: dict[int, list] = defaultdict(list)
+    for pi in db.query(ProductoInsumo).all():
+        recetas[pi.producto_id].append(pi)
+
+    # Ventas últimos 30 días (Colombia) para ordenar por relevancia real.
+    d_utc, h_utc = rango_col_utc(hoy_col() - timedelta(days=29), hoy_col())
+    ventas_rows = (
+        db.query(TicketItem.producto_id,
+                 func.coalesce(func.sum(TicketItem.cantidad), 0),
+                 func.coalesce(func.sum(TicketItem.subtotal), 0.0))
+        .join(Ticket, Ticket.id == TicketItem.ticket_id)
+        .filter(Ticket.estado.notin_(ESTADOS_ANULADOS),
+                Ticket.fecha >= d_utc, Ticket.fecha <= h_utc)
+        .group_by(TicketItem.producto_id)
+        .all()
+    )
+    ventas_30d = {pid: {"unidades": int(u or 0), "plata": float(pl or 0)}
+                  for pid, u, pl in ventas_rows}
+
+    out = []
+    for p in productos:
+        precio_venta = float(p.precio_venta or 0)
+        if precio_venta <= 0:
+            continue  # no se vende en el POS: es insumo puro
+        ingredientes = recetas.get(p.id)
+        faltantes: list[str] = []
+        if ingredientes:
+            tipo = "receta"
+            costo = 0.0
+            alguno = False
+            for pi in ingredientes:
+                c = costo_prom.get(pi.insumo_id)
+                if c is None:
+                    ins = por_id.get(pi.insumo_id)
+                    faltantes.append(ins.nombre if ins else f"insumo {pi.insumo_id}")
+                else:
+                    costo += float(pi.cantidad) * c
+                    alguno = True
+            if not alguno:
+                costo = None
+        else:
+            tipo = "reventa"
+            um = (p.unidad_medida or "").lower()
+            if um in ("gr", "g", "gramos", "ml"):
+                # Se vende a granel sin receta: el costo guardado es POR GR/ML y
+                # el precio de venta es por porción — compararlos daría un margen
+                # sin sentido. Necesita receta para costearse.
+                costo = None
+                faltantes.append("definí la receta (producto a granel)")
+            else:
+                costo = costo_prom.get(p.id)
+                if costo is None:
+                    faltantes.append(p.nombre)
+
+        v = ventas_30d.get(p.id, {"unidades": 0, "plata": 0.0})
+        completo = costo is not None and not faltantes
+        margen = round(precio_venta - costo, 2) if costo is not None else None
+        out.append({
+            "producto_id": p.id,
+            "nombre": p.nombre,
+            "categoria": getattr(p.categoria, "value", None) or str(p.categoria or ""),
+            "tipo": tipo,
+            "precio_venta": round(precio_venta, 2),
+            "costo": round(costo, 2) if costo is not None else None,
+            "costo_completo": completo,
+            "insumos_sin_costo": faltantes,
+            "margen": margen,
+            "pct_margen": round(margen / precio_venta * 100, 1) if margen is not None else None,
+            "unidades_30d": v["unidades"],
+            "venta_30d": round(v["plata"], 2),
+        })
+
+    out.sort(key=lambda x: -x["venta_30d"])
+    from app.services.factura_ocr import facturas_pendientes_de_costos
+    return {
+        "productos": out,
+        "facturas_pendientes_de_costos": facturas_pendientes_de_costos(db),
+        "nota": (
+            "Costo = insumos de la receta × costo promedio de compra (de las facturas "
+            "leídas). Si a un producto le faltan costos de insumos, el margen que se "
+            "muestra es PARCIAL (mayor al real) hasta que se lean más facturas."
         ),
     }

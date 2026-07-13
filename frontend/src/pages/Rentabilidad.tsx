@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import api from '../api/client'
 import {
   TrendingUp, TrendingDown, ShoppingCart, Wallet, Receipt, Info,
+  Coffee, ScanLine, Loader2,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -22,6 +23,18 @@ interface RentabilidadData {
   nota: string
 }
 interface Tienda { id: number; nombre: string }
+
+interface ProdMargen {
+  producto_id: number; nombre: string; categoria: string; tipo: string
+  precio_venta: number; costo: number | null; costo_completo: boolean
+  insumos_sin_costo: string[]; margen: number | null; pct_margen: number | null
+  unidades_30d: number; venta_30d: number
+}
+interface PorProductoData {
+  productos: ProdMargen[]
+  facturas_pendientes_de_costos: number
+  nota: string
+}
 
 const fmt = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO')
 const MESES_CORTOS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
@@ -83,9 +96,51 @@ export default function Rentabilidad() {
   const [data, setData] = useState<RentabilidadData | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // Margen por producto + backfill de costos desde las fotos guardadas
+  const [prodData, setProdData] = useState<PorProductoData | null>(null)
+  const [leyendo, setLeyendo] = useState(false)
+  const [leyendoMsg, setLeyendoMsg] = useState('')
+  const pararRef = useRef(false)
+
+  const fetchProductos = () =>
+    api.get<PorProductoData>('/rentabilidad/por-producto')
+      .then(r => setProdData(r.data))
+      .catch(() => setProdData(null))
+
   useEffect(() => {
     api.get<Tienda[]>('/auth/tiendas').then(r => setTiendas(r.data)).catch(() => {})
+    fetchProductos()
   }, [])
+
+  const leerFacturas = async () => {
+    if (!prodData) return
+    setLeyendo(true)
+    pararRef.current = false
+    let pendientes = prodData.facturas_pendientes_de_costos
+    try {
+      while (pendientes > 0 && !pararRef.current) {
+        setLeyendoMsg(`Leyendo facturas guardadas… quedan ${pendientes}`)
+        const r = await api.post('/rentabilidad/backfill-costos?limite=2', null, { timeout: 300000 })
+        const d = r.data
+        if (d.detenido_por) { setLeyendoMsg(d.detenido_por); break }
+        pendientes = d.pendientes
+        // procesadas=0 → no queda nada que el lector pueda intentar: lo que
+        // sobra necesita carga manual (el backend saltea las ya fallidas).
+        if (d.procesadas === 0) {
+          if (pendientes > 0) {
+            setLeyendoMsg(`Quedan ${pendientes} facturas que no se pudieron leer solas — completá esos precios a mano en Pagos proveedores.`)
+          }
+          break
+        }
+      }
+      if (pendientes === 0) setLeyendoMsg('Listo: todas las facturas con foto quedaron leídas.')
+    } catch (e: any) {
+      setLeyendoMsg(e.response?.data?.detail || 'Error leyendo facturas — intentá más tarde.')
+    } finally {
+      setLeyendo(false)
+      fetchProductos()
+    }
+  }
 
   useEffect(() => {
     // Guard anti-carrera: si el filtro cambia antes de que llegue la respuesta,
@@ -252,6 +307,94 @@ export default function Rentabilidad() {
             <p className="text-xs text-blue-800 leading-relaxed">{data.nota}</p>
           </div>
         </>
+      )}
+
+      {/* ── Margen por producto ── */}
+      {prodData && (
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+          <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-gray-100">
+            <p className="flex items-center gap-2 text-sm font-bold text-gray-700">
+              <Coffee size={15} className="text-forest" /> Margen por producto
+            </p>
+            <div className="ml-auto flex items-center gap-2">
+              {leyendo ? (
+                <>
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-700">
+                    <Loader2 size={13} className="animate-spin" /> {leyendoMsg}
+                  </span>
+                  <button onClick={() => { pararRef.current = true }}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold border border-gray-200 text-gray-500 hover:bg-gray-50">
+                    Parar
+                  </button>
+                </>
+              ) : (
+                <>
+                  {leyendoMsg && <span className="text-xs text-gray-500">{leyendoMsg}</span>}
+                  {prodData.facturas_pendientes_de_costos > 0 && (
+                    <button onClick={leerFacturas}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white"
+                      style={{ background: 'oklch(55% 0.12 65)' }}>
+                      <ScanLine size={13} />
+                      Leer costos de {prodData.facturas_pendientes_de_costos} facturas guardadas
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+
+          {prodData.productos.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-gray-400">Sin productos de venta con precio configurado.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                    <th className="text-left px-4 py-2 font-bold">Producto</th>
+                    <th className="text-right px-3 py-2 font-bold">Vendidos 30d</th>
+                    <th className="text-right px-3 py-2 font-bold">Precio</th>
+                    <th className="text-right px-3 py-2 font-bold">Costo</th>
+                    <th className="text-right px-4 py-2 font-bold">Margen</th>
+                    <th className="text-right px-4 py-2 font-bold">%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {prodData.productos.map(p => (
+                    <tr key={p.producto_id} className="border-b border-gray-50 last:border-0">
+                      <td className="px-4 py-2">
+                        <p className="font-semibold text-gray-700">{p.nombre}</p>
+                        {!p.costo_completo && p.insumos_sin_costo.length > 0 && (
+                          <p className="text-[11px] text-amber-600">
+                            falta costo de: {p.insumos_sin_costo.slice(0, 3).join(', ')}
+                            {p.insumos_sin_costo.length > 3 ? '…' : ''}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-500">
+                        {p.unidades_30d > 0 ? p.unidades_30d : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-700">{fmt(p.precio_venta)}</td>
+                      <td className={`px-3 py-2 text-right font-mono ${p.costo_completo ? 'text-gray-500' : 'text-amber-600'}`}>
+                        {p.costo != null ? `${p.costo_completo ? '' : '≥ '}${fmt(p.costo)}` : '—'}
+                      </td>
+                      <td className={`px-4 py-2 text-right font-mono font-bold ${
+                        p.margen == null ? 'text-gray-300' : p.margen >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                        {p.margen != null ? fmt(p.margen) : '—'}
+                      </td>
+                      <td className={`px-4 py-2 text-right font-mono ${p.costo_completo ? 'text-gray-400' : 'text-amber-600'}`}>
+                        {p.pct_margen != null ? `${p.pct_margen}%${p.costo_completo ? '' : ' *'}` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="flex items-start gap-2 px-4 py-3 bg-gray-50 border-t border-gray-100">
+            <Info size={13} className="text-gray-400 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-gray-500 leading-relaxed">{prodData.nota}</p>
+          </div>
+        </div>
       )}
     </div>
   )

@@ -21,8 +21,11 @@ class Settings(BaseSettings):
     ENV: str = "development"
     CLOUDINARY_URL: str = ""   # cloudinary://api_key:api_secret@cloud_name
     KIOSK_PIN: str = ""        # PIN para activar modo kiosko; vacío = deshabilitado
-    # Escaneo de facturas con Claude (vision). Vacío = escaneo deshabilitado
-    # (el endpoint responde 503 y el form sigue funcionando manual).
+    # Escaneo de facturas (vision). Proveedor preferido: Gemini (tiene cuota
+    # GRATIS diaria de sobra para un café); Claude queda como alternativa paga.
+    # Sin ninguna key el endpoint responde 503 y el form sigue funcionando manual.
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
     ANTHROPIC_API_KEY: str = ""
     OCR_MODEL: str = "claude-opus-4-8"
 

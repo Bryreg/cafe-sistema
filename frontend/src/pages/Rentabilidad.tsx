@@ -3,7 +3,7 @@ import api from '../api/client'
 import {
   TrendingUp, TrendingDown, ShoppingCart, Wallet, Receipt, Info,
   Coffee, ScanLine, Loader2, Sparkles, Award, AlertTriangle, ArrowUpRight,
-  Layers, Gift, Tag,
+  Layers, Gift, Tag, LayoutGrid, SlidersHorizontal, ShieldAlert,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -143,6 +143,9 @@ export default function Rentabilidad() {
   // Filtro por categoría y criterio de orden de la tabla de márgenes.
   const [prodCat, setProdCat] = useState<string>('todas')
   const [prodSort, setProdSort] = useState<'utilidad' | 'margen' | 'unidades'>('utilidad')
+  // Simulador de costo: producto elegido + % de reducción de costo.
+  const [simProdId, setSimProdId] = useState<number | null>(null)
+  const [simReduccion, setSimReduccion] = useState<number>(10)
 
   const fetchProductos = () =>
     api.get<PorProductoData>('/rentabilidad/por-producto')
@@ -312,6 +315,67 @@ export default function Rentabilidad() {
       && p.margen != null && p.precio_venta > 0)
     .sort((a, b) => (a.unidades_30d - b.unidades_30d) || ((b.pct_margen ?? 0) - (a.pct_margen ?? 0)))
     .slice(0, 6)
+
+  // ── Feature 1: Detector de datos truchos (márgenes atípicos + insumos sin costo) ──
+  const outliers = (() => {
+    const byCat = new Map<string, ProdMargen[]>()
+    for (const p of prodsSold) {
+      if (p.pct_margen == null || !p.costo_completo) continue
+      const k = p.categoria || 'otros'
+      const arr = byCat.get(k)
+      if (arr) arr.push(p); else byCat.set(k, [p])
+    }
+    const flags: { p: ProdMargen; mean: number; alto: boolean }[] = []
+    byCat.forEach((arr) => {
+      if (arr.length < 4) return
+      const ms = arr.map(p => p.pct_margen as number)
+      const mean = ms.reduce((a, b) => a + b, 0) / ms.length
+      const sd = Math.sqrt(ms.reduce((a, b) => a + (b - mean) ** 2, 0) / ms.length)
+      if (sd < 4) return  // categoría muy pareja: sin outliers reales
+      for (const p of arr) {
+        const z = ((p.pct_margen as number) - mean) / sd
+        if (Math.abs(z) >= 2) flags.push({ p, mean: Math.round(mean), alto: z > 0 })
+      }
+    })
+    return flags.sort((a, b) => Math.abs(b.p.pct_margen! - b.mean) - Math.abs(a.p.pct_margen! - a.mean)).slice(0, 8)
+  })()
+  const insumosSinCosto = (() => {
+    const m = new Map<string, { n: number; venta: number }>()
+    for (const p of allProds) {
+      for (const nm of (p.insumos_sin_costo ?? [])) {
+        if (nm.startsWith('defin')) continue  // "definí la receta…" no es un insumo
+        const e = m.get(nm) ?? { n: 0, venta: 0 }
+        e.n += 1; e.venta += p.venta_30d || 0; m.set(nm, e)
+      }
+    }
+    return [...m.entries()].map(([nombre, v]) => ({ nombre, ...v })).sort((a, b) => b.venta - a.venta).slice(0, 10)
+  })()
+
+  // ── Feature 2: Matriz de menú (Kasavana-Smith) ──
+  const matrixProds = prodsSold.filter(p => p.pct_margen != null && p.costo_completo)
+  const mAvgU = matrixProds.reduce((s, p) => s + p.unidades_30d, 0) / (matrixProds.length || 1)
+  const mUThresh = mAvgU * 0.7  // umbral de popularidad K-S
+  const mAvgM = matrixProds.reduce((s, p) => s + (p.pct_margen || 0), 0) / (matrixProds.length || 1)
+  const mUMax = Math.max(1, ...matrixProds.map(p => p.unidades_30d))
+  const mMargins = matrixProds.map(p => p.pct_margen as number)
+  const mYMin = Math.max(0, Math.min(92, ...mMargins) - 5)
+  const mYMax = Math.min(100, Math.max(40, ...mMargins) + 4)
+  const quadOf = (p: ProdMargen) => {
+    const pop = p.unidades_30d >= mUThresh, rent = (p.pct_margen || 0) >= mAvgM
+    return pop ? (rent ? 'estrella' : 'caballo') : (rent ? 'puzzle' : 'perro')
+  }
+
+  // ── Feature 3: Simulador de costo ──
+  const simCandidatos = (prodData?.productos ?? [])
+    .filter(p => p.unidades_30d > 0 && p.costo != null && p.costo > 0 && p.precio_venta > 0)
+    .sort((a, b) => b.venta_30d - a.venta_30d)
+  const simDefault = simCandidatos.find(p => (p.pct_margen ?? 100) < 68) ?? simCandidatos[0]
+  const simProd = simCandidatos.find(p => p.producto_id === simProdId) ?? simDefault
+  const simCostoBase = simProd?.costo ?? 0
+  const simCostoNuevo = Math.round(simCostoBase * (1 - simReduccion / 100))
+  const simGanancia = simProd ? Math.round((simCostoBase - simCostoNuevo) * simProd.unidades_30d) : 0
+  const simMargenNuevo = simProd && simProd.precio_venta > 0
+    ? Math.round((1 - simCostoNuevo / simProd.precio_venta) * 100) : 0
 
   return (
     <div className="space-y-4">
@@ -488,6 +552,45 @@ export default function Rentabilidad() {
         </div>
       )}
 
+      {/* ── Detector de datos truchos ── */}
+      {prodData && (outliers.length > 0 || insumosSinCosto.length > 0) && (
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+          <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
+            <ShieldAlert size={15} className="text-rose-600" /> Detector de datos truchos
+            <span className="text-xs font-normal text-gray-400">· márgenes atípicos e insumos sin costo</span>
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-gray-100">
+            <div className="bg-white p-4">
+              <p className="text-[11px] uppercase tracking-wide font-bold text-gray-400 mb-2">Márgenes sospechosos</p>
+              {outliers.length === 0 ? (
+                <p className="text-sm text-gray-400">Ninguno — todos coherentes con su categoría ✓</p>
+              ) : outliers.map(o => (
+                <div key={o.p.producto_id} className="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0">
+                  <span className="flex-1 text-sm text-gray-700 truncate">{o.p.nombre}</span>
+                  <span className={`text-xs font-mono font-bold ${o.alto ? 'text-rose-600' : 'text-amber-600'}`}>{o.p.pct_margen}%</span>
+                  <span className="text-[11px] text-gray-400 w-24 text-right capitalize truncate">{o.p.categoria} ~{o.mean}%</span>
+                </div>
+              ))}
+            </div>
+            <div className="bg-white p-4">
+              <p className="text-[11px] uppercase tracking-wide font-bold text-gray-400 mb-2">Insumos sin costear</p>
+              {insumosSinCosto.length === 0 ? (
+                <p className="text-sm text-gray-400">Todo costeado ✓</p>
+              ) : insumosSinCosto.map(i => (
+                <div key={i.nombre} className="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0">
+                  <span className="flex-1 text-sm text-gray-700 truncate">{i.nombre}</span>
+                  <span className="text-[11px] text-gray-400 shrink-0">{i.n} prod</span>
+                  <span className="text-xs font-mono text-amber-600 w-20 text-right shrink-0">{fmt(i.venta)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <p className="px-4 py-2 text-[11px] text-gray-400 border-t border-gray-100">
+            Un margen que se desvía mucho del promedio de su categoría suele ser un costo mal cargado (así cazamos el helado en las malteadas y los omelettes). Un insumo sin costo deja a todos sus productos con margen falso.
+          </p>
+        </div>
+      )}
+
       {/* ── Analizador de combos y promos ── */}
       {prodData && (combosTop.length > 0 || promoAddons.length > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -575,6 +678,72 @@ export default function Rentabilidad() {
         </div>
       )}
 
+      {/* ── Matriz de menú (Kasavana-Smith) ── */}
+      {prodData && matrixProds.length >= 4 && (
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+          <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
+            <LayoutGrid size={15} className="text-forest" /> Matriz de menú
+            <span className="text-xs font-normal text-gray-400">· popularidad × rentabilidad (30 días)</span>
+          </p>
+          <div className="overflow-x-auto px-2 py-2">
+            {(() => {
+              const PX0 = 52, PX1 = 620, PY0 = 22, PY1 = 320
+              const xOf = (u: number) => PX0 + (Math.sqrt(u) / Math.sqrt(mUMax)) * (PX1 - PX0)
+              const yOf = (m: number) => PY0 + (1 - (m - mYMin) / ((mYMax - mYMin) || 1)) * (PY1 - PY0)
+              const tx = xOf(mUThresh), ty = yOf(mAvgM)
+              const contrib = (p: ProdMargen) => (p.margen || 0) * p.unidades_30d
+              const maxC = Math.max(1, ...matrixProds.map(contrib))
+              const rOf = (p: ProdMargen) => 4 + 11 * Math.sqrt(contrib(p) / maxC)
+              const color: Record<string, string> = { estrella: '#2f7a4f', caballo: '#b45309', puzzle: '#2d5a3f', perro: '#9f1239' }
+              const labeled = [...matrixProds].sort((a, b) => contrib(b) - contrib(a)).slice(0, 6)
+              return (
+                <svg viewBox="0 0 640 372" style={{ minWidth: 560, width: '100%', height: 'auto' }} role="img" aria-label="Matriz de menú">
+                  <rect x={PX0} y={PY0} width={tx - PX0} height={ty - PY0} fill={color.puzzle} opacity="0.05" />
+                  <rect x={tx} y={PY0} width={PX1 - tx} height={ty - PY0} fill={color.estrella} opacity="0.06" />
+                  <rect x={PX0} y={ty} width={tx - PX0} height={PY1 - ty} fill={color.perro} opacity="0.05" />
+                  <rect x={tx} y={ty} width={PX1 - tx} height={PY1 - ty} fill={color.caballo} opacity="0.05" />
+                  <line x1={tx} y1={PY0} x2={tx} y2={PY1} stroke="#cbc9c0" strokeDasharray="4 4" />
+                  <line x1={PX0} y1={ty} x2={PX1} y2={ty} stroke="#cbc9c0" strokeDasharray="4 4" />
+                  <text x={PX1 - 6} y={PY0 + 14} textAnchor="end" fontSize="11" fontWeight="700" fill={color.estrella} opacity="0.75">ESTRELLA</text>
+                  <text x={PX0 + 6} y={PY0 + 14} fontSize="11" fontWeight="700" fill={color.puzzle} opacity="0.75">PUZZLE</text>
+                  <text x={PX1 - 6} y={PY1 - 8} textAnchor="end" fontSize="11" fontWeight="700" fill={color.caballo} opacity="0.8">CABALLO</text>
+                  <text x={PX0 + 6} y={PY1 - 8} fontSize="11" fontWeight="700" fill={color.perro} opacity="0.8">PERRO</text>
+                  {matrixProds.map(p => (
+                    <circle key={p.producto_id} cx={xOf(p.unidades_30d)} cy={yOf(p.pct_margen as number)} r={rOf(p)}
+                      fill={color[quadOf(p)]} fillOpacity="0.7" stroke="#fff" strokeWidth="1">
+                      <title>{`${p.nombre} — ${p.unidades_30d}u — ${p.pct_margen}% margen`}</title>
+                    </circle>
+                  ))}
+                  {labeled.map(p => {
+                    const x = xOf(p.unidades_30d), y = yOf(p.pct_margen as number)
+                    const left = x > PX1 - 130
+                    return (
+                      <text key={'l' + p.producto_id} x={left ? x - rOf(p) - 5 : x + rOf(p) + 5} y={y + 3}
+                        textAnchor={left ? 'end' : 'start'} fontSize="10.5" fontWeight="600" fill="#4a463d">
+                        {p.nombre.length > 22 ? p.nombre.slice(0, 21) + '…' : p.nombre}
+                      </text>
+                    )
+                  })}
+                  <text x={(PX0 + PX1) / 2} y="362" textAnchor="middle" fontSize="11" fontWeight="700" fill="#8a8478">POPULARIDAD  (unidades / mes)  →</text>
+                  <text x="14" y={(PY0 + PY1) / 2} textAnchor="middle" fontSize="11" fontWeight="700" fill="#8a8478" transform={`rotate(-90 14 ${(PY0 + PY1) / 2})`}>MARGEN %  ↑</text>
+                </svg>
+              )
+            })()}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-gray-100 border-t border-gray-100">
+            {[{ k: 'estrella', n: 'Estrellas', a: 'Proteger', c: '#2f7a4f' }, { k: 'caballo', n: 'Caballos', a: 'Bajar costo', c: '#b45309' }, { k: 'puzzle', n: 'Puzzles', a: 'Empujar', c: '#2d5a3f' }, { k: 'perro', n: 'Perros', a: 'Podar', c: '#9f1239' }].map(q => (
+              <div key={q.k} className="bg-white p-3 text-center">
+                <div className="flex items-center justify-center gap-1.5">
+                  <span style={{ background: q.c }} className="w-2.5 h-2.5 rounded-full inline-block"></span>
+                  <span className="text-sm font-bold text-gray-700">{q.n}</span>
+                </div>
+                <p className="text-[11px] text-gray-400 mt-0.5">{matrixProds.filter(p => quadOf(p) === q.k).length} prod · {q.a}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Oportunidades de precio ── */}
       {prodData && pricingOps.length > 0 && (
         <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
@@ -614,6 +783,49 @@ export default function Rentabilidad() {
             una libra de café al 31% es el margen normal de revender, no subprecio. Lo estructuralmente
             bajo conviene atacarlo con combos/promos, no subiendo el precio. Estimación sobre 30 días.
           </p>
+        </div>
+      )}
+
+      {/* ── Simulador de costo ── */}
+      {prodData && simProd && (
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+          <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
+            <SlidersHorizontal size={15} className="text-forest" /> Simulador de costo
+            <span className="text-xs font-normal text-gray-400">· cuánto ganás bajando el costo (sin tocar el precio)</span>
+          </p>
+          <div className="p-4 grid gap-4 sm:grid-cols-[1fr_220px] items-center">
+            <div>
+              <label className="text-[11px] uppercase tracking-wide font-bold text-gray-400">Producto</label>
+              <select value={simProd.producto_id} onChange={e => setSimProdId(Number(e.target.value))}
+                className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
+                {simCandidatos.slice(0, 50).map(p => (
+                  <option key={p.producto_id} value={p.producto_id}>
+                    {p.nombre} — {p.pct_margen}% — {p.unidades_30d}u/mes
+                  </option>
+                ))}
+              </select>
+              <div className="mt-4">
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-gray-400 font-semibold">Bajar el costo</span>
+                  <span className="font-mono font-bold text-forest">−{simReduccion}%</span>
+                </div>
+                <input type="range" min={0} max={30} step={1} value={simReduccion}
+                  onChange={e => setSimReduccion(Number(e.target.value))}
+                  className="w-full" style={{ accentColor: '#2d5a3f' }} />
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Ej: renegociar el proveedor, reducir desechables o ajustar la receta.
+                </p>
+              </div>
+            </div>
+            <div className="rounded-xl border border-gray-200 p-4 text-center" style={{ background: 'oklch(97% 0.02 150)' }}>
+              <p className="text-[11px] uppercase tracking-wide font-bold text-gray-400">Ganás / mes</p>
+              <p className="text-3xl font-mono font-bold text-green-700 leading-tight mt-1">+{fmt(simGanancia)}</p>
+              <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+                costo <span className="font-mono">{fmt(simCostoBase)}</span> → <span className="font-mono">{fmt(simCostoNuevo)}</span><br />
+                margen <span className="font-mono">{simProd.pct_margen}%</span> → <span className="font-mono font-bold text-forest">{simMargenNuevo}%</span>
+              </p>
+            </div>
+          </div>
         </div>
       )}
 

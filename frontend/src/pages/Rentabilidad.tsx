@@ -1,981 +1,123 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { TrendingUp, Activity, Zap, Coffee, Wallet, Database } from 'lucide-react'
 import api from '../api/client'
 import {
-  TrendingUp, TrendingDown, ShoppingCart, Wallet, Receipt, Info,
-  Coffee, ScanLine, Loader2, Sparkles, Award, AlertTriangle, ArrowUpRight,
-  Layers, Gift, Tag, LayoutGrid, SlidersHorizontal, ShieldAlert,
-} from 'lucide-react'
+  RentabilidadData, PorProductoData, PulsoData,
+  computeJugadas, computeOutliers, computeInsumosSinCosto,
+} from '../components/rentabilidad/helpers'
+import PulsoView from '../components/rentabilidad/PulsoView'
+import JugadasView from '../components/rentabilidad/JugadasView'
+import MenuView from '../components/rentabilidad/MenuView'
+import PnLView from '../components/rentabilidad/PnLView'
+import DatosSheet from '../components/rentabilidad/DatosSheet'
+import SimuladorSheet from '../components/rentabilidad/SimuladorSheet'
 
-// ─── Tipos ────────────────────────────────────────────────────────────────────
-interface Bucket {
-  ventas: number; compras: number; gastos: number
-  margen_neto: number; pct_margen_neto: number | null
-}
-interface RentabilidadData {
-  desde: string; hasta: string
-  resumen: Bucket & {
-    margen_bruto: number
-    pct_margen_bruto: number | null
-    n_tickets: number; n_facturas: number
-  }
-  por_mes: ({ mes: string } & Bucket)[]
-  por_sede: ({ tienda_id: number; tienda: string } & Bucket)[]
-  gastos_detalle: { concepto: string; total: number; n: number }[]
-  nota: string
-}
-interface Tienda { id: number; nombre: string }
+// ─── Cockpit de rentabilidad: 4 vistas (una pregunta cada una) + sheet Datos ──
+//   Pulso   → ¿cómo vamos?          Jugadas → ¿qué hago esta semana?
+//   Menú    → ¿qué productos funcionan?   P&L → ¿dónde está la plata?
+// El estado de la tab vive en el hash de la URL (#pulso · #jugadas · #menu · #pyl).
 
-interface ProdMargen {
-  producto_id: number; nombre: string; categoria: string; tipo: string
-  precio_venta: number; costo: number | null; costo_completo: boolean
-  insumos_sin_costo: string[]; margen: number | null; pct_margen: number | null
-  // Costo completo = receta + desechables para llevar (capa aparte, no toca inventario).
-  costo_desechables: number | null; costo_con_desechables: number | null
-  desechables_sin_costo: string[]; margen_con_desechables: number | null
-  pct_margen_con_desechables: number | null
-  unidades_30d: number; venta_30d: number
-}
-interface PorProductoData {
-  productos: ProdMargen[]
-  facturas_pendientes_de_costos: number
-  nota: string
+type Tab = 'pulso' | 'jugadas' | 'menu' | 'pyl'
+const TABS: { id: Tab; label: string; Icon: typeof Activity }[] = [
+  { id: 'pulso', label: 'Pulso', Icon: Activity },
+  { id: 'jugadas', label: 'Jugadas', Icon: Zap },
+  { id: 'menu', label: 'Menú', Icon: Coffee },
+  { id: 'pyl', label: 'P&L', Icon: Wallet },
+]
+const tabFromHash = (): Tab => {
+  const h = window.location.hash.replace('#', '')
+  return (['pulso', 'jugadas', 'menu', 'pyl'] as Tab[]).includes(h as Tab) ? (h as Tab) : 'pulso'
 }
 
-const fmt = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO')
-const MESES_CORTOS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
-const nombreMes = (ym: string) => {
-  const [a, m] = ym.split('-')
-  return `${MESES_CORTOS[Number(m) - 1]} ${a}`
+// "Hoy"/inicio de mes según el reloj de Colombia (no el del navegador).
+function mesActualBogota(): { desde: string; hasta: string } {
+  const s = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+  const [y, m] = s.split('-')
+  return { desde: `${y}-${m}-01`, hasta: s }
 }
 
-function isoLocal(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-// "Hoy" según el reloj de COLOMBIA (el negocio), no el del navegador: un
-// dispositivo en otra zona horaria armaría rangos corridos un día.
-function hoyBogota(): Date {
-  const s = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }) // YYYY-MM-DD
-  const [y, m, d] = s.split('-').map(Number)
-  return new Date(y, m - 1, d)
-}
-
-type Periodo = 'mes' | 'mes_pasado' | '30d' | 'anio'
-function rangoPeriodo(p: Periodo): { desde: string; hasta: string } {
-  const hoy = hoyBogota()
-  if (p === 'mes') return { desde: isoLocal(new Date(hoy.getFullYear(), hoy.getMonth(), 1)), hasta: isoLocal(hoy) }
-  if (p === 'mes_pasado') {
-    return {
-      desde: isoLocal(new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1)),
-      hasta: isoLocal(new Date(hoy.getFullYear(), hoy.getMonth(), 0)),
-    }
-  }
-  if (p === '30d') {
-    const d = new Date(hoy); d.setDate(d.getDate() - 29)
-    return { desde: isoLocal(d), hasta: isoLocal(hoy) }
-  }
-  return { desde: isoLocal(new Date(hoy.getFullYear(), 0, 1)), hasta: isoLocal(hoy) }
-}
-
-// ─── KPI card ─────────────────────────────────────────────────────────────────
-function Kpi({ label, value, sub, Icon, tint }: {
-  label: string; value: string; sub?: string; Icon: typeof Wallet; tint: string
-}) {
-  return (
-    <div className="bg-white rounded-2xl border border-gray-200 p-4">
-      <div className="flex items-center gap-2 mb-1.5">
-        <Icon size={14} style={{ color: tint }} />
-        <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400">{label}</p>
-      </div>
-      <p className="text-xl font-bold text-gray-800 font-mono leading-none">{value}</p>
-      {sub && <p className="text-xs text-gray-400 mt-1.5">{sub}</p>}
-    </div>
-  )
-}
-
-// ─── Barra horizontal para rankings (categoría / producto) ──────────────────────
-function Bar({ label, value, max, right, tint, sub }: {
-  label: string; value: number; max: number; right: string; tint: string; sub?: string
-}) {
-  const pct = max > 0 ? Math.max(3, Math.round((value / max) * 100)) : 0
-  return (
-    <div className="flex items-center gap-3 px-4 py-1.5">
-      <div className="w-36 sm:w-44 shrink-0 min-w-0">
-        <p className="text-sm font-semibold text-gray-700 truncate">{label}</p>
-        {sub && <p className="text-[11px] text-gray-400 truncate">{sub}</p>}
-      </div>
-      <div className="flex-1 h-4 rounded-full bg-gray-100 overflow-hidden">
-        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: tint }} />
-      </div>
-      <span className="w-24 shrink-0 text-right text-sm font-mono font-bold text-gray-700">{right}</span>
-    </div>
-  )
-}
-
-// ─── Tarjeta de insight automático ──────────────────────────────────────────────
-function InsightCard({ Icon, tint, bg, title, children }: {
-  Icon: typeof Wallet; tint: string; bg: string; title: string; children: ReactNode
-}) {
-  return (
-    <div className="rounded-2xl border p-4" style={{ borderColor: tint + '40', background: bg }}>
-      <div className="flex items-center gap-2 mb-1.5">
-        <Icon size={15} style={{ color: tint }} />
-        <p className="text-[11px] font-bold uppercase tracking-wide" style={{ color: tint }}>{title}</p>
-      </div>
-      <p className="text-sm text-gray-700 leading-snug">{children}</p>
-    </div>
-  )
-}
-
-// ─── Página ───────────────────────────────────────────────────────────────────
 export default function Rentabilidad() {
-  const [periodo, setPeriodo] = useState<Periodo>('mes')
-  const [tiendas, setTiendas] = useState<Tienda[]>([])
-  const [tiendaId, setTiendaId] = useState<number | null>(null)
-  const [data, setData] = useState<RentabilidadData | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  // Margen por producto + backfill de costos desde las fotos guardadas
+  const [tab, setTab] = useState<Tab>(tabFromHash)
+  const [pulso, setPulso] = useState<PulsoData | null>(null)
   const [prodData, setProdData] = useState<PorProductoData | null>(null)
-  const [leyendo, setLeyendo] = useState(false)
-  const [leyendoMsg, setLeyendoMsg] = useState('')
-  const pararRef = useRef(false)
-  // Filtro por categoría y criterio de orden de la tabla de márgenes.
-  const [prodCat, setProdCat] = useState<string>('todas')
-  const [prodSort, setProdSort] = useState<'utilidad' | 'margen' | 'unidades'>('utilidad')
-  // Simulador de costo: producto elegido + % de reducción de costo.
-  const [simProdId, setSimProdId] = useState<number | null>(null)
-  const [simReduccion, setSimReduccion] = useState<number>(10)
+  const [plMes, setPlMes] = useState<RentabilidadData | null>(null)
+  const [datosOpen, setDatosOpen] = useState(false)
+  const [simProd, setSimProd] = useState<number | null>(null)
 
   const fetchProductos = () =>
     api.get<PorProductoData>('/rentabilidad/por-producto')
-      .then(r => setProdData(r.data))
-      .catch(() => setProdData(null))
+      .then(r => setProdData(r.data)).catch(() => setProdData(null))
 
   useEffect(() => {
-    api.get<Tienda[]>('/auth/tiendas').then(r => setTiendas(r.data)).catch(() => {})
+    api.get<PulsoData>('/rentabilidad/pulso').then(r => setPulso(r.data)).catch(() => setPulso(null))
     fetchProductos()
+    const { desde, hasta } = mesActualBogota()
+    api.get<RentabilidadData>('/rentabilidad/', { params: { desde, hasta } })
+      .then(r => setPlMes(r.data)).catch(() => setPlMes(null))
   }, [])
 
-  const leerFacturas = async () => {
-    if (!prodData) return
-    setLeyendo(true)
-    pararRef.current = false
-    let pendientes = prodData.facturas_pendientes_de_costos
-    try {
-      while (pendientes > 0 && !pararRef.current) {
-        setLeyendoMsg(`Leyendo facturas guardadas… quedan ${pendientes}`)
-        const r = await api.post('/rentabilidad/backfill-costos?limite=2', null, { timeout: 300000 })
-        const d = r.data
-        if (d.detenido_por) { setLeyendoMsg(d.detenido_por); break }
-        pendientes = d.pendientes
-        // procesadas=0 → no queda nada que el lector pueda intentar: lo que
-        // sobra necesita carga manual (el backend saltea las ya fallidas).
-        if (d.procesadas === 0) {
-          if (pendientes > 0) {
-            setLeyendoMsg(`Quedan ${pendientes} facturas que no se pudieron leer solas — completá esos precios a mano en Pagos proveedores.`)
-          }
-          break
-        }
-      }
-      if (pendientes === 0) setLeyendoMsg('Listo: todas las facturas con foto quedaron leídas.')
-    } catch (e: any) {
-      setLeyendoMsg(e.response?.data?.detail || 'Error leyendo facturas — intentá más tarde.')
-    } finally {
-      setLeyendo(false)
-      fetchProductos()
-    }
-  }
-
+  // Tab ↔ hash de URL (permite deep-links y back del navegador).
   useEffect(() => {
-    // Guard anti-carrera: si el filtro cambia antes de que llegue la respuesta,
-    // la respuesta vieja se descarta (sin esto podía pisar a la nueva).
-    let vigente = true
-    const { desde, hasta } = rangoPeriodo(periodo)
-    setLoading(true)
-    api.get<RentabilidadData>('/rentabilidad/', {
-      params: { desde, hasta, ...(tiendaId ? { tienda_id: tiendaId } : {}) },
-    })
-      .then(r => { if (vigente) setData(r.data) })
-      .catch(() => { if (vigente) setData(null) })
-      .finally(() => { if (vigente) setLoading(false) })
-    return () => { vigente = false }
-  }, [periodo, tiendaId])
-
-  const r = data?.resumen
-  const margenPositivo = (r?.margen_neto ?? 0) >= 0
-
-  // ── Margen por producto: utilidad aportada (margen × volumen), filtro y orden ──
-  // La "utilidad 30d" usa el margen de RECETA (en el punto). Es lo más accionable:
-  // un producto de margen medio pero mucho volumen aporta más plata que uno de
-  // margen alto que casi no rota (el Americano vs. una bebida cara que no vende).
-  const prodUtil = (p: ProdMargen) => (p.margen ?? 0) * p.unidades_30d
-  const prodCats = prodData
-    ? ['todas', ...Array.from(new Set(prodData.productos.map(p => p.categoria).filter(Boolean)))]
-    : ['todas']
-  const prodFiltered = (prodData?.productos ?? [])
-    .filter(p => prodCat === 'todas' || p.categoria === prodCat)
-  const prodSorted = [...prodFiltered].sort((a, b) => {
-    if (prodSort === 'unidades') return b.unidades_30d - a.unidades_30d
-    if (prodSort === 'margen') return (b.pct_margen ?? -Infinity) - (a.pct_margen ?? -Infinity)
-    return prodUtil(b) - prodUtil(a)  // 'utilidad' (default)
-  })
-  const totalUtil = prodFiltered.reduce((s, p) => s + prodUtil(p), 0)
-
-  // ── Análisis de negocio (todo client-side desde por-producto) ──────────────────
-  // Base: productos que se vendieron y tienen margen calculado.
-  const prodsSold = (prodData?.productos ?? []).filter(p => p.unidades_30d > 0 && p.margen != null)
-  const utilTotalNeg = prodsSold.reduce((s, p) => s + prodUtil(p), 0)  // utilidad total del mix
-
-  // Rollup por categoría: de dónde viene realmente la plata.
-  const catMap = new Map<string, { venta: number; contrib: number; unidades: number }>()
-  for (const p of prodsSold) {
-    const k = p.categoria || 'otros'
-    const e = catMap.get(k) ?? { venta: 0, contrib: 0, unidades: 0 }
-    e.venta += p.venta_30d; e.contrib += prodUtil(p); e.unidades += p.unidades_30d
-    catMap.set(k, e)
-  }
-  const catRollup = [...catMap.entries()]
-    .map(([cat, v]) => ({ cat, ...v, pct: v.venta > 0 ? Math.round((v.contrib / v.venta) * 100) : 0 }))
-    .sort((a, b) => b.contrib - a.contrib)
-  const maxCatContrib = Math.max(1, ...catRollup.map(c => c.contrib))
-
-  // Top productos por utilidad aportada (Pareto: los que sostienen el negocio).
-  const topUtil = [...prodsSold].sort((a, b) => prodUtil(b) - prodUtil(a)).slice(0, 10)
-  const maxTopUtil = Math.max(1, ...topUtil.map(prodUtil))
-
-  // Oportunidades de precio: SOLO productos preparados (no reventa) y SOLO ajustes
-  // realistas (suba ≤ 20%). Una REVENTA a 31% (ej. la libra de café que se compra a
-  // $34k y se revende a $50k) NO es "subprecio": es el margen normal de revender un
-  // commodity — no se puede triplicar el precio. Por eso se excluye la reventa y se
-  // acotan las subas a algo creíble; lo estructuralmente bajo va a combos/promos, no acá.
-  const TARGET_MARGEN = 0.62
-  const pricingOps = prodsSold
-    .filter(p => p.tipo !== 'reventa' && p.costo_completo && p.pct_margen != null
-      && p.pct_margen < 58 && p.costo != null)
-    .map(p => {
-      const sugerido = Math.round((p.costo! / (1 - TARGET_MARGEN)) / 100) * 100
-      const suba = p.precio_venta > 0 ? (sugerido - p.precio_venta) / p.precio_venta : 0
-      const ganancia = Math.max(0, (sugerido - p.precio_venta) * p.unidades_30d)
-      return { p, sugerido, ganancia, suba }
-    })
-    .filter(x => x.suba > 0 && x.suba <= 0.20)  // solo tweaks finos y realistas
-    .sort((a, b) => b.ganancia - a.ganancia)
-    .slice(0, 6)
-
-  // Impacto de desechables (cuántos puntos de margen se comen para llevar).
-  const conDesech = prodsSold.filter(p => p.pct_margen != null && p.pct_margen_con_desechables != null
-    && p.costo_con_desechables !== p.costo)
-  const dropPromedio = conDesech.length
-    ? Math.round(conDesech.reduce((s, p) => s + (p.pct_margen! - p.pct_margen_con_desechables!), 0) / conDesech.length)
-    : 0
-
-  // Insights automáticos.
-  const joya = topUtil[0]
-  const oportunidad = pricingOps[0]
-  const catEstrella = catRollup[0]
-
-  // ── Analizador de combos y promos (usa el costo COMPLETO con desechables) ──────
-  const costoFull = (p: ProdMargen) => p.costo_con_desechables ?? p.costo
-  const allProds = prodData?.productos ?? []
-  // Anclas: bebidas de más tráfico (traen a la gente), con costo conocido.
-  const anclas = prodsSold
-    .filter(p => p.categoria === 'bebida' && costoFull(p) != null && p.precio_venta > 0)
-    .sort((a, b) => b.unidades_30d - a.unidades_30d)
-    .slice(0, 3)
-  // Attach para combo: pastelería MÁS PEDIDA (popular) y todavía rentable. La idea
-  // es juntar dos productos apetecidos para empujar el número de tickets, no solo
-  // el margen — por eso el orden es por VOLUMEN de ventas, con un piso de margen.
-  const comboAttach = allProds
-    .filter(p => p.categoria === 'pasteleria' && costoFull(p) != null && p.precio_venta > 0
-      && (p.pct_margen ?? 0) >= 45 && p.unidades_30d > 0)
-    .sort((a, b) => b.unidades_30d - a.unidades_30d)
-    .slice(0, 4)
-  type Combo = { id: string; anc: ProdMargen; at: ProdMargen; suelto: number; combo: number; ahorro: number; margen: number }
-  const combos: Combo[] = []
-  for (const anc of anclas) {
-    for (const at of comboAttach) {
-      const suelto = anc.precio_venta + at.precio_venta
-      const combo = Math.round((suelto * 0.9) / 100) * 100  // gancho -10%, redondeado a $100
-      const costo = (costoFull(anc) ?? 0) + (costoFull(at) ?? 0)
-      const margen = combo > 0 ? Math.round((1 - costo / combo) * 100) : 0
-      if (margen >= 50) combos.push({ id: `${anc.producto_id}-${at.producto_id}`, anc, at, suelto, combo, ahorro: suelto - combo, margen })
-    }
-  }
-  // Prioriza combos donde AMBAS mitades son populares (el min de las dos ventas): un
-  // combo es tan apetecido como su mitad menos pedida → así se empuja el nº de tickets.
-  combos.sort((a, b) =>
-    (Math.min(b.anc.unidades_30d, b.at.unidades_30d) - Math.min(a.anc.unidades_30d, a.at.unidades_30d))
-    || (b.margen - a.margen))
-  const combosTop = combos.slice(0, 5)
-  // Promos: add-ons (porciones/toppings) de alto margen que casi no se venden —
-  // plata pura sin explotar. Se ordenan por MENOR volumen (más dormidos primero).
-  const promoAddons = allProds
-    .filter(p => p.categoria === 'porciones' && (p.pct_margen ?? 0) >= 75
-      && p.margen != null && p.precio_venta > 0)
-    .sort((a, b) => (a.unidades_30d - b.unidades_30d) || ((b.pct_margen ?? 0) - (a.pct_margen ?? 0)))
-    .slice(0, 6)
-
-  // ── Feature 1: Detector de datos truchos (márgenes atípicos + insumos sin costo) ──
-  const outliers = (() => {
-    const byCat = new Map<string, ProdMargen[]>()
-    for (const p of prodsSold) {
-      if (p.pct_margen == null || !p.costo_completo) continue
-      const k = p.categoria || 'otros'
-      const arr = byCat.get(k)
-      if (arr) arr.push(p); else byCat.set(k, [p])
-    }
-    const flags: { p: ProdMargen; mean: number; alto: boolean }[] = []
-    byCat.forEach((arr) => {
-      if (arr.length < 4) return
-      const ms = arr.map(p => p.pct_margen as number)
-      const mean = ms.reduce((a, b) => a + b, 0) / ms.length
-      const sd = Math.sqrt(ms.reduce((a, b) => a + (b - mean) ** 2, 0) / ms.length)
-      if (sd < 4) return  // categoría muy pareja: sin outliers reales
-      for (const p of arr) {
-        const z = ((p.pct_margen as number) - mean) / sd
-        if (Math.abs(z) >= 2) flags.push({ p, mean: Math.round(mean), alto: z > 0 })
-      }
-    })
-    return flags.sort((a, b) => Math.abs(b.p.pct_margen! - b.mean) - Math.abs(a.p.pct_margen! - a.mean)).slice(0, 8)
-  })()
-  const insumosSinCosto = (() => {
-    const m = new Map<string, { n: number; venta: number }>()
-    for (const p of allProds) {
-      for (const nm of (p.insumos_sin_costo ?? [])) {
-        if (nm.startsWith('defin')) continue  // "definí la receta…" no es un insumo
-        const e = m.get(nm) ?? { n: 0, venta: 0 }
-        e.n += 1; e.venta += p.venta_30d || 0; m.set(nm, e)
-      }
-    }
-    return [...m.entries()].map(([nombre, v]) => ({ nombre, ...v })).sort((a, b) => b.venta - a.venta).slice(0, 10)
-  })()
-
-  // ── Feature 2: Matriz de menú (Kasavana-Smith) ──
-  const matrixProds = prodsSold.filter(p => p.pct_margen != null && p.costo_completo)
-  const mAvgU = matrixProds.reduce((s, p) => s + p.unidades_30d, 0) / (matrixProds.length || 1)
-  const mUThresh = mAvgU * 0.7  // umbral de popularidad K-S
-  const mAvgM = matrixProds.reduce((s, p) => s + (p.pct_margen || 0), 0) / (matrixProds.length || 1)
-  const mUMax = Math.max(1, ...matrixProds.map(p => p.unidades_30d))
-  const mMargins = matrixProds.map(p => p.pct_margen as number)
-  const mYMin = Math.max(0, Math.min(92, ...mMargins) - 5)
-  const mYMax = Math.min(100, Math.max(40, ...mMargins) + 4)
-  const quadOf = (p: ProdMargen) => {
-    const pop = p.unidades_30d >= mUThresh, rent = (p.pct_margen || 0) >= mAvgM
-    return pop ? (rent ? 'estrella' : 'caballo') : (rent ? 'puzzle' : 'perro')
+    const onHash = () => setTab(tabFromHash())
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+  const goTab = (t: Tab) => {
+    window.location.hash = t
+    setTab(t)
+    window.scrollTo({ top: 0 })
   }
 
-  // ── Feature 3: Simulador de costo ──
-  const simCandidatos = (prodData?.productos ?? [])
-    .filter(p => p.unidades_30d > 0 && p.costo != null && p.costo > 0 && p.precio_venta > 0)
-    .sort((a, b) => b.venta_30d - a.venta_30d)
-  const simDefault = simCandidatos.find(p => (p.pct_margen ?? 100) < 68) ?? simCandidatos[0]
-  const simProd = simCandidatos.find(p => p.producto_id === simProdId) ?? simDefault
-  const simCostoBase = simProd?.costo ?? 0
-  const simCostoNuevo = Math.round(simCostoBase * (1 - simReduccion / 100))
-  const simGanancia = simProd ? Math.round((simCostoBase - simCostoNuevo) * simProd.unidades_30d) : 0
-  const simMargenNuevo = simProd && simProd.precio_venta > 0
-    ? Math.round((1 - simCostoNuevo / simProd.precio_venta) * 100) : 0
+  const jugadas = useMemo(() => computeJugadas(prodData, pulso), [prodData, pulso])
+  const pendientesDatos = useMemo(() => {
+    if (!prodData) return 0
+    return computeOutliers(prodData.productos).length
+      + computeInsumosSinCosto(prodData.productos).length
+      + (prodData.facturas_pendientes_de_costos || 0)
+  }, [prodData])
 
   return (
-    <div className="space-y-4">
-      {/* Header + filtros */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <TrendingUp size={20} className="text-forest" />
-          <h1 className="text-lg font-bold text-gray-800">Rentabilidad</h1>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {([['mes', 'Este mes'], ['mes_pasado', 'Mes pasado'], ['30d', '30 días'], ['anio', 'Este año']] as [Periodo, string][]).map(([p, lbl]) => (
-            <button key={p} onClick={() => setPeriodo(p)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-semibold border transition-colors ${
-                periodo === p ? 'bg-forest text-white border-forest' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
-              }`}>
-              {lbl}
+    <div className="space-y-3">
+      {/* Header + badge de salud de datos */}
+      <div className="flex items-center gap-2">
+        <TrendingUp size={20} className="text-forest" />
+        <h1 className="text-lg font-bold text-warm-700">Rentabilidad</h1>
+        <button onClick={() => setDatosOpen(true)}
+          className={`ml-auto inline-flex items-center gap-1.5 min-h-[40px] px-3 rounded-full border text-xs font-bold transition-colors ${
+            pendientesDatos > 0
+              ? 'bg-gold-50 text-gold-700 border-gold-200'
+              : 'bg-success-50 text-success-600 border-success-200'}`}>
+          <Database size={13} />
+          {pendientesDatos > 0 ? `Datos: ${pendientesDatos} pendientes` : 'Datos sanos'}
+        </button>
+      </div>
+
+      {/* Tabs sticky */}
+      <div className="sticky top-0 z-20 -mx-1 px-1 py-1.5 bg-warm-50/90 backdrop-blur-sm">
+        <div className="grid grid-cols-4 gap-1 bg-warm-100 rounded-xl p-1">
+          {TABS.map(({ id, label, Icon }) => (
+            <button key={id} onClick={() => goTab(id)}
+              className={`flex items-center justify-center gap-1.5 min-h-[42px] rounded-lg text-xs font-bold transition-colors ${
+                tab === id ? 'bg-white text-forest shadow-sm' : 'text-warm-500'}`}>
+              <Icon size={14} /> {label}
             </button>
           ))}
-          <select value={tiendaId ?? ''} onChange={e => setTiendaId(e.target.value ? Number(e.target.value) : null)}
-            className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white">
-            <option value="">Todas las sedes</option>
-            {tiendas.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-          </select>
         </div>
       </div>
 
-      {loading && <p className="text-sm text-gray-400">Cargando…</p>}
-
-      {!loading && !data && (
-        <p className="text-sm text-gray-400">No se pudo cargar la información.</p>
+      {tab === 'pulso' && (
+        <PulsoView pulso={pulso} plMes={plMes} prodData={prodData}
+          jugadas={jugadas} onVerJugadas={() => goTab('jugadas')} />
       )}
-
-      {!loading && data && r && (
-        <>
-          {/* KPIs */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <Kpi label="Ventas" value={fmt(r.ventas)} Icon={Wallet} tint="#2d5a3f"
-              sub={`${r.n_tickets} tickets`} />
-            <Kpi label="Compras proveedor" value={fmt(r.compras)} Icon={ShoppingCart} tint="#b45309"
-              sub={`${r.n_facturas} facturas recibidas`} />
-            <Kpi label="Gastos de caja" value={fmt(r.gastos)} Icon={Receipt} tint="#9f1239"
-              sub="egresos manuales (sin proveedor)" />
-            <div className="bg-white rounded-2xl border border-gray-200 p-4"
-              style={{ borderColor: margenPositivo ? '#bbe3c8' : '#fecaca', background: margenPositivo ? '#f2faf5' : '#fef2f2' }}>
-              <div className="flex items-center gap-2 mb-1.5">
-                {margenPositivo
-                  ? <TrendingUp size={14} className="text-green-700" />
-                  : <TrendingDown size={14} className="text-red-600" />}
-                <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Margen neto</p>
-              </div>
-              <p className={`text-xl font-bold font-mono leading-none ${margenPositivo ? 'text-green-800' : 'text-red-700'}`}>
-                {fmt(r.margen_neto)}
-              </p>
-              <p className="text-xs text-gray-400 mt-1.5">
-                {r.pct_margen_neto != null ? `${r.pct_margen_neto}% de la venta` : 'sin ventas en el período'}
-                {' · '}bruto {fmt(r.margen_bruto)}{r.pct_margen_bruto != null ? ` (${r.pct_margen_bruto}%)` : ''}
-              </p>
-            </div>
-          </div>
-
-          {/* Por mes */}
-          {data.por_mes.length > 0 && (
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100">Por mes</p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
-                      <th className="text-left px-4 py-2 font-bold">Mes</th>
-                      <th className="text-right px-3 py-2 font-bold">Ventas</th>
-                      <th className="text-right px-3 py-2 font-bold">Compras</th>
-                      <th className="text-right px-3 py-2 font-bold">Gastos</th>
-                      <th className="text-right px-4 py-2 font-bold">Margen</th>
-                      <th className="text-right px-4 py-2 font-bold">%</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.por_mes.map(m => (
-                      <tr key={m.mes} className="border-b border-gray-50 last:border-0">
-                        <td className="px-4 py-2.5 font-semibold text-gray-700">{nombreMes(m.mes)}</td>
-                        <td className="px-3 py-2.5 text-right font-mono text-gray-700">{fmt(m.ventas)}</td>
-                        <td className="px-3 py-2.5 text-right font-mono text-gray-500">{fmt(m.compras)}</td>
-                        <td className="px-3 py-2.5 text-right font-mono text-gray-500">{fmt(m.gastos)}</td>
-                        <td className={`px-4 py-2.5 text-right font-mono font-bold ${m.margen_neto >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                          {fmt(m.margen_neto)}
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-mono text-gray-400">
-                          {m.pct_margen_neto != null ? `${m.pct_margen_neto}%` : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Por sede (solo con "Todas") */}
-          {!tiendaId && data.por_sede.length > 1 && (
-            <div className="grid sm:grid-cols-2 gap-3">
-              {data.por_sede.map(s => (
-                <div key={s.tienda_id} className="bg-white rounded-2xl border border-gray-200 p-4">
-                  <p className="text-sm font-bold text-gray-700 mb-2">{s.tienda}</p>
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div>
-                      <p className="text-[10px] uppercase font-bold text-gray-400">Ventas</p>
-                      <p className="text-sm font-mono font-bold text-gray-700 mt-0.5">{fmt(s.ventas)}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase font-bold text-gray-400">Compras+Gastos</p>
-                      <p className="text-sm font-mono font-bold text-gray-500 mt-0.5">{fmt(s.compras + s.gastos)}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase font-bold text-gray-400">Margen</p>
-                      <p className={`text-sm font-mono font-bold mt-0.5 ${s.margen_neto >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                        {fmt(s.margen_neto)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Detalle de gastos */}
-          {data.gastos_detalle.length > 0 && (
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100">
-                En qué se fue el gasto de caja
-              </p>
-              <div>
-                {data.gastos_detalle.map((g, i) => (
-                  <div key={i} className="flex items-center gap-3 px-4 py-2 border-b border-gray-50 last:border-0">
-                    <span className="flex-1 text-sm text-gray-600 truncate">{g.concepto}</span>
-                    <span className="text-xs text-gray-400 shrink-0">{g.n}×</span>
-                    <span className="text-sm font-mono font-bold text-gray-700 shrink-0 w-24 text-right">{fmt(g.total)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Nota metodológica */}
-          <div className="flex items-start gap-2 px-4 py-3 bg-blue-50 border border-blue-100 rounded-2xl">
-            <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
-            <p className="text-xs text-blue-800 leading-relaxed">{data.nota}</p>
-          </div>
-        </>
+      {tab === 'jugadas' && (
+        <JugadasView jugadas={jugadas} pulso={pulso} listo={prodData != null} onSimular={id => setSimProd(id)} />
       )}
+      {tab === 'menu' && <MenuView prodData={prodData} pulso={pulso} />}
+      {tab === 'pyl' && <PnLView onVerMetodologia={() => setDatosOpen(true)} />}
 
-      {/* ── Insights automáticos: qué le dice esto del negocio ── */}
-      {prodData && prodsSold.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {joya && (
-            <InsightCard Icon={Award} tint="#2d5a3f" bg="#f2faf5" title="Joya del negocio">
-              <b>{joya.nombre}</b> te deja <b>{fmt(prodUtil(joya))}/mes</b> ({joya.unidades_30d} vend · {joya.pct_margen}% margen). Es lo que más plata aporta — cuidá su stock y calidad.
-            </InsightCard>
-          )}
-          {oportunidad && (
-            <InsightCard Icon={ArrowUpRight} tint="#b45309" bg="#fffbeb" title="Oportunidad de precio">
-              <b>{oportunidad.p.nombre}</b> rinde solo <b>{oportunidad.p.pct_margen}%</b>. Subiéndolo a <b>{fmt(oportunidad.sugerido)}</b> ganás <b>~{fmt(oportunidad.ganancia)}/mes</b> más.
-            </InsightCard>
-          )}
-          {catEstrella && (
-            <InsightCard Icon={Layers} tint="#7c3aed" bg="#faf5ff" title="De dónde viene la plata">
-              La categoría <b className="capitalize">{catEstrella.cat}</b> aporta <b>{utilTotalNeg > 0 ? Math.round((catEstrella.contrib / utilTotalNeg) * 100) : 0}%</b> de tu utilidad ({fmt(catEstrella.contrib)}/mes).
-            </InsightCard>
-          )}
-          {dropPromedio > 0 && (
-            <InsightCard Icon={AlertTriangle} tint="#9f1239" bg="#fef2f2" title="Peso de los desechables">
-              Para llevar, los desechables te comen <b>~{dropPromedio} puntos</b> de margen. En el punto (cristalería) ganás más.
-            </InsightCard>
-          )}
-        </div>
-      )}
-
-      {/* ── Detector de datos truchos ── */}
-      {prodData && (outliers.length > 0 || insumosSinCosto.length > 0) && (
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-          <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
-            <ShieldAlert size={15} className="text-rose-600" /> Detector de datos truchos
-            <span className="text-xs font-normal text-gray-400">· márgenes atípicos e insumos sin costo</span>
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-gray-100">
-            <div className="bg-white p-4">
-              <p className="text-[11px] uppercase tracking-wide font-bold text-gray-400 mb-2">Márgenes sospechosos</p>
-              {outliers.length === 0 ? (
-                <p className="text-sm text-gray-400">Ninguno — todos coherentes con su categoría ✓</p>
-              ) : outliers.map(o => (
-                <div key={o.p.producto_id} className="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0">
-                  <span className="flex-1 text-sm text-gray-700 truncate">{o.p.nombre}</span>
-                  <span className={`text-xs font-mono font-bold ${o.alto ? 'text-rose-600' : 'text-amber-600'}`}>{o.p.pct_margen}%</span>
-                  <span className="text-[11px] text-gray-400 w-24 text-right capitalize truncate">{o.p.categoria} ~{o.mean}%</span>
-                </div>
-              ))}
-            </div>
-            <div className="bg-white p-4">
-              <p className="text-[11px] uppercase tracking-wide font-bold text-gray-400 mb-2">Insumos sin costear</p>
-              {insumosSinCosto.length === 0 ? (
-                <p className="text-sm text-gray-400">Todo costeado ✓</p>
-              ) : insumosSinCosto.map(i => (
-                <div key={i.nombre} className="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0">
-                  <span className="flex-1 text-sm text-gray-700 truncate">{i.nombre}</span>
-                  <span className="text-[11px] text-gray-400 shrink-0">{i.n} prod</span>
-                  <span className="text-xs font-mono text-amber-600 w-20 text-right shrink-0">{fmt(i.venta)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <p className="px-4 py-2 text-[11px] text-gray-400 border-t border-gray-100">
-            Un margen que se desvía mucho del promedio de su categoría suele ser un costo mal cargado (así cazamos el helado en las malteadas y los omelettes). Un insumo sin costo deja a todos sus productos con margen falso.
-          </p>
-        </div>
-      )}
-
-      {/* ── Analizador de combos y promos ── */}
-      {prodData && (combosTop.length > 0 || promoAddons.length > 0) && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {combosTop.length > 0 && (
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
-                <Gift size={15} className="text-forest" /> Combos para subir el ticket
-                <span className="text-xs font-normal text-gray-400">· gancho −10%</span>
-              </p>
-              <div>
-                {combosTop.map(c => (
-                  <div key={c.id} className="px-4 py-2 border-b border-gray-50 last:border-0">
-                    <p className="text-sm font-semibold text-gray-700">
-                      {c.anc.nombre} <span className="text-gray-300">+</span> {c.at.nombre}
-                    </p>
-                    <p className="text-[11px] text-gray-400">
-                      {c.anc.unidades_30d} + {c.at.unidades_30d} vendidos/mes
-                    </p>
-                    <div className="flex items-center gap-2 text-xs mt-0.5">
-                      <span className="text-gray-400 line-through font-mono">{fmt(c.suelto)}</span>
-                      <span className="text-sm font-mono font-bold text-forest">{fmt(c.combo)}</span>
-                      <span className="text-orange-500">(−{fmt(c.ahorro)})</span>
-                      <span className="ml-auto font-mono font-bold text-green-700">{c.margen}% margen</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <p className="px-4 py-2 text-[11px] text-gray-400 border-t border-gray-100">
-                Junta dos productos APETECIDOS (los más pedidos) para empujar el nº de tickets.
-                El gancho −10% atrae al cliente y el combo mantiene buen margen.
-              </p>
-            </div>
-          )}
-          {promoAddons.length > 0 && (
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
-                <Tag size={15} className="text-forest" /> Promos: empujá estos add-ons
-              </p>
-              <p className="px-4 pt-2 text-[11px] text-gray-500">
-                Alto margen y casi no se venden — plata pura sin explotar. Un "agregá por $X" los despierta.
-              </p>
-              <div className="py-1">
-                {promoAddons.map(p => (
-                  <div key={p.producto_id} className="flex items-center gap-3 px-4 py-1.5">
-                    <span className="flex-1 text-sm font-semibold text-gray-700 truncate">{p.nombre}</span>
-                    <span className="text-xs text-gray-400 shrink-0">
-                      {p.unidades_30d > 0 ? `${p.unidades_30d}/mes` : 'no vende'}
-                    </span>
-                    <span className="w-14 text-right font-mono font-bold text-green-700 shrink-0">{p.pct_margen}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Utilidad por categoría + Top que sostienen el negocio ── */}
-      {prodData && catRollup.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-            <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
-              <Layers size={15} className="text-forest" /> Utilidad por categoría
-              <span className="text-xs font-normal text-gray-400">· 30 días</span>
-            </p>
-            <div className="py-2">
-              {catRollup.map(c => (
-                <Bar key={c.cat} label={c.cat.charAt(0).toUpperCase() + c.cat.slice(1)}
-                  sub={`${fmt(c.venta)} venta · ${c.pct}% margen`}
-                  value={c.contrib} max={maxCatContrib} right={fmt(c.contrib)} tint="#2d5a3f" />
-              ))}
-            </div>
-          </div>
-          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-            <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
-              <Sparkles size={15} className="text-forest" /> Top 10 que sostienen el negocio
-            </p>
-            <div className="py-2">
-              {topUtil.map(p => (
-                <Bar key={p.producto_id} label={p.nombre} sub={`${p.unidades_30d} vend · ${p.pct_margen}%`}
-                  value={prodUtil(p)} max={maxTopUtil} right={fmt(prodUtil(p))} tint="oklch(55% 0.12 65)" />
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Matriz de menú (Kasavana-Smith) ── */}
-      {prodData && matrixProds.length >= 4 && (
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-          <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
-            <LayoutGrid size={15} className="text-forest" /> Matriz de menú
-            <span className="text-xs font-normal text-gray-400">· popularidad × rentabilidad (30 días)</span>
-          </p>
-          <div className="overflow-x-auto px-2 py-2">
-            {(() => {
-              const PX0 = 52, PX1 = 620, PY0 = 22, PY1 = 320
-              const xOf = (u: number) => PX0 + (Math.sqrt(u) / Math.sqrt(mUMax)) * (PX1 - PX0)
-              const yOf = (m: number) => PY0 + (1 - (m - mYMin) / ((mYMax - mYMin) || 1)) * (PY1 - PY0)
-              const tx = xOf(mUThresh), ty = yOf(mAvgM)
-              const contrib = (p: ProdMargen) => (p.margen || 0) * p.unidades_30d
-              const maxC = Math.max(1, ...matrixProds.map(contrib))
-              const rOf = (p: ProdMargen) => 4 + 11 * Math.sqrt(contrib(p) / maxC)
-              const color: Record<string, string> = { estrella: '#2f7a4f', caballo: '#b45309', puzzle: '#2d5a3f', perro: '#9f1239' }
-              const labeled = [...matrixProds].sort((a, b) => contrib(b) - contrib(a)).slice(0, 6)
-              return (
-                <svg viewBox="0 0 640 372" style={{ minWidth: 560, width: '100%', height: 'auto' }} role="img" aria-label="Matriz de menú">
-                  <rect x={PX0} y={PY0} width={tx - PX0} height={ty - PY0} fill={color.puzzle} opacity="0.05" />
-                  <rect x={tx} y={PY0} width={PX1 - tx} height={ty - PY0} fill={color.estrella} opacity="0.06" />
-                  <rect x={PX0} y={ty} width={tx - PX0} height={PY1 - ty} fill={color.perro} opacity="0.05" />
-                  <rect x={tx} y={ty} width={PX1 - tx} height={PY1 - ty} fill={color.caballo} opacity="0.05" />
-                  <line x1={tx} y1={PY0} x2={tx} y2={PY1} stroke="#cbc9c0" strokeDasharray="4 4" />
-                  <line x1={PX0} y1={ty} x2={PX1} y2={ty} stroke="#cbc9c0" strokeDasharray="4 4" />
-                  <text x={PX1 - 6} y={PY0 + 14} textAnchor="end" fontSize="11" fontWeight="700" fill={color.estrella} opacity="0.75">ESTRELLA</text>
-                  <text x={PX0 + 6} y={PY0 + 14} fontSize="11" fontWeight="700" fill={color.puzzle} opacity="0.75">PUZZLE</text>
-                  <text x={PX1 - 6} y={PY1 - 8} textAnchor="end" fontSize="11" fontWeight="700" fill={color.caballo} opacity="0.8">CABALLO</text>
-                  <text x={PX0 + 6} y={PY1 - 8} fontSize="11" fontWeight="700" fill={color.perro} opacity="0.8">PERRO</text>
-                  {matrixProds.map(p => (
-                    <circle key={p.producto_id} cx={xOf(p.unidades_30d)} cy={yOf(p.pct_margen as number)} r={rOf(p)}
-                      fill={color[quadOf(p)]} fillOpacity="0.7" stroke="#fff" strokeWidth="1">
-                      <title>{`${p.nombre} — ${p.unidades_30d}u — ${p.pct_margen}% margen`}</title>
-                    </circle>
-                  ))}
-                  {labeled.map(p => {
-                    const x = xOf(p.unidades_30d), y = yOf(p.pct_margen as number)
-                    const left = x > PX1 - 130
-                    return (
-                      <text key={'l' + p.producto_id} x={left ? x - rOf(p) - 5 : x + rOf(p) + 5} y={y + 3}
-                        textAnchor={left ? 'end' : 'start'} fontSize="10.5" fontWeight="600" fill="#4a463d">
-                        {p.nombre.length > 22 ? p.nombre.slice(0, 21) + '…' : p.nombre}
-                      </text>
-                    )
-                  })}
-                  <text x={(PX0 + PX1) / 2} y="362" textAnchor="middle" fontSize="11" fontWeight="700" fill="#8a8478">POPULARIDAD  (unidades / mes)  →</text>
-                  <text x="14" y={(PY0 + PY1) / 2} textAnchor="middle" fontSize="11" fontWeight="700" fill="#8a8478" transform={`rotate(-90 14 ${(PY0 + PY1) / 2})`}>MARGEN %  ↑</text>
-                </svg>
-              )
-            })()}
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-gray-100 border-t border-gray-100">
-            {[{ k: 'estrella', n: 'Estrellas', a: 'Proteger', c: '#2f7a4f' }, { k: 'caballo', n: 'Caballos', a: 'Bajar costo', c: '#b45309' }, { k: 'puzzle', n: 'Puzzles', a: 'Empujar', c: '#2d5a3f' }, { k: 'perro', n: 'Perros', a: 'Podar', c: '#9f1239' }].map(q => (
-              <div key={q.k} className="bg-white p-3 text-center">
-                <div className="flex items-center justify-center gap-1.5">
-                  <span style={{ background: q.c }} className="w-2.5 h-2.5 rounded-full inline-block"></span>
-                  <span className="text-sm font-bold text-gray-700">{q.n}</span>
-                </div>
-                <p className="text-[11px] text-gray-400 mt-0.5">{matrixProds.filter(p => quadOf(p) === q.k).length} prod · {q.a}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── Oportunidades de precio ── */}
-      {prodData && pricingOps.length > 0 && (
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-          <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
-            <ArrowUpRight size={15} className="text-amber-600" /> Oportunidades de precio
-            <span className="text-xs font-normal text-gray-400">· margen bajo con volumen</span>
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
-                  <th className="text-left px-4 py-2 font-bold">Producto</th>
-                  <th className="text-right px-3 py-2 font-bold">Hoy</th>
-                  <th className="text-right px-3 py-2 font-bold">Margen</th>
-                  <th className="text-right px-3 py-2 font-bold">Sugerido</th>
-                  <th className="text-right px-4 py-2 font-bold">Ganás/mes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pricingOps.map(({ p, sugerido, ganancia }) => (
-                  <tr key={p.producto_id} className="border-b border-gray-50 last:border-0">
-                    <td className="px-4 py-2 font-semibold text-gray-700">
-                      {p.nombre}
-                      <span className="text-[11px] text-gray-400 font-normal"> · {p.unidades_30d} vend</span>
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-gray-500">{fmt(p.precio_venta)}</td>
-                    <td className="px-3 py-2 text-right font-mono font-bold text-red-600">{p.pct_margen}%</td>
-                    <td className="px-3 py-2 text-right font-mono font-bold text-forest">{fmt(sugerido)}</td>
-                    <td className="px-4 py-2 text-right font-mono font-bold text-green-700">+{fmt(ganancia)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="px-4 py-2 text-[11px] text-gray-400 border-t border-gray-100">
-            Solo productos PREPARADOS con margen ajustado y subas realistas (≤20%). No incluye reventa:
-            una libra de café al 31% es el margen normal de revender, no subprecio. Lo estructuralmente
-            bajo conviene atacarlo con combos/promos, no subiendo el precio. Estimación sobre 30 días.
-          </p>
-        </div>
-      )}
-
-      {/* ── Simulador de costo ── */}
-      {prodData && simProd && (
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-          <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
-            <SlidersHorizontal size={15} className="text-forest" /> Simulador de costo
-            <span className="text-xs font-normal text-gray-400">· cuánto ganás bajando el costo (sin tocar el precio)</span>
-          </p>
-          <div className="p-4 grid gap-4 sm:grid-cols-[1fr_220px] items-center">
-            <div>
-              <label className="text-[11px] uppercase tracking-wide font-bold text-gray-400">Producto</label>
-              <select value={simProd.producto_id} onChange={e => setSimProdId(Number(e.target.value))}
-                className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
-                {simCandidatos.slice(0, 50).map(p => (
-                  <option key={p.producto_id} value={p.producto_id}>
-                    {p.nombre} — {p.pct_margen}% — {p.unidades_30d}u/mes
-                  </option>
-                ))}
-              </select>
-              <div className="mt-4">
-                <div className="flex justify-between text-xs mb-1">
-                  <span className="text-gray-400 font-semibold">Bajar el costo</span>
-                  <span className="font-mono font-bold text-forest">−{simReduccion}%</span>
-                </div>
-                <input type="range" min={0} max={30} step={1} value={simReduccion}
-                  onChange={e => setSimReduccion(Number(e.target.value))}
-                  className="w-full" style={{ accentColor: '#2d5a3f' }} />
-                <p className="text-[11px] text-gray-400 mt-1">
-                  Ej: renegociar el proveedor, reducir desechables o ajustar la receta.
-                </p>
-              </div>
-            </div>
-            <div className="rounded-xl border border-gray-200 p-4 text-center" style={{ background: 'oklch(97% 0.02 150)' }}>
-              <p className="text-[11px] uppercase tracking-wide font-bold text-gray-400">Ganás / mes</p>
-              <p className="text-3xl font-mono font-bold text-green-700 leading-tight mt-1">+{fmt(simGanancia)}</p>
-              <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
-                costo <span className="font-mono">{fmt(simCostoBase)}</span> → <span className="font-mono">{fmt(simCostoNuevo)}</span><br />
-                margen <span className="font-mono">{simProd.pct_margen}%</span> → <span className="font-mono font-bold text-forest">{simMargenNuevo}%</span>
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Margen por producto ── */}
-      {prodData && (
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-          <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-gray-100">
-            <p className="flex items-center gap-2 text-sm font-bold text-gray-700">
-              <Coffee size={15} className="text-forest" /> Margen por producto
-              {totalUtil > 0 && (
-                <span className="text-xs font-semibold text-gray-400">
-                  · aporta {fmt(totalUtil)}/mes
-                </span>
-              )}
-            </p>
-            <div className="ml-auto flex items-center gap-2">
-              {leyendo ? (
-                <>
-                  <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-700">
-                    <Loader2 size={13} className="animate-spin" /> {leyendoMsg}
-                  </span>
-                  <button onClick={() => { pararRef.current = true }}
-                    className="px-2.5 py-1 rounded-lg text-xs font-semibold border border-gray-200 text-gray-500 hover:bg-gray-50">
-                    Parar
-                  </button>
-                </>
-              ) : (
-                <>
-                  {leyendoMsg && <span className="text-xs text-gray-500">{leyendoMsg}</span>}
-                  {prodData.facturas_pendientes_de_costos > 0 && (
-                    <button onClick={leerFacturas}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white"
-                      style={{ background: 'oklch(55% 0.12 65)' }}>
-                      <ScanLine size={13} />
-                      Leer costos de {prodData.facturas_pendientes_de_costos} facturas guardadas
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Filtro por categoría + criterio de orden */}
-          {prodData.productos.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-gray-100 bg-gray-50/60">
-              <div className="flex flex-wrap items-center gap-1.5">
-                {prodCats.map(c => (
-                  <button key={c} onClick={() => setProdCat(c)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold capitalize border transition-colors ${
-                      prodCat === c ? 'bg-forest text-white border-forest' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
-                    {c}
-                  </button>
-                ))}
-              </div>
-              <div className="ml-auto flex items-center gap-1.5 text-xs">
-                <span className="text-gray-400 font-semibold">Ordenar por:</span>
-                {(([['utilidad', 'Utilidad'], ['margen', 'Margen %'], ['unidades', 'Más vendidos']]) as [typeof prodSort, string][]).map(([s, lbl]) => (
-                  <button key={s} onClick={() => setProdSort(s)}
-                    className={`px-2 py-1 rounded-lg font-semibold border transition-colors ${
-                      prodSort === s ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
-                    {lbl}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {prodData.productos.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-gray-400">Sin productos de venta con precio configurado.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
-                    <th className="text-left px-4 py-2 font-bold">Producto</th>
-                    <th className="text-right px-3 py-2 font-bold">Vend 30d</th>
-                    <th className="text-right px-3 py-2 font-bold">Precio</th>
-                    <th className="text-right px-3 py-2 font-bold">Costo</th>
-                    <th className="text-right px-3 py-2 font-bold">Margen</th>
-                    <th className="text-right px-4 py-2 font-bold">Utilidad 30d</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {prodSorted.map(p => {
-                    const util = prodUtil(p)
-                    const hayDesech = p.costo_con_desechables != null && p.costo != null
-                      && p.costo_con_desechables !== p.costo
-                    const pctColor = p.pct_margen == null ? 'text-gray-300'
-                      : p.pct_margen >= 60 ? 'text-green-700'
-                      : p.pct_margen >= 40 ? 'text-amber-600' : 'text-red-600'
-                    return (
-                      <tr key={p.producto_id} className="border-b border-gray-50 last:border-0">
-                        <td className="px-4 py-2">
-                          <p className="font-semibold text-gray-700">{p.nombre}</p>
-                          {!p.costo_completo && p.insumos_sin_costo.length > 0 && (
-                            <p className="text-[11px] text-amber-600">
-                              falta costo de: {p.insumos_sin_costo.slice(0, 3).join(', ')}
-                              {p.insumos_sin_costo.length > 3 ? '…' : ''}
-                            </p>
-                          )}
-                          {p.desechables_sin_costo && p.desechables_sin_costo.length > 0 && (
-                            <p className="text-[11px] text-gray-400">
-                              falta desechable: {p.desechables_sin_costo.slice(0, 2).join(', ')}
-                            </p>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-gray-500">
-                          {p.unidades_30d > 0 ? p.unidades_30d : '—'}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-gray-700">{fmt(p.precio_venta)}</td>
-                        <td className="px-3 py-2 text-right font-mono">
-                          <span className={p.costo_completo ? 'text-gray-500' : 'text-amber-600'}>
-                            {p.costo != null ? `${p.costo_completo ? '' : '≥ '}${fmt(p.costo)}` : '—'}
-                          </span>
-                          {hayDesech && (
-                            <span className="block text-[11px] text-orange-500">
-                              p/llevar {fmt(p.costo_con_desechables!)}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono">
-                          <span className={`font-bold ${pctColor}`}>
-                            {p.pct_margen != null ? `${p.pct_margen}%${p.costo_completo ? '' : ' *'}` : '—'}
-                          </span>
-                          {hayDesech && p.pct_margen_con_desechables != null && (
-                            <span className="block text-[11px] text-orange-500">
-                              llevar {p.pct_margen_con_desechables}%
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-right font-mono font-bold text-gray-800">
-                          {p.unidades_30d > 0 && p.margen != null ? fmt(util) : '—'}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <div className="flex items-start gap-2 px-4 py-3 bg-gray-50 border-t border-gray-100">
-            <Info size={13} className="text-gray-400 shrink-0 mt-0.5" />
-            <p className="text-[11px] text-gray-500 leading-relaxed">
-              <b>Utilidad 30d</b> = margen × unidades vendidas: lo que cada producto APORTA al mes.{' '}
-              <b>p/llevar</b> suma los desechables (vaso, tapa, servilleta…); el margen en el punto
-              es mayor porque ahí se usa cristalería. {prodData.nota}
-            </p>
-          </div>
-        </div>
-      )}
+      <DatosSheet open={datosOpen} prodData={prodData} plMes={plMes}
+        onClose={() => setDatosOpen(false)} onRefresh={fetchProductos} />
+      <SimuladorSheet prodData={prodData} productoId={simProd} onClose={() => setSimProd(null)} />
     </div>
   )
 }

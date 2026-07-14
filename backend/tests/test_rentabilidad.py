@@ -17,7 +17,9 @@ from app.models.models import (
     ProductoDesechable, Ticket,
     TicketItem, Tienda, TipoPagoEnum, Usuario, RolEnum,
 )
-from app.services.rentabilidad import get_rentabilidad, get_rentabilidad_productos
+from app.services.rentabilidad import (
+    get_pulso, get_rentabilidad, get_rentabilidad_productos,
+)
 
 
 class RentabilidadTest(unittest.TestCase):
@@ -368,6 +370,99 @@ class RentabilidadTest(unittest.TestCase):
         self.assertAlmostEqual(por["Omelette JyQ"]["costo"], 7445)
         self.assertTrue(por["Omelette JyQ"]["costo_completo"])
         self.assertAlmostEqual(por["Omelette JyQ"]["margen"], 16900 - 7445)
+
+
+    def test_alertas_costo_insumo_subiendo(self):
+        # Insumo con último precio de factura >10% sobre el promedio → alerta.
+        leche = Producto(nombre="Leche A", categoria=CategoriaProductoEnum.insumo,
+                         unidad_medida="ml", precio_venta=0)
+        latte = Producto(nombre="Latte A", categoria=CategoriaProductoEnum.bebida,
+                         unidad_medida="unidad", precio_venta=10000)
+        self.db.add_all([leche, latte])
+        self.db.flush()
+        self.db.add(ProductoInsumo(producto_id=latte.id, insumo_id=leche.id, cantidad=200))
+        # Factura vieja a $2/ml y reciente a $3/ml (+50% sobre el promedio ~2.5 no,
+        # promedio ponderado = (1000*2 + 1000*3)/2000 = 2.5; ultimo 3 = +20%).
+        for dias, precio in ((10, 2.0), (1, 3.0)):
+            f = FacturaCompra(tienda_id=self.t1.id, proveedor="L", valor_total=1,
+                              tipo_pago=TipoPagoEnum.credito, usuario_id=self.u.id,
+                              fecha_recibido=self.ahora - __import__("datetime").timedelta(days=dias))
+            self.db.add(f)
+            self.db.flush()
+            self.db.add(FacturaCompraItem(factura_id=f.id, producto_id=leche.id,
+                                          cantidad=1000, precio_unitario=precio))
+        # venta del latte para dimensionar la alerta
+        tk = Ticket(tienda_id=self.t1.id, caja_turno_id=self.turno1.id, usuario_id=self.u.id,
+                    fecha=self.ahora, total=10000, estado="completado", metodo_pago="efectivo")
+        self.db.add(tk)
+        self.db.flush()
+        self.db.add(TicketItem(ticket_id=tk.id, producto_id=latte.id, nombre_producto="Latte A",
+                               cantidad=1, precio_unitario=10000, subtotal=10000))
+        self.db.commit()
+
+        r = get_rentabilidad_productos(self.db)
+        alertas = {a["nombre"]: a for a in r["alertas_costo"]}
+        self.assertIn("Leche A", alertas)
+        a = alertas["Leche A"]
+        self.assertAlmostEqual(a["costo_ultimo"], 3.0)
+        self.assertGreater(a["pct_suba"], 10)
+        self.assertIn("Latte A", a["productos_afectados"])
+        self.assertAlmostEqual(a["venta_30d_afectada"], 10000)
+
+    def test_cogs_teorico_en_pl(self):
+        # Producto vendido con costo de receta conocido → COGS = unidades × costo.
+        cafe = Producto(nombre="Café B", categoria=CategoriaProductoEnum.insumo,
+                        unidad_medida="gr", precio_venta=0, precio_costo=50)
+        capu = Producto(nombre="Capu B", categoria=CategoriaProductoEnum.bebida,
+                        unidad_medida="unidad", precio_venta=10000)
+        self.db.add_all([cafe, capu])
+        self.db.flush()
+        self.db.add(ProductoInsumo(producto_id=capu.id, insumo_id=cafe.id, cantidad=10))
+        tk = Ticket(tienda_id=self.t1.id, caja_turno_id=self.turno1.id, usuario_id=self.u.id,
+                    fecha=self.ahora, total=20000, estado="completado", metodo_pago="efectivo")
+        self.db.add(tk)
+        self.db.flush()
+        self.db.add(TicketItem(ticket_id=tk.id, producto_id=capu.id, nombre_producto="Capu B",
+                               cantidad=2, precio_unitario=10000, subtotal=20000))
+        self.db.commit()
+
+        r = get_rentabilidad(self.db, hoy_col(), hoy_col())
+        # 2 unidades × (10 gr × $50) = $1.000
+        self.assertAlmostEqual(r["resumen"]["cogs_teorico"], 1000)
+        self.assertAlmostEqual(r["resumen"]["brecha_compras"],
+                               r["resumen"]["compras"] - 1000)
+        self.assertIsNotNone(r["resumen"]["pct_venta_costeada"])
+
+    def test_pulso_basico(self):
+        # bebida + pastelería en el mismo ticket → attach y par co-ocurrente.
+        beb = Producto(nombre="Capu P", categoria=CategoriaProductoEnum.bebida,
+                       unidad_medida="unidad", precio_venta=10000)
+        pan = Producto(nombre="Torta P", categoria=CategoriaProductoEnum.pasteleria,
+                       unidad_medida="unidad", precio_venta=12000)
+        self.db.add_all([beb, pan])
+        self.db.flush()
+        for _ in range(3):
+            tk = Ticket(tienda_id=self.t1.id, caja_turno_id=self.turno1.id,
+                        usuario_id=self.u.id, fecha=self.ahora, total=22000,
+                        estado="completado", metodo_pago="efectivo")
+            self.db.add(tk)
+            self.db.flush()
+            self.db.add_all([
+                TicketItem(ticket_id=tk.id, producto_id=beb.id, nombre_producto="Capu P",
+                           cantidad=1, precio_unitario=10000, subtotal=10000),
+                TicketItem(ticket_id=tk.id, producto_id=pan.id, nombre_producto="Torta P",
+                           cantidad=1, precio_unitario=12000, subtotal=12000),
+            ])
+        self.db.commit()
+
+        p = get_pulso(self.db)
+        self.assertGreater(p["mes_actual"]["tickets"], 0)
+        self.assertIsNotNone(p["mes_actual"]["ticket_promedio"])
+        self.assertEqual(p["attach"]["pct_bebida_con_pasteleria"], 100.0)
+        pares = {(x["a"], x["b"]) for x in p["top_pares"]}
+        self.assertTrue(("Capu P", "Torta P") in pares or ("Torta P", "Capu P") in pares)
+        self.assertTrue(len(p["ventas_diarias"]) >= 1)
+        self.assertTrue(len(p["daypart"]) >= 1)
 
 
 if __name__ == "__main__":

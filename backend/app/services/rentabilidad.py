@@ -11,12 +11,12 @@ Cruza las tres fuentes de dinero del sistema, cada una en su base:
 
 margen_bruto = ventas - compras;  margen_neto = margen_bruto - gastos.
 """
-from collections import defaultdict
-from datetime import date, timedelta
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import func, not_, or_
 
-from app.core.tz import dia_col, hoy_col, rango_col_utc
+from app.core.tz import dia_col, hora_col, hoy_col, rango_col_utc
 from app.models.models import (
     CajaTurno, FacturaCompra, FacturaCompraItem, MovimientoCaja, Producto,
     ProductoInsumo, ProductoDesechable, Ticket, TicketItem, Tienda, TipoMovCajaEnum,
@@ -31,6 +31,37 @@ ESTADOS_ANULADOS = ("anulado", "reversado")
 
 def _mes(dt) -> str:
     return dia_col(dt).strftime("%Y-%m")
+
+
+def _costo_unitario_productos(db) -> dict[int, float]:
+    """Costo por unidad de VENTA de cada producto (para el COGS teórico).
+    Prioridad: precio_costo oficial > receta (Σ insumos × costo) > costo de
+    compra (reventa). Los granel-sin-receta quedan afuera (costo por gr vs
+    venta por porción no son comparables)."""
+    costo_prom, _ = _costos_insumos(db)
+    recetas: dict[int, list] = defaultdict(list)
+    for pi in db.query(ProductoInsumo).all():
+        recetas[pi.producto_id].append(pi)
+    out: dict[int, float] = {}
+    for p in db.query(Producto).all():
+        if p.precio_costo is not None and float(p.precio_costo) > 0:
+            out[p.id] = float(p.precio_costo)
+            continue
+        ings = recetas.get(p.id)
+        if ings:
+            c, alguno = 0.0, False
+            for pi in ings:
+                ci = costo_prom.get(pi.insumo_id)
+                if ci is not None:
+                    c += float(pi.cantidad) * ci
+                    alguno = True
+            if alguno:
+                out[p.id] = c
+            continue
+        um = (p.unidad_medida or "").lower()
+        if um not in ("gr", "g", "gramos", "ml") and p.id in costo_prom:
+            out[p.id] = costo_prom[p.id]
+    return out
 
 
 def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None) -> dict:
@@ -74,6 +105,32 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     if tienda_id is not None:
         q_gastos = q_gastos.filter(CajaTurno.tienda_id == tienda_id)
     gastos_rows = q_gastos.all()
+
+    # ── COGS teórico: lo VENDIDO × costo de receta (base de consumo, no de
+    # recepción). Da el margen bruto real del período sin la distorsión de los
+    # días en que se stockea fuerte. Se acompaña de pct_venta_costeada para no
+    # leer el número como exacto si hay productos sin costo.
+    costo_unit = _costo_unitario_productos(db)
+    q_items = (
+        db.query(TicketItem.producto_id,
+                 func.coalesce(func.sum(TicketItem.cantidad), 0),
+                 func.coalesce(func.sum(TicketItem.subtotal), 0.0))
+        .join(Ticket, Ticket.id == TicketItem.ticket_id)
+        .filter(Ticket.estado.notin_(ESTADOS_ANULADOS),
+                Ticket.fecha >= d_utc, Ticket.fecha <= h_utc)
+        .group_by(TicketItem.producto_id)
+    )
+    if tienda_id is not None:
+        q_items = q_items.filter(Ticket.tienda_id == tienda_id)
+    cogs_teorico = 0.0
+    venta_costeada = 0.0
+    venta_items = 0.0
+    for pid, cant, subtotal in q_items.all():
+        venta_items += float(subtotal or 0)
+        c = costo_unit.get(pid)
+        if c is not None:
+            cogs_teorico += float(cant or 0) * c
+            venta_costeada += float(subtotal or 0)
 
     # ── Agregaciones ──────────────────────────────────────────────────────────
     tot_ventas = round(sum(float(r[1] or 0) for r in ventas_rows), 2)
@@ -119,6 +176,12 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             "pct_margen_neto": round(margen_neto / tot_ventas * 100, 1) if tot_ventas > 0 else None,
             "n_tickets": len(ventas_rows),
             "n_facturas": len(compras_rows),
+            # Base de CONSUMO (complementa a compras, que es base de recepción):
+            "cogs_teorico": round(cogs_teorico, 2),
+            "margen_bruto_real": round(tot_ventas - cogs_teorico, 2),
+            "pct_margen_bruto_real": round((tot_ventas - cogs_teorico) / tot_ventas * 100, 1) if tot_ventas > 0 else None,
+            "brecha_compras": round(tot_compras - cogs_teorico, 2),
+            "pct_venta_costeada": round(venta_costeada / venta_items * 100, 1) if venta_items > 0 else None,
         },
         "por_mes": [
             {"mes": mes, **_cerrar(vals)}
@@ -149,22 +212,29 @@ def _costos_insumos(db) -> tuple[dict, dict]:
       1) Producto.precio_costo (costo OFICIAL fijado a mano) — si existe, MANDA.
       2) promedio ponderado de FacturaCompraItem (lo llena el escaneo / backfill).
     Devuelve (costo por producto, último costo de factura conocido)."""
+    # fecha_recibido puede ser NULL (columna agregada por ALTER) → caer a
+    # fecha_registro, igual que get_rentabilidad, para no perder esas filas al
+    # buscar el "último precio".
+    fc_fecha = func.coalesce(FacturaCompra.fecha_recibido, FacturaCompra.fecha_registro)
     rows = (
         db.query(FacturaCompraItem.producto_id, FacturaCompraItem.cantidad,
-                 FacturaCompraItem.precio_unitario, FacturaCompra.fecha_recibido)
+                 FacturaCompraItem.precio_unitario, fc_fecha, FacturaCompraItem.id)
         .join(FacturaCompra, FacturaCompra.id == FacturaCompraItem.factura_id)
         .filter(FacturaCompraItem.precio_unitario.isnot(None),
                 FacturaCompraItem.precio_unitario > 0,
                 FacturaCompraItem.cantidad > 0)
         .all()
     )
-    acum: dict[int, dict] = defaultdict(lambda: {"plata": 0.0, "cant": 0.0, "ultimo": None, "ultima_fecha": None})
-    for pid, cant, precio, fecha in rows:
+    acum: dict[int, dict] = defaultdict(lambda: {"plata": 0.0, "cant": 0.0, "ultimo": None, "ultima_clave": None})
+    for pid, cant, precio, fecha, item_id in rows:
         a = acum[pid]
         a["plata"] += float(cant) * float(precio)
         a["cant"] += float(cant)
-        if a["ultima_fecha"] is None or (fecha and fecha > a["ultima_fecha"]):
-            a["ultima_fecha"], a["ultimo"] = fecha, float(precio)
+        # Último precio = factura más reciente; desempate ESTABLE por id de ítem
+        # (dos facturas del mismo día no dependen del orden arbitrario del SELECT).
+        clave = (fecha or datetime.min, item_id or 0)
+        if a["ultima_clave"] is None or clave > a["ultima_clave"]:
+            a["ultima_clave"], a["ultimo"] = clave, float(precio)
     costo = {pid: a["plata"] / a["cant"] for pid, a in acum.items() if a["cant"] > 0}
     ultimo = {pid: a["ultimo"] for pid, a in acum.items() if a["ultimo"] is not None}
     # El costo oficial a mano pisa el promedio de facturas (lecturas con ruido).
@@ -179,7 +249,7 @@ def get_rentabilidad_productos(db) -> dict:
     - Producto con receta (ProductoInsumo): costo = Σ cantidad_insumo × costo_insumo.
     - Producto sin receta (reventa): costo = su propio costo de compra.
     Los costos salen de las facturas escaneadas; lo que falte se reporta."""
-    costo_prom, _costo_ult = _costos_insumos(db)
+    costo_prom, costo_ult = _costos_insumos(db)
     productos = db.query(Producto).all()
     por_id = {p.id: p for p in productos}
 
@@ -298,13 +368,181 @@ def get_rentabilidad_productos(db) -> dict:
         })
 
     out.sort(key=lambda x: -x["venta_30d"])
+
+    # ── Alertas de costo: el ÚLTIMO precio de factura de un insumo supera en
+    # >10% al costo con el que hoy se calculan los márgenes (promedio u oficial).
+    # Es la señal temprana de "este insumo está subiendo" — palanca central de
+    # la estrategia de ganar por costo. Se dimensiona por la venta afectada.
+    usa_insumo: dict[int, set] = defaultdict(set)
+    for prod_id, ings in recetas.items():
+        for pi in ings:
+            usa_insumo[pi.insumo_id].add(prod_id)
+    alertas_costo = []
+    for iid, ultimo in costo_ult.items():
+        usado = costo_prom.get(iid)
+        if not usado or usado <= 0 or ultimo <= usado * 1.10:
+            continue
+        afectados = set(usa_insumo.get(iid, set()))
+        ins = por_id.get(iid)
+        if ins is not None and float(ins.precio_venta or 0) > 0:
+            afectados.add(iid)  # el insumo también se vende directo (reventa)
+        if not afectados:
+            continue
+        venta_afectada = sum(ventas_30d.get(pid, {}).get("plata", 0.0) for pid in afectados)
+        alertas_costo.append({
+            "insumo_id": iid,
+            "nombre": ins.nombre if ins else f"insumo {iid}",
+            "unidad_medida": ins.unidad_medida if ins else None,
+            "costo_usado": round(usado, 2),
+            "costo_ultimo": round(ultimo, 2),
+            "pct_suba": round((ultimo / usado - 1) * 100, 1),
+            "productos_afectados": sorted(
+                (por_id[pid].nombre for pid in afectados if pid in por_id))[:6],
+            "venta_30d_afectada": round(venta_afectada, 2),
+        })
+    alertas_costo.sort(key=lambda a: -a["venta_30d_afectada"])
+
     from app.services.factura_ocr import facturas_pendientes_de_costos
     return {
         "productos": out,
+        "alertas_costo": alertas_costo[:10],
         "facturas_pendientes_de_costos": facturas_pendientes_de_costos(db),
         "nota": (
             "Costo = insumos de la receta × costo promedio de compra (de las facturas "
             "leídas). Si a un producto le faltan costos de insumos, el margen que se "
             "muestra es PARCIAL (mayor al real) hasta que se lean más facturas."
         ),
+    }
+
+
+# ─── Pulso: cómo vamos + comportamiento de compra ────────────────────────────
+
+def get_pulso(db) -> dict:
+    """El vistazo de 10 segundos + el comportamiento real de compra:
+      - mes en curso vs mes anterior EN LA MISMA VENTANA de días (día 1 → hoy),
+        para que la comparación a mitad de mes sea justa;
+      - ventas diarias del mes (sparkline);
+      - attach real y pares por CO-OCURRENCIA de tickets (últimos 30 días);
+      - ventas por hora Colombia (daypart) para ubicar pico y valle;
+      - top movers: productos subiendo/bajando vs los 30 días anteriores.
+    Ventana fija y ambas sedes: es el pulso global del negocio."""
+    hoy = hoy_col()
+    ini_act = hoy.replace(day=1)
+    fin_ant_mes = ini_act - timedelta(days=1)
+    ini_ant = fin_ant_mes.replace(day=1)
+    fin_ant = ini_ant.replace(day=min(hoy.day, fin_ant_mes.day))
+
+    def _ventana(desde: date, hasta: date) -> tuple[dict, list]:
+        d, h = rango_col_utc(desde, hasta)
+        rows = (db.query(Ticket.fecha, Ticket.total)
+                .filter(Ticket.estado.notin_(ESTADOS_ANULADOS),
+                        Ticket.fecha >= d, Ticket.fecha <= h).all())
+        ventas = sum(float(r[1] or 0) for r in rows)
+        n = len(rows)
+        return ({"ventas": round(ventas, 2), "tickets": n,
+                 "ticket_promedio": round(ventas / n, 0) if n else None}, rows)
+
+    actual, rows_act = _ventana(ini_act, hoy)
+    anterior, _ = _ventana(ini_ant, fin_ant)
+
+    por_dia: dict = defaultdict(float)
+    for f, t in rows_act:
+        por_dia[dia_col(f)] += float(t or 0)
+    ventas_diarias = [{"dia": d.isoformat(), "ventas": round(v, 2)}
+                      for d, v in sorted(por_dia.items())]
+
+    # ── Comportamiento (30 días): attach y pares reales ──────────────────────
+    d30, h30 = rango_col_utc(hoy - timedelta(days=29), hoy)
+    info_prod = {p.id: (p.nombre, getattr(p.categoria, "value", None) or str(p.categoria or ""))
+                 for p in db.query(Producto).all()}
+    items = (db.query(TicketItem.ticket_id, TicketItem.producto_id)
+             .join(Ticket, Ticket.id == TicketItem.ticket_id)
+             .filter(Ticket.estado.notin_(ESTADOS_ANULADOS),
+                     Ticket.fecha >= d30, Ticket.fecha <= h30).all())
+    por_ticket: dict = defaultdict(set)
+    for tid, pid in items:
+        por_ticket[tid].add(pid)
+    con_bebida = con_beb_pasteleria = con_beb_addon = 0
+    pares: Counter = Counter()
+    for pids in por_ticket.values():
+        cats = {info_prod.get(p, ("", ""))[1] for p in pids}
+        if "bebida" in cats:
+            con_bebida += 1
+            if "pasteleria" in cats:
+                con_beb_pasteleria += 1
+            if "porciones" in cats:
+                con_beb_addon += 1
+        lp = sorted(pids)
+        for i in range(len(lp)):
+            for j in range(i + 1, len(lp)):
+                pares[(lp[i], lp[j])] += 1
+    top_pares = []
+    for (a, b), c in pares.most_common(40):
+        if c < 3:
+            break
+        na, ca = info_prod.get(a, (f"#{a}", ""))
+        nb, cb = info_prod.get(b, (f"#{b}", ""))
+        top_pares.append({"a": na, "a_id": a, "a_cat": ca,
+                          "b": nb, "b_id": b, "b_cat": cb, "veces": c})
+        if len(top_pares) >= 12:
+            break
+    attach = {
+        "tickets_con_bebida": con_bebida,
+        "pct_bebida_con_pasteleria": round(con_beb_pasteleria / con_bebida * 100, 1) if con_bebida else None,
+        "pct_bebida_con_addon": round(con_beb_addon / con_bebida * 100, 1) if con_bebida else None,
+    }
+
+    # ── Daypart: por hora Colombia (30 días) ─────────────────────────────────
+    rows30 = (db.query(Ticket.fecha, Ticket.total)
+              .filter(Ticket.estado.notin_(ESTADOS_ANULADOS),
+                      Ticket.fecha >= d30, Ticket.fecha <= h30).all())
+    horas: dict = defaultdict(lambda: {"tickets": 0, "ventas": 0.0})
+    for f, t in rows30:
+        e = horas[hora_col(f)]
+        e["tickets"] += 1
+        e["ventas"] += float(t or 0)
+    daypart = [{"hora": h, "tickets": v["tickets"], "ventas": round(v["ventas"], 2)}
+               for h, v in sorted(horas.items())]
+
+    # ── Top movers: 30 días vs los 30 anteriores ─────────────────────────────
+    def _ventas_prod(desde: date, hasta: date) -> dict:
+        d, h = rango_col_utc(desde, hasta)
+        rows = (db.query(TicketItem.producto_id,
+                         func.coalesce(func.sum(TicketItem.cantidad), 0),
+                         func.coalesce(func.sum(TicketItem.subtotal), 0.0))
+                .join(Ticket, Ticket.id == TicketItem.ticket_id)
+                .filter(Ticket.estado.notin_(ESTADOS_ANULADOS),
+                        Ticket.fecha >= d, Ticket.fecha <= h)
+                .group_by(TicketItem.producto_id).all())
+        return {pid: (int(u or 0), float(v or 0)) for pid, u, v in rows}
+
+    act30 = _ventas_prod(hoy - timedelta(days=29), hoy)
+    ant30 = _ventas_prod(hoy - timedelta(days=59), hoy - timedelta(days=30))
+    movers = []
+    for pid in set(act30) | set(ant30):
+        ua, va = act30.get(pid, (0, 0.0))
+        ub, vb = ant30.get(pid, (0, 0.0))
+        dv = va - vb
+        if abs(dv) < 30000:  # ruido: cambios menores a $30k/mes no son señal
+            continue
+        movers.append({"producto_id": pid,
+                       "nombre": info_prod.get(pid, (f"#{pid}", ""))[0],
+                       "unidades": ua, "unidades_prev": ub,
+                       "venta": round(va, 2), "venta_prev": round(vb, 2),
+                       "delta_venta": round(dv, 2)})
+    subiendo = sorted((m for m in movers if m["delta_venta"] > 0),
+                      key=lambda m: -m["delta_venta"])[:5]
+    bajando = sorted((m for m in movers if m["delta_venta"] < 0),
+                     key=lambda m: m["delta_venta"])[:5]
+
+    return {
+        "mes_actual": {**actual, "desde": ini_act.isoformat(), "hasta": hoy.isoformat()},
+        "mes_anterior": {**anterior, "desde": ini_ant.isoformat(), "hasta": fin_ant.isoformat()},
+        "ventas_diarias": ventas_diarias,
+        "attach": attach,
+        "top_pares": top_pares,
+        "daypart": daypart,
+        "top_movers": {"subiendo": subiendo, "bajando": bajando},
+        "nota": ("Comparación mes en curso vs mes anterior en la MISMA ventana de días. "
+                 "Attach, pares, daypart y movers usan los últimos 30 días, ambas sedes."),
     }

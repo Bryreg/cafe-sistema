@@ -51,6 +51,17 @@ def rentabilidad_por_producto(
     return svc.get_rentabilidad_productos(db)
 
 
+@router.get("/pulso")
+def pulso(
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """El vistazo de 10 segundos: mes en curso vs anterior (misma ventana de
+    días), ventas diarias, attach real por co-ocurrencia de tickets, ventas
+    por hora (daypart) y top movers vs los 30 días anteriores."""
+    return svc.get_pulso(db)
+
+
 @router.post("/backfill-costos")
 async def backfill_costos(
     limite: int = Query(2, ge=1, le=5),

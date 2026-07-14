@@ -3,7 +3,7 @@ import api from '../api/client'
 import {
   TrendingUp, TrendingDown, ShoppingCart, Wallet, Receipt, Info,
   Coffee, ScanLine, Loader2, Sparkles, Award, AlertTriangle, ArrowUpRight,
-  Layers,
+  Layers, Gift, Tag,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -272,6 +272,41 @@ export default function Rentabilidad() {
   const oportunidad = pricingOps[0]
   const catEstrella = catRollup[0]
 
+  // ── Analizador de combos y promos (usa el costo COMPLETO con desechables) ──────
+  const costoFull = (p: ProdMargen) => p.costo_con_desechables ?? p.costo
+  const allProds = prodData?.productos ?? []
+  // Anclas: bebidas de más tráfico (traen a la gente), con costo conocido.
+  const anclas = prodsSold
+    .filter(p => p.categoria === 'bebida' && costoFull(p) != null && p.precio_venta > 0)
+    .sort((a, b) => b.unidades_30d - a.unidades_30d)
+    .slice(0, 3)
+  // Attach para combo: pastelería de buen margen (café + algo para comer).
+  const comboAttach = allProds
+    .filter(p => p.categoria === 'pasteleria' && costoFull(p) != null
+      && (p.pct_margen ?? 0) >= 60 && p.precio_venta > 0)
+    .sort((a, b) => (b.pct_margen ?? 0) - (a.pct_margen ?? 0))
+    .slice(0, 3)
+  type Combo = { id: string; anc: ProdMargen; at: ProdMargen; suelto: number; combo: number; ahorro: number; margen: number }
+  const combos: Combo[] = []
+  for (const anc of anclas) {
+    for (const at of comboAttach) {
+      const suelto = anc.precio_venta + at.precio_venta
+      const combo = Math.round((suelto * 0.9) / 100) * 100  // gancho -10%, redondeado a $100
+      const costo = (costoFull(anc) ?? 0) + (costoFull(at) ?? 0)
+      const margen = combo > 0 ? Math.round((1 - costo / combo) * 100) : 0
+      if (margen >= 55) combos.push({ id: `${anc.producto_id}-${at.producto_id}`, anc, at, suelto, combo, ahorro: suelto - combo, margen })
+    }
+  }
+  combos.sort((a, b) => (b.anc.unidades_30d - a.anc.unidades_30d) || (b.margen - a.margen))
+  const combosTop = combos.slice(0, 5)
+  // Promos: add-ons (porciones/toppings) de alto margen que casi no se venden —
+  // plata pura sin explotar. Se ordenan por MENOR volumen (más dormidos primero).
+  const promoAddons = allProds
+    .filter(p => p.categoria === 'porciones' && (p.pct_margen ?? 0) >= 75
+      && p.margen != null && p.precio_venta > 0)
+    .sort((a, b) => (a.unidades_30d - b.unidades_30d) || ((b.pct_margen ?? 0) - (a.pct_margen ?? 0)))
+    .slice(0, 6)
+
   return (
     <div className="space-y-4">
       {/* Header + filtros */}
@@ -443,6 +478,60 @@ export default function Rentabilidad() {
             <InsightCard Icon={AlertTriangle} tint="#9f1239" bg="#fef2f2" title="Peso de los desechables">
               Para llevar, los desechables te comen <b>~{dropPromedio} puntos</b> de margen. En el punto (cristalería) ganás más.
             </InsightCard>
+          )}
+        </div>
+      )}
+
+      {/* ── Analizador de combos y promos ── */}
+      {prodData && (combosTop.length > 0 || promoAddons.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {combosTop.length > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+              <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
+                <Gift size={15} className="text-forest" /> Combos para subir el ticket
+                <span className="text-xs font-normal text-gray-400">· gancho −10%</span>
+              </p>
+              <div>
+                {combosTop.map(c => (
+                  <div key={c.id} className="px-4 py-2 border-b border-gray-50 last:border-0">
+                    <p className="text-sm font-semibold text-gray-700">
+                      {c.anc.nombre} <span className="text-gray-300">+</span> {c.at.nombre}
+                    </p>
+                    <div className="flex items-center gap-2 text-xs mt-0.5">
+                      <span className="text-gray-400 line-through font-mono">{fmt(c.suelto)}</span>
+                      <span className="text-sm font-mono font-bold text-forest">{fmt(c.combo)}</span>
+                      <span className="text-orange-500">(−{fmt(c.ahorro)})</span>
+                      <span className="ml-auto font-mono font-bold text-green-700">{c.margen}% margen</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="px-4 py-2 text-[11px] text-gray-400 border-t border-gray-100">
+                Ancla (lo que más vende) + algo rico de buen margen. El combo le da un gancho al
+                cliente y te sube el ticket promedio sin regalar margen.
+              </p>
+            </div>
+          )}
+          {promoAddons.length > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+              <p className="px-4 py-3 text-sm font-bold text-gray-700 border-b border-gray-100 flex items-center gap-2">
+                <Tag size={15} className="text-forest" /> Promos: empujá estos add-ons
+              </p>
+              <p className="px-4 pt-2 text-[11px] text-gray-500">
+                Alto margen y casi no se venden — plata pura sin explotar. Un "agregá por $X" los despierta.
+              </p>
+              <div className="py-1">
+                {promoAddons.map(p => (
+                  <div key={p.producto_id} className="flex items-center gap-3 px-4 py-1.5">
+                    <span className="flex-1 text-sm font-semibold text-gray-700 truncate">{p.nombre}</span>
+                    <span className="text-xs text-gray-400 shrink-0">
+                      {p.unidades_30d > 0 ? `${p.unidades_30d}/mes` : 'no vende'}
+                    </span>
+                    <span className="w-14 text-right font-mono font-bold text-green-700 shrink-0">{p.pct_margen}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}

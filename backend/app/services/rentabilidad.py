@@ -243,6 +243,14 @@ def get_rentabilidad_productos(db) -> dict:
                 if costo is None:
                     faltantes.append(p.nombre)
 
+        # Costo OFICIAL del producto (Producto.precio_costo, fijado a mano) MANDA sobre
+        # la receta y el promedio de facturas. Sirve para productos COMPRADOS hechos que
+        # están mal cargados como receta (ej. omelettes con una receta errónea de "1
+        # almojábana"): así el margen sale real sin tener que tocar la receta del POS.
+        if p.precio_costo is not None and float(p.precio_costo) > 0:
+            costo = float(p.precio_costo)
+            faltantes = []
+
         # Desechables: capa de costo aparte (vaso/tapa/servilleta/azúcar…) que NO
         # descuenta inventario. Se suma al costo de receta para el "costo completo"
         # del producto para llevar. Solo aplica a lo que tenga desechables cargados.

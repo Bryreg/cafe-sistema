@@ -280,12 +280,14 @@ export default function Rentabilidad() {
     .filter(p => p.categoria === 'bebida' && costoFull(p) != null && p.precio_venta > 0)
     .sort((a, b) => b.unidades_30d - a.unidades_30d)
     .slice(0, 3)
-  // Attach para combo: pastelería de buen margen (café + algo para comer).
+  // Attach para combo: pastelería MÁS PEDIDA (popular) y todavía rentable. La idea
+  // es juntar dos productos apetecidos para empujar el número de tickets, no solo
+  // el margen — por eso el orden es por VOLUMEN de ventas, con un piso de margen.
   const comboAttach = allProds
-    .filter(p => p.categoria === 'pasteleria' && costoFull(p) != null
-      && (p.pct_margen ?? 0) >= 60 && p.precio_venta > 0)
-    .sort((a, b) => (b.pct_margen ?? 0) - (a.pct_margen ?? 0))
-    .slice(0, 3)
+    .filter(p => p.categoria === 'pasteleria' && costoFull(p) != null && p.precio_venta > 0
+      && (p.pct_margen ?? 0) >= 45 && p.unidades_30d > 0)
+    .sort((a, b) => b.unidades_30d - a.unidades_30d)
+    .slice(0, 4)
   type Combo = { id: string; anc: ProdMargen; at: ProdMargen; suelto: number; combo: number; ahorro: number; margen: number }
   const combos: Combo[] = []
   for (const anc of anclas) {
@@ -294,10 +296,14 @@ export default function Rentabilidad() {
       const combo = Math.round((suelto * 0.9) / 100) * 100  // gancho -10%, redondeado a $100
       const costo = (costoFull(anc) ?? 0) + (costoFull(at) ?? 0)
       const margen = combo > 0 ? Math.round((1 - costo / combo) * 100) : 0
-      if (margen >= 55) combos.push({ id: `${anc.producto_id}-${at.producto_id}`, anc, at, suelto, combo, ahorro: suelto - combo, margen })
+      if (margen >= 50) combos.push({ id: `${anc.producto_id}-${at.producto_id}`, anc, at, suelto, combo, ahorro: suelto - combo, margen })
     }
   }
-  combos.sort((a, b) => (b.anc.unidades_30d - a.anc.unidades_30d) || (b.margen - a.margen))
+  // Prioriza combos donde AMBAS mitades son populares (el min de las dos ventas): un
+  // combo es tan apetecido como su mitad menos pedida → así se empuja el nº de tickets.
+  combos.sort((a, b) =>
+    (Math.min(b.anc.unidades_30d, b.at.unidades_30d) - Math.min(a.anc.unidades_30d, a.at.unidades_30d))
+    || (b.margen - a.margen))
   const combosTop = combos.slice(0, 5)
   // Promos: add-ons (porciones/toppings) de alto margen que casi no se venden —
   // plata pura sin explotar. Se ordenan por MENOR volumen (más dormidos primero).
@@ -497,6 +503,9 @@ export default function Rentabilidad() {
                     <p className="text-sm font-semibold text-gray-700">
                       {c.anc.nombre} <span className="text-gray-300">+</span> {c.at.nombre}
                     </p>
+                    <p className="text-[11px] text-gray-400">
+                      {c.anc.unidades_30d} + {c.at.unidades_30d} vendidos/mes
+                    </p>
                     <div className="flex items-center gap-2 text-xs mt-0.5">
                       <span className="text-gray-400 line-through font-mono">{fmt(c.suelto)}</span>
                       <span className="text-sm font-mono font-bold text-forest">{fmt(c.combo)}</span>
@@ -507,8 +516,8 @@ export default function Rentabilidad() {
                 ))}
               </div>
               <p className="px-4 py-2 text-[11px] text-gray-400 border-t border-gray-100">
-                Ancla (lo que más vende) + algo rico de buen margen. El combo le da un gancho al
-                cliente y te sube el ticket promedio sin regalar margen.
+                Junta dos productos APETECIDOS (los más pedidos) para empujar el nº de tickets.
+                El gancho −10% atrae al cliente y el combo mantiene buen margen.
               </p>
             </div>
           )}

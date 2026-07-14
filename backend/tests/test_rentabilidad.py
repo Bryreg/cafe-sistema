@@ -337,5 +337,38 @@ class RentabilidadTest(unittest.TestCase):
         self.assertAlmostEqual(exp_r["margen_con_desechables"], exp_r["margen"])
 
 
+    def test_precio_costo_oficial_manda_sobre_receta(self):
+        # Producto COMPRADO hecho pero mal cargado como receta (ej. omelette con
+        # receta errónea "1 almojábana"): el costo oficial debe pisar la receta.
+        almo = Producto(nombre="Almojábana", categoria=CategoriaProductoEnum.insumo,
+                        unidad_medida="und", precio_venta=0, precio_costo=1200)
+        omelette = Producto(nombre="Omelette JyQ", categoria=CategoriaProductoEnum.pasteleria,
+                            unidad_medida="unidad", precio_venta=16900)
+        self.db.add_all([almo, omelette])
+        self.db.flush()
+        # receta equivocada: 1 almojábana ($1.200) → margen inflado si no se corrige.
+        self.db.add(ProductoInsumo(producto_id=omelette.id, insumo_id=almo.id, cantidad=1))
+        # una venta para que aparezca en el ranking.
+        tk = Ticket(tienda_id=self.t1.id, caja_turno_id=self.turno1.id, usuario_id=self.u.id,
+                    fecha=self.ahora, total=16900, estado="completado", metodo_pago="efectivo")
+        self.db.add(tk); self.db.flush()
+        self.db.add(TicketItem(ticket_id=tk.id, producto_id=omelette.id,
+                               nombre_producto="Omelette JyQ", cantidad=1,
+                               precio_unitario=16900, subtotal=16900))
+        self.db.commit()
+
+        # Sin costo oficial: usa la receta (1 almojábana = $1.200) → margen inflado 92.9%.
+        por = {p["nombre"]: p for p in get_rentabilidad_productos(self.db)["productos"]}
+        self.assertAlmostEqual(por["Omelette JyQ"]["costo"], 1200)
+
+        # Con costo oficial $7.445 (leído de factura del proveedor): manda sobre la receta.
+        omelette.precio_costo = 7445
+        self.db.commit()
+        por = {p["nombre"]: p for p in get_rentabilidad_productos(self.db)["productos"]}
+        self.assertAlmostEqual(por["Omelette JyQ"]["costo"], 7445)
+        self.assertTrue(por["Omelette JyQ"]["costo_completo"])
+        self.assertAlmostEqual(por["Omelette JyQ"]["margen"], 16900 - 7445)
+
+
 if __name__ == "__main__":
     unittest.main()

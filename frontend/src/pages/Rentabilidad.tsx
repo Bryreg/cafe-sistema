@@ -241,17 +241,22 @@ export default function Rentabilidad() {
   const topUtil = [...prodsSold].sort((a, b) => prodUtil(b) - prodUtil(a)).slice(0, 10)
   const maxTopUtil = Math.max(1, ...topUtil.map(prodUtil))
 
-  // Oportunidades de precio: costo completo conocido, margen < 60%, con volumen real.
-  // Sugerido = precio que llega a 68% de margen, redondeado a $100.
-  const TARGET_MARGEN = 0.68
+  // Oportunidades de precio: SOLO productos preparados (no reventa) y SOLO ajustes
+  // realistas (suba ≤ 20%). Una REVENTA a 31% (ej. la libra de café que se compra a
+  // $34k y se revende a $50k) NO es "subprecio": es el margen normal de revender un
+  // commodity — no se puede triplicar el precio. Por eso se excluye la reventa y se
+  // acotan las subas a algo creíble; lo estructuralmente bajo va a combos/promos, no acá.
+  const TARGET_MARGEN = 0.62
   const pricingOps = prodsSold
-    .filter(p => p.costo_completo && p.pct_margen != null && p.pct_margen < 60 && p.costo != null)
+    .filter(p => p.tipo !== 'reventa' && p.costo_completo && p.pct_margen != null
+      && p.pct_margen < 58 && p.costo != null)
     .map(p => {
       const sugerido = Math.round((p.costo! / (1 - TARGET_MARGEN)) / 100) * 100
+      const suba = p.precio_venta > 0 ? (sugerido - p.precio_venta) / p.precio_venta : 0
       const ganancia = Math.max(0, (sugerido - p.precio_venta) * p.unidades_30d)
-      return { p, sugerido, ganancia }
+      return { p, sugerido, ganancia, suba }
     })
-    .filter(x => x.ganancia > 0 && x.sugerido > x.p.precio_venta)
+    .filter(x => x.suba > 0 && x.suba <= 0.20)  // solo tweaks finos y realistas
     .sort((a, b) => b.ganancia - a.ganancia)
     .slice(0, 6)
 
@@ -507,7 +512,9 @@ export default function Rentabilidad() {
             </table>
           </div>
           <p className="px-4 py-2 text-[11px] text-gray-400 border-t border-gray-100">
-            Sugerido = precio para llegar a ~68% de margen (redondeado a $100). Estimación sobre ventas de 30 días; el margen usa el costo completo confirmado.
+            Solo productos PREPARADOS con margen ajustado y subas realistas (≤20%). No incluye reventa:
+            una libra de café al 31% es el margen normal de revender, no subprecio. Lo estructuralmente
+            bajo conviene atacarlo con combos/promos, no subiendo el precio. Estimación sobre 30 días.
           </p>
         </div>
       )}

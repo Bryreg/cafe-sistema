@@ -118,6 +118,7 @@ class TurnoHistorialItem(BaseModel):
     diferencia_apertura: float = 0
     diferencia_cierre: Optional[float] = None
     diferencia_tarjeta: Optional[float] = None
+    tiene_conteo_cierre: bool = False
     baristas: List[str] = []
     imagen_cierre_url: Optional[str] = None
     class Config: from_attributes = True

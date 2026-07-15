@@ -25,6 +25,7 @@ interface TurnoItem {
   diferencia_apertura: number
   diferencia_cierre: number | null
   diferencia_tarjeta: number | null
+  tiene_conteo_cierre?: boolean
   baristas: string[]
   imagen_cierre_url: string | null
 }
@@ -739,9 +740,9 @@ interface ResumenBarista {
   barista: string; entro: string | null; salio: string | null; diferencia_cuadre: number | null
 }
 
-function TurnoTimelineCard({ turno, onFoto, onDetalle, esDiaAnterior, onCerrarPendiente }: {
+function TurnoTimelineCard({ turno, onFoto, onDetalle, esDiaAnterior, onCerrarPendiente, onReabrirCierre }: {
   turno: TurnoItem; onFoto: (url: string) => void; onDetalle: () => void
-  esDiaAnterior: (iso: string) => boolean; onCerrarPendiente: () => void
+  esDiaAnterior: (iso: string) => boolean; onCerrarPendiente: () => void; onReabrirCierre: () => void
 }) {
   type MovTL = { tipo: string; concepto: string; valor: number; fecha: string | null; imagen_url: string | null }
   const [data, setData] = useState<{ eventos: TimelineEvento[]; resumen_baristas: ResumenBarista[]; movimientos: MovTL[] } | null>(null)
@@ -777,6 +778,12 @@ function TurnoTimelineCard({ turno, onFoto, onDetalle, esDiaAnterior, onCerrarPe
           </p>
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+          {!cerrado && turno.tiene_conteo_cierre && (
+            <span role="button" onClick={onReabrirCierre} title="El conteo de cierre ya se registró y el POS dejó de facturar. Reabrí para vender de nuevo (ej. venta de último momento)."
+              style={{ padding: '3px 10px', borderRadius: 999, fontSize: 10, fontWeight: 800, background: 'oklch(52% 0.16 65)', color: '#fff', cursor: 'pointer' }}>
+              Reabrir cierre
+            </span>
+          )}
           {!cerrado && esDiaAnterior(turno.fecha_apertura) && (
             <span role="button" onClick={onCerrarPendiente}
               style={{ padding: '3px 10px', borderRadius: 999, fontSize: 10, fontWeight: 800, background: 'oklch(54% 0.18 25)', color: '#fff', cursor: 'pointer' }}>
@@ -956,6 +963,17 @@ export default function CuadreTurnos() {
       alert(e.response?.data?.detail || 'No se pudo cerrar')
     }
   }
+  // El conteo de cierre se adelantó y llegó una venta de último momento: reabrir
+  // devuelve el turno a facturar (el conteo real se registra de nuevo al cerrar).
+  const reabrirCierre = async (t: TurnoItem) => {
+    if (!window.confirm(`¿Reabrir el cierre del turno del ${fmtDate(t.fecha_apertura)}? El POS vuelve a facturar. La barista debe registrar de nuevo el conteo de cierre al terminar.`)) return
+    try {
+      await api.post(`/caja/${t.id}/reabrir-cierre`)
+      api.get(`/caja/historial/${histTiendaId}`).then(r => setTurnos(r.data)).catch(() => null)
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'No se pudo reabrir el cierre')
+    }
+  }
 
   // Filtro por estado + rango de fechas (client-side sobre TODOS los turnos que
   // devuelve /caja/historial). El mismo rango alimenta el panel de desempeño.
@@ -1048,7 +1066,8 @@ export default function CuadreTurnos() {
               <TurnoTimelineCard key={t.id} turno={t} onFoto={setFotoUrl}
                 onDetalle={() => setSelected(t)}
                 esDiaAnterior={esDiaAnterior}
-                onCerrarPendiente={() => cerrarPendiente(t)} />
+                onCerrarPendiente={() => cerrarPendiente(t)}
+                onReabrirCierre={() => reabrirCierre(t)} />
             ))}
           </div>
         )}

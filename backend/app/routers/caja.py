@@ -292,6 +292,7 @@ def historial(tienda_id: int, db: Session = Depends(get_db), user: Usuario = Dep
             diferencia_apertura=float(t.diferencia_apertura or 0),
             diferencia_cierre=float(t.diferencia_cierre) if t.diferencia_cierre is not None else None,
             diferencia_tarjeta=float(t.diferencia_tarjeta) if t.diferencia_tarjeta is not None else None,
+            tiene_conteo_cierre=bool(t.tiene_conteo_cierre),
             baristas=baristas_by_turno.get(t.id, []),
             imagen_cierre_url=foto_by_turno.get(t.id),
         ))

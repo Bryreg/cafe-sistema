@@ -93,12 +93,17 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
             status_code=403,
             detail="El turno no está operativo: completá el cuadre de llegada y el conteo de apertura antes de vender.",
         )
-    # El conteo de cierre CONGELA el inventario del turno: vender después lo desfasaría
-    # (el consumo derivado ya se calculó y el stock ya se reconcilió al conteo).
+    # El conteo de cierre pone el turno EN CIERRE y el POS deja de facturar (para
+    # que el conteo registrado refleje el estado final). Si llega una venta de
+    # último momento, NO es un callejón sin salida: un admin reabre el cierre
+    # (Cuadres → "Reabrir cierre") y el POS vuelve a vender; el conteo real se
+    # registra de nuevo al cerrar. El mensaje guía al remedio en vez de frenar en seco.
     if getattr(turno, "tiene_conteo_cierre", False):
         raise HTTPException(
             status_code=403,
-            detail="El conteo de cierre ya fue registrado — el turno está en cierre y no admite más ventas.",
+            detail="El turno ya registró el conteo de cierre. ¿Llegó una venta de último momento? "
+                   "Un administrador puede reabrir el cierre (Cuadres → Reabrir cierre) para volver a "
+                   "facturar; después se registra de nuevo el conteo.",
         )
 
     # Normalizar items: cantidad y descuento por producto (evita líneas duplicadas)

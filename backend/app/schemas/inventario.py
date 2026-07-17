@@ -47,6 +47,7 @@ class PreparacionRequest(BaseModel):
     producto_id: int
     tienda_id: int
     cantidad: float = 1  # tandas preparadas (0.5 = media tanda)
+    idempotency_key: Optional[str] = None  # una por intento: evita el doble-submit
 
 class StockMinimoUpdate(BaseModel):
     stock_minimo: float

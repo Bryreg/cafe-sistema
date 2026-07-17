@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import { FlaskConical, Check, Minus, Plus } from 'lucide-react'
@@ -10,6 +10,18 @@ interface Preparable {
   rendimiento: number | null; stock_actual: number; insumos: Insumo[]
 }
 
+// Llave de idempotencia con fallback: crypto.randomUUID solo existe en contexto
+// seguro y navegadores modernos (una tablet vieja no lo tiene). Nunca lanza.
+function newIdempotencyKey(): string {
+  const c = globalThis.crypto
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  if (c && typeof c.getRandomValues === 'function') {
+    const b = c.getRandomValues(new Uint8Array(16))
+    return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
+  }
+  return `k-${Date.now()}-${Math.random().toString(16).slice(2)}${Math.random().toString(16).slice(2)}`
+}
+
 export default function Preparaciones() {
   const { user } = useAuth()
   const [preparables, setPreparables] = useState<Preparable[]>([])
@@ -18,6 +30,13 @@ export default function Preparaciones() {
   const [enviando, setEnviando] = useState<number | null>(null)
   const [ok, setOk] = useState('')
   const [error, setError] = useState('')
+  // Guardián SÍNCRONO contra el doble-disparo: los refs mutan al instante (a
+  // diferencia de setState, que espera el repintado), así que el segundo click
+  // del doble tap ve el flag ya puesto y no dispara una segunda request.
+  const enviandoRef = useRef<Set<number>>(new Set())
+  // Llave de idempotencia ESTABLE por producto: sobrevive a un reintento tras una
+  // respuesta perdida, así el backend deduplica en vez de re-aplicar el descuento.
+  const keysRef = useRef<Record<number, string>>({})
 
   const cargar = () => {
     if (!user?.tienda_id) return
@@ -28,18 +47,41 @@ export default function Preparaciones() {
   }
   useEffect(cargar, [user?.tienda_id])
 
+  // Cambiar la cantidad = intento distinto → invalida la llave para que la próxima
+  // preparación no sea deduplicada contra la anterior.
+  const ajustarTandas = (pid: number, valor: number) => {
+    setTandas(t => ({ ...t, [pid]: valor }))
+    delete keysRef.current[pid]
+  }
+
   const registrar = async (p: Preparable) => {
-    const n = tandas[p.producto_id] ?? 1
-    setEnviando(p.producto_id); setError(''); setOk('')
+    if (enviandoRef.current.has(p.producto_id)) return  // ya hay un envío en curso
+    enviandoRef.current.add(p.producto_id)
     try {
+      setEnviando(p.producto_id); setError(''); setOk('')
+      // Reusa la llave si ya hay un intento en curso para este producto (reintento
+      // tras respuesta perdida); si no, acuña una nueva. Nunca lanza.
+      const key = keysRef.current[p.producto_id] ?? (keysRef.current[p.producto_id] = newIdempotencyKey())
+      const n = tandas[p.producto_id] ?? 1
       const r = await api.post('/inventario/preparaciones', {
         producto_id: p.producto_id, tienda_id: user?.tienda_id, cantidad: n,
+        idempotency_key: key,
       })
-      setOk(`Listo: ${p.nombre} +${Math.round(r.data.producido)} ${p.unidad_medida}. Ya quedó descontada la materia prima.`)
+      delete keysRef.current[p.producto_id]  // éxito → la próxima usa llave nueva
+      if (r.data?.duplicada) {
+        setOk('Esa preparación ya estaba registrada — no la dupliqué.')
+      } else {
+        setOk(`Listo: ${p.nombre} +${Math.round(r.data.producido)} ${p.unidad_medida}. Ya quedó descontada la materia prima.`)
+      }
       cargar()
     } catch (e: any) {
+      // NO borro la llave: si la barista reintenta el mismo envío, reusa esta llave
+      // y el backend lo deduplica (evita doble descuento por respuesta perdida).
       setError(e.response?.data?.detail || 'No se pudo registrar la preparación')
-    } finally { setEnviando(null) }
+    } finally {
+      enviandoRef.current.delete(p.producto_id)
+      setEnviando(null)
+    }
   }
 
   return (
@@ -99,10 +141,10 @@ export default function Preparaciones() {
 
             <div className="px-4 py-3 border-t border-gray-100 flex items-center gap-3">
               <div className="flex items-center gap-1 rounded-xl border-2 border-gray-200 px-1 py-0.5">
-                <button onClick={() => setTandas(t => ({ ...t, [p.producto_id]: Math.max(0.5, n - 0.5) }))}
+                <button onClick={() => ajustarTandas(p.producto_id, Math.max(0.5, n - 0.5))}
                   className="p-1.5 text-gray-500 hover:text-gray-800" aria-label="Menos"><Minus size={14} /></button>
                 <span className="w-10 text-center text-sm font-bold font-mono">{n}</span>
-                <button onClick={() => setTandas(t => ({ ...t, [p.producto_id]: n + 0.5 }))}
+                <button onClick={() => ajustarTandas(p.producto_id, n + 0.5)}
                   className="p-1.5 text-gray-500 hover:text-gray-800" aria-label="Más"><Plus size={14} /></button>
               </div>
               <span className="text-xs text-gray-400">tanda{n !== 1 ? 's' : ''}</span>

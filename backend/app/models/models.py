@@ -821,6 +821,21 @@ class ProductoDesechable(Base):
     )
 
 
+class IdempotencyKey(Base):
+    """Llave de idempotencia para operaciones que MUEVEN inventario y no pueden
+    aplicarse dos veces (ej. preparaciones). El cliente manda una llave única por
+    intento; si el servidor ya la vio, es un doble-disparo (doble tap, reintento de
+    red, otro dispositivo) y devuelve el resultado previo SIN volver a aplicar el
+    movimiento. La defensa vive en el servidor porque es donde ocurre la escritura:
+    el guardián del front (botón deshabilitado) es cortesía, no garantía."""
+    __tablename__ = "idempotency_keys"
+    id         = Column(Integer, primary_key=True)
+    key        = Column(String(64), unique=True, index=True, nullable=False)
+    scope      = Column(String(40), nullable=True)   # "preparacion", ...
+    resultado  = Column(Text, nullable=True)          # JSON del resultado, para el replay
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class Notificacion(Base):
     """Etapa 7: Notificaciones operativas internas para el admin."""
     __tablename__ = "notificaciones"

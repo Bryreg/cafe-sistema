@@ -25,6 +25,11 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     if "sqlite" in str(engine.url):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        # Ante escrituras concurrentes (SQLite serializa), el perdedor ESPERA hasta
+        # 5s a que el ganador haga commit en vez de fallar con "database is locked".
+        # Así una carrera por la misma idempotency_key cae en el UNIQUE (IntegrityError,
+        # ya manejado) en lugar de un 500.
+        cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 
 # Migraciones inline ANTES de create_all

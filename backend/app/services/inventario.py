@@ -515,11 +515,26 @@ def get_preparables(db: Session, tienda_id: int) -> list:
 
 def registrar_preparacion(db: Session, producto_id: int, tienda_id: int, cantidad: float,
                           usuario_id: int, barista_id: int | None = None,
-                          barista_nombre: str | None = None) -> dict:
+                          barista_nombre: str | None = None,
+                          idempotency_key: str | None = None) -> dict:
     """Registra que se preparó `cantidad` tandas de un producto intermedio:
     descuenta los insumos de su receta y suma el rendimiento al stock del producto.
-    Atómico: todo en una transacción."""
-    from app.models.models import ProductoInsumo
+    Atómico: todo en una transacción. Idempotente: si `idempotency_key` ya se usó,
+    es un doble-disparo (doble tap, reintento de red) → devuelve el resultado previo
+    SIN volver a mover inventario."""
+    import json as _json
+    from app.models.models import ProductoInsumo, IdempotencyKey
+    from sqlalchemy.exc import IntegrityError
+
+    # Replay directo: la llave ya está registrada → no re-aplicamos nada.
+    if idempotency_key:
+        prev = db.query(IdempotencyKey).filter_by(key=idempotency_key).first()
+        if prev is not None:
+            try:
+                return {**_json.loads(prev.resultado or "{}"), "duplicada": True}
+            except Exception:
+                return {"producto_id": producto_id, "duplicada": True}
+
     if cantidad <= 0:
         raise HTTPException(400, "La cantidad de preparaciones debe ser mayor a 0")
     p = db.query(Producto).filter_by(id=producto_id).first()
@@ -532,6 +547,23 @@ def registrar_preparacion(db: Session, producto_id: int, tienda_id: int, cantida
     receta = db.query(ProductoInsumo).filter_by(producto_id=producto_id).all()
     if not receta:
         raise HTTPException(400, "El producto no tiene receta de preparación")
+
+    # Reserva la llave DENTRO de la transacción de los movimientos: el UNIQUE del
+    # índice es la garantía real — una carrera entre dos requests idénticos choca
+    # acá y solo uno pasa. Si después algo falla y se hace rollback, la llave se
+    # libera y el reintento legítimo con la misma llave vuelve a aplicarse.
+    idem_row = None
+    if idempotency_key:
+        idem_row = IdempotencyKey(key=idempotency_key, scope="preparacion")
+        db.add(idem_row)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            prev = db.query(IdempotencyKey).filter_by(key=idempotency_key).first()
+            if prev is not None and prev.resultado:
+                return {**_json.loads(prev.resultado), "duplicada": True}
+            return {"producto_id": producto_id, "duplicada": True}
 
     quien = f" ({barista_nombre})" if barista_nombre else ""
     motivo = f"Preparación: {p.nombre}{quien}"
@@ -555,10 +587,14 @@ def registrar_preparacion(db: Session, producto_id: int, tienda_id: int, cantida
                        "barista": barista_nombre,
                        "insumos": [{"id": r.insumo_id, "cantidad": r.cantidad * cantidad} for r in receta]},
     )
-    db.commit()
     inv = db.query(Inventario).filter_by(producto_id=producto_id, tienda_id=tienda_id).first()
-    return {"producto_id": producto_id, "producido": producido,
-            "stock_actual": inv.stock_actual if inv else producido}
+    resultado = {"producto_id": producto_id, "producido": float(producido),
+                 "stock_actual": float(inv.stock_actual) if inv else float(producido)}
+    # Guardar el resultado en la llave para que el replay devuelva lo mismo.
+    if idem_row is not None:
+        idem_row.resultado = _json.dumps(resultado)
+    db.commit()
+    return resultado
 
 
 def unificar_productos(db: Session, keeper_id: int, archive_ids: list[int],

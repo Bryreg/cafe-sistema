@@ -61,7 +61,8 @@ def registrar_preparacion(data: PreparacionRequest, db: Session = Depends(get_db
     """Barista registra una preparación: descuenta insumos de la receta y suma el rendimiento."""
     ensure_tienda_access(user, data.tienda_id)
     return svc.registrar_preparacion(db, data.producto_id, data.tienda_id, data.cantidad,
-                                     user.id, barista_id=barista[0], barista_nombre=barista[1])
+                                     user.id, barista_id=barista[0], barista_nombre=barista[1],
+                                     idempotency_key=data.idempotency_key)
 
 
 @router.get("/alertas/{tienda_id}")

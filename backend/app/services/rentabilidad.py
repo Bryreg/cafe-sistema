@@ -546,3 +546,90 @@ def get_pulso(db) -> dict:
         "nota": ("Comparación mes en curso vs mes anterior en la MISMA ventana de días. "
                  "Attach, pares, daypart y movers usan los últimos 30 días, ambas sedes."),
     }
+
+
+def get_attach_producto(db, producto_id: int, dias: int = 30) -> dict:
+    """Attach REAL de un producto: en cuántos tickets aparece, con qué se vende
+    junto y en qué proporción sale acompañado de bebida.
+
+    Existe porque el `top_pares` del pulso se queda con las 12 combinaciones más
+    frecuentes de TODA la carta: un par poco frecuente (croissant + americano)
+    queda invisible aunque el sistema sí lo calcule. Para decidir un combo hace
+    falta el número exacto de ESE par, no el ranking general.
+
+    `tickets_multiples` (2+ unidades del mismo producto en un ticket) es clave para
+    combos que venden de a dos: si mucha gente ya se lleva dos, un combo que las
+    empaqueta con descuento canibaliza en vez de sumar.
+    """
+    dias = max(1, min(int(dias or 30), 365))
+    hoy = hoy_col()
+    d_utc, h_utc = rango_col_utc(hoy - timedelta(days=dias - 1), hoy)
+
+    prod = db.query(Producto).filter_by(id=producto_id).first()
+    if not prod:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Producto no encontrado")
+
+    # Los tickets que contienen el producto, como SUBCONSULTA (no como lista de IDs):
+    # un producto muy vendido en una ventana larga da miles de tickets y una lista
+    # enlazada revienta el tope de variables de SQLite.
+    sub = (db.query(TicketItem.ticket_id)
+           .join(Ticket, Ticket.id == TicketItem.ticket_id)
+           .filter(TicketItem.producto_id == producto_id,
+                   Ticket.estado.notin_(ESTADOS_ANULADOS),
+                   Ticket.fecha >= d_utc, Ticket.fecha <= h_utc)
+           .distinct().subquery())
+
+    filas = (db.query(TicketItem.ticket_id, TicketItem.producto_id, TicketItem.cantidad)
+             .filter(TicketItem.ticket_id.in_(db.query(sub.c.ticket_id))).all())
+    por_ticket: dict = defaultdict(lambda: defaultdict(float))
+    for tid, pid, cant in filas:
+        por_ticket[tid][pid] += float(cant or 0)
+
+    if not por_ticket:
+        return {"producto": {"id": prod.id, "nombre": prod.nombre,
+                             "categoria": getattr(prod.categoria, "value", None) or str(prod.categoria or "")},
+                "dias": dias, "tickets": 0, "unidades": 0, "tickets_multiples": 0,
+                "con_bebida": 0, "pct_con_bebida": None, "sin_bebida": 0,
+                "por_categoria": {}, "pares": []}
+
+    info = {p.id: (p.nombre, getattr(p.categoria, "value", None) or str(p.categoria or ""))
+            for p in db.query(Producto).all()}
+
+    unidades = 0.0
+    multiples = 0
+    con_bebida = 0
+    cats: Counter = Counter()
+    pares: Counter = Counter()
+    for pids in por_ticket.values():
+        propia = pids.get(producto_id, 0)
+        unidades += propia
+        if propia >= 2:
+            multiples += 1
+        acompanantes = [p for p in pids if p != producto_id]
+        cats_ticket = {info.get(p, ("", ""))[1] for p in acompanantes}
+        if "bebida" in cats_ticket:
+            con_bebida += 1
+        for c in cats_ticket:
+            if c:
+                cats[c] += 1
+        for p in acompanantes:
+            pares[p] += 1
+
+    n = len(por_ticket)
+    return {
+        "producto": {"id": prod.id, "nombre": prod.nombre,
+                     "categoria": getattr(prod.categoria, "value", None) or str(prod.categoria or "")},
+        "dias": dias,
+        "tickets": n,
+        "unidades": round(unidades, 2),
+        "tickets_multiples": multiples,
+        "con_bebida": con_bebida,
+        "pct_con_bebida": round(con_bebida / n * 100, 1) if n else None,
+        "sin_bebida": n - con_bebida,
+        "por_categoria": {c: v for c, v in cats.most_common()},
+        "pares": [{"producto_id": p, "nombre": info.get(p, (f"#{p}", ""))[0],
+                   "categoria": info.get(p, ("", ""))[1], "veces": v,
+                   "pct": round(v / n * 100, 1)}
+                  for p, v in pares.most_common()],
+    }

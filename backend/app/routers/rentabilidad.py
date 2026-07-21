@@ -62,6 +62,21 @@ def pulso(
     return svc.get_pulso(db)
 
 
+@router.get("/attach/{producto_id}")
+def attach_producto(
+    producto_id: int,
+    dias: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Con qué se vende junto un producto, sin truncar.
+
+    El `top_pares` del pulso solo publica las 12 combinaciones más frecuentes de
+    toda la carta, así que un par poco frecuente queda invisible aunque se calcule.
+    Para decidir o medir un combo hace falta el número exacto de ESE par."""
+    return svc.get_attach_producto(db, producto_id, dias)
+
+
 @router.post("/backfill-costos")
 async def backfill_costos(
     limite: int = Query(2, ge=1, le=5),

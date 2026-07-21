@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { TrendingUp, TrendingDown, Layers } from 'lucide-react'
+import { TrendingUp, TrendingDown, Layers, Link2 } from 'lucide-react'
 import {
   PorProductoData, PulsoData, ProdMargen, Quad,
   buildMatrix, prodUtil, fmt, fmtK,
 } from './helpers'
+import AttachSheet from './AttachSheet'
 
 const QUAD_UI: Record<Quad, { nombre: string; accion: string; dot: string; chipOn: string }> = {
   estrella: { nombre: 'Estrellas', accion: 'Proteger', dot: 'bg-success-500', chipOn: 'bg-success-500 text-white border-success-500' },
@@ -30,6 +31,8 @@ export default function MenuView({ prodData, pulso }: {
   pulso: PulsoData | null
 }) {
   const [quad, setQuad] = useState<Quad>('caballo')
+  // Drill-down de attach: con qué se vende junto ESE producto (dato exacto, sin truncar).
+  const [attachId, setAttachId] = useState<number | null>(null)
   const [cat, setCat] = useState('todas')
   const [sort, setSort] = useState<'utilidad' | 'margen' | 'unidades'>('utilidad')
   const [verTodos, setVerTodos] = useState(false)
@@ -184,7 +187,13 @@ export default function MenuView({ prodData, pulso }: {
           {sorted.slice(0, 60).map(p => (
             <div key={p.producto_id} className="px-4 py-2.5 border-b border-warm-100 last:border-0">
               <div className="flex items-center gap-2">
-                <span className="flex-1 min-w-0 text-sm font-semibold text-warm-700 truncate">{p.nombre}</span>
+                <button onClick={() => setAttachId(p.producto_id)}
+                  aria-label={`Ver con qué se vende junto ${p.nombre}`}
+                  className="flex-1 min-w-0 flex items-center gap-1 text-left text-sm font-semibold text-warm-700 truncate
+                             rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-forest-400">
+                  <span className="truncate">{p.nombre}</span>
+                  <Link2 size={12} className="text-warm-400 shrink-0" />
+                </button>
                 <MargenBadge pct={p.pct_margen} incompleto={!p.costo_completo} />
               </div>
               <div className="flex items-center gap-3 mt-1 text-[11px] text-warm-500 font-mono tabular-nums">
@@ -217,7 +226,13 @@ export default function MenuView({ prodData, pulso }: {
                 return (
                   <tr key={p.producto_id} className="border-b border-warm-100 last:border-0">
                     <td className="px-4 py-2">
-                      <p className="font-semibold text-warm-700">{p.nombre}</p>
+                      <button onClick={() => setAttachId(p.producto_id)}
+                        aria-label={`Ver con qué se vende junto ${p.nombre}`}
+                        className="group inline-flex items-center gap-1 font-semibold text-warm-700 text-left
+                                   rounded hover:text-forest focus:outline-none focus-visible:ring-2 focus-visible:ring-forest-400">
+                        {p.nombre}
+                        <Link2 size={12} className="text-warm-300 group-hover:text-forest shrink-0" />
+                      </button>
                       {!p.costo_completo && p.insumos_sin_costo.length > 0 && (
                         <p className="text-[11px] text-gold-700">falta costo de: {p.insumos_sin_costo.slice(0, 3).join(', ')}</p>
                       )}
@@ -247,9 +262,12 @@ export default function MenuView({ prodData, pulso }: {
         </div>
         <p className="px-4 py-2 text-[11px] text-warm-400 border-t border-warm-100">
           Utilidad 30d = margen × unidades: lo que el producto APORTA al mes. "p/llevar" suma los desechables.
+          Tocá el nombre de un producto para ver con qué se vende junto.
           Ventana: últimos 30 días, ambas sedes.
         </p>
       </div>
+
+      <AttachSheet productoId={attachId} onClose={() => setAttachId(null)} />
     </div>
   )
 }

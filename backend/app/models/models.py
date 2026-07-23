@@ -1037,6 +1037,113 @@ class TicketItem(Base):
     descuento = Column(Numeric(12, 2, asdecimal=False), default=0)       # descuento de esta linea
     ticket = relationship("Ticket", back_populates="items")
     producto = relationship("Producto", foreign_keys=[producto_id])
+    # Solo líneas de combo: la combinación elegida (qué opción de qué grupo).
+    combo_selecciones = relationship("TicketItemComboSeleccion", back_populates="ticket_item",
+                                     cascade="all, delete-orphan")
+
+
+# ---------------------------------------------------------------------------
+# Combos del POS: precio fijo, grupos de opciones y disponibilidad por tienda
+# ---------------------------------------------------------------------------
+
+class Combo(Base):
+    """Combo de precio fijo del POS (ej. bebida + acompañamiento).
+
+    En el ticket el combo entra como una línea NORMAL de ticket_items apuntando
+    a su producto SOMBRA (producto_id): así el conteo de combos vendidos sale de
+    las mismas queries que el resto del historial/analytics sin tocar el esquema
+    de ticket_items (producto_id sigue NOT NULL). El producto sombra tiene
+    precio_venta=0 para que NO aparezca en la grilla del POS (filtro precio>0);
+    el precio que manda es SIEMPRE Combo.precio_venta, fijado en el servidor.
+    """
+    __tablename__ = "combos"
+    id = Column(Integer, primary_key=True)
+    nombre = Column(String(150), nullable=False)
+    precio_venta = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    activo = Column(Boolean, default=True, nullable=False)
+    orden = Column(Integer, default=0, nullable=False)
+    # Producto sombra para la línea del ticket (snapshot nombre/precio como todo item).
+    producto_id = Column(Integer, ForeignKey("productos.id", ondelete="RESTRICT"), nullable=False, unique=True)
+    producto = relationship("Producto")
+    grupos = relationship("ComboGrupo", back_populates="combo",
+                          cascade="all, delete-orphan", order_by="ComboGrupo.orden")
+    tiendas = relationship("ComboTienda", back_populates="combo", cascade="all, delete-orphan")
+
+
+class ComboGrupo(Base):
+    """Grupo de elección dentro de un combo (ej. 'Bebida', 'Acompañamiento').
+    Un grupo con UNA sola opción es fijo: se auto-selecciona (sin elección)."""
+    __tablename__ = "combo_grupos"
+    id = Column(Integer, primary_key=True)
+    combo_id = Column(Integer, ForeignKey("combos.id", ondelete="CASCADE"), nullable=False, index=True)
+    nombre = Column(String(100), nullable=False)
+    orden = Column(Integer, default=0, nullable=False)
+    combo = relationship("Combo", back_populates="grupos")
+    opciones = relationship("ComboOpcion", back_populates="grupo",
+                            cascade="all, delete-orphan", order_by="ComboOpcion.orden")
+
+
+class ComboOpcion(Base):
+    """Opción elegible de un grupo. El nombre es de display (ej. 'Americano
+    Grande'); los productos reales que consume viven en ComboOpcionProducto
+    (una opción puede componerse de VARIOS productos)."""
+    __tablename__ = "combo_opciones"
+    id = Column(Integer, primary_key=True)
+    grupo_id = Column(Integer, ForeignKey("combo_grupos.id", ondelete="CASCADE"), nullable=False, index=True)
+    nombre = Column(String(150), nullable=False)
+    orden = Column(Integer, default=0, nullable=False)
+    grupo = relationship("ComboGrupo", back_populates="opciones")
+    productos = relationship("ComboOpcionProducto", back_populates="opcion",
+                             cascade="all, delete-orphan")
+
+
+class ComboOpcionProducto(Base):
+    """Producto real que consume una opción de combo (con su cantidad).
+    Ej. opción 'Americano Grande' = Americano Medium ×1 + Bebida Agrandada ×1;
+    grupo fijo 'Bebidas' del Combo 03 = Cappuccino Tradicional Medium ×2."""
+    __tablename__ = "combo_opcion_productos"
+    id = Column(Integer, primary_key=True)
+    opcion_id = Column(Integer, ForeignKey("combo_opciones.id", ondelete="CASCADE"), nullable=False, index=True)
+    producto_id = Column(Integer, ForeignKey("productos.id", ondelete="RESTRICT"), nullable=False)
+    cantidad = Column(Integer, default=1, nullable=False)
+    opcion = relationship("ComboOpcion", back_populates="productos")
+    producto = relationship("Producto")
+    __table_args__ = (
+        UniqueConstraint("opcion_id", "producto_id", name="uq_combo_opcion_producto"),
+    )
+
+
+class ComboTienda(Base):
+    """Disponibilidad del combo por tienda (asociativa combo↔tienda)."""
+    __tablename__ = "combo_tiendas"
+    id = Column(Integer, primary_key=True)
+    combo_id = Column(Integer, ForeignKey("combos.id", ondelete="CASCADE"), nullable=False, index=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="RESTRICT"), nullable=False, index=True)
+    combo = relationship("Combo", back_populates="tiendas")
+    tienda = relationship("Tienda")
+    __table_args__ = (
+        UniqueConstraint("combo_id", "tienda_id", name="uq_combo_tienda"),
+    )
+
+
+class TicketItemComboSeleccion(Base):
+    """Combinación elegida en una línea de combo del ticket: qué opción de qué
+    grupo y qué producto real consumió (para reponer inventario al anular).
+    grupo_id/opcion_id son columnas PLANAS (sin FK) + snapshots de nombre, para
+    que reorganizar el catálogo de combos nunca rompa el historial de ventas.
+    cantidad es por UNA unidad de combo (el total = cantidad × TicketItem.cantidad)."""
+    __tablename__ = "ticket_item_combo_selecciones"
+    id = Column(Integer, primary_key=True)
+    ticket_item_id = Column(Integer, ForeignKey("ticket_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    combo_id = Column(Integer, ForeignKey("combos.id", ondelete="RESTRICT"), nullable=False, index=True)
+    grupo_id = Column(Integer, nullable=True)        # plano, sin FK
+    opcion_id = Column(Integer, nullable=True)       # plano, sin FK
+    nombre_grupo = Column(String(100), nullable=False)
+    nombre_opcion = Column(String(150), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id", ondelete="RESTRICT"), nullable=False)
+    cantidad = Column(Integer, default=1, nullable=False)
+    ticket_item = relationship("TicketItem", back_populates="combo_selecciones")
+    producto = relationship("Producto")
 
 
 # ---------------------------------------------------------------------------

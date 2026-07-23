@@ -11,7 +11,7 @@ from app.models.models import (
     Ticket, NotaCredito, NotaCreditoItem, Producto, CajaTurno, Inventario,
     TicketItemComboSeleccion,
 )
-from app.services import inventario as inv_svc, audit
+from app.services import audit
 from app.services import pos as pos_svc
 import logging
 
@@ -68,7 +68,7 @@ def revertir_venta(db: Session, ticket_id: int, usuario_admin_id: int,
             it.id: items_usado.get(it.id, usado_por_producto.get(it.producto_id, True))
             for it in ticket.items
         }
-        consumos_combo: list[tuple[int, float]] = []
+        consumos_reponer: list[tuple[int, float]] = []
         for it in ticket.items:
             usado = usado_por_linea[it.id]
             db.add(NotaCreditoItem(
@@ -81,12 +81,14 @@ def revertir_venta(db: Session, ticket_id: int, usuario_admin_id: int,
             if sels:
                 # Línea de combo NO usada: reponer los consumos reales de sus
                 # componentes (mismo espejo que anular_ticket, más abajo).
-                consumos_combo.extend(
+                consumos_reponer.extend(
                     (s.producto_id, (s.cantidad or 1) * it.cantidad) for s in sels)
                 continue
             prod = productos.get(it.producto_id)
             if prod and prod.controla_stock:
-                # No usado → vuelve al inventario (entrada). Asegurar fila de inventario.
+                # No usado → vuelve al inventario (entrada). Asegurar fila de
+                # inventario: la nota SIEMPRE repone el suelto (revertir_consumos
+                # tolera el 404 y lo omitiría si no existiera la fila).
                 inv = db.query(Inventario).filter(
                     Inventario.producto_id == it.producto_id, Inventario.tienda_id == ticket.tienda_id
                 ).first()
@@ -95,17 +97,15 @@ def revertir_venta(db: Session, ticket_id: int, usuario_admin_id: int,
                                      stock_actual=0.0, stock_minimo=0.0)
                     db.add(inv)
                     db.flush()
-                inv_svc.registrar_movimiento(
-                    db, producto_id=it.producto_id, tienda_id=ticket.tienda_id, tipo="entrada",
-                    cantidad=it.cantidad, motivo=f"Nota crédito ticket #{ticket.id}",
-                    usuario_id=usuario_admin_id, commit=False,
-                )
-        if consumos_combo:
-            # Espejo de anular_ticket: componentes con controla_stock reponen su
-            # stock; componentes con receta reponen insumos; 404 de inventario
-            # se tolera (la venta tampoco descontó nada).
+                consumos_reponer.append((it.producto_id, it.cantidad))
+        if consumos_reponer:
+            # Espejo de anular_ticket: revertir_consumos fusiona por producto —
+            # suelto + componente de combo reponen con UN solo movimiento de
+            # entrada (igual que la venta descontó con uno). Componentes con
+            # controla_stock reponen su stock; con receta reponen insumos; 404
+            # de inventario se tolera (la venta tampoco descontó nada).
             pos_svc.revertir_consumos(
-                db, consumos_combo, ticket.tienda_id, usuario_admin_id,
+                db, consumos_reponer, ticket.tienda_id, usuario_admin_id,
                 motivo=f"Nota crédito ticket #{ticket.id}",
             )
 

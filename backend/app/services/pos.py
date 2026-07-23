@@ -901,7 +901,17 @@ def revertir_consumos(db: Session, consumos: list[tuple[int, float]], tienda_id:
     receta (ProductoInsumo) reponen sus insumos. Sin fila de inventario se omite
     (la venta tampoco descontó nada). No commitea: el caller cierra la transacción.
     Lo usan anular_ticket y la Nota Crédito (componentes de combo no usados).
+
+    Fusiona por producto_id antes de reponer — espejo de la fusión de
+    crear_ticket: producto suelto + componente de combo (o dos combos) del mismo
+    ticket descontaron con UN solo movimiento de salida, así que la reversión
+    repone con UN solo movimiento de entrada con la cantidad sumada.
     """
+    fusionados: dict[int, float] = {}
+    for pid, cant in consumos:
+        fusionados[pid] = fusionados.get(pid, 0.0) + float(cant)
+    consumos = list(fusionados.items())
+
     producto_ids = list({pid for pid, _ in consumos})
     productos = {
         p.id: p

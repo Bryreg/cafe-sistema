@@ -856,6 +856,65 @@ class CombosTestCase(unittest.TestCase):
         self.assertEqual(len(movs), 1)
         self.assertEqual(movs[0].cantidad, 2.0)
 
+    def _ticket_mixto_americano(self):
+        """Ticket con americano suelto + combo cuyo componente es el MISMO
+        americano → la venta descuenta con UN solo movimiento de salida (2.0)."""
+        combo = self.combo_basico()
+        inv_americano = self.crear_inventario(self.americano, stock=10)
+        self.crear_inventario(self.almojabana, stock=10)
+        self.crear_turno_operativo()
+        self.set_current_user(self.barista)
+
+        r = self.post_ticket(
+            [{"combo_id": combo.id, "cantidad": 1,
+              "selecciones": self.seleccion(combo, [(0, 0), (1, 0)])}],  # americano + almojabana
+            items=[{"producto_id": self.americano.id, "cantidad": 1}],
+        )
+        self.assertEqual(r.status_code, 201, r.text)
+        return r, inv_americano
+
+    def _movimientos_entrada_americano(self):
+        return self.db.query(MovimientoInventario).filter(
+            MovimientoInventario.producto_id == self.americano.id,
+            MovimientoInventario.tipo == TipoMovInvEnum.entrada,
+        ).all()
+
+    def test_anulacion_fusiona_movimiento_de_entrada_por_producto(self):
+        # Espejo de W4: la venta fusionó suelto + componente en UN movimiento de
+        # salida — la anulación debe reponer con UN solo movimiento de entrada
+        # con la cantidad sumada, no uno por línea.
+        r, inv_americano = self._ticket_mixto_americano()
+
+        db = self.SessionLocal()
+        try:
+            pos_svc.anular_ticket(db, r.json()["id"], usuario_id=self.admin.id,
+                                  motivo="prueba")
+        finally:
+            db.close()
+
+        self.db.refresh(inv_americano)
+        self.assertEqual(inv_americano.stock_actual, 10.0)
+        movs = self._movimientos_entrada_americano()
+        self.assertEqual(len(movs), 1)
+        self.assertEqual(movs[0].cantidad, 2.0)
+
+    def test_nota_credito_no_usado_fusiona_movimiento_de_entrada(self):
+        # Espejo de W4 para la Nota Crédito: todo marcado NO usado → el suelto y
+        # el componente del combo reponen con UN solo movimiento de entrada.
+        r, inv_americano = self._ticket_mixto_americano()
+
+        rv = self._revertir(r.json()["id"], [
+            {"item_id": it["id"], "producto_usado": False}
+            for it in r.json()["items"]
+        ])
+        self.assertEqual(rv.status_code, 201, rv.text)
+
+        self.db.refresh(inv_americano)
+        self.assertEqual(inv_americano.stock_actual, 10.0)
+        movs = self._movimientos_entrada_americano()
+        self.assertEqual(len(movs), 1)
+        self.assertEqual(movs[0].cantidad, 2.0)
+
     def test_combo_sin_grupos_no_es_vendible(self):
         # W3: un combo sin grupos configurados no puede venderse a precio
         # completo sin componentes — error claro.

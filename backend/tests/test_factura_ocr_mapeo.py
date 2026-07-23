@@ -12,9 +12,10 @@ from fastapi import HTTPException
 
 from app.services import factura_ocr
 from app.services.factura_ocr import (
-    _convertir_cantidad, _extraer, _extraer_con_groq, _fecha_iso,
-    _json_de_texto, _modelos_groq, _precios_para_factura,
-    _reducir_para_groq, _validar_suma, hay_proveedor_ocr, mapear_items,
+    _convertir_cantidad, _extraer, _extraer_con_gemini, _extraer_con_groq,
+    _fecha_iso, _json_de_texto, _modelos_gemini, _modelos_groq,
+    _precios_para_factura, _reducir_para_groq, _validar_suma,
+    hay_proveedor_ocr, mapear_items,
 )
 
 
@@ -337,7 +338,11 @@ class PreciosParaFacturaTest(unittest.TestCase):
 
 
 class ProveedorDispatchTest(unittest.TestCase):
-    """Preferencia de proveedor Groq → Gemini → Claude según la key disponible."""
+    """Preferencia de proveedor Gemini → Groq → Claude según la key disponible.
+    Gemini primero: schema estructurado, imagen a resolución completa y free
+    tier que aguanta una lectura de visión. Groq quedó de respaldo: su tier
+    gratis `on_demand` limita a 8.000 TPM y UNA sola request de visión
+    (imagen + catálogo) supera ese tope → 429 seguro (producción 2026-07)."""
 
     def test_reducir_para_groq_achica_la_imagen(self):
         import io
@@ -350,28 +355,39 @@ class ProveedorDispatchTest(unittest.TestCase):
         self.assertLessEqual(max(w, h), 1280)
         self.assertLessEqual(len(out), 2_800_000)
 
-    def test_dispatcher_prefiere_groq(self):
+    def test_dispatcher_prefiere_gemini(self):
         with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", "gk"), \
              mock.patch.object(factura_ocr.settings, "GEMINI_API_KEY", "gm"), \
              mock.patch.object(factura_ocr.settings, "ANTHROPIC_API_KEY", "ak"), \
-             mock.patch.object(factura_ocr, "_extraer_con_groq", return_value={"via": "groq"}) as mg, \
-             mock.patch.object(factura_ocr, "_extraer_con_gemini") as mgem, \
+             mock.patch.object(factura_ocr, "_extraer_con_gemini", return_value={"via": "gemini"}) as mgem, \
+             mock.patch.object(factura_ocr, "_extraer_con_groq") as mg, \
              mock.patch.object(factura_ocr, "_extraer_con_claude") as mcl:
-            from datetime import date
-            out = _extraer(b"jpeg", "cat", date(2026, 7, 14))
-            self.assertEqual(out, {"via": "groq"})
-            mg.assert_called_once()
-            mgem.assert_not_called()
-            mcl.assert_not_called()
-
-    def test_dispatcher_cae_a_gemini_sin_groq(self):
-        with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", ""), \
-             mock.patch.object(factura_ocr.settings, "GEMINI_API_KEY", "gm"), \
-             mock.patch.object(factura_ocr, "_extraer_con_gemini", return_value={"via": "gemini"}) as mgem:
-            from datetime import date
             out = _extraer(b"jpeg", "cat", date(2026, 7, 14))
             self.assertEqual(out, {"via": "gemini"})
             mgem.assert_called_once()
+            mg.assert_not_called()
+            mcl.assert_not_called()
+
+    def test_con_las_tres_keys_el_primer_post_va_a_generativelanguage(self):
+        # Nivel HTTP: con las tres keys puestas, la PRIMERA llamada de red sale
+        # hacia Gemini (generativelanguage.googleapis.com), no hacia Groq.
+        with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", "gk"), \
+             mock.patch.object(factura_ocr.settings, "GEMINI_API_KEY", "gm"), \
+             mock.patch.object(factura_ocr.settings, "ANTHROPIC_API_KEY", "ak"), \
+             mock.patch("httpx.post", side_effect=[_gemini_200(_EXTR_OK)]) as mpost:
+            out = _extraer(b"jpeg", "cat", date(2026, 7, 14))
+        self.assertEqual(out, _EXTR_OK)
+        self.assertEqual(mpost.call_count, 1)
+        self.assertIn("generativelanguage.googleapis.com", mpost.call_args.args[0])
+
+    def test_dispatcher_cae_a_groq_sin_gemini(self):
+        with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", "gk"), \
+             mock.patch.object(factura_ocr.settings, "GEMINI_API_KEY", ""), \
+             mock.patch.object(factura_ocr.settings, "ANTHROPIC_API_KEY", ""), \
+             mock.patch.object(factura_ocr, "_extraer_con_groq", return_value={"via": "groq"}) as mg:
+            out = _extraer(b"jpeg", "cat", date(2026, 7, 14))
+            self.assertEqual(out, {"via": "groq"})
+            mg.assert_called_once()
 
     def test_hay_proveedor_ocr(self):
         with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", ""), \
@@ -422,6 +438,19 @@ _EXTR_OK = {"error": None, "proveedor": "X", "numero_factura": None,
             "fecha_factura": None, "valor_total": None, "tipo_pago": None,
             "items": [], "advertencias": []}
 
+# Forma REAL del 429 de Groq en producción (2026-07, primer escaneo con
+# qwen3.6-27b): límite POR MINUTO (TPM 8000 del tier gratis `on_demand`, que
+# una sola request de visión supera), con la coletilla comercial "Upgrade to
+# Dev Tier today" al final — el "day" de ese "today" era lo que el clasificador
+# viejo pescaba con `"day" in low` para decir "cuota del DÍA".
+_GROQ_429_TPM_REAL = (
+    "Rate limit reached for model `qwen/qwen3.6-27b` in organization "
+    "`org_abc123` service tier `on_demand` on tokens per minute (TPM): "
+    "Limit 8000, Used 0, Requested 9468. Please try again in 11.01s. "
+    "Need more tokens? Upgrade to Dev Tier today at "
+    "https://console.groq.com/settings/billing"
+)
+
 
 class ModelosGroqTest(unittest.TestCase):
     """Groq retiró llama-4-scout de un día para otro: el modelo configurado va
@@ -443,6 +472,48 @@ class ModelosGroqTest(unittest.TestCase):
     def test_default_de_config_es_qwen(self):
         from app.config import Settings
         self.assertEqual(Settings.model_fields["GROQ_MODEL"].default, "qwen/qwen3.6-27b")
+
+
+class ModelosGeminiTest(unittest.TestCase):
+    """La cadena Gemini lleva SOLO modelos verificados vivos: en producción
+    (2026-07) gemini-3-flash respondió 404 "is not found for API version
+    v1beta" (nombre muerto) y consumió un intento que impidió llegar a
+    gemini-2.5-flash, el que históricamente funciona."""
+
+    def test_solo_modelos_verificados_y_configurado_primero(self):
+        with mock.patch.object(factura_ocr.settings, "GEMINI_MODEL", "gemini-3.5-flash"):
+            self.assertEqual(_modelos_gemini(), ["gemini-3.5-flash", "gemini-2.5-flash"])
+
+    def test_modelo_custom_va_primero_sin_nombres_muertos_ni_duplicados(self):
+        with mock.patch.object(factura_ocr.settings, "GEMINI_MODEL", "gemini-x-custom"):
+            cadena = _modelos_gemini()
+        self.assertEqual(cadena[0], "gemini-x-custom")
+        self.assertNotIn("gemini-3-flash", cadena)         # 404 real en producción
+        self.assertNotIn("gemini-3.1-flash-lite", cadena)  # nunca verificado
+        self.assertIn("gemini-2.5-flash", cadena)
+        self.assertEqual(len(cadena), len(set(cadena)))
+
+
+class ExtraerConGeminiCadenaTest(unittest.TestCase):
+    """Réplica de producción (2026-07): 503 "high demand" del primer modelo +
+    404 de un nombre muerto consumían el tope de 2 intentos y NUNCA se llegaba
+    al modelo vivo. Un 404 de modelo inexistente es instantáneo y no gasta
+    tokens: NO consume intento."""
+
+    def test_404_no_consume_intento_y_se_llega_al_modelo_vivo(self):
+        alta_demanda = FakeResp(503, {"error": {"message": "The model is overloaded (high demand)"}})
+        muerto = FakeResp(404, {"error": {"message":
+            "models/gemini-3-flash is not found for API version v1beta, or is "
+            "not supported for generateContent."}})
+        with mock.patch.object(factura_ocr.settings, "GEMINI_API_KEY", "gm"), \
+             mock.patch.object(factura_ocr, "_modelos_gemini",
+                               return_value=["ocupado", "muerto", "vivo"]), \
+             mock.patch("httpx.post",
+                        side_effect=[alta_demanda, muerto, _gemini_200(_EXTR_OK)]) as mpost:
+            out = _extraer_con_gemini(b"jpeg", "cat", date(2026, 7, 14))
+        self.assertEqual(out, _EXTR_OK)
+        self.assertEqual(mpost.call_count, 3)
+        self.assertIn("vivo", mpost.call_args_list[2].args[0])
 
 
 class ExtraerConGroqCadenaTest(unittest.TestCase):
@@ -486,18 +557,62 @@ class ExtraerConGroqCadenaTest(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 502)
         self.assertIn("ningún modelo", ctx.exception.detail)
 
-    def test_cadena_larga_corta_al_tope_por_proveedor(self):
-        # La cadena real trae 3-4 modelos, pero UN proveedor no puede quemar
-        # más de _MAX_INTENTOS_POR_PROVEEDOR llamadas salientes.
+    def test_404_no_consume_intento_y_el_tope_permite_el_modelo_vivo(self):
+        # Dos nombres muertos (404 instantáneos, sin tokens) + el vivo: los 404
+        # NO cuentan contra el tope de llamadas reales y el vivo SÍ se alcanza.
+        with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", "gk"), \
+             mock.patch.object(factura_ocr, "_modelos_groq", return_value=["m1", "m2", "m3"]), \
+             mock.patch.object(factura_ocr, "_reducir_para_groq", side_effect=lambda b, **kw: b), \
+             mock.patch("httpx.post",
+                        side_effect=[_groq_404_model(), _groq_404_model(),
+                                     _groq_200(_EXTR_OK)]) as mpost:
+            out = _extraer_con_groq(b"jpeg", "cat", date(2026, 7, 14))
+        self.assertEqual(out, _EXTR_OK)
+        self.assertEqual(mpost.call_count, 3)
+
+    def test_cadena_entera_de_404_recorre_todo_y_da_error_de_proveedor(self):
+        # Los 404 no consumen tope: la cadena completa se recorre y el error
+        # final es el del proveedor (502 "ningún modelo"), no un falso
+        # "se agotó el tiempo" por tope de intentos.
         with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", "gk"), \
              mock.patch.object(factura_ocr.settings, "GROQ_MODEL", "modelo-viejo"), \
              mock.patch.object(factura_ocr, "_reducir_para_groq", side_effect=lambda b, **kw: b), \
              mock.patch("httpx.post", side_effect=[_groq_404_model()] * 6) as mpost:
-            self.assertGreaterEqual(len(factura_ocr._modelos_groq()), 3)
+            cadena = factura_ocr._modelos_groq()
+            self.assertGreaterEqual(len(cadena), 3)
             with self.assertRaises(HTTPException) as ctx:
                 _extraer_con_groq(b"jpeg", "cat", date(2026, 7, 14))
-        self.assertEqual(mpost.call_count, factura_ocr._MAX_INTENTOS_POR_PROVEEDOR)
+        self.assertEqual(mpost.call_count, len(cadena))
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertIn("ningún modelo", ctx.exception.detail)
+
+    def test_429_tpm_real_de_produccion_clasifica_por_minuto_no_por_dia(self):
+        # String real del 429 de producción (2026-07): el límite es POR MINUTO
+        # (TPM) pero el mensaje termina en "Upgrade to Dev Tier today" — y el
+        # clasificador viejo pescaba el "day" de "toDAY" y decía "cuota del DÍA".
+        limitado = FakeResp(429, {"error": {"message": _GROQ_429_TPM_REAL}})
+        with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", "gk"), \
+             mock.patch.object(factura_ocr, "_reducir_para_groq", side_effect=lambda b, **kw: b), \
+             mock.patch("httpx.post", side_effect=[limitado]):
+            with self.assertRaises(HTTPException) as ctx:
+                _extraer_con_groq(b"jpeg", "cat", date(2026, 7, 14))
         self.assertEqual(ctx.exception.status_code, 503)
+        self.assertIn("esperá un minuto", ctx.exception.detail)
+        self.assertNotIn("seguí mañana", ctx.exception.detail)
+
+    def test_429_cuota_diaria_real_clasifica_por_dia(self):
+        diario = FakeResp(429, {"error": {"message":
+            "Rate limit reached for model `qwen/qwen3.6-27b` in organization "
+            "`org_abc` service tier `on_demand` on tokens per day (TPD): "
+            "Limit 500000, Used 499900, Requested 9468. "
+            "Please try again in 4h32m."}})
+        with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", "gk"), \
+             mock.patch.object(factura_ocr, "_reducir_para_groq", side_effect=lambda b, **kw: b), \
+             mock.patch("httpx.post", side_effect=[diario]):
+            with self.assertRaises(HTTPException) as ctx:
+                _extraer_con_groq(b"jpeg", "cat", date(2026, 7, 14))
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertIn("seguí mañana", ctx.exception.detail)
 
     def test_429_no_prueba_otro_modelo_y_conserva_mensaje(self):
         limitado = FakeResp(429, {"error": {"message": "Rate limit reached, try again in 20s"}})
@@ -533,70 +648,88 @@ class PresupuestoEscaneoTest(unittest.TestCase):
                 mock.patch.object(factura_ocr.settings, "ANTHROPIC_API_KEY", claude))
 
     def test_budget_agotado_no_intenta_el_siguiente_proveedor(self):
-        # Groq se comió todo el tiempo: Gemini NI SE INTENTA y el error lo dice.
+        # Gemini se comió todo el tiempo: Groq NI SE INTENTA y el error lo dice.
         reloj = {"ahora": 0.0}
         k1, k2, k3 = self._keys(groq="gk", gemini="gm")
 
-        def groq_lento(*a, **kw):
+        def gemini_lento(*a, **kw):
             reloj["ahora"] = factura_ocr._BUDGET_SEG + 1.0
             raise HTTPException(502, "El servicio de escaneo falló")
 
         with k1, k2, k3, \
              mock.patch.object(factura_ocr.time, "monotonic",
                                side_effect=lambda: reloj["ahora"]), \
-             mock.patch.object(factura_ocr, "_extraer_con_groq", side_effect=groq_lento), \
-             mock.patch.object(factura_ocr, "_extraer_con_gemini") as mgem:
+             mock.patch.object(factura_ocr, "_extraer_con_gemini", side_effect=gemini_lento), \
+             mock.patch.object(factura_ocr, "_extraer_con_groq") as mg:
             with self.assertRaises(HTTPException) as ctx:
                 _extraer(b"jpeg", "cat", date(2026, 7, 14))
-        mgem.assert_not_called()
+        mg.assert_not_called()
         self.assertEqual(ctx.exception.status_code, 503)
         low = ctx.exception.detail.lower()
         self.assertIn("se agotó el tiempo de lectura probando proveedores", low)
         # El último error real viaja en el mensaje para poder diagnosticar.
         self.assertIn("el servicio de escaneo falló", low)
 
-    def test_groq_caido_del_todo_gemini_si_recibe_llamadas(self):
-        # Groq caído del todo: quema solo SU tope (_MAX_INTENTOS_POR_PROVEEDOR)
-        # y la cascada sigue con Gemini, que rescata el escaneo. (El contrato
-        # viejo de tope GLOBAL dejaba a Gemini sin llamadas — ese era el bug.)
+    def test_gemini_caido_del_todo_groq_si_recibe_llamadas(self):
+        # Gemini caído (toda su cadena con 5xx REALES): quema solo SUS intentos
+        # y la cascada sigue con Groq, que rescata el escaneo. (El contrato
+        # viejo de tope GLOBAL dejaba al siguiente sin llamadas — ese era el bug.)
         k1, k2, k3 = self._keys(groq="gk", gemini="gm")
-        tope = factura_ocr._MAX_INTENTOS_POR_PROVEEDOR
+        caido = FakeResp(503, {"error": {"message": "Service Unavailable"}})
         with k1, k2, k3, \
-             mock.patch.object(factura_ocr.settings, "GROQ_MODEL", "modelo-viejo"), \
+             mock.patch.object(factura_ocr.settings, "GEMINI_MODEL", "gemini-3.5-flash"), \
              mock.patch.object(factura_ocr, "_reducir_para_groq",
                                side_effect=lambda b, **kw: b), \
              mock.patch("httpx.post",
-                        side_effect=[_groq_404_model()] * tope
-                                    + [_gemini_200(_EXTR_OK)]) as mpost:
+                        side_effect=[caido, caido, _groq_200(_EXTR_OK)]) as mpost:
+            out = _extraer(b"jpeg", "cat", date(2026, 7, 14))
+        self.assertEqual(out, _EXTR_OK)
+        self.assertEqual(mpost.call_count, 3)
+        urls = [c.args[0] for c in mpost.call_args_list]
+        self.assertTrue(all("googleapis.com" in u for u in urls[:2]))
+        self.assertIn("api.groq.com", urls[2])
+
+    def test_cada_proveedor_arranca_con_su_propio_tope(self):
+        # Gemini (cadena de 3) quema SU tope de 2 con errores reales — su
+        # tercer modelo NI SE LLAMA — y Groq arranca con contador PROPIO
+        # y rescata el escaneo.
+        k1, k2, k3 = self._keys(groq="gk", gemini="gm")
+        alta_demanda = FakeResp(503, {"error": {"message": "high demand"}})
+        tope = factura_ocr._MAX_INTENTOS_POR_PROVEEDOR
+        with k1, k2, k3, \
+             mock.patch.object(factura_ocr, "_modelos_gemini",
+                               return_value=["m1", "m2", "m3"]), \
+             mock.patch.object(factura_ocr, "_reducir_para_groq",
+                               side_effect=lambda b, **kw: b), \
+             mock.patch("httpx.post",
+                        side_effect=[alta_demanda] * tope
+                                    + [_groq_200(_EXTR_OK)]) as mpost:
             out = _extraer(b"jpeg", "cat", date(2026, 7, 14))
         self.assertEqual(out, _EXTR_OK)
         self.assertEqual(mpost.call_count, tope + 1)
         urls = [c.args[0] for c in mpost.call_args_list]
-        self.assertTrue(all("api.groq.com" in u for u in urls[:tope]))
-        self.assertIn("googleapis.com", urls[tope])
+        self.assertTrue(all("googleapis.com" in u for u in urls[:tope]))
+        self.assertIn("api.groq.com", urls[tope])
 
-    def test_cada_proveedor_arranca_con_su_propio_tope(self):
-        # Groq (cadena de 3) corta a SU tope de 2; Gemini arranca con contador
-        # PROPIO y quema otros 2 (su cadena de 5 también corta): 4 POSTs y fin.
-        k1, k2, k3 = self._keys(groq="gk", gemini="gm")
-        gemini_404 = FakeResp(404, {"error": {"message": "model not found"}})
+    def test_tope_de_intentos_agotado_da_mensaje_de_proveedores_no_de_tiempo(self):
+        # Producción: la cascada murió por TOPE de intentos, pero el usuario
+        # leyó "se agotó el tiempo". El mensaje debe decir que los proveedores
+        # fallaron, con el último error real — no culpar al reloj.
+        k1, k2, k3 = self._keys(gemini="gm")
+        alta_demanda = FakeResp(503, {"error": {"message": "The model is overloaded (high demand)"}})
         tope = factura_ocr._MAX_INTENTOS_POR_PROVEEDOR
         with k1, k2, k3, \
-             mock.patch.object(factura_ocr, "_modelos_groq", return_value=["m1", "m2", "m3"]), \
-             mock.patch.object(factura_ocr, "_reducir_para_groq",
-                               side_effect=lambda b, **kw: b), \
-             mock.patch("httpx.post",
-                        side_effect=[_groq_404_model()] * tope
-                                    + [gemini_404] * tope) as mpost:
+             mock.patch.object(factura_ocr, "_modelos_gemini",
+                               return_value=["m1", "m2", "m3"]), \
+             mock.patch("httpx.post", side_effect=[alta_demanda] * tope) as mpost:
             with self.assertRaises(HTTPException) as ctx:
                 _extraer(b"jpeg", "cat", date(2026, 7, 14))
-        self.assertEqual(mpost.call_count, 2 * tope)
-        urls = [c.args[0] for c in mpost.call_args_list]
-        self.assertTrue(all("api.groq.com" in u for u in urls[:tope]))
-        self.assertTrue(all("googleapis.com" in u for u in urls[tope:]))
+        self.assertEqual(mpost.call_count, tope)
         self.assertEqual(ctx.exception.status_code, 503)
-        self.assertIn("se agotó el tiempo de lectura probando proveedores",
-                      ctx.exception.detail.lower())
+        detalle = ctx.exception.detail
+        self.assertNotIn("Se agotó el tiempo", detalle)
+        self.assertIn("fallaron", detalle)
+        self.assertIn("high demand", detalle)  # el último error real viaja
 
     def test_timeout_por_llamada_es_45_con_budget_completo(self):
         # Con el budget entero, cada llamada pide _TIMEOUT_LLAMADA (45s), no 120.
@@ -690,7 +823,7 @@ class JsonDeTextoTest(unittest.TestCase):
 
 
 class FallbackProveedoresTest(unittest.TestCase):
-    """_extraer intenta TODOS los proveedores con key, en orden Groq → Gemini
+    """_extraer intenta TODOS los proveedores con key, en orden Gemini → Groq
     → Claude, antes de rendirse."""
 
     def _keys(self, groq="", gemini="", claude=""):
@@ -698,27 +831,27 @@ class FallbackProveedoresTest(unittest.TestCase):
                 mock.patch.object(factura_ocr.settings, "GEMINI_API_KEY", gemini),
                 mock.patch.object(factura_ocr.settings, "ANTHROPIC_API_KEY", claude))
 
-    def test_groq_agotado_cae_a_gemini(self):
+    def test_gemini_agotado_cae_a_groq(self):
         k1, k2, k3 = self._keys(groq="gk", gemini="gm")
         with k1, k2, k3, \
+             mock.patch.object(factura_ocr, "_extraer_con_gemini",
+                               side_effect=HTTPException(502, "El servicio de escaneo falló")) as mgem, \
              mock.patch.object(factura_ocr, "_extraer_con_groq",
-                               side_effect=HTTPException(502, "El servicio de escaneo falló")) as mg, \
-             mock.patch.object(factura_ocr, "_extraer_con_gemini",
-                               return_value={"via": "gemini"}) as mgem:
+                               return_value={"via": "groq"}) as mg:
             out = _extraer(b"jpeg", "cat", date(2026, 7, 14))
-        self.assertEqual(out, {"via": "gemini"})
-        mg.assert_called_once()
+        self.assertEqual(out, {"via": "groq"})
         mgem.assert_called_once()
+        mg.assert_called_once()
 
-    def test_429_de_groq_con_gemini_disponible_no_molesta_al_usuario(self):
+    def test_cuota_de_gemini_con_groq_disponible_no_molesta_al_usuario(self):
         k1, k2, k3 = self._keys(groq="gk", gemini="gm")
-        err_429 = HTTPException(503, "Se alcanzó el límite por minuto — esperá un minuto. (Groq: rate limit)")
+        err_cuota = HTTPException(503, "El escaneo gratis no tiene cuota disponible en ninguno de los modelos probados.")
         with k1, k2, k3, \
-             mock.patch.object(factura_ocr, "_extraer_con_groq", side_effect=err_429), \
-             mock.patch.object(factura_ocr, "_extraer_con_gemini",
-                               return_value={"via": "gemini"}):
+             mock.patch.object(factura_ocr, "_extraer_con_gemini", side_effect=err_cuota), \
+             mock.patch.object(factura_ocr, "_extraer_con_groq",
+                               return_value={"via": "groq"}):
             out = _extraer(b"jpeg", "cat", date(2026, 7, 14))
-        self.assertEqual(out, {"via": "gemini"})
+        self.assertEqual(out, {"via": "groq"})
 
     def test_429_sin_otro_proveedor_conserva_mensaje_actual(self):
         k1, k2, k3 = self._keys(groq="gk")
@@ -748,13 +881,13 @@ class FallbackProveedoresTest(unittest.TestCase):
         # de proveedor no ayuda: se devuelve de una.
         k1, k2, k3 = self._keys(groq="gk", gemini="gm")
         with k1, k2, k3, \
-             mock.patch.object(factura_ocr, "_extraer_con_groq",
+             mock.patch.object(factura_ocr, "_extraer_con_gemini",
                                side_effect=HTTPException(422, "no es una factura")), \
-             mock.patch.object(factura_ocr, "_extraer_con_gemini") as mgem:
+             mock.patch.object(factura_ocr, "_extraer_con_groq") as mg:
             with self.assertRaises(HTTPException) as ctx:
                 _extraer(b"jpeg", "cat", date(2026, 7, 14))
         self.assertEqual(ctx.exception.status_code, 422)
-        mgem.assert_not_called()
+        mg.assert_not_called()
 
 
 class FuzzyEnVivoTest(unittest.TestCase):

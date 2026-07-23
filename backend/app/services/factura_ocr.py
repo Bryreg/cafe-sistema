@@ -182,8 +182,8 @@ _GEMINI_SCHEMA = {
                  "valor_total", "tipo_pago", "items", "advertencias"],
 }
 
-_MSG_SIN_KEY = ("El escaneo de facturas no está configurado: agregá GROQ_API_KEY "
-                "(gratis en console.groq.com), o GEMINI_API_KEY / ANTHROPIC_API_KEY, "
+_MSG_SIN_KEY = ("El escaneo de facturas no está configurado: agregá GEMINI_API_KEY "
+                "(gratis en aistudio.google.com), o GROQ_API_KEY / ANTHROPIC_API_KEY, "
                 "en el servidor.")
 
 # Groq usa response_format=json_object (no schema): la forma exacta va en el prompt.
@@ -244,12 +244,18 @@ _MSG_TODOS_CAIDOS = ("Los proveedores de lectura están caídos o sin cuota — 
 _BUDGET_SEG = 100.0      # deadline total por escaneo (margen bajo los 120s del front)
 _TIMEOUT_LLAMADA = 45.0  # por llamada: una lectura de visión sana responde en <30s
 # Tope de POSTs POR PROVEEDOR (no global): la cadena de un proveedor caído no
-# puede comerse los intentos de los siguientes. Peor caso: 2 (Groq) + 2
-# (Gemini) + 1 (Claude, sin cadena) = 5 llamadas, siempre bajo el deadline.
+# puede comerse los intentos de los siguientes. Solo cuentan llamadas REALES
+# (200/429/5xx/timeout): un 404 de modelo inexistente es instantáneo y sin
+# tokens, se devuelve (ver devolver_intento). Peor caso: 2 (Gemini) + 2 (Groq)
+# + 1 (Claude, sin cadena) = 5 llamadas reales, siempre bajo el deadline.
 _MAX_INTENTOS_POR_PROVEEDOR = 2
 
 _MSG_TIEMPO_AGOTADO = ("Se agotó el tiempo de lectura probando proveedores — "
                        "llenala manual e intentá el escaneo más tarde.")
+
+_MSG_INTENTOS_AGOTADOS = ("Los proveedores de lectura fallaron y se agotó el tope "
+                          "de intentos del escaneo — llenala manual e intentá "
+                          "más tarde.")
 
 
 class _Presupuesto:
@@ -268,19 +274,50 @@ class _Presupuesto:
     def restante(self) -> float:
         return self._deadline - time.monotonic()
 
+    def sin_tiempo(self) -> bool:
+        return self.restante() <= 0
+
+    def sin_intentos(self) -> bool:
+        return self._intentos_proveedor <= 0
+
     def agotado(self) -> bool:
-        return self._intentos_proveedor <= 0 or self.restante() <= 0
+        return self.sin_intentos() or self.sin_tiempo()
 
     def consumir_intento(self) -> None:
         self._intentos_proveedor -= 1
+
+    def devolver_intento(self) -> None:
+        """Un 404 de modelo inexistente es instantáneo y no gasta tokens: se
+        devuelve el intento para que un nombre muerto en la cadena no impida
+        llegar al modelo vivo (el tope cuenta solo llamadas REALES). En
+        producción (2026-07) el 404 de gemini-3-flash consumió el segundo
+        intento y el escaneo nunca llegó a gemini-2.5-flash."""
+        self._intentos_proveedor += 1
 
     def timeout_llamada(self) -> float:
         return min(_TIMEOUT_LLAMADA, self.restante())
 
 
+def _error_presupuesto_agotado(presupuesto: _Presupuesto,
+                               ultimo_error: str = "") -> HTTPException:
+    """503 honesto según QUÉ se agotó: el deadline de tiempo o el tope de
+    llamadas del proveedor. Antes todo decía "se agotó el tiempo" aunque la
+    cascada muriera por tope de intentos — engañoso para diagnosticar."""
+    if presupuesto.sin_tiempo():
+        return HTTPException(503, _MSG_TIEMPO_AGOTADO)
+    detalle = f" (último error: {ultimo_error[:200]})" if ultimo_error else ""
+    return HTTPException(503, f"{_MSG_INTENTOS_AGOTADOS}{detalle}")
+
+
 def _extraer(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
     """Dispatcher de proveedor: intenta TODOS los que tengan key configurada,
-    en orden de preferencia Groq (gratis) → Gemini → Claude.
+    en orden de preferencia Gemini → Groq → Claude.
+
+    Gemini primero: schema estructurado, imagen a resolución completa y free
+    tier que sí aguanta una lectura de visión. Groq quedó de respaldo porque
+    su tier gratis `on_demand` limita a 8.000 tokens POR MINUTO y una sola
+    request de visión (imagen + catálogo) supera ese tope → 429 garantizado
+    (visto en producción 2026-07, aunque el modelo exista).
 
     Un error DE PROVEEDOR (modelo retirado con la cadena agotada, 5xx, key
     inválida, JSON ilegible, cuota agotada) pasa al siguiente; los 422 son un
@@ -290,15 +327,17 @@ def _extraer(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
     otro proveedor al cual pasar.
 
     Toda la cascada comparte UN presupuesto (_Presupuesto): deadline total de
-    _BUDGET_SEG, más un tope de _MAX_INTENTOS_POR_PROVEEDOR llamadas que se
-    resetea al pasar de proveedor (peor caso 2+2+1 = 5 llamadas). Agotado el
-    tiempo no se intenta nada más y el error final lo dice; agotado el tope de
-    UN proveedor, su cadena corta y la cascada sigue con el siguiente."""
+    _BUDGET_SEG, más un tope de _MAX_INTENTOS_POR_PROVEEDOR llamadas REALES
+    que se resetea al pasar de proveedor (peor caso 2+2+1 = 5 llamadas; los
+    404 de modelo inexistente no cuentan). Agotado el tiempo no se intenta
+    nada más y el error final lo dice; agotado el tope de UN proveedor, su
+    cadena corta (con mensaje de proveedores fallidos, no de tiempo) y la
+    cascada sigue con el siguiente."""
     proveedores = []
-    if settings.GROQ_API_KEY:
-        proveedores.append(("Groq", _extraer_con_groq))
     if settings.GEMINI_API_KEY:
         proveedores.append(("Gemini", _extraer_con_gemini))
+    if settings.GROQ_API_KEY:
+        proveedores.append(("Groq", _extraer_con_groq))
     if settings.ANTHROPIC_API_KEY:
         proveedores.append(("Claude", _extraer_con_claude))
     if not proveedores:
@@ -322,7 +361,8 @@ def _extraer(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
             if i + 1 < len(proveedores):
                 logger.warning("Proveedor %s falló (%s: %s) — probando %s",
                                nombre, e.status_code, e.detail, proveedores[i + 1][0])
-    if ultimo is not None and _MSG_TIEMPO_AGOTADO in str(ultimo.detail):
+    if ultimo is not None and (_MSG_TIEMPO_AGOTADO in str(ultimo.detail)
+                               or _MSG_INTENTOS_AGOTADOS in str(ultimo.detail)):
         raise ultimo  # la cadena ya cortó por presupuesto adentro: no anidar el mensaje
     if corto_por_presupuesto:
         if ultimo is None:
@@ -434,7 +474,7 @@ def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
     ultimo_error = ""
     for modelo in _modelos_groq():
         if presupuesto.agotado():
-            raise HTTPException(503, _MSG_TIEMPO_AGOTADO)
+            raise _error_presupuesto_agotado(presupuesto, ultimo_error)
         body = {
             "model": modelo,
             "temperature": 0,
@@ -462,9 +502,17 @@ def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
             except ValueError:
                 raw = r.text
             logger.warning("Groq 429: %s", raw[:300])
-            # Distinguir cuota DIARIA (hay que esperar a mañana) de límite por minuto.
+            # Distinguir cuota DIARIA (hay que esperar a mañana) de límite por
+            # minuto. Ojo con substrings: el 429 real de producción decía
+            # "tokens per minute (TPM)" pero TERMINABA en "Upgrade to Dev Tier
+            # today" — el chequeo viejo `"day" in low` pescaba el "day" de ese
+            # "toDAY" y clasificaba un límite por minuto como cuota del día.
+            # Por eso: primero los marcadores explícitos de minuto, y "día"
+            # solo con marcadores reales (per day / TPD / RPD), nunca el
+            # substring suelto "day".
             low = raw.lower()
-            es_dia = "per day" in low or "tpd" in low or "rpd" in low or "day" in low
+            es_minuto = "per minute" in low or "tpm" in low or "rpm" in low
+            es_dia = not es_minuto and ("per day" in low or "tpd" in low or "rpd" in low)
             if es_dia:
                 raise HTTPException(503, f"Se agotó la cuota gratis de escaneo del DÍA — seguí mañana. (Groq: {raw[:160]})")
             raise HTTPException(503, f"Se alcanzó el límite por minuto — esperá un minuto. (Groq: {raw[:160]})")
@@ -482,6 +530,9 @@ def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
                 detalle, code = r.text, ""
             if (r.status_code == 404 or "model_not_found" in code
                     or "model_decommissioned" in code):
+                # Respuesta instantánea y sin tokens: no cuenta contra el tope
+                # de llamadas reales — un nombre muerto no bloquea al vivo.
+                presupuesto.devolver_intento()
                 ultimo_error = detalle
                 logger.warning("Groq: modelo %s no disponible (HTTP %s): %s",
                                modelo, r.status_code, detalle[:300])
@@ -515,11 +566,16 @@ def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
 
 
 def _modelos_gemini() -> list[str]:
-    """Cadena de modelos a probar en orden. Google mueve el tier gratis entre
-    modelos cada tanto (2.5-flash quedó sin cuota gratis para proyectos nuevos):
-    si el configurado responde 429/404, se prueba el siguiente."""
-    cadena = [settings.GEMINI_MODEL, "gemini-3.5-flash", "gemini-3-flash",
-              "gemini-3.1-flash-lite", "gemini-2.5-flash"]
+    """Cadena de modelos a probar en orden: SOLO nombres verificados vivos.
+
+    En producción (2026-07) la cadena traía gemini-3-flash, que respondió 404
+    "is not found for API version v1beta" (nombre muerto): ese 404 consumió un
+    intento del tope y el escaneo nunca llegó a gemini-2.5-flash, el que
+    históricamente funciona. Para verificar nombres cuando vuelva a pasar:
+        GET https://generativelanguage.googleapis.com/v1beta/models
+        (header x-goog-api-key) — ListModels lista los nombres reales; usar
+        solo los que soporten generateContent."""
+    cadena = [settings.GEMINI_MODEL, "gemini-3.5-flash", "gemini-2.5-flash"]
     vistos: set[str] = set()
     return [m for m in cadena if m and not (m in vistos or vistos.add(m))]
 
@@ -552,7 +608,7 @@ def _extraer_con_gemini(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
     ultimo_error = ""
     for modelo in _modelos_gemini():
         if presupuesto.agotado():
-            raise HTTPException(503, _MSG_TIEMPO_AGOTADO)
+            raise _error_presupuesto_agotado(presupuesto, ultimo_error)
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
                f"{modelo}:generateContent")
         presupuesto.consumir_intento()
@@ -593,6 +649,12 @@ def _extraer_con_gemini(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
         except ValueError:
             ultimo_error = r.text
         logger.warning("Gemini %s → HTTP %s: %s", modelo, r.status_code, ultimo_error[:300])
+        if r.status_code == 404:
+            # Nombre de modelo muerto (producción 2026-07: gemini-3-flash →
+            # 404 "not found for API version v1beta"): respuesta instantánea
+            # y sin tokens — se devuelve el intento para que el nombre muerto
+            # no impida llegar al modelo vivo de la cadena.
+            presupuesto.devolver_intento()
 
     raise HTTPException(503, ("El escaneo gratis no tiene cuota disponible en ninguno de los "
                               f"modelos probados. Detalle de Google: {ultimo_error[:250]}"))
@@ -604,7 +666,7 @@ def _extraer_con_claude(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
 
     presupuesto = presupuesto or _Presupuesto()
     if presupuesto.agotado():
-        raise HTTPException(503, _MSG_TIEMPO_AGOTADO)
+        raise _error_presupuesto_agotado(presupuesto)
     presupuesto.consumir_intento()
     client = anthropic.Anthropic(
         api_key=settings.ANTHROPIC_API_KEY, timeout=presupuesto.timeout_llamada(),

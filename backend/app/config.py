@@ -21,9 +21,13 @@ class Settings(BaseSettings):
     ENV: str = "development"
     CLOUDINARY_URL: str = ""   # cloudinary://api_key:api_secret@cloud_name
     KIOSK_PIN: str = ""        # PIN para activar modo kiosko; vacío = deshabilitado
-    # Escaneo de facturas (vision). Proveedor preferido: Groq (gratis DE VERDAD,
-    # sin tarjeta ni proyecto con facturación — no tiene la trampa de Gemini).
-    # Orden de preferencia: Groq → Gemini → Claude, según qué key esté puesta.
+    # Escaneo de facturas (vision). Proveedor preferido: Gemini (schema
+    # estructurado, imagen a resolución completa y free tier que sí aguanta una
+    # lectura de visión). Groq quedó de RESPALDO: su tier gratis `on_demand`
+    # limita a 8.000 tokens POR MINUTO (TPM) y una sola request de visión
+    # (imagen + catálogo) supera ese tope → 429 garantizado aunque el modelo
+    # exista (visto en producción 2026-07 con el primer escaneo real).
+    # Orden de preferencia: Gemini → Groq → Claude, según qué key esté puesta.
     # Sin ninguna key el endpoint responde 503 y el form sigue funcionando manual.
     GROQ_API_KEY: str = ""
     # Único modelo de visión vigente en Groq (2026-07; llama-4-scout fue
@@ -31,8 +35,9 @@ class Settings(BaseSettings):
     # modelos alternativos (ver factura_ocr._modelos_groq).
     GROQ_MODEL: str = "qwen/qwen3.6-27b"
     GEMINI_API_KEY: str = ""
-    # Si este modelo no tiene cuota gratis, el código prueba solo una cadena de
-    # modelos Flash alternativos (ver factura_ocr._modelos_gemini).
+    # Si este modelo no tiene cuota gratis, el código prueba solo una cadena
+    # CORTA de modelos verificados vivos (ver factura_ocr._modelos_gemini; los
+    # nombres se verifican contra v1beta ListModels — un nombre muerto da 404).
     GEMINI_MODEL: str = "gemini-3.5-flash"
     ANTHROPIC_API_KEY: str = ""
     OCR_MODEL: str = "claude-opus-4-8"

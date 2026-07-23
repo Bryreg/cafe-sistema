@@ -13,7 +13,11 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from fastapi import HTTPException
 
-from app.models.models import Producto, ProductoInsumo, Ticket, TicketItem, CajaTurno, Usuario
+from app.models.models import (
+    Producto, ProductoInsumo, Ticket, TicketItem, CajaTurno, Usuario,
+    Combo, ComboGrupo, ComboOpcion, ComboOpcionProducto, ComboTienda,
+    TicketItemComboSeleccion,
+)
 from app.services.caja import get_turno_activo
 from app.services import inventario as inv_svc, audit
 from app.core.tz import (
@@ -68,19 +72,194 @@ def get_productos_pos(db: Session, categoria: str | None = None):
     ]
 
 
+def get_combos_pos(db: Session, tienda_id: int):
+    """Combos activos disponibles en la tienda, con grupos, opciones y productos.
+
+    Es el catálogo que el POS usa para pintar las pestañas de combos y el
+    selector de opciones. Solo combos activos Y asociados a esa tienda.
+    """
+    combos = (
+        db.query(Combo)
+        .join(ComboTienda, ComboTienda.combo_id == Combo.id)
+        .filter(Combo.activo == True, ComboTienda.tienda_id == tienda_id)  # noqa: E712
+        .options(
+            joinedload(Combo.grupos)
+            .joinedload(ComboGrupo.opciones)
+            .joinedload(ComboOpcion.productos)
+            .joinedload(ComboOpcionProducto.producto)
+        )
+        .order_by(Combo.orden, Combo.nombre)
+        .all()
+    )
+    return [
+        {
+            "id": c.id,
+            "nombre": c.nombre,
+            "precio_venta": c.precio_venta or 0.0,
+            "orden": c.orden,
+            "grupos": [
+                {
+                    "id": g.id,
+                    "nombre": g.nombre,
+                    "orden": g.orden,
+                    "opciones": [
+                        {
+                            "id": o.id,
+                            "nombre": o.nombre,
+                            "orden": o.orden,
+                            "productos": [
+                                {
+                                    "producto_id": op.producto_id,
+                                    "nombre": op.producto.nombre if op.producto else "",
+                                    "cantidad": int(op.cantidad or 1),
+                                }
+                                for op in o.productos
+                            ],
+                        }
+                        for o in g.opciones
+                    ],
+                }
+                for g in c.grupos
+            ],
+        }
+        for c in combos
+    ]
+
+
+def _resolver_combos(db: Session, tienda_id: int, combos_req: list):
+    """Valida y resuelve los combos del ticket CONTRA LA DB (nunca contra el cliente).
+
+    Reglas:
+      - Combo existente, activo y disponible en la tienda.
+      - Exactamente UNA opción por grupo; la opción debe pertenecer al grupo.
+      - Un grupo con UNA sola opción es fijo: se auto-selecciona si no viene.
+      - El precio SIEMPRE es Combo.precio_venta del servidor.
+
+    Devuelve por combo: cantidad, precio, subtotal, selecciones resueltas
+    [(grupo, opcion, [(producto, cantidad_por_combo)])] y consumos de inventario
+    [(producto, cantidad_total)].
+    """
+    resultado = []
+    for c in combos_req:
+        combo_id = c["combo_id"] if isinstance(c, dict) else c.combo_id
+        cantidad = c["cantidad"] if isinstance(c, dict) else c.cantidad
+        selecciones_req = (c.get("selecciones") if isinstance(c, dict)
+                           else getattr(c, "selecciones", None)) or []
+        if cantidad is None or int(cantidad) <= 0:
+            raise HTTPException(status_code=400, detail="La cantidad del combo debe ser mayor a 0")
+        cantidad = int(cantidad)
+
+        combo = (
+            db.query(Combo)
+            .options(
+                joinedload(Combo.grupos)
+                .joinedload(ComboGrupo.opciones)
+                .joinedload(ComboOpcion.productos)
+                .joinedload(ComboOpcionProducto.producto)
+            )
+            .filter(Combo.id == combo_id)
+            .first()
+        )
+        if not combo:
+            raise HTTPException(status_code=404, detail=f"Combo {combo_id} no encontrado")
+        if not combo.activo:
+            raise HTTPException(status_code=400, detail=f"El combo '{combo.nombre}' no está activo")
+        disponible = db.query(ComboTienda).filter(
+            ComboTienda.combo_id == combo.id, ComboTienda.tienda_id == tienda_id
+        ).first()
+        if not disponible:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El combo '{combo.nombre}' no está disponible en esta tienda",
+            )
+        precio = float(combo.precio_venta or 0.0)
+        if precio <= 0:
+            raise HTTPException(
+                status_code=400, detail=f"El combo '{combo.nombre}' no tiene precio de venta")
+        # Sin grupos no hay componentes que elegir ni consumir: venderlo sería
+        # cobrar el precio completo sin entregar (ni descontar) nada.
+        if not combo.grupos:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El combo '{combo.nombre}' no tiene grupos de opciones configurados",
+            )
+
+        # Selección por grupo (a lo sumo una opción por grupo)
+        sel_map: dict[int, int] = {}
+        for s in selecciones_req:
+            gid = s["grupo_id"] if isinstance(s, dict) else s.grupo_id
+            oid = s["opcion_id"] if isinstance(s, dict) else s.opcion_id
+            if gid in sel_map and sel_map[gid] != oid:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Hay más de una opción seleccionada para un grupo del combo '{combo.nombre}'",
+                )
+            sel_map[gid] = oid
+        grupos_ids = {g.id for g in combo.grupos}
+        sobrantes = set(sel_map.keys()) - grupos_ids
+        if sobrantes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Una selección no corresponde a ningún grupo del combo '{combo.nombre}'",
+            )
+
+        selecciones = []
+        consumos: list[tuple[Producto, float]] = []
+        for g in combo.grupos:
+            oid = sel_map.get(g.id)
+            if oid is None:
+                if len(g.opciones) == 1:
+                    # Grupo fijo (una sola opción): auto-seleccionado
+                    opcion = g.opciones[0]
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Falta elegir una opción del grupo '{g.nombre}' en el combo '{combo.nombre}'",
+                    )
+            else:
+                opcion = next((o for o in g.opciones if o.id == oid), None)
+                if not opcion:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"La opción elegida no pertenece al grupo '{g.nombre}' del combo '{combo.nombre}'",
+                    )
+            productos_op = [(op.producto, int(op.cantidad or 1)) for op in opcion.productos
+                            if op.producto is not None]
+            selecciones.append((g, opcion, productos_op))
+            consumos.extend((p, cant * cantidad) for p, cant in productos_op)
+
+        resultado.append({
+            "combo": combo,
+            "cantidad": cantidad,
+            "precio": precio,
+            "subtotal": round(precio * cantidad, 2),
+            "selecciones": selecciones,
+            "consumos": consumos,
+        })
+    return resultado
+
+
 def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
                  metodo_pago: str, efectivo_recibido: float | None = None,
                  monto_efectivo: float | None = None,
                  monto_tarjeta: float | None = None,
-                 barista_id: int | None = None, barista_nombre: str | None = None):
+                 barista_id: int | None = None, barista_nombre: str | None = None,
+                 combos: list | None = None):
     """Crea una venta itemizada. Atómico: si algo falla, no se persiste nada.
 
     `items`: lista de dicts/objetos con `producto_id` y `cantidad`.
+    `combos`: lista de dicts/objetos con `combo_id`, `cantidad` y `selecciones`
+    ([{grupo_id, opcion_id}]). El combo entra como UNA línea del ticket a su
+    precio fijo (vía producto sombra); los componentes elegidos quedan en
+    ticket_item_combo_selecciones y descuentan inventario/recetas igual que
+    una venta normal — nunca como líneas con precio (no duplican ingresos).
     """
+    combos = combos or []
     if metodo_pago not in METODOS_PAGO:
         raise HTTPException(status_code=400, detail="metodo_pago inválido")
-    if not items:
+    if not items and not combos:
         raise HTTPException(status_code=400, detail="El ticket no tiene items")
+    items = items or []
 
     # Turno activo + gate duro: el POS solo vende si el turno está OPERATIVO
     # (cuadre de llegada + conteo de apertura del día hechos). El backend es la
@@ -141,6 +320,12 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
         total += subtotal
         descuento_total += desc_linea
         lineas.append((prod, cantidad, precio, subtotal, desc_linea))
+
+    # Combos: validación estricta + precio SIEMPRE del servidor (Combo.precio_venta)
+    lineas_combo = _resolver_combos(db, tienda_id, combos)
+    for lc in lineas_combo:
+        total += lc["subtotal"]
+
     total = round(total, 2)
     descuento = round(descuento_total, 2)
 
@@ -197,9 +382,57 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
             descuento=desc_linea,
         ))
 
+    # Líneas de combo: UNA línea por combo a su precio fijo (producto sombra,
+    # snapshot de nombre/precio como los demás items) + registro de la
+    # combinación elegida vinculado a esa línea (precio 0 implícito: los
+    # componentes NO son líneas del ticket).
+    for lc in lineas_combo:
+        combo = lc["combo"]
+        item_combo = TicketItem(
+            ticket_id=ticket.id,
+            producto_id=combo.producto_id,
+            nombre_producto=combo.nombre,
+            cantidad=lc["cantidad"],
+            precio_unitario=lc["precio"],
+            subtotal=lc["subtotal"],
+            descuento=0,
+        )
+        db.add(item_combo)
+        db.flush()  # obtener item_combo.id
+        for grupo, opcion, productos_op in lc["selecciones"]:
+            for prod_comp, cant_comp in productos_op:
+                db.add(TicketItemComboSeleccion(
+                    ticket_item_id=item_combo.id,
+                    combo_id=combo.id,
+                    grupo_id=grupo.id,
+                    opcion_id=opcion.id,
+                    nombre_grupo=grupo.nombre,
+                    nombre_opcion=opcion.nombre,
+                    producto_id=prod_comp.id,
+                    cantidad=cant_comp,
+                ))
+
+    # Consumos de inventario: items normales + componentes de combos, con la
+    # MISMA lógica (stock propio y recetas). Los componentes descuentan igual
+    # que una venta individual del producto.
+    consumos_brutos: list[tuple[Producto, float]] = [(p, c) for p, c, _, _, _ in lineas]
+    for lc in lineas_combo:
+        consumos_brutos.extend(lc["consumos"])
+    # Fusionar por producto (misma semántica que la fusión de `pedidos`):
+    # producto suelto + componente de combo (o dos combos) en el mismo ticket
+    # generan UN solo movimiento de inventario con la cantidad sumada.
+    consumos_map: dict[int, list] = {}
+    for prod, cant in consumos_brutos:
+        e = consumos_map.get(prod.id)
+        if e is None:
+            consumos_map[prod.id] = [prod, float(cant)]
+        else:
+            e[1] += float(cant)
+    consumos: list[tuple[Producto, float]] = [(p, c) for p, c in consumos_map.values()]
+
     # Inventario: descuento atómico. Stock negativo permitido (allow_negative=True).
     # Si el producto no tiene registro en inventario, se omite sin bloquear la venta.
-    for prod, cantidad, _, _, _ in lineas:
+    for prod, cantidad in consumos:
         if prod.controla_stock:
             try:
                 inv_svc.registrar_movimiento(
@@ -218,14 +451,14 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
     # Insumos por receta (producto_insumos): productos compuestos descuentan sus
     # ingredientes (ej. 1 waffle pandebono = 4 bolas de masa). SOLO movimiento de
     # inventario — nunca como item del ticket, para no contaminar ventas/analytics.
-    prod_ids = [p.id for p, *_ in lineas]
+    prod_ids = list({p.id for p, _ in consumos})
     receta_rows = db.query(ProductoInsumo).filter(
         ProductoInsumo.producto_id.in_(prod_ids)
     ).all() if prod_ids else []
     insumos_por_prod: dict[int, list[ProductoInsumo]] = {}
     for r in receta_rows:
         insumos_por_prod.setdefault(r.producto_id, []).append(r)
-    for prod, cantidad, _, _, _ in lineas:
+    for prod, cantidad in consumos:
         # Fuga de inventario: producto vendido SIN receta y SIN stock propio no
         # descuenta nada. Avisar al admin (dedupe diario por producto) — la venta
         # sigue normal, la alerta alimenta el reporte de cobertura de recetas.
@@ -267,6 +500,17 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
             "monto_efectivo": monto_efectivo_final, "monto_tarjeta": monto_tarjeta_final,
             "items": [{"producto_id": p.id, "cantidad": c, "subtotal": s}
                       for p, c, _, s, _ in lineas],
+            "combos": [
+                {
+                    "combo_id": lc["combo"].id,
+                    "nombre": lc["combo"].nombre,
+                    "cantidad": lc["cantidad"],
+                    "subtotal": lc["subtotal"],
+                    "selecciones": [f"{g.nombre}: {o.nombre}"
+                                    for g, o, _ in lc["selecciones"]],
+                }
+                for lc in lineas_combo
+            ],
         },
     )
 
@@ -305,7 +549,7 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
 def get_ticket(db: Session, ticket_id: int):
     return (
         db.query(Ticket)
-        .options(joinedload(Ticket.items))
+        .options(joinedload(Ticket.items).joinedload(TicketItem.combo_selecciones))
         .filter(Ticket.id == ticket_id)
         .first()
     )
@@ -314,7 +558,7 @@ def get_ticket(db: Session, ticket_id: int):
 def get_tickets_turno(db: Session, turno_id: int):
     return (
         db.query(Ticket)
-        .options(joinedload(Ticket.items))
+        .options(joinedload(Ticket.items).joinedload(TicketItem.combo_selecciones))
         .filter(Ticket.caja_turno_id == turno_id)
         .order_by(Ticket.fecha.desc())
         .all()
@@ -326,7 +570,7 @@ def get_tickets_recientes(db: Session, tienda_id: int, dias: int = 7, limit: int
     desde = datetime.utcnow() - timedelta(days=dias)
     return (
         db.query(Ticket)
-        .options(joinedload(Ticket.items))
+        .options(joinedload(Ticket.items).joinedload(TicketItem.combo_selecciones))
         .filter(Ticket.tienda_id == tienda_id, Ticket.fecha >= desde)
         .order_by(Ticket.fecha.desc())
         .limit(limit)
@@ -340,7 +584,7 @@ def get_tickets_historial(db: Session, tienda_id: int, fecha_desde: date | None 
     desde, hasta = _rango_fechas(fecha_desde, fecha_hasta)
     return (
         db.query(Ticket)
-        .options(joinedload(Ticket.items))
+        .options(joinedload(Ticket.items).joinedload(TicketItem.combo_selecciones))
         .filter(Ticket.tienda_id == tienda_id, Ticket.fecha >= desde, Ticket.fecha <= hasta)
         .order_by(Ticket.fecha.desc())
         .limit(limit)
@@ -648,6 +892,97 @@ def get_analytics_metodo_pago(db: Session, fecha_desde: date | None = None,
 # Anulación de ticket — reversión atómica todo-o-nada (como crear_ticket).
 # ---------------------------------------------------------------------------
 
+def revertir_consumos(db: Session, consumos: list[tuple[int, float]], tienda_id: int,
+                      usuario_id: int, motivo: str):
+    """Repone lo CONSUMIDO por una venta — espejo del descuento de crear_ticket.
+
+    `consumos`: [(producto_id, cantidad_total)] — items normales o componentes
+    de combo. Los productos con controla_stock reponen su stock; los que tienen
+    receta (ProductoInsumo) reponen sus insumos. Sin fila de inventario se omite
+    (la venta tampoco descontó nada). No commitea: el caller cierra la transacción.
+    Lo usan anular_ticket y la Nota Crédito (componentes de combo no usados).
+
+    Fusiona por producto_id antes de reponer — espejo de la fusión de
+    crear_ticket: producto suelto + componente de combo (o dos combos) del mismo
+    ticket descontaron con UN solo movimiento de salida, así que la reversión
+    repone con UN solo movimiento de entrada con la cantidad sumada.
+    """
+    fusionados: dict[int, float] = {}
+    for pid, cant in consumos:
+        fusionados[pid] = fusionados.get(pid, 0.0) + float(cant)
+    consumos = list(fusionados.items())
+
+    producto_ids = list({pid for pid, _ in consumos})
+    productos = {
+        p.id: p
+        for p in db.query(Producto).filter(Producto.id.in_(producto_ids)).all()
+    } if producto_ids else {}
+    for pid, cant in consumos:
+        prod = productos.get(pid)
+        if prod and prod.controla_stock:
+            try:
+                inv_svc.registrar_movimiento(
+                    db, producto_id=pid, tienda_id=tienda_id,
+                    tipo="entrada", cantidad=cant,
+                    motivo=motivo, usuario_id=usuario_id, commit=False,
+                )
+            except HTTPException as e:
+                # Espejo de crear_ticket: sin fila de inventario la venta no
+                # descontó nada — al revertir tampoco hay nada que reponer.
+                if e.status_code == 404:
+                    logger.warning(f"Producto {pid} sin inventario al reponer; se omite")
+                else:
+                    raise
+
+    # Insumos consumidos por receta (producto_insumos) — espejo del descuento
+    # de crear_ticket. Si el insumo no tiene inventario, se omite.
+    receta_rows = db.query(ProductoInsumo).filter(
+        ProductoInsumo.producto_id.in_(producto_ids)
+    ).all() if producto_ids else []
+    insumos_por_prod: dict[int, list[ProductoInsumo]] = {}
+    for r in receta_rows:
+        insumos_por_prod.setdefault(r.producto_id, []).append(r)
+    for pid, cant in consumos:
+        for r in insumos_por_prod.get(pid, []):
+            try:
+                inv_svc.registrar_movimiento(
+                    db, producto_id=r.insumo_id, tienda_id=tienda_id,
+                    tipo="entrada", cantidad=r.cantidad * cant,
+                    motivo=f"{motivo} — insumo", usuario_id=usuario_id, commit=False,
+                )
+            except HTTPException as e:
+                if e.status_code == 404:
+                    logger.warning(f"Insumo {r.insumo_id} sin inventario al reponer; se omite")
+                else:
+                    raise
+
+
+def consumos_de_items(db: Session, items) -> list[tuple[int, float]]:
+    """(producto_id, cantidad_total) realmente consumidos por líneas de ticket.
+
+    Los items normales consumen su producto; las líneas de combo consumen sus
+    COMPONENTES elegidos (la línea apunta al producto sombra, que no controla
+    stock). La cantidad de la selección es POR combo → total = cantidad ×
+    item.cantidad.
+    """
+    item_ids = [it.id for it in items]
+    sel_rows = db.query(TicketItemComboSeleccion).filter(
+        TicketItemComboSeleccion.ticket_item_id.in_(item_ids)
+    ).all() if item_ids else []
+    sel_por_item: dict[int, list[TicketItemComboSeleccion]] = {}
+    for s in sel_rows:
+        sel_por_item.setdefault(s.ticket_item_id, []).append(s)
+    consumos: list[tuple[int, float]] = []
+    for item in items:
+        sels = sel_por_item.get(item.id)
+        if sels:
+            consumos.extend(
+                (s.producto_id, (s.cantidad or 1) * item.cantidad) for s in sels)
+        else:
+            consumos.append((item.producto_id, item.cantidad))
+    return consumos
+
+
 def anular_ticket(db: Session, ticket_id: int, usuario_id: int, motivo: str | None = None):
     """Anula un ticket revirtiendo stock y totales del turno de forma atómica.
 
@@ -682,43 +1017,11 @@ def anular_ticket(db: Session, ticket_id: int, usuario_id: int, motivo: str | No
         )
 
     try:
-        # 1) Reponer stock de los productos contables (atómico, sin commit).
-        #    Se cargan los productos del ticket para conocer controla_stock.
-        producto_ids = [it.producto_id for it in ticket.items]
-        productos = {
-            p.id: p
-            for p in db.query(Producto).filter(Producto.id.in_(producto_ids)).all()
-        } if producto_ids else {}
-        for item in ticket.items:
-            prod = productos.get(item.producto_id)
-            if prod and prod.controla_stock:
-                inv_svc.registrar_movimiento(
-                    db, producto_id=item.producto_id, tienda_id=ticket.tienda_id,
-                    tipo="entrada", cantidad=item.cantidad,
-                    motivo="Anulación venta POS", usuario_id=usuario_id, commit=False,
-                )
-
-        # 1b) Reponer insumos consumidos por receta (producto_insumos) — espejo del
-        #     descuento de crear_ticket. Si el insumo no tiene inventario, se omite.
-        receta_rows = db.query(ProductoInsumo).filter(
-            ProductoInsumo.producto_id.in_(producto_ids)
-        ).all() if producto_ids else []
-        insumos_por_prod: dict[int, list[ProductoInsumo]] = {}
-        for r in receta_rows:
-            insumos_por_prod.setdefault(r.producto_id, []).append(r)
-        for item in ticket.items:
-            for r in insumos_por_prod.get(item.producto_id, []):
-                try:
-                    inv_svc.registrar_movimiento(
-                        db, producto_id=r.insumo_id, tienda_id=ticket.tienda_id,
-                        tipo="entrada", cantidad=r.cantidad * item.cantidad,
-                        motivo="Anulación venta POS — insumo", usuario_id=usuario_id, commit=False,
-                    )
-                except HTTPException as e:
-                    if e.status_code == 404:
-                        logger.warning(f"Insumo {r.insumo_id} sin inventario al anular; se omite")
-                    else:
-                        raise
+        # 1) Reponer stock e insumos de lo realmente consumido (atómico, sin
+        #    commit): items normales + componentes de combos.
+        consumos_revertir = consumos_de_items(db, ticket.items)
+        revertir_consumos(db, consumos_revertir, ticket.tienda_id, usuario_id,
+                          motivo="Anulación venta POS")
 
         # 2) Revertir totales del turno (restar lo que el ticket había sumado).
         turno_db = db.query(CajaTurno).filter(CajaTurno.id == ticket.caja_turno_id).first()

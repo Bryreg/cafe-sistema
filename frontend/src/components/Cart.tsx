@@ -1,22 +1,33 @@
 import { ShoppingBag, Trash2 } from 'lucide-react'
 import { Stepper, SectionLabel } from './ui'
+import type { ComboSeleccion } from './ComboSelector'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
 export interface CartItem {
-  producto_id: number
+  producto_id: number // 0 en líneas de combo (el combo no es un producto de la grilla)
   nombre: string
   cantidad: number
   precio_venta: number
   descuento?: number
+  /** Clave única de la línea (combos: mismo combo + misma selección se agrupan). */
+  linea_id?: string
+  /** Presente solo en líneas de combo: qué se eligió (viaja al checkout). */
+  combo?: {
+    combo_id: number
+    selecciones: ComboSeleccion[]
+  }
 }
+
+/** Clave única de una línea del carrito (productos por id, combos por selección). */
+export const cartKey = (i: CartItem) => i.linea_id ?? `p-${i.producto_id}`
 
 interface Props {
   items: CartItem[]
-  onInc: (producto_id: number) => void
-  onDec: (producto_id: number) => void
-  onRemove: (producto_id: number) => void
-  onDescuento: (producto_id: number, valor: number) => void
+  onInc: (key: string) => void
+  onDec: (key: string) => void
+  onRemove: (key: string) => void
+  onDescuento: (key: string, valor: number) => void
   onClear: () => void
   onCobrar: () => void
   /** Oculta el header "Cuenta · N ítems" cuando el contenedor ya lo muestra (hoja mobile). */
@@ -80,66 +91,76 @@ export default function Cart({
           </div>
         ) : (
           <div className="divide-y divide-warm-100">
-            {items.map(item => (
-              <div key={item.producto_id} className="py-3">
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-bark-800 truncate">{item.nombre}</p>
-                    <p className="text-xs text-warm-400 tabular-nums">
-                      {fmtCO(item.precio_venta)} c/u ·{' '}
-                      <span className="font-bold text-warm-600">
-                        {fmtCO(item.precio_venta * item.cantidad - (item.descuento || 0))}
-                      </span>
-                      {(item.descuento || 0) > 0 && (
-                        <span className="text-clay-600"> (−{fmtCO(item.descuento || 0)})</span>
+            {items.map(item => {
+              const key = cartKey(item)
+              // Resumen de la combinación elegida (solo líneas de combo)
+              const resumenCombo = item.combo
+                ? item.combo.selecciones.map(s => s.nombre_opcion).join(' + ')
+                : null
+              return (
+                <div key={key} className="py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-bark-800 truncate">{item.nombre}</p>
+                      {resumenCombo && (
+                        <p className="text-[11px] text-warm-500 truncate">{resumenCombo}</p>
                       )}
-                    </p>
-                  </div>
-                  <Stepper
-                    value={item.cantidad}
-                    min={1}
-                    onDec={() => onDec(item.producto_id)}
-                    onInc={() => onInc(item.producto_id)}
-                  />
-                  <button
-                    onClick={() => onRemove(item.producto_id)}
-                    aria-label="Quitar"
-                    className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center text-danger-400 hover:text-danger-600 hover:bg-danger-50 transition-colors"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-                {/* Descuento en % por producto */}
-                {(() => {
-                  const bruto = item.precio_venta * item.cantidad
-                  const pct = bruto > 0 ? Math.round((item.descuento || 0) / bruto * 100) : 0
-                  return (
-                    <div className="flex items-center gap-2 mt-1.5">
-                      <span className="text-[11px] text-warm-400">Desc.</span>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min={0}
-                        max={100}
-                        value={pct || ''}
-                        onChange={e => {
-                          const p = Math.min(100, Math.max(0, Number(e.target.value) || 0))
-                          onDescuento(item.producto_id, Math.round((p / 100) * bruto))
-                        }}
-                        placeholder="0"
-                        className="w-14 text-right text-xs font-bold font-mono tabular-nums bg-warm-50 border border-warm-200 rounded-md px-2 py-1 outline-none focus:border-clay-400"
-                      />
-                      <span className="text-[11px] text-warm-400">%</span>
-                      {pct > 0 && (
-                        <span className="text-[11px] text-clay-600 font-semibold">
-                          −{`$${Math.round((pct / 100) * bruto).toLocaleString('es-CO')}`}
+                      <p className="text-xs text-warm-400 tabular-nums">
+                        {fmtCO(item.precio_venta)} c/u ·{' '}
+                        <span className="font-bold text-warm-600">
+                          {fmtCO(item.precio_venta * item.cantidad - (item.descuento || 0))}
                         </span>
-                      )}
+                        {(item.descuento || 0) > 0 && (
+                          <span className="text-clay-600"> (−{fmtCO(item.descuento || 0)})</span>
+                        )}
+                      </p>
                     </div>
-                  )
-                })()}
-              </div>
-            ))}
+                    <Stepper
+                      value={item.cantidad}
+                      min={1}
+                      onDec={() => onDec(key)}
+                      onInc={() => onInc(key)}
+                    />
+                    <button
+                      onClick={() => onRemove(key)}
+                      aria-label="Quitar"
+                      className="w-7 h-7 shrink-0 rounded-lg flex items-center justify-center text-danger-400 hover:text-danger-600 hover:bg-danger-50 transition-colors"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                  {/* Descuento en % por producto — no aplica a combos (precio fijo) */}
+                  {!item.combo && (() => {
+                    const bruto = item.precio_venta * item.cantidad
+                    const pct = bruto > 0 ? Math.round((item.descuento || 0) / bruto * 100) : 0
+                    return (
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <span className="text-[11px] text-warm-400">Desc.</span>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          max={100}
+                          value={pct || ''}
+                          onChange={e => {
+                            const p = Math.min(100, Math.max(0, Number(e.target.value) || 0))
+                            onDescuento(key, Math.round((p / 100) * bruto))
+                          }}
+                          placeholder="0"
+                          className="w-14 text-right text-xs font-bold font-mono tabular-nums bg-warm-50 border border-warm-200 rounded-md px-2 py-1 outline-none focus:border-clay-400"
+                        />
+                        <span className="text-[11px] text-warm-400">%</span>
+                        {pct > 0 && (
+                          <span className="text-[11px] text-clay-600 font-semibold">
+                            −{`$${Math.round((pct / 100) * bruto).toLocaleString('es-CO')}`}
+                          </span>
+                        )}
+                      </div>
+                    )
+                  })()}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>

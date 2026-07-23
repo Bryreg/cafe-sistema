@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models.models import (
     Ticket, TicketItem, Tienda, Inventario, Producto, CategoriaProductoEnum,
-    FacturaCompraItem,
+    FacturaCompraItem, Combo,
 )
 from app.core.tz import rango_col_utc
 
@@ -87,26 +87,37 @@ def ventas_por_categoria(
     if tienda_id is not None:
         filtros.append(Ticket.tienda_id == tienda_id)
 
+    # Línea de combo = su producto es el SOMBRA de un Combo (Combo.producto_id):
+    # se reporta como categoría propia "combos" en vez de la categoría inerte del
+    # sombra — así el ingreso de combos no infla bebida ni esconde pastelería.
+    es_combo = Combo.id.isnot(None)
     rows = (
         db.query(
             Producto.categoria,
+            es_combo,
             func.sum(TicketItem.subtotal),
             func.sum(TicketItem.cantidad),
         )
         .join(Ticket, Ticket.id == TicketItem.ticket_id)
         .join(Producto, Producto.id == TicketItem.producto_id)
+        .outerjoin(Combo, Combo.producto_id == TicketItem.producto_id)
         .filter(*filtros)
-        .group_by(Producto.categoria)
-        .order_by(func.sum(TicketItem.subtotal).desc())
+        .group_by(Producto.categoria, es_combo)
         .all()
     )
+    acumulado: dict[str, dict] = {}
+    for cat, combo_flag, total, unidades in rows:
+        nombre = "combos" if combo_flag else (cat.value if hasattr(cat, "value") else str(cat))
+        e = acumulado.setdefault(nombre, {"total": 0.0, "unidades": 0.0})
+        e["total"] += float(total or 0)
+        e["unidades"] += float(unidades or 0)
     return [
         {
-            "categoria": r[0].value if hasattr(r[0], "value") else str(r[0]),
-            "total": round(float(r[1] or 0), 2),
-            "unidades": float(r[2] or 0),
+            "categoria": nombre,
+            "total": round(v["total"], 2),
+            "unidades": v["unidades"],
         }
-        for r in rows
+        for nombre, v in sorted(acumulado.items(), key=lambda kv: -kv[1]["total"])
     ]
 
 

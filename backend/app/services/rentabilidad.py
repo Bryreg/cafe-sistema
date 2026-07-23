@@ -18,8 +18,9 @@ from sqlalchemy import func, not_, or_
 
 from app.core.tz import dia_col, hora_col, hoy_col, rango_col_utc
 from app.models.models import (
-    CajaTurno, FacturaCompra, FacturaCompraItem, MovimientoCaja, Producto,
-    ProductoInsumo, ProductoDesechable, Ticket, TicketItem, Tienda, TipoMovCajaEnum,
+    CajaTurno, Combo, FacturaCompra, FacturaCompraItem, MovimientoCaja, Producto,
+    ProductoInsumo, ProductoDesechable, Ticket, TicketItem,
+    TicketItemComboSeleccion, Tienda, TipoMovCajaEnum,
 )
 
 # Patrones de concepto que crea services/facturas.py para pagos a proveedor.
@@ -111,6 +112,10 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # días en que se stockea fuerte. Se acompaña de pct_venta_costeada para no
     # leer el número como exacto si hay productos sin costo.
     costo_unit = _costo_unitario_productos(db)
+    # Líneas de combo: el producto de la línea es el SOMBRA (Combo.producto_id),
+    # sin costo propio — su costo real son los COMPONENTES elegidos
+    # (TicketItemComboSeleccion), agregados más abajo.
+    sombras_combo = {pid for (pid,) in db.query(Combo.producto_id).all()}
     q_items = (
         db.query(TicketItem.producto_id,
                  func.coalesce(func.sum(TicketItem.cantidad), 0),
@@ -127,10 +132,33 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     venta_items = 0.0
     for pid, cant, subtotal in q_items.all():
         venta_items += float(subtotal or 0)
+        if pid in sombras_combo:
+            # La venta del combo cuenta como costeada con su costo agregado
+            # (componentes × costo unitario, sumado abajo).
+            venta_costeada += float(subtotal or 0)
+            continue
         c = costo_unit.get(pid)
         if c is not None:
             cogs_teorico += float(cant or 0) * c
             venta_costeada += float(subtotal or 0)
+
+    # COGS de combos: consumo real de componentes en el rango × costo unitario
+    # (la cantidad de la selección es POR combo → total = cantidad × línea).
+    q_sel = (
+        db.query(TicketItemComboSeleccion.producto_id,
+                 func.coalesce(func.sum(TicketItemComboSeleccion.cantidad * TicketItem.cantidad), 0))
+        .join(TicketItem, TicketItem.id == TicketItemComboSeleccion.ticket_item_id)
+        .join(Ticket, Ticket.id == TicketItem.ticket_id)
+        .filter(Ticket.estado.notin_(ESTADOS_ANULADOS),
+                Ticket.fecha >= d_utc, Ticket.fecha <= h_utc)
+        .group_by(TicketItemComboSeleccion.producto_id)
+    )
+    if tienda_id is not None:
+        q_sel = q_sel.filter(Ticket.tienda_id == tienda_id)
+    for pid, cant in q_sel.all():
+        c = costo_unit.get(pid)
+        if c is not None:
+            cogs_teorico += float(cant or 0) * c
 
     # ── Agregaciones ──────────────────────────────────────────────────────────
     tot_ventas = round(sum(float(r[1] or 0) for r in ventas_rows), 2)
@@ -462,10 +490,16 @@ def get_pulso(db) -> dict:
     por_ticket: dict = defaultdict(set)
     for tid, pid in items:
         por_ticket[tid].add(pid)
+    # Tickets con combo: la línea apunta al SOMBRA (Combo.producto_id), de
+    # categoría inerte. Todo combo incluye bebida + acompañamiento/torta, así
+    # que para el attach cuenta como bebida CON pastelería.
+    sombras_combo = {pid for (pid,) in db.query(Combo.producto_id).all()}
     con_bebida = con_beb_pasteleria = con_beb_addon = 0
     pares: Counter = Counter()
     for pids in por_ticket.values():
         cats = {info_prod.get(p, ("", ""))[1] for p in pids}
+        if pids & sombras_combo:
+            cats |= {"bebida", "pasteleria"}
         if "bebida" in cats:
             con_bebida += 1
             if "pasteleria" in cats:

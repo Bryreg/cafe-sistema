@@ -15,6 +15,8 @@ export interface TicketData {
     precio_unitario: number
     subtotal: number
     descuento?: number
+    // Solo líneas de combo: combinación elegida (se imprime como sub-líneas)
+    combo_selecciones?: Array<{ nombre_grupo: string; nombre_opcion: string; cantidad: number }>
   }>
 }
 
@@ -198,6 +200,20 @@ export default function TicketRecibo({
                   {fmtCO(bruto)}
                 </span>
               </div>
+              {/* Combinación elegida (líneas de combo) — una sub-línea por opción.
+                  Las opciones compuestas traen una fila por producto: se dedupe
+                  por grupo+opción para imprimir la opción una sola vez. */}
+              {Array.from(
+                new Map(
+                  (item.combo_selecciones || []).map(s => [
+                    `${s.nombre_grupo}|${s.nombre_opcion}`, s,
+                  ]),
+                ).values(),
+              ).map((s, j) => (
+                <div key={j} style={{ fontSize: '9px', color: '#000', paddingLeft: '8px' }}>
+                  · {s.nombre_opcion}
+                </div>
+              ))}
               {desc > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#000', paddingLeft: '8px' }}>
                   <span>Descuento ({Math.round(desc / bruto * 100)}%)</span>

@@ -106,8 +106,10 @@ export default function NotaCredito() {
 
 function RevertModal({ ticket, onClose, onDone }: { ticket: Ticket; onClose: () => void; onDone: () => void }) {
   const [motivo, setMotivo] = useState('')
+  // Indexado por id de la LÍNEA del ticket: dos líneas del mismo combo comparten
+  // producto_id (sombra) y deben marcarse independiente.
   const [usado, setUsado] = useState<Record<number, boolean>>(
-    Object.fromEntries(ticket.items.map(i => [i.producto_id, true])) // default: usado (no devuelve)
+    Object.fromEntries(ticket.items.map(i => [i.id, true])) // default: usado (no devuelve)
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -118,7 +120,7 @@ function RevertModal({ ticket, onClose, onDone }: { ticket: Ticket; onClose: () 
     try {
       await api.post(`/pos/ticket/${ticket.id}/revertir`, {
         motivo: motivo.trim(),
-        items: ticket.items.map(i => ({ producto_id: i.producto_id, producto_usado: usado[i.producto_id] })),
+        items: ticket.items.map(i => ({ item_id: i.id, producto_id: i.producto_id, producto_usado: usado[i.id] })),
       })
       onDone()
     } catch (e: any) {
@@ -143,12 +145,12 @@ function RevertModal({ ticket, onClose, onDone }: { ticket: Ticket; onClose: () 
                 {i.nombre_producto} <span className="text-warm-400">×{i.cantidad}</span>
               </span>
               <div className="flex rounded-lg overflow-hidden border border-warm-200 text-xs font-semibold">
-                <button onClick={() => setUsado(p => ({ ...p, [i.producto_id]: true }))}
-                  className={usado[i.producto_id] ? 'px-3 py-1.5 bg-warm-700 text-white' : 'px-3 py-1.5 bg-white text-warm-500'}>
+                <button onClick={() => setUsado(p => ({ ...p, [i.id]: true }))}
+                  className={usado[i.id] ? 'px-3 py-1.5 bg-warm-700 text-white' : 'px-3 py-1.5 bg-white text-warm-500'}>
                   Sí, se usó
                 </button>
-                <button onClick={() => setUsado(p => ({ ...p, [i.producto_id]: false }))}
-                  className={!usado[i.producto_id] ? 'px-3 py-1.5 bg-green-700 text-white' : 'px-3 py-1.5 bg-white text-warm-500'}>
+                <button onClick={() => setUsado(p => ({ ...p, [i.id]: false }))}
+                  className={!usado[i.id] ? 'px-3 py-1.5 bg-green-700 text-white' : 'px-3 py-1.5 bg-white text-warm-500'}>
                   No, vuelve
                 </button>
               </div>

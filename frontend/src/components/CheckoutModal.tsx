@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import TicketRecibo, { type TicketData } from './TicketRecibo'
 import Numpad from './Numpad'
 import { Sheet, MoneyInput, Toast, SectionLabel, Pill } from './ui'
+import type { CartItem } from './Cart'
 
 // Extrae un mensaje de error legible. El backend puede devolver `detail` como
 // string (errores de negocio) o como array de objetos (errores de validación
@@ -20,14 +21,6 @@ function extractError(e: any): string {
   }
   if (d && typeof d === 'object' && typeof d.msg === 'string') return d.msg
   return 'Error al procesar el cobro'
-}
-
-interface CartItem {
-  producto_id: number
-  nombre: string
-  cantidad: number
-  precio_venta: number
-  descuento?: number
 }
 
 interface Props {
@@ -97,9 +90,21 @@ export default function CheckoutModal({ items, totalEstimado, onClose, onSuccess
     setError('')
     setLoading(true)
     try {
+      // Productos normales y combos viajan en campos separados del payload.
+      // El precio del combo lo fija SIEMPRE el servidor (acá no se envía).
+      const productos = items.filter(i => !i.combo)
+      const combos = items.filter(i => i.combo)
       const body: Record<string, unknown> = {
         tienda_id: user?.tienda_id,
-        items: items.map(i => ({ producto_id: i.producto_id, cantidad: i.cantidad, descuento: i.descuento || 0 })),
+        items: productos.map(i => ({ producto_id: i.producto_id, cantidad: i.cantidad, descuento: i.descuento || 0 })),
+        combos: combos.map(i => ({
+          combo_id: i.combo!.combo_id,
+          cantidad: i.cantidad,
+          selecciones: i.combo!.selecciones.map(s => ({
+            grupo_id: s.grupo_id,
+            opcion_id: s.opcion_id,
+          })),
+        })),
         metodo_pago: metodo,
       }
       if (metodo === 'efectivo') body.efectivo_recibido = numRecibido

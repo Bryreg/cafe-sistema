@@ -7,7 +7,8 @@ import api from '../api/client'
 import CheckoutModal from '../components/CheckoutModal'
 import TicketRecibo, { TicketData } from '../components/TicketRecibo'
 import ProductGrid, { Producto } from '../components/ProductGrid'
-import Cart, { CartItem } from '../components/Cart'
+import Cart, { CartItem, cartKey } from '../components/Cart'
+import { ComboPos, ComboSeleccion } from '../components/ComboSelector'
 import { Toast, Sheet, Pill } from '../components/ui'
 import DockBar from '../components/DockBar'
 import PanelTurno from '../components/PanelTurno'
@@ -45,6 +46,8 @@ interface TicketApi {
     precio_unitario: number
     subtotal: number
     descuento?: number
+    // Solo líneas de combo: combinación elegida (para el recibo)
+    combo_selecciones?: Array<{ nombre_grupo: string; nombre_opcion: string; cantidad: number }>
   }>
 }
 
@@ -94,6 +97,7 @@ export default function POS() {
 
   // Hooks antes de cualquier return condicional.
   const [productos, setProductos] = useState<Producto[]>([])
+  const [combos, setCombos] = useState<ComboPos[]>([])
   const [cart, setCart] = useState<CartItem[]>([])
   const [search, setSearch] = useState('')
   const [catFiltro, setCatFiltro] = useState('todas')
@@ -141,6 +145,17 @@ export default function POS() {
       .finally(() => setLoading(false))
   }, [turnoListo])
 
+  // Combos activos de la tienda actual (pestaña "Combos" dinámica). Si falla,
+  // el POS sigue normal sin la pestaña de combos.
+  useEffect(() => {
+    const tid = turno?.tienda_id
+    if (!turnoListo || !tid) return
+    api
+      .get<ComboPos[]>('/pos/combos', { params: { tienda_id: tid } })
+      .then(r => setCombos(r.data))
+      .catch(() => setCombos([]))
+  }, [turnoListo, turno?.tienda_id])
+
   // Traslados entrantes por recibir → badge en el dock/banner. Refresca cada 30s
   // y al abrir/cerrar un panel (así baja apenas la barista recibe en Merma).
   useEffect(() => {
@@ -167,10 +182,10 @@ export default function POS() {
 
   const addToCart = (p: Producto) => {
     setCart(prev => {
-      const existing = prev.find(i => i.producto_id === p.id)
+      const existing = prev.find(i => !i.combo && i.producto_id === p.id)
       if (existing) {
         return prev.map(i =>
-          i.producto_id === p.id ? { ...i, cantidad: i.cantidad + 1 } : i,
+          !i.combo && i.producto_id === p.id ? { ...i, cantidad: i.cantidad + 1 } : i,
         )
       }
       return [
@@ -180,25 +195,53 @@ export default function POS() {
     })
   }
 
-  const incItem = (producto_id: number) =>
+  // Combo → línea del carrito a precio fijo. Mismo combo + misma selección se
+  // agrupan (sube cantidad); selecciones distintas son líneas separadas.
+  const addComboToCart = (combo: ComboPos, selecciones: ComboSeleccion[]) => {
+    const lineaId = `c-${combo.id}-${selecciones
+      .map(s => s.opcion_id)
+      .sort((a, b) => a - b)
+      .join('.')}`
+    setCart(prev => {
+      const existing = prev.find(i => i.linea_id === lineaId)
+      if (existing) {
+        return prev.map(i =>
+          i.linea_id === lineaId ? { ...i, cantidad: i.cantidad + 1 } : i,
+        )
+      }
+      return [
+        ...prev,
+        {
+          producto_id: 0, // centinela: la línea de combo no es un producto de la grilla (ver CartItem en Cart.tsx)
+          linea_id: lineaId,
+          nombre: combo.nombre,
+          cantidad: 1,
+          precio_venta: combo.precio_venta,
+          combo: { combo_id: combo.id, selecciones },
+        },
+      ]
+    })
+  }
+
+  const incItem = (key: string) =>
     setCart(prev =>
-      prev.map(i => (i.producto_id === producto_id ? { ...i, cantidad: i.cantidad + 1 } : i)),
+      prev.map(i => (cartKey(i) === key ? { ...i, cantidad: i.cantidad + 1 } : i)),
     )
 
-  const decItem = (producto_id: number) =>
+  const decItem = (key: string) =>
     setCart(prev =>
       prev
-        .map(i => (i.producto_id === producto_id ? { ...i, cantidad: i.cantidad - 1 } : i))
+        .map(i => (cartKey(i) === key ? { ...i, cantidad: i.cantidad - 1 } : i))
         .filter(i => i.cantidad > 0),
     )
 
-  const removeItem = (producto_id: number) =>
-    setCart(prev => prev.filter(i => i.producto_id !== producto_id))
+  const removeItem = (key: string) =>
+    setCart(prev => prev.filter(i => cartKey(i) !== key))
 
   // Descuento libre por producto (clamp al bruto de la línea)
-  const setItemDescuento = (producto_id: number, valor: number) =>
+  const setItemDescuento = (key: string, valor: number) =>
     setCart(prev => prev.map(i => {
-      if (i.producto_id !== producto_id) return i
+      if (cartKey(i) !== key) return i
       const max = i.precio_venta * i.cantidad
       return { ...i, descuento: Math.max(0, Math.min(valor, max)) }
     }))
@@ -338,8 +381,10 @@ export default function POS() {
 
               <ProductGrid
                 productos={productos}
+                combos={combos}
                 cart={cart}
                 onAdd={addToCart}
+                onAddCombo={addComboToCart}
                 search={search}
                 onSearch={setSearch}
                 catFiltro={catFiltro}

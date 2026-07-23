@@ -9,9 +9,23 @@ class TicketItemRequest(BaseModel):
     descuento: Optional[float] = 0  # descuento libre por producto (linea)
 
 
+class ComboSeleccionRequest(BaseModel):
+    grupo_id: int
+    opcion_id: int
+
+
+class TicketComboRequest(BaseModel):
+    combo_id: int
+    cantidad: int
+    # Una selección por grupo. Los grupos de opción única se auto-seleccionan
+    # en el servidor si no vienen (grupos fijos).
+    selecciones: List[ComboSeleccionRequest] = []
+
+
 class TicketCreate(BaseModel):
     tienda_id: int
-    items: List[TicketItemRequest]
+    items: List[TicketItemRequest] = []
+    combos: List[TicketComboRequest] = []
     metodo_pago: str  # 'efectivo' | 'tarjeta' | 'mixto'
     efectivo_recibido: Optional[float] = None
     # Solo se usan cuando metodo_pago == 'mixto'
@@ -33,6 +47,16 @@ class ProductoPOSOut(BaseModel):
     vendidos_7d: int = 0  # unidades vendidas últimos 7 días (para "Favoritos")
 
 
+class TicketItemComboSeleccionOut(BaseModel):
+    nombre_grupo: str
+    nombre_opcion: str
+    producto_id: int
+    cantidad: int
+
+    class Config:
+        from_attributes = True
+
+
 class TicketItemOut(BaseModel):
     id: int
     producto_id: int
@@ -41,6 +65,8 @@ class TicketItemOut(BaseModel):
     precio_unitario: float
     subtotal: float
     descuento: float = 0
+    # Solo líneas de combo: la combinación elegida (vacío en items normales).
+    combo_selecciones: List[TicketItemComboSeleccionOut] = []
 
     class Config:
         from_attributes = True
@@ -112,3 +138,35 @@ class MetodoPagoOut(BaseModel):
     metodo_pago: str   # 'efectivo' | 'tarjeta' | 'mixto'
     n_tickets: int
     total: float
+
+
+# ---------------------------------------------------------------------------
+# Combos (precio fijo, grupos de opciones) — catálogo para el POS
+# ---------------------------------------------------------------------------
+
+class ComboOpcionProductoOut(BaseModel):
+    producto_id: int
+    nombre: str
+    cantidad: int
+
+
+class ComboOpcionOut(BaseModel):
+    id: int
+    nombre: str
+    orden: int
+    productos: List[ComboOpcionProductoOut] = []
+
+
+class ComboGrupoOut(BaseModel):
+    id: int
+    nombre: str
+    orden: int
+    opciones: List[ComboOpcionOut] = []
+
+
+class ComboOut(BaseModel):
+    id: int
+    nombre: str
+    precio_venta: float
+    orden: int
+    grupos: List[ComboGrupoOut] = []

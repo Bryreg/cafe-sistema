@@ -9,15 +9,19 @@ from app.models.models import Usuario
 from app.schemas.pos import (
     TicketCreate, PrecioUpdate, ProductoPOSOut, TicketOut,
     TicketAnularRequest, AnalyticsResumenOut, ProductoTopOut,
-    VentaPorHoraOut, VentaPorBaristaOut, MetodoPagoOut,
+    VentaPorHoraOut, VentaPorBaristaOut, MetodoPagoOut, ComboOut,
 )
 from app.services import pos as svc
 from app.services import notas_credito as nc_svc
 
 
 class NotaCreditoItemIn(BaseModel):
-    producto_id: int
     producto_usado: bool
+    # Por LÍNEA del ticket (TicketItemOut.id): dos líneas del mismo combo
+    # comparten producto_id (sombra) y se marcan independiente por item_id.
+    item_id: Optional[int] = None
+    # Compat con payloads viejos: indexado por producto (aplica a sus líneas).
+    producto_id: Optional[int] = None
 
 
 class RevertirRequest(BaseModel):
@@ -31,6 +35,15 @@ router = APIRouter(prefix="/pos", tags=["pos"])
 def productos(categoria: Optional[str] = None, db: Session = Depends(get_db),
               user: Usuario = Depends(get_current_user)):
     return svc.get_productos_pos(db, categoria)
+
+
+@router.get("/combos", response_model=List[ComboOut])
+def combos_disponibles(tienda_id: int, db: Session = Depends(get_db),
+                       user: Usuario = Depends(get_current_user)):
+    """Combos activos disponibles en la tienda (con grupos, opciones y productos).
+    El POS los usa para pintar las pestañas y el selector de combo."""
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_combos_pos(db, tienda_id)
 
 
 @router.post("/ticket", response_model=TicketOut, status_code=201)
@@ -48,6 +61,7 @@ def crear_ticket(data: TicketCreate, db: Session = Depends(get_db),
         monto_efectivo=data.monto_efectivo,
         monto_tarjeta=data.monto_tarjeta,
         barista_id=barista[0], barista_nombre=barista[1],
+        combos=[c.dict() for c in data.combos],
     )
     return ticket
 
@@ -117,10 +131,13 @@ def anular_ticket(ticket_id: int, data: TicketAnularRequest = TicketAnularReques
 def revertir_ticket(ticket_id: int, data: RevertirRequest,
                     db: Session = Depends(get_db),
                     user: Usuario = Depends(require_admin)):
-    """Nota Crédito: revierte la venta. Por producto, producto_usado decide si el
-    inventario lo recupera (False = vuelve al conteo) o no (True = se consumió)."""
-    items_usado = {i.producto_id: i.producto_usado for i in data.items}
-    nota = nc_svc.revertir_venta(db, ticket_id, user.id, data.motivo, items_usado)
+    """Nota Crédito: revierte la venta. Por línea del ticket, producto_usado decide
+    si el inventario lo recupera (False = vuelve al conteo) o no (True = se consumió)."""
+    items_usado = {i.item_id: i.producto_usado for i in data.items if i.item_id is not None}
+    usado_por_producto = {i.producto_id: i.producto_usado
+                          for i in data.items if i.item_id is None and i.producto_id is not None}
+    nota = nc_svc.revertir_venta(db, ticket_id, user.id, data.motivo,
+                                 items_usado, usado_por_producto)
     return {
         "id": nota.id, "ticket_id": nota.ticket_id,
         "valor_revertido": nota.valor_revertido,

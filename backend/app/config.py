@@ -26,7 +26,10 @@ class Settings(BaseSettings):
     # Orden de preferencia: Groq → Gemini → Claude, según qué key esté puesta.
     # Sin ninguna key el endpoint responde 503 y el form sigue funcionando manual.
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    # Único modelo de visión vigente en Groq (2026-07; llama-4-scout fue
+    # retirado). Es PREVIEW: si desaparece, el código prueba solo una cadena de
+    # modelos alternativos (ver factura_ocr._modelos_groq).
+    GROQ_MODEL: str = "qwen/qwen3.6-27b"
     GEMINI_API_KEY: str = ""
     # Si este modelo no tiene cuota gratis, el código prueba solo una cadena de
     # modelos Flash alternativos (ver factura_ocr._modelos_gemini).

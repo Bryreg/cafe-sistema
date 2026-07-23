@@ -234,15 +234,103 @@ def _user_text(catalogo: str, fecha_hoy: date) -> str:
     )
 
 
+_MSG_TODOS_CAIDOS = ("Los proveedores de lectura están caídos o sin cuota — "
+                     "llenala manual e intentá el escaneo más tarde.")
+
+# ─── Presupuesto por escaneo: tiempo total + tope de llamadas ────────────────
+# El front corta a los 120s (300s el backfill): sin deadline server-side, el
+# peor caso de la cascada (~10 llamadas × 120s) seguía quemando cuota y
+# conexiones ~20 minutos para una respuesta que ya nadie iba a leer.
+_BUDGET_SEG = 100.0      # deadline total por escaneo (margen bajo los 120s del front)
+_TIMEOUT_LLAMADA = 45.0  # por llamada: una lectura de visión sana responde en <30s
+# Tope de POSTs POR PROVEEDOR (no global): la cadena de un proveedor caído no
+# puede comerse los intentos de los siguientes. Peor caso: 2 (Groq) + 2
+# (Gemini) + 1 (Claude, sin cadena) = 5 llamadas, siempre bajo el deadline.
+_MAX_INTENTOS_POR_PROVEEDOR = 2
+
+_MSG_TIEMPO_AGOTADO = ("Se agotó el tiempo de lectura probando proveedores — "
+                       "llenala manual e intentá el escaneo más tarde.")
+
+
+class _Presupuesto:
+    """Deadline COMPARTIDO por toda la cascada de un escaneo (los tres
+    proveedores y sus cadenas de modelos), más un tope de llamadas POR
+    PROVEEDOR: _extraer lo resetea con iniciar_proveedor() antes de cada uno,
+    así la cadena de un proveedor caído no agota los intentos del siguiente."""
+
+    def __init__(self) -> None:
+        self._deadline = time.monotonic() + _BUDGET_SEG
+        self._intentos_proveedor = _MAX_INTENTOS_POR_PROVEEDOR
+
+    def iniciar_proveedor(self) -> None:
+        self._intentos_proveedor = _MAX_INTENTOS_POR_PROVEEDOR
+
+    def restante(self) -> float:
+        return self._deadline - time.monotonic()
+
+    def agotado(self) -> bool:
+        return self._intentos_proveedor <= 0 or self.restante() <= 0
+
+    def consumir_intento(self) -> None:
+        self._intentos_proveedor -= 1
+
+    def timeout_llamada(self) -> float:
+        return min(_TIMEOUT_LLAMADA, self.restante())
+
+
 def _extraer(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
-    """Dispatcher de proveedor, por preferencia: Groq (gratis) → Gemini → Claude."""
+    """Dispatcher de proveedor: intenta TODOS los que tengan key configurada,
+    en orden de preferencia Groq (gratis) → Gemini → Claude.
+
+    Un error DE PROVEEDOR (modelo retirado con la cadena agotada, 5xx, key
+    inválida, JSON ilegible, cuota agotada) pasa al siguiente; los 422 son un
+    problema de la IMAGEN (no es factura / ilegible) y se devuelven de una,
+    porque otro proveedor no la va a leer distinto. Los mensajes de cuota
+    ("esperá un minuto" / "seguí mañana") solo llegan al usuario si no queda
+    otro proveedor al cual pasar.
+
+    Toda la cascada comparte UN presupuesto (_Presupuesto): deadline total de
+    _BUDGET_SEG, más un tope de _MAX_INTENTOS_POR_PROVEEDOR llamadas que se
+    resetea al pasar de proveedor (peor caso 2+2+1 = 5 llamadas). Agotado el
+    tiempo no se intenta nada más y el error final lo dice; agotado el tope de
+    UN proveedor, su cadena corta y la cascada sigue con el siguiente."""
+    proveedores = []
     if settings.GROQ_API_KEY:
-        return _extraer_con_groq(imagen_jpeg, catalogo, fecha_hoy)
+        proveedores.append(("Groq", _extraer_con_groq))
     if settings.GEMINI_API_KEY:
-        return _extraer_con_gemini(imagen_jpeg, catalogo, fecha_hoy)
+        proveedores.append(("Gemini", _extraer_con_gemini))
     if settings.ANTHROPIC_API_KEY:
-        return _extraer_con_claude(imagen_jpeg, catalogo, fecha_hoy)
-    raise HTTPException(503, _MSG_SIN_KEY)
+        proveedores.append(("Claude", _extraer_con_claude))
+    if not proveedores:
+        raise HTTPException(503, _MSG_SIN_KEY)
+
+    presupuesto = _Presupuesto()
+    ultimo: HTTPException | None = None
+    corto_por_presupuesto = False
+    for i, (nombre, fn) in enumerate(proveedores):
+        presupuesto.iniciar_proveedor()  # tope de intentos propio por proveedor
+        if presupuesto.agotado():  # con el contador recién reseteado, solo corta el tiempo
+            corto_por_presupuesto = True
+            logger.warning("Presupuesto del escaneo agotado — no se intenta %s", nombre)
+            break
+        try:
+            return fn(imagen_jpeg, catalogo, fecha_hoy, presupuesto)
+        except HTTPException as e:
+            if e.status_code == 422:
+                raise
+            ultimo = e
+            if i + 1 < len(proveedores):
+                logger.warning("Proveedor %s falló (%s: %s) — probando %s",
+                               nombre, e.status_code, e.detail, proveedores[i + 1][0])
+    if ultimo is not None and _MSG_TIEMPO_AGOTADO in str(ultimo.detail):
+        raise ultimo  # la cadena ya cortó por presupuesto adentro: no anidar el mensaje
+    if corto_por_presupuesto:
+        if ultimo is None:
+            raise HTTPException(503, _MSG_TIEMPO_AGOTADO)
+        raise HTTPException(503, f"{_MSG_TIEMPO_AGOTADO} (último error: {ultimo.detail})")
+    if len(proveedores) == 1:
+        raise ultimo  # un solo proveedor: su mensaje específico es el útil
+    raise HTTPException(503, f"{_MSG_TODOS_CAIDOS} (último error: {ultimo.detail})")
 
 
 def _reducir_para_groq(jpeg: bytes, max_side: int = 1280, quality: int = 78,
@@ -258,66 +346,172 @@ def _reducir_para_groq(jpeg: bytes, max_side: int = 1280, quality: int = 78,
     return out
 
 
-def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
+def _modelos_groq() -> list[str]:
+    """Cadena de modelos a probar en orden. Groq retira modelos de visión de un
+    día para otro (llama-4-scout murió con 404 model_not_found en producción):
+    si el configurado responde 404/decommissioned, se prueba el siguiente.
+    qwen3.6-27b es el único de visión vigente hoy (PREVIEW); los llama-4 quedan
+    de respaldo por si Groq los revive o el usuario apunta a otro."""
+    cadena = [settings.GROQ_MODEL, "qwen/qwen3.6-27b",
+              "meta-llama/llama-4-maverick-17b-128e-instruct",
+              "meta-llama/llama-4-scout-17b-16e-instruct"]
+    vistos: set[str] = set()
+    return [m for m in cadena if m and not (m in vistos or vistos.add(m))]
+
+
+# Cap de entrada de _json_de_texto: el escaneo de llaves de abajo es O(n²) en
+# su peor caso (texto plagado de '{' que nunca cierran). Con max_tokens=4000
+# (su único caller es Groq) una respuesta legítima ronda ~16k caracteres, así
+# que recortar en 60k no pierde nada real y acota el costo del peor caso.
+_MAX_TEXTO_JSON = 60_000
+
+
+def _json_de_texto(texto: str) -> dict:
+    """Parsea el JSON de la respuesta aunque venga rodeado de texto.
+
+    Los modelos con "thinking" (qwen3.6-27b) a veces razonan antes del objeto
+    o lo envuelven en ```json. Se busca el primer bloque {...} balanceado
+    (respetando strings con escapes); si hay varios, se prefiere el que tenga
+    forma de extracción (claves "items"/"error"). Lanza ValueError si no hay
+    ningún objeto parseable."""
+    texto = texto or ""
+    if len(texto) > _MAX_TEXTO_JSON:
+        texto = texto[:_MAX_TEXTO_JSON]
+    try:
+        out = json.loads(texto)
+        if isinstance(out, dict):
+            return out
+    except (json.JSONDecodeError, ValueError):
+        pass
+    primero = None
+    inicio = texto.find("{")
+    while inicio != -1:
+        fin, depth, en_str, esc = -1, 0, False, False
+        for i in range(inicio, len(texto)):
+            ch = texto[i]
+            if en_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    en_str = False
+            elif ch == '"':
+                en_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    fin = i
+                    break
+        if fin != -1:
+            try:
+                out = json.loads(texto[inicio:fin + 1])
+            except (json.JSONDecodeError, ValueError):
+                out = None
+            if isinstance(out, dict):
+                if "items" in out or "error" in out:
+                    return out
+                if primero is None:
+                    primero = out
+        inicio = texto.find("{", inicio + 1)
+    if primero is not None:
+        return primero
+    raise ValueError("sin JSON parseable en la respuesta")
+
+
+def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
+                      presupuesto: "_Presupuesto | None" = None) -> dict:
     import httpx
 
+    presupuesto = presupuesto or _Presupuesto()
     jpeg = _reducir_para_groq(imagen_jpeg)
     b64 = base64.standard_b64encode(jpeg).decode("utf-8")
     # Los modelos de visión de Llama tuvieron el bug de rechazar un mensaje
     # `system` cuando venía una imagen: mandamos TODO en un solo turno de usuario.
     prompt = f"{_SYSTEM}\n\n{_user_text(catalogo, fecha_hoy)}\n\n{_ESQUEMA_TXT}"
-    body = {
-        "model": settings.GROQ_MODEL,
-        "temperature": 0,
-        "max_tokens": 4000,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "user", "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-            ]},
-        ],
-    }
-    try:
-        r = httpx.post("https://api.groq.com/openai/v1/chat/completions", json=body,
-                       headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
-                       timeout=120.0)
-    except httpx.HTTPError as e:
-        logger.error("Error de red contra Groq: %s", e)
-        raise HTTPException(502, "No se pudo contactar el servicio de escaneo — intentá de nuevo en un rato.")
-
-    if r.status_code == 429:
+    ultimo_error = ""
+    for modelo in _modelos_groq():
+        if presupuesto.agotado():
+            raise HTTPException(503, _MSG_TIEMPO_AGOTADO)
+        body = {
+            "model": modelo,
+            "temperature": 0,
+            "max_tokens": 4000,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                ]},
+            ],
+        }
+        presupuesto.consumir_intento()
         try:
-            raw = ((r.json().get("error") or {}).get("message", "") or r.text)
-        except ValueError:
-            raw = r.text
-        logger.warning("Groq 429: %s", raw[:300])
-        # Distinguir cuota DIARIA (hay que esperar a mañana) de límite por minuto.
-        low = raw.lower()
-        es_dia = "per day" in low or "tpd" in low or "rpd" in low or "day" in low
-        if es_dia:
-            raise HTTPException(503, f"Se agotó la cuota gratis de escaneo del DÍA — seguí mañana. (Groq: {raw[:160]})")
-        raise HTTPException(503, f"Se alcanzó el límite por minuto — esperá un minuto. (Groq: {raw[:160]})")
-    if r.status_code in (401, 403):
-        logger.error("Groq rechazó la key (%s): %s", r.status_code, r.text[:500])
-        raise HTTPException(503, "La clave de la API de escaneo no es válida — revisá GROQ_API_KEY en el servidor.")
-    if r.status_code != 200:
-        logger.error("Groq HTTP %s: %s", r.status_code, r.text[:500])
-        raise HTTPException(502, "El servicio de escaneo falló — intentá de nuevo más tarde.")
+            r = httpx.post("https://api.groq.com/openai/v1/chat/completions", json=body,
+                           headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+                           timeout=presupuesto.timeout_llamada())
+        except httpx.HTTPError as e:
+            logger.error("Error de red contra Groq: %s", e)
+            raise HTTPException(502, "No se pudo contactar el servicio de escaneo — intentá de nuevo en un rato.")
 
-    data = r.json()
-    choices = data.get("choices") or []
-    if not choices:
-        logger.error("Groq sin choices: %s", json.dumps(data)[:500])
-        raise HTTPException(422, "El servicio no pudo procesar esta imagen — llenala manual.")
-    if choices[0].get("finish_reason") == "length":
-        raise HTTPException(502, "La factura es demasiado larga para leerla completa — llenala manual.")
-    texto = (choices[0].get("message") or {}).get("content") or ""
-    try:
-        return json.loads(texto)
-    except (json.JSONDecodeError, ValueError):
-        logger.error("Respuesta de Groq no parseable: %r", texto[:500])
-        raise HTTPException(502, "No se pudo interpretar la lectura de la factura — llenala manual.")
+        if r.status_code == 429:
+            try:
+                raw = ((r.json().get("error") or {}).get("message", "") or r.text)
+            except ValueError:
+                raw = r.text
+            logger.warning("Groq 429: %s", raw[:300])
+            # Distinguir cuota DIARIA (hay que esperar a mañana) de límite por minuto.
+            low = raw.lower()
+            es_dia = "per day" in low or "tpd" in low or "rpd" in low or "day" in low
+            if es_dia:
+                raise HTTPException(503, f"Se agotó la cuota gratis de escaneo del DÍA — seguí mañana. (Groq: {raw[:160]})")
+            raise HTTPException(503, f"Se alcanzó el límite por minuto — esperá un minuto. (Groq: {raw[:160]})")
+        if r.status_code in (401, 403):
+            logger.error("Groq rechazó la key (%s): %s", r.status_code, r.text[:500])
+            raise HTTPException(503, "La clave de la API de escaneo no es válida — revisá GROQ_API_KEY en el servidor.")
+        if r.status_code in (400, 404):
+            # Modelo retirado/inexistente (Groq los mata sin aviso): probar el
+            # siguiente de la cadena. Otros 400 sí son error nuestro.
+            try:
+                err = (r.json().get("error") or {})
+                detalle = err.get("message") or r.text
+                code = err.get("code") or ""
+            except ValueError:
+                detalle, code = r.text, ""
+            if (r.status_code == 404 or "model_not_found" in code
+                    or "model_decommissioned" in code):
+                ultimo_error = detalle
+                logger.warning("Groq: modelo %s no disponible (HTTP %s): %s",
+                               modelo, r.status_code, detalle[:300])
+                continue
+            logger.error("Groq HTTP %s: %s", r.status_code, r.text[:500])
+            raise HTTPException(502, "El servicio de escaneo falló — intentá de nuevo más tarde.")
+        if r.status_code != 200:
+            logger.error("Groq HTTP %s: %s", r.status_code, r.text[:500])
+            raise HTTPException(502, "El servicio de escaneo falló — intentá de nuevo más tarde.")
+
+        data = r.json()
+        choices = data.get("choices") or []
+        if not choices:
+            logger.error("Groq sin choices: %s", json.dumps(data)[:500])
+            raise HTTPException(422, "El servicio no pudo procesar esta imagen — llenala manual.")
+        if choices[0].get("finish_reason") == "length":
+            raise HTTPException(502, "La factura es demasiado larga para leerla completa — llenala manual.")
+        texto = (choices[0].get("message") or {}).get("content") or ""
+        try:
+            out = _json_de_texto(texto)
+        except ValueError:
+            logger.error("Respuesta de Groq (%s) no parseable: %r", modelo, texto[:500])
+            raise HTTPException(502, "No se pudo interpretar la lectura de la factura — llenala manual.")
+        if modelo != settings.GROQ_MODEL:
+            logger.info("Escaneo OK con Groq %s (fallback de cadena)", modelo)
+        return out
+
+    logger.error("Groq: ningún modelo de visión disponible. Último error: %s", ultimo_error[:300])
+    raise HTTPException(502, ("El servicio de escaneo no tiene ningún modelo de visión "
+                              f"disponible — avisale al administrador. (Groq: {ultimo_error[:200]})"))
 
 
 def _modelos_gemini() -> list[str]:
@@ -330,9 +524,11 @@ def _modelos_gemini() -> list[str]:
     return [m for m in cadena if m and not (m in vistos or vistos.add(m))]
 
 
-def _extraer_con_gemini(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
+def _extraer_con_gemini(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
+                        presupuesto: "_Presupuesto | None" = None) -> dict:
     import httpx
 
+    presupuesto = presupuesto or _Presupuesto()
     body = {
         "system_instruction": {"parts": [{"text": _SYSTEM}]},
         "contents": [{
@@ -355,12 +551,15 @@ def _extraer_con_gemini(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> d
 
     ultimo_error = ""
     for modelo in _modelos_gemini():
+        if presupuesto.agotado():
+            raise HTTPException(503, _MSG_TIEMPO_AGOTADO)
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
                f"{modelo}:generateContent")
+        presupuesto.consumir_intento()
         try:
             r = httpx.post(url, json=body,
                            headers={"x-goog-api-key": settings.GEMINI_API_KEY},
-                           timeout=120.0)
+                           timeout=presupuesto.timeout_llamada())
         except httpx.HTTPError as e:
             logger.error("Error de red contra Gemini (%s): %s", modelo, e)
             raise HTTPException(502, "No se pudo contactar el servicio de escaneo — intentá de nuevo en un rato.")
@@ -399,11 +598,19 @@ def _extraer_con_gemini(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> d
                               f"modelos probados. Detalle de Google: {ultimo_error[:250]}"))
 
 
-def _extraer_con_claude(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
+def _extraer_con_claude(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
+                        presupuesto: "_Presupuesto | None" = None) -> dict:
     import anthropic
 
+    presupuesto = presupuesto or _Presupuesto()
+    if presupuesto.agotado():
+        raise HTTPException(503, _MSG_TIEMPO_AGOTADO)
+    presupuesto.consumir_intento()
     client = anthropic.Anthropic(
-        api_key=settings.ANTHROPIC_API_KEY, timeout=120.0, max_retries=1,
+        api_key=settings.ANTHROPIC_API_KEY, timeout=presupuesto.timeout_llamada(),
+        # Sin retries del SDK: los reintentos son de la cascada, y un retry puede
+        # tardar 2× el timeout rompiendo el budget del escaneo.
+        max_retries=0,
     )
     b64 = base64.standard_b64encode(imagen_jpeg).decode("utf-8")
     user_text = _user_text(catalogo, fecha_hoy)
@@ -569,13 +776,22 @@ def mapear_items(extraccion: dict, productos: list) -> list[dict]:
             "advertencia": None,
         }
 
+        adv_fuzzy = None
         if prod is None:
-            fila["advertencia"] = "no lo encontré en el inventario — agregalo a mano"
-            out.append(fila)
-            continue
+            # La IA no asignó producto_id: intentar el match por nombre contra
+            # el catálogo (mismos umbrales que el backfill: score ≥0.6 y sin
+            # ambigüedad). Si pega, se usa PERO siempre con advertencia.
+            prod = _match_por_nombre(desc, productos)
+            if prod is None:
+                fila["advertencia"] = "no lo encontré en el inventario — agregalo a mano"
+                out.append(fila)
+                continue
+            adv_fuzzy = f"asigné '{desc}' a {prod.nombre} por similitud — verificá"
 
         cantidad, en_empaques, factor, adv = _convertir_cantidad(
             prod, it.get("cantidad"), it.get("unidad"))
+        if adv_fuzzy:
+            adv = f"{adv_fuzzy}; {adv}" if adv else adv_fuzzy
 
         # Chequeo por renglón: cantidad × precio debería dar el subtotal. Si no
         # cuadra, alguna de las tres cifras se leyó mal — que lo revise un humano.

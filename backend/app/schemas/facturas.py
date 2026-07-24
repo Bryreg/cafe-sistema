@@ -12,6 +12,15 @@ class FacturaItemCreate(BaseModel):
     # True = cantidad viene en EMPAQUES (botellas/frascos): el backend la convierte
     # a gr/ml multiplicando por producto.contenido_por_empaque.
     en_empaques: bool = False
+    # Fase 2 (aliases): texto TAL CUAL del renglón de la factura escaneada. Si
+    # viene, al registrar se aprende el alias descripcion→producto.
+    descripcion_original: Optional[str] = None
+    # Cómo se resolvió el producto: "alias" | "ia" | "fuzzy" (lo sugirió el
+    # escaneo y la barista confirmó) o "correccion" (un humano lo asignó/cambió).
+    # Ausente → se asume confirmación de escaneo. Es METADATA informativa: el
+    # privilegio de sobrescribir un alias existente se deriva SERVER-SIDE
+    # (services/facturas.py::_origen_alias_derivado), nunca de esta etiqueta.
+    origen_match: Optional[str] = None
 
 
 class FacturaCreate(BaseModel):

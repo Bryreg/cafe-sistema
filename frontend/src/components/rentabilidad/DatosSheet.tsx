@@ -1,10 +1,21 @@
 import { useRef, useState } from 'react'
-import { X, ShieldAlert, ScanLine, Loader2 } from 'lucide-react'
+import { X, ShieldAlert, ScanLine, Loader2, Trash2 } from 'lucide-react'
 import api from '../../api/client'
 import {
   PorProductoData, RentabilidadData,
   computeOutliers, computeInsumosSinCosto, fmt,
 } from './helpers'
+
+// Fila de GET /rentabilidad/aliases (administración mínima de la Fase 2).
+interface AliasRow {
+  id: number
+  alias_original: string
+  producto_nombre: string
+  origen: string
+  veces_visto: number
+  actualizado_en: string | null
+  barista_nombre: string | null
+}
 
 /** Bottom-sheet "Salud de datos": todo el mantenimiento de la calidad del
  *  costeo en un solo lugar — cobertura, márgenes atípicos, insumos sin costo,
@@ -20,6 +31,12 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh }
   const [msg, setMsg] = useState('')
   const pararRef = useRef(false)
 
+  // Aliases aprendidos (Fase 2): lista simple con borrar — un alias malo se
+  // auto-refuerza en silencio con cada escaneo si no se puede eliminar.
+  const [verAliases, setVerAliases] = useState(false)
+  const [aliases, setAliases] = useState<AliasRow[] | null>(null)
+  const [aliasMsg, setAliasMsg] = useState('')
+
   if (!open) return null
 
   const all = prodData?.productos ?? []
@@ -28,6 +45,29 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh }
   const completos = all.filter(p => p.costo_completo).length
   const cobertura = all.length ? Math.round((completos / all.length) * 100) : 0
   const pendientes = prodData?.facturas_pendientes_de_costos ?? 0
+
+  const toggleAliases = async () => {
+    const abrir = !verAliases
+    setVerAliases(abrir)
+    if (abrir && aliases === null) {
+      try {
+        const r = await api.get<AliasRow[]>('/rentabilidad/aliases')
+        setAliases(r.data)
+        setAliasMsg('')
+      } catch (e: any) {
+        setAliasMsg(e.response?.data?.detail || 'No se pudieron cargar los aliases.')
+      }
+    }
+  }
+
+  const borrarAlias = async (id: number) => {
+    try {
+      await api.delete(`/rentabilidad/aliases/${id}`)
+      setAliases(a => (a ?? []).filter(x => x.id !== id))
+    } catch (e: any) {
+      setAliasMsg(e.response?.data?.detail || 'No se pudo eliminar el alias.')
+    }
+  }
 
   const leerFacturas = async () => {
     if (!prodData) return
@@ -82,6 +122,52 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh }
             <p className="text-[11px] text-warm-400 mt-1.5">
               {cobertura}% de los productos con costo completo. Un producto sin costo tiene margen falso.
             </p>
+            {typeof prodData?.aliases_conocidos === 'number' && (() => {
+              const n = aliases !== null ? aliases.length : prodData.aliases_conocidos
+              return (
+                <div className="mt-1">
+                  <p className="text-[11px] text-warm-400">
+                    El sistema conoce {n} {n === 1 ? 'alias' : 'aliases'} de
+                    proveedores — aprende con cada factura escaneada, corregida o leída.{' '}
+                    {n > 0 && (
+                      <button onClick={toggleAliases}
+                        className="font-bold text-gold-700 underline decoration-dotted">
+                        {verAliases ? 'ocultar' : 'ver y gestionar'}
+                      </button>
+                    )}
+                  </p>
+                  {verAliases && (
+                    <div className="mt-2 rounded-lg border border-warm-100 divide-y divide-warm-100 max-h-56 overflow-y-auto">
+                      {aliases === null ? (
+                        <p className="text-[11px] text-warm-400 px-2.5 py-2">Cargando…</p>
+                      ) : aliases.length === 0 ? (
+                        <p className="text-[11px] text-warm-400 px-2.5 py-2">No queda ningún alias.</p>
+                      ) : aliases.map(a => (
+                        <div key={a.id} className="flex items-center gap-2 px-2.5 py-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] text-warm-700 truncate">
+                              <span className="font-mono">{a.alias_original}</span>
+                              <span className="text-warm-400"> → </span>
+                              <span className="font-semibold">{a.producto_nombre}</span>
+                            </p>
+                            <p className="text-[10px] text-warm-400">
+                              {a.origen} · visto {a.veces_visto} {a.veces_visto === 1 ? 'vez' : 'veces'}
+                              {a.barista_nombre ? ` · enseñó ${a.barista_nombre}` : ''}
+                              {a.actualizado_en ? ` · ${String(a.actualizado_en).slice(0, 10)}` : ''}
+                            </p>
+                          </div>
+                          <button onClick={() => borrarAlias(a.id)} aria-label={`Eliminar alias ${a.alias_original}`}
+                            className="p-2 rounded-md text-warm-300 hover:text-danger-500 hover:bg-danger-50 shrink-0">
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {aliasMsg && <p className="text-[11px] text-danger-500 mt-1">{aliasMsg}</p>}
+                </div>
+              )
+            })()}
           </div>
 
           {/* Backfill OCR */}

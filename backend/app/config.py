@@ -38,7 +38,12 @@ class Settings(BaseSettings):
     # Si este modelo no tiene cuota gratis, el código prueba solo una cadena
     # CORTA de modelos verificados vivos (ver factura_ocr._modelos_gemini; los
     # nombres se verifican contra v1beta ListModels — un nombre muerto da 404).
-    GEMINI_MODEL: str = "gemini-3.5-flash"
+    # 2026-07-23: default bajado de gemini-3.5-flash a 3.6-flash — el 3.5
+    # respondió 503 "high demand" PERSISTENTE (toda una noche y una mañana,
+    # no un pico) y gemini-2.5-flash murió con 404 "no longer available to
+    # new users". 3.6-flash es el flash más nuevo con generateContent en el
+    # ListModels de la key de producción.
+    GEMINI_MODEL: str = "gemini-3.6-flash"
     ANTHROPIC_API_KEY: str = ""
     OCR_MODEL: str = "claude-opus-4-8"
 

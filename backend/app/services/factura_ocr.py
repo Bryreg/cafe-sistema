@@ -538,7 +538,13 @@ def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
                 logger.warning("Groq: modelo %s no disponible (HTTP %s): %s",
                                modelo, r.status_code, detalle[:300])
                 continue
-            logger.error("Groq HTTP %s: %s", r.status_code, r.text[:500])
+            # Otros 400 son terminales para Groq y cascadean como error de
+            # proveedor (502). El code va al log para diagnosticar: en
+            # producción (2026-07-23) qwen dio code=json_validate_failed con
+            # failed_generation vacío — el modelo no pudo emitir JSON con esa
+            # foto; reintentar con otro modelo de Groq no ayuda.
+            logger.error("Groq HTTP %s (code=%s): %s",
+                         r.status_code, code or "?", r.text[:500])
             raise HTTPException(502, "El servicio de escaneo falló — intentá de nuevo más tarde.")
         if r.status_code != 200:
             logger.error("Groq HTTP %s: %s", r.status_code, r.text[:500])
@@ -569,14 +575,20 @@ def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
 def _modelos_gemini() -> list[str]:
     """Cadena de modelos a probar en orden: SOLO nombres verificados vivos.
 
-    En producción (2026-07) la cadena traía gemini-3-flash, que respondió 404
-    "is not found for API version v1beta" (nombre muerto): ese 404 consumió un
-    intento del tope y el escaneo nunca llegó a gemini-2.5-flash, el que
-    históricamente funciona. Para verificar nombres cuando vuelva a pasar:
+    La fuente de verdad es ListModels con la key de producción (última
+    verificación: 2026-07-23):
         GET https://generativelanguage.googleapis.com/v1beta/models
-        (header x-goog-api-key) — ListModels lista los nombres reales; usar
-        solo los que soporten generateContent."""
-    cadena = [settings.GEMINI_MODEL, "gemini-3.5-flash", "gemini-2.5-flash"]
+        (header x-goog-api-key) — usar solo los nombres que soporten
+        generateContent.
+    Historial que motiva la cadena: gemini-3-flash respondió 404 "is not
+    found for API version v1beta" (nombre muerto, 2026-07) y gemini-2.5-flash
+    murió con 404 "no longer available to new users" (2026-07-23) — fuera.
+    gemini-3.5-flash quedó de respaldo (503 "high demand" persistente ese
+    mismo día). Una cadena de 4-5 nombres vivos es segura con el tope de
+    _MAX_INTENTOS_POR_PROVEEDOR: los 404 devuelven el intento (no consumen),
+    así que un nombre que muera no bloquea a los vivos."""
+    cadena = [settings.GEMINI_MODEL, "gemini-3.6-flash", "gemini-3.5-flash",
+              "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
     vistos: set[str] = set()
     return [m for m in cadena if m and not (m in vistos or vistos.add(m))]
 

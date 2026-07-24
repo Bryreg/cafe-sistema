@@ -475,23 +475,34 @@ class ModelosGroqTest(unittest.TestCase):
 
 
 class ModelosGeminiTest(unittest.TestCase):
-    """La cadena Gemini lleva SOLO modelos verificados vivos: en producción
-    (2026-07) gemini-3-flash respondió 404 "is not found for API version
-    v1beta" (nombre muerto) y consumió un intento que impidió llegar a
-    gemini-2.5-flash, el que históricamente funciona."""
+    """La cadena Gemini lleva SOLO nombres verificados vivos vía ListModels
+    (v1beta, key de producción, 2026-07-23). Fuera de la cadena:
+    gemini-2.5-flash (404 "no longer available to new users" en producción) y
+    gemini-3-flash (404 "is not found for API version v1beta"). El default
+    baja a 3.6-flash porque gemini-3.5-flash respondió 503 "high demand"
+    PERSISTENTE (toda una noche y una mañana, no un pico)."""
 
-    def test_solo_modelos_verificados_y_configurado_primero(self):
-        with mock.patch.object(factura_ocr.settings, "GEMINI_MODEL", "gemini-3.5-flash"):
-            self.assertEqual(_modelos_gemini(), ["gemini-3.5-flash", "gemini-2.5-flash"])
+    def test_cadena_verificada_orden_y_sin_2_5_flash(self):
+        with mock.patch.object(factura_ocr.settings, "GEMINI_MODEL", "gemini-3.6-flash"):
+            self.assertEqual(_modelos_gemini(),
+                             ["gemini-3.6-flash", "gemini-3.5-flash",
+                              "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"])
 
     def test_modelo_custom_va_primero_sin_nombres_muertos_ni_duplicados(self):
         with mock.patch.object(factura_ocr.settings, "GEMINI_MODEL", "gemini-x-custom"):
             cadena = _modelos_gemini()
         self.assertEqual(cadena[0], "gemini-x-custom")
-        self.assertNotIn("gemini-3-flash", cadena)         # 404 real en producción
-        self.assertNotIn("gemini-3.1-flash-lite", cadena)  # nunca verificado
-        self.assertIn("gemini-2.5-flash", cadena)
+        self.assertNotIn("gemini-3-flash", cadena)   # 404 real en producción
+        self.assertNotIn("gemini-2.5-flash", cadena)  # 404 "no longer available to new users"
+        self.assertIn("gemini-3.6-flash", cadena)
+        self.assertIn("gemini-3.5-flash-lite", cadena)  # verificado en ListModels 2026-07-23
         self.assertEqual(len(cadena), len(set(cadena)))
+
+    def test_default_de_config_es_gemini_3_6_flash(self):
+        # 2026-07-23: gemini-3.5-flash lleva noche y mañana en 503 "high
+        # demand" — el default pasa al flash más nuevo verificado vivo.
+        from app.config import Settings
+        self.assertEqual(Settings.model_fields["GEMINI_MODEL"].default, "gemini-3.6-flash")
 
 
 class ExtraerConGeminiCadenaTest(unittest.TestCase):
@@ -543,6 +554,23 @@ class ExtraerConGroqCadenaTest(unittest.TestCase):
         out, mpost = self._con_groq([decomisado, _groq_200(_EXTR_OK)])
         self.assertEqual(out, _EXTR_OK)
         self.assertEqual(mpost.call_count, 2)
+
+    def test_400_json_validate_failed_es_error_de_proveedor_502(self):
+        # Producción 2026-07-23: qwen devolvió 400 code=json_validate_failed
+        # con failed_generation vacío — el modelo no pudo emitir JSON con ESA
+        # foto. No es un modelo muerto (no se recorre la cadena): es error de
+        # proveedor 502, y la cascada de _extraer pasa al siguiente proveedor.
+        invalido = FakeResp(400, {"error": {
+            "message": "json_validate_failed: the model failed to generate valid JSON",
+            "type": "invalid_request_error", "code": "json_validate_failed",
+            "failed_generation": ""}})
+        with mock.patch.object(factura_ocr.settings, "GROQ_API_KEY", "gk"), \
+             mock.patch.object(factura_ocr, "_reducir_para_groq", side_effect=lambda b, **kw: b), \
+             mock.patch("httpx.post", side_effect=[invalido]) as mpost:
+            with self.assertRaises(HTTPException) as ctx:
+                _extraer_con_groq(b"jpeg", "cat", date(2026, 7, 14))
+        self.assertEqual(mpost.call_count, 1)  # no prueba el siguiente modelo
+        self.assertEqual(ctx.exception.status_code, 502)
 
     def test_cadena_agotada_lanza_error_de_proveedor(self):
         # Cadena de 2 modelos (dentro del tope): se agota la CADENA, no el
@@ -677,7 +705,7 @@ class PresupuestoEscaneoTest(unittest.TestCase):
         k1, k2, k3 = self._keys(groq="gk", gemini="gm")
         caido = FakeResp(503, {"error": {"message": "Service Unavailable"}})
         with k1, k2, k3, \
-             mock.patch.object(factura_ocr.settings, "GEMINI_MODEL", "gemini-3.5-flash"), \
+             mock.patch.object(factura_ocr.settings, "GEMINI_MODEL", "gemini-3.6-flash"), \
              mock.patch.object(factura_ocr, "_reducir_para_groq",
                                side_effect=lambda b, **kw: b), \
              mock.patch("httpx.post",

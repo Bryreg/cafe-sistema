@@ -40,6 +40,8 @@ export interface PorProductoData {
   productos: ProdMargen[]
   alertas_costo?: AlertaCosto[]
   facturas_pendientes_de_costos: number
+  // Fase 2 del OCR: aliases proveedor→producto que el sistema aprendió.
+  aliases_conocidos?: number
   nota: string
 }
 

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.core.deps import ensure_tienda_access, get_current_user, require_admin, require_barista_en_turno
-from app.models.models import Usuario
+from app.models.models import Producto, Usuario
 from app.schemas.facturas import FacturaCreate
 from app.services import facturas as svc
 from app.services import factura_ocr
@@ -33,8 +33,11 @@ async def crear_factura(
     ensure_tienda_access(user, payload.tienda_id)
 
     imagen_url = await upload_imagen(imagen, max_side=1600, quality=85)
-    return svc.crear_factura(db, payload, imagen_url, user.id,
-                             barista_id=barista[0], barista_nombre=barista[1])
+    # En threadpool (mismo patrón de /analizar-foto): crear_factura hace commits
+    # por-item del aprendizaje de aliases — eso no puede bloquear el event loop.
+    return await run_in_threadpool(
+        svc.crear_factura, db, payload, imagen_url, user.id,
+        barista_id=barista[0], barista_nombre=barista[1])
 
 
 _MAX_FOTO_BYTES = 15 * 1024 * 1024
@@ -61,6 +64,35 @@ async def analizar_foto(
     # no bloquear el event loop del server.
     return await run_in_threadpool(
         factura_ocr.analizar_factura_foto, db, tienda_id, bytes(data), user.id)
+
+
+class ConvertirCantidadBody(BaseModel):
+    producto_id: int
+    cantidad: Optional[float] = None
+    unidad: Optional[str] = None
+
+
+@router.post("/convertir-cantidad")
+def convertir_cantidad(
+    body: ConvertirCantidadBody,
+    db: Session = Depends(get_db),
+    barista: tuple = Depends(require_barista_en_turno),
+):
+    """Convierte una cantidad en la unidad de la FACTURA (kg/lt/caja…) a la
+    unidad del inventario del producto, para los renglones PENDIENTES del
+    escaneo (sin match) a los que la barista les asigna producto en el form.
+
+    NADA de lógica nueva: expone la MISMA función pura _convertir_cantidad que
+    ya usan los renglones matcheados (factura_ocr.mapear_items). Regla de oro:
+    nunca se adivina una cantidad — lo dudoso sale como cantidad null +
+    advertencia y la barista la digita."""
+    prod = db.query(Producto).filter(Producto.id == body.producto_id).first()
+    if prod is None:
+        raise HTTPException(404, "Producto no encontrado")
+    cantidad, en_empaques, _factor, advertencia = factura_ocr._convertir_cantidad(
+        prod, body.cantidad, body.unidad)
+    return {"cantidad": cantidad, "en_empaques": en_empaques,
+            "advertencia": advertencia}
 
 
 # Must be before /{factura_id} to avoid route conflict

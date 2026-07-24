@@ -431,10 +431,14 @@ def get_rentabilidad_productos(db) -> dict:
     alertas_costo.sort(key=lambda a: -a["venta_30d_afectada"])
 
     from app.services.factura_ocr import facturas_pendientes_de_costos
+    from app.services.producto_alias import contar_aliases
     return {
         "productos": out,
         "alertas_costo": alertas_costo[:10],
         "facturas_pendientes_de_costos": facturas_pendientes_de_costos(db),
+        # Fase 2 del OCR: cuántos aliases proveedor→producto conoce el sistema
+        # (visible en "Salud de datos").
+        "aliases_conocidos": contar_aliases(db),
         "nota": (
             "Costo = insumos de la receta × costo promedio de compra (de las facturas "
             "leídas). Si a un producto le faltan costos de insumos, el margen que se "

@@ -1,3 +1,5 @@
+import logging
+
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from fastapi import HTTPException
@@ -8,6 +10,9 @@ from app.models.models import (FacturaCompra, FacturaCompraItem, TipoPagoEnum,
                                LoteInventario, Producto, Inventario)
 from app.services import inventario as inv_svc
 from app.services import audit
+from app.services import producto_alias as alias_svc
+
+logger = logging.getLogger(__name__)
 
 
 def eliminar_factura(db: Session, factura_id: int, usuario_id: int) -> dict:
@@ -97,6 +102,27 @@ def eliminar_factura(db: Session, factura_id: int, usuario_id: int) -> dict:
     return {"ok": True, "items_revertidos": len(items), "egresos_revertidos": revertidos}
 
 
+def _origen_alias_derivado(db: Session, clave: str, producto_id_guardado: int,
+                           origen_match_cliente) -> str:
+    """REGLA DE PRIVILEGIO del aprendizaje (server-side): el derecho a
+    SOBRESCRIBIR un alias existente NUNCA sale de la etiqueta origen_match del
+    payload (metadata informativa que cualquier cliente puede falsear). Se
+    deriva acá comparando el alias conocido contra lo que el humano guardó:
+      - existe y apunta a OTRO producto que el guardado → eso ES una corrección
+        humana (el escaneo sugirió el alias y el humano eligió distinto)
+        → "correccion" (repunta);
+      - existe y apunta al MISMO → refuerzo; la etiqueta da igual (upsert_alias
+        solo suma veces_visto, sin tocar el origen);
+      - no existe → se CREA y no hay privilegio en juego: origen informativo,
+        "correccion" si el cliente lo dice, si no "escaneo"."""
+    existente = alias_svc._existente_por_clave(db, clave)
+    if existente is not None:
+        if existente.producto_id != producto_id_guardado:
+            return "correccion"
+        return "escaneo"
+    return "correccion" if origen_match_cliente == "correccion" else "escaneo"
+
+
 def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
                   barista_id: int | None = None, barista_nombre: str | None = None) -> FacturaCompra:
     tipo_map = {
@@ -128,6 +154,11 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
     )
     db.add(factura)
     db.flush()
+    # id capturado como int YA, tras el flush y ANTES del commit: con
+    # expire_on_commit, factura.id después del commit dispara un refresh — y si
+    # el aprendizaje de aliases deja la sesión caída, ese refresh revienta con
+    # PendingRollbackError (ver el except del bloque de aprendizaje).
+    factura_id = factura.id
 
     UNIDADES_GRANEL = {"gr", "g", "gramos", "ml"}
     for item in data.items:
@@ -148,6 +179,9 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
               and (prod.contenido_por_empaque or 0) > 0 and item.cantidad < 50):
             # Guard anti-unidades: producto en gramos con empaque configurado y una
             # cantidad diminuta => casi seguro escribieron botellas/frascos.
+            # El umbral 50 es _MAX_EMPAQUES_PLAUSIBLE (factura_ocr.py) y está
+            # ESPEJADO en el front (Ingresos.tsx: MAX_EMPAQUES_PLAUSIBLE, con
+            # comparación estricta <). SYNC: si cambia acá, cambiar allá.
             raise HTTPException(400, (
                 f"{prod.nombre} se registra en {prod.unidad_medida} y pusiste {item.cantidad:g}. "
                 f"¿Eran empaques? Usá el campo de empaques (1 empaque = "
@@ -225,6 +259,39 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
         },
     )
     db.commit()
+
+    # ── Fase 2 (aliases): la factura registrada ENTRENA al escaneo ────────────
+    # DESPUÉS del commit y en transacción propia POR ITEM: un alias que explote
+    # jamás puede hacer fallar el guardado de la factura, ni matar el
+    # aprendizaje de los DEMÁS renglones (try/except individual + commit por
+    # alias aprendido).
+    for item in data.items:
+        texto = (getattr(item, "descripcion_original", None) or "").strip()
+        if not texto or not item.producto_id:
+            continue
+        try:
+            # OJO nombres parecidos, cosas distintas: `origen_match` (payload)
+            # dice cómo se RESOLVIÓ el renglón en el front (alias/ia/fuzzy/
+            # correccion) y es solo metadata; el `origen` que se guarda en la
+            # columna del alias se deriva SERVER-SIDE acá — el privilegio de
+            # sobrescribir nunca se le confía a la etiqueta del cliente.
+            clave = alias_svc.clave_alias(texto)
+            origen = _origen_alias_derivado(db, clave, item.producto_id,
+                                            getattr(item, "origen_match", None))
+            if alias_svc.upsert_alias(db, texto, item.producto_id, origen,
+                                      barista_id=barista_id,
+                                      barista_nombre=barista_nombre) is not None:
+                db.commit()
+        except Exception:
+            # rollback PRIMERO: si el flush/commit del alias murió (ej. UNIQUE
+            # en carrera) la sesión queda DEACTIVE y cualquier acceso ORM —
+            # incluso factura.id en este log — revienta con PendingRollbackError
+            # (500 con la factura YA commiteada → doble registro por reintento
+            # de la barista). Por eso el log usa el int capturado tras el flush.
+            db.rollback()
+            logger.exception("Factura %s: no se pudo aprender el alias %r "
+                             "(la factura quedó guardada)", factura_id, texto[:80])
+
     db.refresh(factura)
     return factura
 

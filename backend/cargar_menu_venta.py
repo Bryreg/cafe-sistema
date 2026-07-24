@@ -45,6 +45,8 @@ DATA_FILE = os.path.join(os.path.dirname(__file__), "menu_venta.json")
 
 
 def norm(s: str) -> str:
+    # SYNC: misma normalización que app/services/producto_alias.py
+    # (normalizar_alias) — si cambia una, actualizar la otra.
     s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode()
     return re.sub(r"\s+", " ", s).strip().upper()
 

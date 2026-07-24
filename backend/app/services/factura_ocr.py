@@ -25,8 +25,9 @@ from fastapi import HTTPException
 from app.config import settings
 from app.core.storage import _compress
 from app.core.tz import hoy_col
-from app.models.models import FacturaCompra, FacturaCompraItem, Producto
+from app.models.models import FacturaCompra, FacturaCompraItem, Producto, ProductoAlias
 from app.services import audit
+from app.services import producto_alias as alias_svc
 
 logger = logging.getLogger(__name__)
 
@@ -810,14 +811,43 @@ def _convertir_cantidad(prod, cantidad, unidad) -> tuple[float | None, bool, flo
     return None, False, 1.0, f"unidad '{unidad}' no reconocida y el producto se maneja en {prod.unidad_medida} — poné la cantidad a mano"
 
 
-def mapear_items(extraccion: dict, productos: list) -> list[dict]:
-    """Cruza los items extraídos con el catálogo y convierte unidades."""
+def _aliases_para_items(db, items: list) -> dict:
+    """{alias_normalizado: producto_id} para las descripciones del lote, en UNA
+    consulta. Los aliases son verdad aprendida (Fase 2): el match exacto por
+    texto normalizado gana sobre la IA y el fuzzy."""
+    if db is None:
+        return {}
+    # clave_alias (no normalizar_alias pelado): la clave trunca al largo de la
+    # columna igual que el guardado — buscar sin truncar jamás matchearía una
+    # descripción más larga que la columna.
+    normas = {alias_svc.clave_alias(it.get("descripcion"))
+              for it in items if (it.get("descripcion") or "").strip()}
+    normas.discard("")
+    if not normas:
+        return {}
+    filas = (db.query(ProductoAlias)
+             .filter(ProductoAlias.alias_normalizado.in_(list(normas)))
+             .all())
+    return {f.alias_normalizado: f.producto_id for f in filas}
+
+
+def mapear_items(extraccion: dict, productos: list, db=None) -> list[dict]:
+    """Cruza los items extraídos con el catálogo y convierte unidades.
+
+    Orden de resolución por renglón (origen_match lo registra para el front):
+      1. "alias": texto normalizado en producto_aliases — determinístico,
+         confirmado por humanos → SIN advertencia de identidad.
+      2. "ia": el producto_id que asignó el modelo.
+      3. "fuzzy": _match_por_nombre (siempre con advertencia de similitud).
+      4. sin match → advertencia actual.
+    `db` es opcional: sin sesión no hay aliases y todo funciona como antes."""
     por_id = {p.id: p for p in productos}
+    items = extraccion.get("items") or []
+    aliases = _aliases_para_items(db, items)
     out = []
-    for it in extraccion.get("items") or []:
+    for it in items:
         desc = (it.get("descripcion") or "").strip() or "(sin descripción)"
         precio_factura = it.get("precio_unitario")
-        prod = por_id.get(it.get("producto_id"))
 
         fila = {
             "descripcion": desc,
@@ -836,18 +866,30 @@ def mapear_items(extraccion: dict, productos: list) -> list[dict]:
             "en_empaques": False,
             "precio_unitario": None,
             "advertencia": None,
+            "origen_match": None,
         }
+
+        # 1) Alias aprendido: gana siempre (verdad confirmada, confianza alta).
+        prod = por_id.get(aliases.get(alias_svc.clave_alias(desc)))
+        if prod is not None:
+            fila["origen_match"] = "alias"
+        else:
+            # 2) producto_id que asignó la IA.
+            prod = por_id.get(it.get("producto_id"))
+            if prod is not None:
+                fila["origen_match"] = "ia"
 
         adv_fuzzy = None
         if prod is None:
-            # La IA no asignó producto_id: intentar el match por nombre contra
-            # el catálogo (mismos umbrales que el backfill: score ≥0.6 y sin
+            # 3) Ni alias ni IA: intentar el match por nombre contra el
+            # catálogo (mismos umbrales que el backfill: score ≥0.6 y sin
             # ambigüedad). Si pega, se usa PERO siempre con advertencia.
             prod = _match_por_nombre(desc, productos)
             if prod is None:
                 fila["advertencia"] = "no lo encontré en el inventario — agregalo a mano"
                 out.append(fila)
                 continue
+            fila["origen_match"] = "fuzzy"
             adv_fuzzy = f"asigné '{desc}' a {prod.nombre} por similitud — verificá"
 
         cantidad, en_empaques, factor, adv = _convertir_cantidad(
@@ -940,7 +982,7 @@ def analizar_factura_foto(db, tienda_id: int, imagen_bytes: bytes, usuario_id: i
         "fecha_factura": _fecha_iso(extraccion.get("fecha_factura")),
         "valor_total": valor_total,
         "tipo_pago": tipo_pago,
-        "items": mapear_items(extraccion, productos),
+        "items": mapear_items(extraccion, productos, db),
         "advertencias": advertencias,
     }
 
@@ -989,9 +1031,14 @@ def _match_por_nombre(desc: str, candidatos: list):
     return puntuados[0][1]
 
 
-def _precios_para_factura(items_extraidos: list[dict], items_db: list,
-                          valor_total_db: float, por_id: dict) -> tuple[dict, list[str]]:
-    """Deriva el costo por unidad ALMACENADA de cada ítem guardado sin precio:
+def _precios_para_factura(
+        items_extraidos: list[dict], items_db: list, valor_total_db: float,
+        por_id: dict) -> tuple[dict[int, float], list[str], list[tuple[str, int]]]:
+    """Devuelve (precios, advertencias, aliases): [0] {item_db_id: precio por
+    unidad almacenada}, [1] advertencias humanas del emparejamiento, [2] pares
+    (texto del renglón, producto_id) confiables para entrenar aliases.
+
+    Deriva el costo por unidad ALMACENADA de cada ítem guardado sin precio:
         precio_unitario = subtotal del renglón / cantidad GUARDADA.
     La cantidad guardada es la fuente de verdad (el inventario depende de ella),
     así que NO se valida contra la cantidad de la factura (el modelo la lee con
@@ -1002,8 +1049,11 @@ def _precios_para_factura(items_extraidos: list[dict], items_db: list,
       - granel: el costo por gr/ml no puede ser absurdo (atrapa cantidades legacy
         mal registradas, ej. una botella guardada como "1 gr");
       - duplicados del mismo producto se saltan (no se pueden repartir sin riesgo).
-    Devuelve ({item_db_id: precio}, advertencias). Solo toca items sin precio."""
+    Los aliases salen solo de los matches CONFIABLES (los que pasaron todos los
+    guardias y escribieron precio): la misma lectura que costea también ENTRENA
+    (bootstrap de la Fase 2). Solo toca items sin precio."""
     advertencias: list[str] = []
+    aliases: list[tuple[str, int]] = []
     disponibles = [it for it in items_db
                    if it.precio_unitario is None and float(it.cantidad or 0) > 0]
     prods_fac = {it.producto_id: por_id[it.producto_id]
@@ -1070,7 +1120,11 @@ def _precios_para_factura(items_extraidos: list[dict], items_db: list,
             advertencias.append(f"{etq}: el precio por unidad da menos de $0,01 — revisá las cifras")
             continue
         asignados[destino.id] = precio
-    return asignados, advertencias
+        # Match confiable (pasó todos los guardias): el texto del renglón es un
+        # alias legítimo de este producto — una lectura = costos + entrenamiento.
+        if desc:
+            aliases.append((desc, pid))
+    return asignados, advertencias, aliases
 
 
 def facturas_pendientes_de_costos(db) -> int:
@@ -1136,7 +1190,7 @@ def backfill_costos_facturas(db, usuario_id: int, limite: int = 2) -> dict:
 
     # ── Fase larga (sin conexión de DB): descargar + leer + emparejar ────────
     detalle = []
-    resultados: list[tuple[dict, dict]] = []  # (data_factura, precios)
+    resultados: list[tuple[dict, dict, list]] = []  # (data_factura, precios, aliases)
     detenido_por = None
     for c in datos:
         info = {"factura_id": c["id"], "proveedor": c["proveedor"],
@@ -1174,7 +1228,16 @@ def backfill_costos_facturas(db, usuario_id: int, limite: int = 2) -> dict:
         try:
             extraccion = _extraer(jpeg, cat_fac, hoy_col())
         except HTTPException as e:
-            # Cuota agotada / key inválida: cortar el lote (lo leído hasta acá se guarda).
+            if e.status_code == 422:
+                # Problema de ESTA imagen (no es factura / ilegible): se anota
+                # como no legible y el lote SIGUE — una foto mala no puede
+                # bloquear la lectura de las demás.
+                info["advertencias"].append(str(e.detail))
+                _backfill_no_legibles.add(c["id"])
+                continue
+            # Error de PROVEEDOR (cuota agotada / key inválida / caído): cortar
+            # el lote (lo leído hasta acá se guarda) — sin proveedor no tiene
+            # sentido seguir intentando.
             detenido_por = str(e.detail)
             info["advertencias"].append(detenido_por)
             break
@@ -1197,18 +1260,18 @@ def backfill_costos_facturas(db, usuario_id: int, limite: int = 2) -> dict:
             _backfill_no_legibles.add(c["id"])
             continue
 
-        precios, advs = _precios_para_factura(
+        precios, advs, aliases = _precios_para_factura(
             extraccion.get("items") or [], c["items"], c["valor_total"], por_id)
         info["advertencias"].extend(advs)
         if precios:
             info["items_actualizados"] = len(precios)
-            resultados.append((c, precios))
+            resultados.append((c, precios, aliases))
         else:
             _backfill_no_legibles.add(c["id"])
 
     # ── Fase corta de escritura: una sola transacción ─────────────────────────
     total_actualizados = 0
-    for c, precios in resultados:
+    for c, precios, _aliases in resultados:
         filas = (db.query(FacturaCompraItem)
                  .filter(FacturaCompraItem.id.in_(list(precios.keys())),
                          FacturaCompraItem.precio_unitario.is_(None))
@@ -1225,9 +1288,32 @@ def backfill_costos_facturas(db, usuario_id: int, limite: int = 2) -> dict:
             )
     db.commit()
 
+    # ── Bootstrap de aliases (Fase 2): la misma lectura ENTRENA ───────────────
+    # DESPUÉS del commit de los precios y en transacción propia POR ALIAS
+    # (mismo patrón robusto de crear_factura: try/except + commit individual):
+    # un alias que explote a mitad de lote jamás deshace los costos ya escritos
+    # NI descarta los aliases ya aprendidos antes de él.
+    aliases_aprendidos = 0
+    for c, _precios, aliases in resultados:
+        for texto, pid in aliases:
+            try:
+                if alias_svc.upsert_alias(db, texto, pid, "bootstrap") is not None:
+                    db.commit()
+                    aliases_aprendidos += 1
+            except Exception:
+                # rollback PRIMERO: un fallo real del flush/commit (ej. UNIQUE
+                # en carrera) deja la sesión caída — sin esto el upsert del
+                # siguiente alias revienta con PendingRollbackError.
+                db.rollback()
+                logger.exception(
+                    "Backfill: no se pudo aprender el alias %r (los costos y "
+                    "los aliases previos quedaron guardados)", str(texto)[:80])
+
     out = {"procesadas": len(detalle), "items_actualizados": total_actualizados,
            "pendientes": facturas_pendientes_de_costos(db),
-           "no_legibles": len(_backfill_no_legibles), "detalle": detalle}
+           "no_legibles": len(_backfill_no_legibles), "detalle": detalle,
+           "aliases_aprendidos": aliases_aprendidos,
+           "aliases_conocidos": alias_svc.contar_aliases(db)}
     if detenido_por:
         out["detenido_por"] = detenido_por
     return out

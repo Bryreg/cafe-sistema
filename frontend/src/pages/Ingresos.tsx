@@ -22,6 +22,12 @@ interface Producto {
 // Productos a granel: se registran en gr/ml, nunca en botellas o frascos.
 const esGranel = (u: string) => ['gr', 'g', 'gramos', 'ml'].includes((u || '').toLowerCase())
 
+// Espejo EXACTO del guard anti-unidades del backend: _MAX_EMPAQUES_PLAUSIBLE
+// (backend/app/services/factura_ocr.py) y el guard estricto `cantidad < 50` de
+// services/facturas.py. La comparación es ESTRICTA (<), igual que allá.
+// SYNC: si cambia el umbral en el backend, cambiarlo acá (y viceversa).
+const MAX_EMPAQUES_PLAUSIBLE = 50
+
 interface ProveedorHistorial {
   proveedor: string
   frecuencia: number
@@ -30,7 +36,7 @@ interface ProveedorHistorial {
 }
 
 interface ItemForm {
-  producto_id: number
+  producto_id: number     // 0 = renglón del escaneo SIN producto: pendiente de asignar
   nombre: string
   unidad_medida: string
   categoria: string
@@ -42,11 +48,25 @@ interface ItemForm {
   // Solo lo llena el escaneo (ya ajustado a la unidad final del inventario);
   // la carga manual lo deja en null, igual que siempre.
   precio_unitario?: number | null
+  // Fase 2 (aliases): texto TAL CUAL del renglón de la factura. Viaja en el
+  // payload para que el registro entrene el alias descripcion→producto.
+  descripcion_original?: string | null
+  // Cómo se resolvió el producto: 'alias' | 'ia' | 'fuzzy' (lo sugirió el
+  // escaneo) o 'correccion' (la barista lo asignó/cambió acá).
+  origen_match?: string | null
+  // Solo renglones PENDIENTES del escaneo (producto_id=0): cantidad y unidad
+  // TAL CUAL la factura (kg/lt/caja). Al asignar producto, el SERVER convierte
+  // (POST /facturas/convertir-cantidad) — nunca se precarga la cifra cruda
+  // como si ya estuviera en la unidad del inventario.
+  cantidad_factura?: number | null
+  unidad_factura?: string | null
 }
 
 // Respuesta de POST /facturas/analizar-foto (extracción + mapeo al catálogo).
 interface ScanItem {
   descripcion: string
+  cantidad_factura: number | null   // cantidad TAL CUAL la factura (sin convertir)
+  unidad_factura: string | null
   producto_id: number | null
   producto_nombre: string | null
   unidad_medida: string | null
@@ -58,6 +78,7 @@ interface ScanItem {
   numero_lote: string | null
   fecha_vencimiento: string | null
   advertencia: string | null
+  origen_match: 'alias' | 'ia' | 'fuzzy' | null
 }
 interface ScanResult {
   proveedor: string | null
@@ -182,6 +203,31 @@ export default function Ingresos() {
     }
     const nuevos: ItemForm[] = []
     for (const it of d.items || []) {
+      // Renglón CON cantidad leída pero SIN producto: entra al form con el
+      // selector de producto (en vez de desaparecer al banner). Al elegirlo y
+      // guardar, la corrección entrena un alias proveedor→producto.
+      if (!it.producto_id && it.cantidad_factura != null && it.cantidad_factura > 0) {
+        nuevos.push({
+          producto_id:       0,
+          nombre:            it.descripcion,
+          unidad_medida:     '',
+          categoria:         '',
+          // SIN precarga cruda: "2 KG" no son "2 gr" ni "2 empaques". La
+          // cantidad queda vacía hasta asignar producto — ahí el server
+          // convierte la unidad de la factura (regla de oro: nunca adivinar).
+          cantidad:          '',
+          en_empaques:       false,
+          contenido_por_empaque: null,
+          numero_lote:       it.numero_lote || '',
+          fecha_vencimiento: it.fecha_vencimiento || '',
+          precio_unitario:   null,
+          descripcion_original: it.descripcion,
+          origen_match:      null,
+          cantidad_factura:  it.cantidad_factura,
+          unidad_factura:    it.unidad_factura,
+        })
+        continue
+      }
       if (it.advertencia) warns.push(`${it.producto_nombre || it.descripcion}: ${it.advertencia}`)
       // Solo entran al form los items con producto identificado Y cantidad
       // convertida sin dudas; el resto queda en advertencias para carga manual.
@@ -197,8 +243,12 @@ export default function Ingresos() {
         numero_lote:       it.numero_lote || '',
         fecha_vencimiento: it.fecha_vencimiento || '',
         precio_unitario:   it.precio_unitario ?? null,
+        descripcion_original: it.descripcion,
+        origen_match:      it.origen_match ?? null,
       })
     }
+    setPickQuery({})
+    setCambiandoIdx(null)
     if (nuevos.length > 0) setItems(nuevos)
     else warns.push('No pude armar ningún producto desde la foto — agregalos manual.')
     setScanWarnings(warns)
@@ -256,7 +306,7 @@ export default function Ingresos() {
 
     // Guard anti-unidades SOLO en el camino de gramos directos: un granel con
     // valor diminuto = casi seguro contaron empaques (fuga #1 de la auditoría).
-    if (!usaEmpaques && granel && Number(addCantidad) < 50) {
+    if (!usaEmpaques && granel && Number(addCantidad) < MAX_EMPAQUES_PLAUSIBLE) {
       if (cpe > 0) {
         alert(`${addProducto.nombre} se registra en ${addProducto.unidad_medida}. ` +
           `Si recibiste empaques, usá el campo "Empaques" (1 = ${cpe} ${addProducto.unidad_medida}).`)
@@ -279,7 +329,114 @@ export default function Ingresos() {
     setShowQuickAdd(false)
   }
 
-  const quitarItem = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx))
+  const quitarItem = (idx: number) => {
+    setItems(prev => prev.filter((_, i) => i !== idx))
+    setPickQuery({})
+    setCambiandoIdx(null)   // los índices corren: cerrar cualquier cambio abierto
+  }
+
+  // ── Asignar/cambiar producto de un renglón (entrena alias) ────────────────
+  // Búsqueda por renglón (keyed por índice del item), y renglón matcheado con
+  // el cambiador abierto (F1: un alias mal enseñado solo se corrige si el
+  // producto asignado se puede CAMBIAR — si no, el error queda invisible y
+  // permanente).
+  const [pickQuery, setPickQuery] = useState<Record<number, string>>({})
+  const [cambiandoIdx, setCambiandoIdx] = useState<number | null>(null)
+
+  // Lo CRUDO de la factura, para advertencias legibles ("la factura dice: 2 KG").
+  const crudoFactura = (it: ItemForm) =>
+    `${it.cantidad_factura}${it.unidad_factura ? ' ' + it.unidad_factura : ''}`
+
+  const asignarProducto = async (idx: number, p: Producto) => {
+    const item = items[idx]
+
+    // ── Renglón PENDIENTE del escaneo (producto_id=0): la cantidad viene en la
+    // unidad de la FACTURA (kg/lt/caja). La conversión la decide el SERVER —
+    // la misma _convertir_cantidad de los renglones matcheados. Si no hay
+    // conversión segura (o la red falla), la cantidad queda VACÍA con
+    // advertencia y la barista la digita: nunca se adivina.
+    if (item && item.producto_id === 0 && item.cantidad_factura != null) {
+      let cantidad = ''
+      let enEmpaques = false
+      let advertencia: string | null = null
+      try {
+        const r = await api.post('/facturas/convertir-cantidad', {
+          producto_id: p.id,
+          cantidad:    item.cantidad_factura,
+          unidad:      item.unidad_factura ?? null,
+        })
+        if (r.data.cantidad != null && r.data.cantidad > 0) {
+          cantidad = String(r.data.cantidad)
+          enEmpaques = !!r.data.en_empaques
+          advertencia = r.data.advertencia ?? null
+        } else {
+          advertencia = r.data.advertencia || `ingresá la cantidad en ${p.unidad_medida}`
+        }
+      } catch {
+        // Red/servidor caído: mismo comportamiento conservador.
+        advertencia = `no se pudo convertir — ingresá la cantidad en ${p.unidad_medida}`
+      }
+      setItems(prev => prev.map((it, i) => (i !== idx ? it : {
+        ...it,
+        producto_id:  p.id,
+        nombre:       p.nombre,
+        unidad_medida: p.unidad_medida,
+        categoria:    p.categoria,
+        contenido_por_empaque: p.contenido_por_empaque || null,
+        cantidad,
+        en_empaques:  enEmpaques,
+        // Metadata local: un humano lo asignó acá (ver nota del camino de abajo).
+        origen_match: 'correccion',
+      })))
+      setCambiandoIdx(null)
+      setPickQuery(q => ({ ...q, [idx]: '' }))
+      if (advertencia) {
+        setScanWarnings(w => [...w,
+          `${p.nombre}: la factura dice ${crudoFactura(item)} — ${advertencia}`])
+      }
+      return
+    }
+
+    // ── "Cambiar" de un renglón YA matcheado: la cantidad ya está en la unidad
+    // del inventario (la convirtió el server al escanear) — solo cambia la
+    // identidad del producto.
+    const cpe = p.contenido_por_empaque || 0
+    const granel = esGranel(p.unidad_medida)
+    setItems(prev => prev.map((it, i) => {
+      if (i !== idx) return it
+      const cant = Number(it.cantidad) || 0
+      // Espejo de la heurística del backend: pocas "unidades" de un granel con
+      // empaque configurado casi seguro son empaques sellados (el backend
+      // multiplica por contenido_por_empaque al registrar). Estricto (<),
+      // igual que el guard del backend (ver MAX_EMPAQUES_PLAUSIBLE arriba).
+      const enEmpaques = granel && cpe > 0 && cant > 0 && cant < MAX_EMPAQUES_PLAUSIBLE
+      return {
+        ...it,
+        producto_id:  p.id,
+        nombre:       p.nombre,
+        unidad_medida: p.unidad_medida,
+        categoria:    p.categoria,
+        contenido_por_empaque: cpe || null,
+        en_empaques:  enEmpaques,
+        // Metadata local: un humano lo asignó/cambió acá. El backend NO le
+        // cree a esta etiqueta para sobrescribir aliases (deriva server-side);
+        // solo informa el origen cuando el alias es nuevo.
+        origen_match: 'correccion',
+      }
+    }))
+    setCambiandoIdx(null)
+    setPickQuery(q => ({ ...q, [idx]: '' }))
+    if (granel && !cpe) {
+      setScanWarnings(w => [...w,
+        `${p.nombre}: verificá la cantidad — este producto se registra en ${p.unidad_medida} totales, no en envases.`])
+    }
+  }
+
+  const setCantidadItem = (idx: number, v: string) =>
+    setItems(prev => prev.map((it, i) => (i === idx ? { ...it, cantidad: v } : it)))
+
+  const toggleEmpaquesItem = (idx: number) =>
+    setItems(prev => prev.map((it, i) => (i === idx ? { ...it, en_empaques: !it.en_empaques } : it)))
 
   const seleccionarProveedor = (p: string) => {
     setProveedor(p); setShowPickerProv(false); setQueryProv('')
@@ -292,6 +449,9 @@ export default function Ingresos() {
     if (!valorTotal || Number(valorTotal) <= 0) return setError('El valor total debe ser mayor a 0')
     if (items.length === 0) return setError('Agrega al menos un producto')
     for (const it of items) {
+      if (it.producto_id === 0) {
+        return setError(`Elegí el producto del inventario para "${it.nombre}" o quitá ese renglón`)
+      }
       if (!it.cantidad || Number(it.cantidad) <= 0) return setError(`Cantidad inválida en ${it.nombre}`)
     }
     if (!user?.tienda_id) return
@@ -314,6 +474,11 @@ export default function Ingresos() {
         fecha_vencimiento: it.fecha_vencimiento
           ? new Date(it.fecha_vencimiento + 'T00:00:00').toISOString()
           : null,
+        // Fase 2 (aliases): el texto original del renglón + cómo se resolvió.
+        // Con esto el backend aprende el alias ("correccion" si lo asignó la
+        // barista; confirmación sin cambios → "escaneo").
+        descripcion_original: it.descripcion_original || null,
+        origen_match:         it.origen_match || null,
       })),
     }
 
@@ -331,6 +496,7 @@ export default function Ingresos() {
       if (fileRef.current) fileRef.current.value = ''
       setItems([])
       setScanWarnings([])
+      setPickQuery({})
       setTimeout(() => setExito(false), 3000)
     } catch (e: any) {
       setError(e.response?.data?.detail || 'Error al guardar')
@@ -510,7 +676,34 @@ export default function Ingresos() {
           {/* ── Lista de ítems ── */}
           {items.length > 0 && (
             <div className="mx-4 bg-white border border-warm-100 rounded-2xl overflow-hidden">
-              {items.map((it, idx) => (
+              {items.map((it, idx) => it.producto_id === 0 ? (
+                /* ── Renglón del escaneo SIN producto: elegirlo entrena un alias ── */
+                <div key={`pendiente-${idx}`}
+                  className={`px-3 py-2.5 bg-amber-50/60 ${idx < items.length - 1 ? 'border-b border-warm-100' : ''}`}>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <AlertTriangle size={13} className="text-amber-500 shrink-0" />
+                    <span className="flex-1 text-[13px] font-bold text-warm-800 truncate">{it.nombre}</span>
+                    {/* Lo CRUDO de la factura (ej. "2 KG"): informativo — la
+                        cantidad real se convierte al asignar el producto. */}
+                    <span className="text-[13px] font-bold text-warm-600 font-mono shrink-0">{crudoFactura(it)}</span>
+                    <button
+                      onClick={() => quitarItem(idx)}
+                      className="w-6 h-6 rounded-md flex items-center justify-center text-warm-300 hover:text-red-400 hover:bg-red-50 shrink-0 transition-colors"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                  <p className="text-[11px] font-semibold text-amber-700 mb-1.5">
+                    ¿Qué producto del inventario es? Elegilo y el sistema lo recuerda para la próxima.
+                  </p>
+                  <ProductoPicker
+                    productos={productos}
+                    query={pickQuery[idx] || ''}
+                    onQuery={v => setPickQuery(q => ({ ...q, [idx]: v }))}
+                    onPick={p => asignarProducto(idx, p)}
+                  />
+                </div>
+              ) : (
                 <div key={`${it.producto_id}-${idx}`}
                   className={`px-3 py-2.5 ${idx < items.length - 1 ? 'border-b border-warm-100' : ''}`}>
                   {/* Fila 1: nombre + cantidad + borrar */}
@@ -520,11 +713,52 @@ export default function Ingresos() {
                       : <Box size={13} className="text-warm-400 shrink-0" />
                     }
                     <span className="flex-1 text-[13px] font-bold text-warm-800 truncate">{it.nombre}</span>
-                    <span className="text-[13px] font-bold text-warm-600 font-mono shrink-0 text-right">
-                      {it.en_empaques
-                        ? `${it.cantidad} emp. = ${Math.round(Number(it.cantidad) * (it.contenido_por_empaque || 0) * 100) / 100} ${it.unidad_medida}`
-                        : `${it.cantidad} ${it.unidad_medida}`}
-                    </span>
+                    {it.origen_match === 'correccion' ? (
+                      /* Recién asignado a mano: la cantidad vino cruda de la
+                         factura — dejarla editable, con toggle de empaques. */
+                      <span className="flex items-center gap-1 shrink-0">
+                        <input
+                          value={it.cantidad}
+                          onChange={e => setCantidadItem(idx, e.target.value)}
+                          inputMode="decimal"
+                          className="w-16 px-1.5 py-1 border border-amber-300 rounded-md text-[13px] font-bold text-warm-700 font-mono text-right focus:outline-none focus:border-amber-500 bg-white"
+                        />
+                        {esGranel(it.unidad_medida) && (it.contenido_por_empaque || 0) > 0 ? (
+                          <button
+                            onClick={() => toggleEmpaquesItem(idx)}
+                            className={`px-1.5 py-1 rounded-md text-[10px] font-bold border transition-colors ${
+                              it.en_empaques
+                                ? 'bg-amber-100 border-amber-300 text-amber-700'
+                                : 'bg-white border-warm-200 text-warm-400'}`}
+                          >
+                            {it.en_empaques ? 'emp.' : it.unidad_medida}
+                          </button>
+                        ) : (
+                          <span className="text-[11px] font-semibold text-warm-500">{it.unidad_medida}</span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-[13px] font-bold text-warm-600 font-mono shrink-0 text-right">
+                        {it.en_empaques
+                          ? `${it.cantidad} emp. = ${Math.round(Number(it.cantidad) * (it.contenido_por_empaque || 0) * 100) / 100} ${it.unidad_medida}`
+                          : `${it.cantidad} ${it.unidad_medida}`}
+                      </span>
+                    )}
+                    {/* F1: TODO renglón permite CAMBIAR el producto asignado —
+                        un match equivocado del escaneo que no se puede tocar
+                        se convierte en alias malo permanente e invisible. */}
+                    <button
+                      onClick={() => {
+                        setCambiandoIdx(cambiandoIdx === idx ? null : idx)
+                        setPickQuery(q => ({ ...q, [idx]: '' }))
+                      }}
+                      className={`px-1.5 py-1 rounded-md text-[10px] font-bold shrink-0 transition-colors ${
+                        cambiandoIdx === idx
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'text-amber-600 hover:bg-amber-50'}`}
+                    >
+                      {cambiandoIdx === idx ? 'cancelar' : 'cambiar'}
+                    </button>
                     <button
                       onClick={() => quitarItem(idx)}
                       className="w-6 h-6 rounded-md flex items-center justify-center text-warm-300 hover:text-red-400 hover:bg-red-50 shrink-0 transition-colors"
@@ -532,6 +766,28 @@ export default function Ingresos() {
                       <Trash2 size={12} />
                     </button>
                   </div>
+                  {/* Cambiador de producto: mismo buscador que los renglones
+                      pendientes. Elegir marca origen_match 'correccion'. */}
+                  {cambiandoIdx === idx && (
+                    <div className="mb-2">
+                      <p className="text-[11px] font-semibold text-amber-700 mb-1.5">
+                        ¿A qué producto va{it.descripcion_original ? ` "${it.descripcion_original}"` : ' este renglón'}?
+                      </p>
+                      <ProductoPicker
+                        productos={productos}
+                        query={pickQuery[idx] || ''}
+                        onQuery={v => setPickQuery(q => ({ ...q, [idx]: v }))}
+                        onPick={p => asignarProducto(idx, p)}
+                      />
+                    </div>
+                  )}
+                  {/* Equivalencia de la cantidad editable en empaques */}
+                  {it.origen_match === 'correccion' && it.en_empaques && (
+                    <p className="text-[11px] font-semibold text-amber-700 mb-1.5">
+                      {it.cantidad || 0} empaque{Number(it.cantidad) !== 1 ? 's' : ''} ={' '}
+                      {Math.round(Number(it.cantidad) * (it.contenido_por_empaque || 0) * 100) / 100} {it.unidad_medida}
+                    </p>
+                  )}
                   {/* Fila 2: chips lote + vence + precio (escaneo) */}
                   {(it.numero_lote || it.fecha_vencimiento || it.precio_unitario != null) && (
                     <div className="grid grid-cols-2 gap-1.5">
@@ -745,6 +1001,43 @@ function FieldChip({ label, value }: { label: string; value: string }) {
       <span className="text-[9px] font-bold uppercase tracking-wide text-warm-400">{label}</span>
       <span className="text-[12px] font-semibold text-warm-700 font-mono flex-1 text-right">{value}</span>
     </div>
+  )
+}
+
+// ─── ProductoPicker ──────────────────────────────────────────────────────────
+// Buscador compacto de producto: lo usan los renglones del escaneo SIN match y
+// el "cambiar" de los renglones ya matcheados (ambos entrenan alias al elegir).
+
+function ProductoPicker({ productos, query, onQuery, onPick }: {
+  productos: Producto[]
+  query: string
+  onQuery: (v: string) => void
+  onPick: (p: Producto) => void
+}) {
+  return (
+    <>
+      <div className="flex items-center gap-2 px-2.5 py-2 bg-white border border-amber-200 rounded-lg mb-1">
+        <Search size={12} className="text-amber-500 shrink-0" />
+        <input
+          value={query}
+          onChange={e => onQuery(e.target.value)}
+          placeholder="Buscar producto…"
+          className="flex-1 text-[13px] text-warm-700 bg-transparent outline-none placeholder:text-warm-300"
+        />
+      </div>
+      <div className="max-h-32 overflow-y-auto rounded-lg border border-warm-100 divide-y divide-warm-50 bg-white">
+        {productos
+          .filter(p => !query || p.nombre.toLowerCase().includes(query.toLowerCase()))
+          .slice(0, 5)
+          .map(p => (
+            <button key={p.id} onClick={() => onPick(p)}
+              className="w-full text-left px-2.5 py-2 hover:bg-amber-50 transition-colors">
+              <p className="text-[13px] font-semibold text-warm-700">{p.nombre}</p>
+              <p className="text-[10px] text-warm-400">{p.categoria} · {p.unidad_medida}</p>
+            </button>
+          ))}
+      </div>
+    </>
   )
 }
 

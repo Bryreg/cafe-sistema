@@ -960,6 +960,32 @@ class FacturaCompraItem(Base):
     producto = relationship("Producto")
 
 
+class ProductoAlias(Base):
+    """Alias proveedor→producto que el sistema APRENDE de las facturas (Fase 2
+    del OCR): cómo llama cada proveedor a cada producto del inventario.
+    `alias_normalizado` usa la MISMA normalización que cargar_menu_venta.norm
+    (NFKD sin tildes, espacios colapsados, MAYÚSCULAS). En el escaneo el match
+    por alias es determinístico y gana sobre la IA y el fuzzy: es verdad
+    confirmada por humanos (correccion) o por matches confiables del backfill
+    (bootstrap) / del registro sin cambios (escaneo). Datos aprendidos y
+    desechables: si el producto se borra, sus aliases se van con él (CASCADE)."""
+    __tablename__ = "producto_aliases"
+    id = Column(Integer, primary_key=True)
+    alias_normalizado = Column(String(200), unique=True, nullable=False, index=True)
+    alias_original = Column(String(200), nullable=False)   # snapshot tal cual la factura
+    producto_id = Column(Integer, ForeignKey("productos.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    origen = Column(String(20), nullable=False)            # bootstrap | correccion | escaneo
+    veces_visto = Column(Integer, nullable=False, default=1, server_default="1")
+    actualizado_en = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Autoría plana (patrón X-Barista-Id del proyecto, sin FK — igual que
+    # facturas_compra/tickets): QUIÉN enseñó el alias (lo creó o lo repuntó por
+    # corrección). NULL = flujo sin barista identificada (backfill, admin).
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
+    producto = relationship("Producto")
+
+
 # ---------------------------------------------------------------------------
 # Conteo de compras (Problema 2: conteo físico independiente para pedidos)
 # ---------------------------------------------------------------------------

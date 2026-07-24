@@ -212,6 +212,10 @@ with engine.connect() as _conn:
         # Costo oficial por unidad fijado a mano (verificador de facturas). Manda sobre
         # el promedio de facturas en rentabilidad.
         "ALTER TABLE productos ADD COLUMN precio_costo FLOAT",
+        # Fase 2 aliases: autoría de quién enseñó cada alias (plano, sin FK —
+        # patrón X-Barista-Id). En DBs donde create_all ya creó la tabla vieja.
+        "ALTER TABLE producto_aliases ADD COLUMN barista_id INTEGER",
+        "ALTER TABLE producto_aliases ADD COLUMN barista_nombre VARCHAR(100)",
     ]:
         try:
             _conn.execute(_text(_sql))

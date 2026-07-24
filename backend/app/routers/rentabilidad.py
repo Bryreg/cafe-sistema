@@ -11,6 +11,7 @@ from app.core.tz import hoy_col
 from app.database import get_db
 from app.models.models import Producto, Usuario
 from app.services import factura_ocr
+from app.services import producto_alias as alias_svc
 from app.services import rentabilidad as svc
 
 router = APIRouter(prefix="/rentabilidad", tags=["rentabilidad"])
@@ -87,6 +88,28 @@ async def backfill_costos(
     ítem que estén vacíos. Se llama repetidas veces hasta que no queden pendientes."""
     return await run_in_threadpool(
         factura_ocr.backfill_costos_facturas, db, admin.id, limite)
+
+
+@router.get("/aliases")
+def listar_aliases(
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Aliases proveedor→producto que el sistema aprendió (Fase 2 del OCR), con
+    origen, veces visto y quién lo enseñó. Un alias equivocado se auto-refuerza
+    en silencio con cada escaneo: tiene que poder verse y borrarse."""
+    return alias_svc.listar_aliases(db)
+
+
+@router.delete("/aliases/{alias_id}")
+def eliminar_alias(
+    alias_id: int,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Borra un alias malo. El próximo escaneo de ese texto vuelve a caer en
+    IA/fuzzy y la barista puede reenseñarlo bien."""
+    return alias_svc.eliminar_alias(db, alias_id)
 
 
 @router.get("/")

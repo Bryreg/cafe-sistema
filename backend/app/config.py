@@ -45,7 +45,12 @@ class Settings(BaseSettings):
     # ListModels de la key de producción.
     GEMINI_MODEL: str = "gemini-3.6-flash"
     ANTHROPIC_API_KEY: str = ""
-    OCR_MODEL: str = "claude-opus-4-8"
+    # 2026-07-24: default bajado de claude-opus-4-8 a Haiku (el económico):
+    # para extraer renglones de facturas con schema alcanza de sobra y cuesta
+    # centavos por foto. Claude es el RESCATE pago de la cascada (Gemini gratis
+    # va primero); con ANTHROPIC_API_KEY en Render se activa solo. Para más
+    # calidad: OCR_MODEL=claude-sonnet-5 como env var, sin tocar código.
+    OCR_MODEL: str = "claude-haiku-4-5-20251001"
 
     @field_validator("SECRET_KEY")
     @classmethod

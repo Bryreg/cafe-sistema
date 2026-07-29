@@ -41,6 +41,7 @@ interface ResumenDia {
 // todos los turnos del día juntos.
 interface DiaAgrupado {
   key: string
+  turno_ids: number[]
   tienda_nombre: string
   fecha_apertura: string
   fecha_cierre: string | null
@@ -459,6 +460,7 @@ export default function ConsignacionesAdmin() {
   const [loading, setLoading] = useState(false)
   const [fotoModal, setFotoModal] = useState<string | null>(null)
   const [confirmando, setConfirmando] = useState<number | null>(null)
+  const [recogiendo, setRecogiendo] = useState<string | null>(null)
   // expandido = clave de DÍA (YYYY-MM-DD), no turno_id: la lista ahora es por día.
   const [expandido, setExpandido] = useState<string | null>(null)
   const [desde, setDesde] = useState('')
@@ -540,6 +542,27 @@ export default function ConsignacionesAdmin() {
     } finally { setConfirmando(null) }
   }
 
+  // El admin pasó por la tienda y se llevó el efectivo del día: salda esos turnos
+  // sin comprobante (ya no hay foto que aprobar, la plata la recogió él en persona).
+  // El monto lo recalcula el backend desde el saldo real; acá sólo mandamos los turnos.
+  const recoger = async (dia: DiaAgrupado, monto: number) => {
+    if (tiendaId === null) return
+    if (!window.confirm(
+      `¿Confirmás que recogiste ${fmt(monto)} de ${fmtFecha(dia.fecha_apertura)}?\n\n` +
+      `El día queda saldado sin comprobante. Se puede revertir borrando la consignación.`
+    )) return
+    setRecogiendo(dia.key)
+    try {
+      const fd = new FormData()
+      fd.append('tienda_id', String(tiendaId))
+      fd.append('turno_ids', JSON.stringify(dia.turno_ids))
+      await api.post('/consignaciones/recoger', fd)
+      await load(tiendaId)
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'No se pudo registrar la recogida')
+    } finally { setRecogiendo(null) }
+  }
+
   // Agrupar los turnos por DÍA de calendario (una tarjeta por día). Suma esperado y
   // consignado del día; concatena movimientos y consignaciones de sus turnos. El backend
   // devuelve los turnos en orden de cierre desc, así que el Map conserva ese orden por día.
@@ -550,7 +573,7 @@ export default function ConsignacionesAdmin() {
       let g = map.get(key)
       if (!g) {
         g = {
-          key, tienda_nombre: d.tienda_nombre,
+          key, turno_ids: [], tienda_nombre: d.tienda_nombre,
           fecha_apertura: d.fecha_apertura, fecha_cierre: d.fecha_cierre,
           n_turnos: 0, total_efectivo: 0, total_ingresos_mov: 0, total_egresos: 0,
           diferencia_cierre: 0, esperado_consignar: 0, total_consignado: 0, diferencia: 0,
@@ -559,6 +582,7 @@ export default function ConsignacionesAdmin() {
         map.set(key, g)
       }
       g.n_turnos += 1
+      g.turno_ids.push(d.turno_id)
       g.total_efectivo += d.total_efectivo
       g.total_ingresos_mov += d.total_ingresos_mov
       g.total_egresos += d.total_egresos
@@ -846,6 +870,20 @@ export default function ConsignacionesAdmin() {
                       </span>
                     </div>
                   </div>
+
+                  {/* Recogida por el admin — reemplaza la foto del comprobante */}
+                  {porConsignar > 0.5 && (
+                    <button
+                      onClick={() => recoger(dia, porConsignar)}
+                      disabled={recogiendo === dia.key}
+                      className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-bold px-4 py-3 rounded-xl transition-colors"
+                    >
+                      <Banknote size={16} />
+                      {recogiendo === dia.key
+                        ? 'Registrando...'
+                        : `Recogí ${fmt(porConsignar)} — marcar saldado`}
+                    </button>
+                  )}
 
                   {/* Consignaciones */}
                   {dia.consignaciones.length === 0 ? (

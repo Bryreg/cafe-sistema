@@ -111,7 +111,10 @@ export default function Consignaciones() {
 
   const totalPendiente = pendiente?.total_pendiente ?? 0
   const hayPendiente = totalPendiente > 0
-  const canSave = !!valor && Number(valor) > 0 && !!archivo && !saving
+  // La foto dejó de ser obligatoria (28-jul): ahora la administración recoge el
+  // efectivo en la tienda y salda el día desde su panel, así que no siempre hay
+  // comprobante bancario que fotografiar.
+  const canSave = !!valor && Number(valor) > 0 && !saving
 
   return (
     <BaristaLayout title="Consignaciones">
@@ -243,7 +246,7 @@ export default function Consignaciones() {
             <label className="text-xs font-semibold text-warm-500 uppercase tracking-wide block mb-1.5">
               Soporte bancario
               {!archivo && (
-                <span className="ml-1.5 normal-case font-normal text-red-400">requerido</span>
+                <span className="ml-1.5 normal-case font-normal text-warm-400">opcional</span>
               )}
             </label>
             <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
@@ -280,7 +283,8 @@ export default function Consignaciones() {
 
           {!archivo && (
             <p className="text-center text-[11px] text-warm-400">
-              Adjunta la foto del comprobante bancario para continuar
+              Si consignaste en el banco, adjuntá el comprobante. Si el efectivo lo
+              recoge la administración, no hace falta.
             </p>
           )}
         </div>

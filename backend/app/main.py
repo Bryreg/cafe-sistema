@@ -14,6 +14,7 @@ from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
                           inventario_mensual, dashboard_ejecutivo)
 from app.routers import config_ticket
 from app.routers import rentabilidad
+from app.routers import combos
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -748,6 +749,7 @@ app.include_router(inventario_mensual.router, prefix="/api/v1")
 app.include_router(dashboard_ejecutivo.router, prefix="/api/v1")
 app.include_router(config_ticket.router,     prefix="/api/v1")
 app.include_router(rentabilidad.router,      prefix="/api/v1")
+app.include_router(combos.router,            prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────
 _frontend_dist = os.path.abspath(

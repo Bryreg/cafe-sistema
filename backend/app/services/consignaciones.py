@@ -234,6 +234,55 @@ def confirmar(db: Session, consignacion_id: int):
     return c
 
 
+def recoger(db: Session, tienda_id: int, turno_ids: list[int], usuario_id: int):
+    """El admin pasó por la tienda y se llevó el efectivo pendiente de esos días.
+
+    Reemplaza al flujo viejo (la barista sube la foto del comprobante bancario y
+    el admin la aprueba): ahora la plata la recoge el admin en persona, así que
+    no hay comprobante que fotografiar y la consignación nace ya `realizada`.
+
+    El valor NUNCA llega del cliente: se recalcula acá con `_saldos_consignacion`
+    (mismo criterio que todo el módulo, con la cascada FIFO ya aplicada). Si un
+    turno dejó de tener saldo entre que se pintó la pantalla y se apretó el botón,
+    se omite en silencio en vez de duplicar plata.
+    """
+    from app.services import audit
+
+    if not turno_ids:
+        raise HTTPException(status_code=400, detail="No se indicó ningún turno")
+
+    pendientes = {
+        s["turno"].id: round(s["saldo"], 2)
+        for s in _saldos_consignacion(db, tienda_id)
+        if round(s["saldo"], 2) > 0
+    }
+
+    creadas: list[dict] = []
+    for tid in turno_ids:
+        saldo = pendientes.get(tid)
+        if not saldo:
+            continue
+        db.add(Consignacion(
+            tienda_id=tienda_id, caja_turno_id=tid, valor=saldo,
+            imagen_url=None, usuario_id=usuario_id,
+            estado=EstadoConsignacionEnum.realizada,
+        ))
+        creadas.append({"turno_id": tid, "valor": saldo})
+
+    if not creadas:
+        raise HTTPException(status_code=400,
+                            detail="Esos turnos ya no tienen saldo pendiente")
+
+    total = round(sum(c["valor"] for c in creadas), 2)
+    audit.registrar(
+        db, accion="recoger_efectivo", tabla="consignaciones",
+        usuario_id=usuario_id, tienda_id=tienda_id,
+        datos_despues={"turnos": creadas, "total": total},
+    )
+    db.commit()
+    return {"recogidas": creadas, "total": total}
+
+
 def editar(db: Session, consignacion_id: int, usuario_id: int,
            valor: float | None = None, turno_id: int | None = None):
     """Corrige una consignación mal registrada (solo admin): valor y/o el turno

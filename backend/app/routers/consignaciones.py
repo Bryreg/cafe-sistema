@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, UploadFile, File, Form, Query
+import json
+
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Query, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import date
@@ -59,6 +61,25 @@ async def editar(
 ):
     """Corrige el valor y/o el día (turno) de una consignación mal registrada."""
     return svc.editar(db, consignacion_id, user.id, valor=valor, turno_id=turno_id)
+
+
+@router.post("/recoger")
+def recoger(
+    tienda_id: int = Form(...),
+    turno_ids: str = Form(...),          # JSON: [turno_id, ...] — los días recogidos
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(require_admin),
+):
+    """El admin recogió el efectivo en la tienda: salda esos días sin comprobante."""
+    ensure_tienda_access(user, tienda_id)
+    try:
+        parsed = json.loads(turno_ids)
+        if not isinstance(parsed, list):
+            raise ValueError
+        ids = [int(x) for x in parsed]
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="turno_ids debe ser una lista JSON de ids")
+    return svc.recoger(db, tienda_id, ids, user.id)
 
 
 @router.patch("/{consignacion_id}/confirmar")

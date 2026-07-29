@@ -46,6 +46,7 @@ import MantenimientosAdmin from './pages/MantenimientosAdmin'
 import AuditoriasAdmin from './pages/AuditoriasAdmin'
 import AuditLog from './pages/AuditLog'
 import Catalogo from './pages/Catalogo'
+import CombosAdmin from './pages/CombosAdmin'
 import NotaCredito from './pages/NotaCredito'
 import CumplimientoAdmin from './pages/CumplimientoAdmin'
 import InformeContador from './pages/InformeContador'
@@ -187,6 +188,7 @@ function AppRoutes() {
       <Route path="/usuarios"         element={<RequireAdmin><Layout><Usuarios /></Layout></RequireAdmin>} />
       <Route path="/control-inventario" element={<RequireAdmin><Layout><ControlInventario /></Layout></RequireAdmin>} />
       <Route path="/catalogo"         element={<RequireAdmin><Layout><Catalogo /></Layout></RequireAdmin>} />
+      <Route path="/combos"           element={<RequireAdmin><Layout><CombosAdmin /></Layout></RequireAdmin>} />
       <Route path="/notas-credito"    element={<RequireAdmin><Layout><NotaCredito /></Layout></RequireAdmin>} />
       <Route path="/pedidos-admin"    element={<RequireAdmin><Layout><PedidosAdmin /></Layout></RequireAdmin>} />
       <Route path="/mantenimientos"   element={<RequireAdmin><Layout><MantenimientosAdmin /></Layout></RequireAdmin>} />

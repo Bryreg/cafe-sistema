@@ -135,11 +135,16 @@ def reabrir(db: Session, tienda_id: int, anio: int, mes: int, usuario_id: int) -
     vivo = {prod.id: (invrow, prod) for invrow, prod in rows}
 
     # 1) Sincronizar los renglones existentes con el producto/stock vivos.
+    #    Los huérfanos (producto retirado de la sede: sin fila Inventario, p.ej.
+    #    por unificación de productos) salen del conteo — no hay contra qué contarlos.
     unidades_cambiadas = 0
-    for it in inv.items:
+    eliminados = 0
+    for it in list(inv.items):
         par = vivo.get(it.producto_id)
         if par is None:
-            continue   # sin fila de inventario en la sede: se deja la foto congelada
+            inv.items.remove(it)   # delete-orphan: borra la fila del conteo
+            eliminados += 1
+            continue
         invrow, prod = par
         u_vieja = (it.unidad_medida or "").strip().lower()
         u_nueva = (prod.unidad_medida or "").strip().lower()
@@ -180,7 +185,8 @@ def reabrir(db: Session, tienda_id: int, anio: int, mes: int, usuario_id: int) -
         db, accion="reabrir_inventario_mensual", tabla="inventarios_mensuales",
         registro_id=inv.id, usuario_id=usuario_id, tienda_id=tienda_id,
         datos_despues={"anio": anio, "mes": mes, "reabierto": reabierto,
-                       "productos_agregados": agregados, "unidades_cambiadas": unidades_cambiadas},
+                       "productos_agregados": agregados, "unidades_cambiadas": unidades_cambiadas,
+                       "huerfanos_eliminados": eliminados},
     )
     db.commit()
     db.refresh(inv)

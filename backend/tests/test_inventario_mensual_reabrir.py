@@ -122,6 +122,30 @@ class ReabrirMensualTest(unittest.TestCase):
         self.assertEqual(por_pid[self.prod.id]["cantidad_real"], 8)        # sin cambio de unidad: se conserva
         self.assertEqual(por_pid[self.prod.id]["cantidad_sistema"], 10)    # sistema refrescado (igual acá)
 
+    def test_reabrir_elimina_renglones_huerfanos(self):
+        # Producto retirado de la sede después de abrir el conteo (fila Inventario
+        # borrada, p.ej. por unificación): su renglón congelado no se puede contar
+        # contra nada y debe salir del conteo.
+        viejo = Producto(nombre="MEZCLA GRANIZADO", categoria=CategoriaProductoEnum.insumo,
+                         unidad_medida="bolsa", controla_stock=True)
+        self.db.add(viejo)
+        self.db.flush()
+        fila = Inventario(producto_id=viejo.id, tienda_id=self.t1.id, stock_actual=2)
+        self.db.add(fila)
+        self.db.commit()
+
+        inv = svc.iniciar(self.db, self.t1.id, 2026, 7, self.admin.id)
+        self.assertIn(viejo.id, {i["producto_id"] for i in inv["items"]})
+
+        self.db.delete(fila)   # retirado de la sede
+        self.db.commit()
+
+        out = svc.reabrir(self.db, self.t1.id, 2026, 7, self.admin.id)
+
+        pids = {i["producto_id"] for i in out["items"]}
+        self.assertNotIn(viejo.id, pids)          # el fantasma salió
+        self.assertIn(self.prod.id, pids)         # los vivos siguen
+
     def test_reabrir_sin_conteo_da_404(self):
         from fastapi import HTTPException
         with self.assertRaises(HTTPException):

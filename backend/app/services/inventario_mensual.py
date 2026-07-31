@@ -135,13 +135,14 @@ def reabrir(db: Session, tienda_id: int, anio: int, mes: int, usuario_id: int) -
     vivo = {prod.id: (invrow, prod) for invrow, prod in rows}
 
     # 1) Sincronizar los renglones existentes con el producto/stock vivos.
-    #    Los huérfanos (producto retirado de la sede: sin fila Inventario, p.ej.
-    #    por unificación de productos) salen del conteo — no hay contra qué contarlos.
+    #    Los retirados salen del conteo — sin fila Inventario en la sede O con
+    #    controla_stock=False (unificación/retiro por bandera): en ambos casos ya
+    #    no hay contra qué contarlos (mismo criterio de siembra que iniciar()).
     unidades_cambiadas = 0
     eliminados = 0
     for it in list(inv.items):
         par = vivo.get(it.producto_id)
-        if par is None:
+        if par is None or not par[1].controla_stock:
             inv.items.remove(it)   # delete-orphan: borra la fila del conteo
             eliminados += 1
             continue

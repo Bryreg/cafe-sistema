@@ -134,16 +134,29 @@ class ReabrirMensualTest(unittest.TestCase):
         self.db.add(fila)
         self.db.commit()
 
-        inv = svc.iniciar(self.db, self.t1.id, 2026, 7, self.admin.id)
-        self.assertIn(viejo.id, {i["producto_id"] for i in inv["items"]})
+        # Retirado por BANDERA: conserva fila Inventario pero controla_stock=False
+        # (caso real: Chai Latte / PANELA tras la unificación de productos).
+        bandera = Producto(nombre="PANELA", categoria=CategoriaProductoEnum.insumo,
+                           unidad_medida="bolsa", controla_stock=True)
+        self.db.add(bandera)
+        self.db.flush()
+        self.db.add(Inventario(producto_id=bandera.id, tienda_id=self.t1.id, stock_actual=1))
+        self.db.commit()
 
-        self.db.delete(fila)   # retirado de la sede
+        inv = svc.iniciar(self.db, self.t1.id, 2026, 7, self.admin.id)
+        pids0 = {i["producto_id"] for i in inv["items"]}
+        self.assertIn(viejo.id, pids0)
+        self.assertIn(bandera.id, pids0)
+
+        self.db.delete(fila)               # retirado por borrado de la fila
+        bandera.controla_stock = False     # retirado por bandera
         self.db.commit()
 
         out = svc.reabrir(self.db, self.t1.id, 2026, 7, self.admin.id)
 
         pids = {i["producto_id"] for i in out["items"]}
-        self.assertNotIn(viejo.id, pids)          # el fantasma salió
+        self.assertNotIn(viejo.id, pids)          # fantasma sin fila: salió
+        self.assertNotIn(bandera.id, pids)        # fantasma por bandera: salió
         self.assertIn(self.prod.id, pids)         # los vivos siguen
 
     def test_reabrir_sin_conteo_da_404(self):

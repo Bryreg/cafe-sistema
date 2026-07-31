@@ -110,25 +110,52 @@ def reiniciar(db: Session, tienda_id: int, anio: int, mes: int, usuario_id: int)
 def reabrir(db: Session, tienda_id: int, anio: int, mes: int, usuario_id: int) -> dict:
     """Reabre un conteo mensual cerrado (p.ej. cerrado por error antes de terminar):
     vuelve a en_proceso conservando lo contado y limpia las diferencias del cierre
-    prematuro (cerrar() las recalcula al finalizar de verdad). Además agrega los
-    productos con controla_stock que entraron al catálogo después de iniciarlo —
-    el conteo se congela con el catálogo del momento de apertura. Sobre un conteo
-    en_proceso solo agrega los faltantes (idempotente)."""
+    prematuro (cerrar() las recalcula al finalizar de verdad).
+
+    Además re-sincroniza el conteo con el catálogo VIVO — el conteo congela unidad,
+    categoría y existencia teórica al abrirse, y un mes abierto temprano queda con
+    la foto vieja (caso real: apertura 1-jul, conversión a gramos 3-jul):
+    - agrega los productos con controla_stock que entraron después de iniciarlo;
+    - refresca unidad, categoría, costo y cantidad_sistema desde el producto y el
+      stock actuales;
+    - si la UNIDAD cambió (botella→gr), borra cantidad_real: lo contado estaba en
+      la unidad vieja y no significa nada en la nueva — hay que recontarlo.
+    Sobre un conteo en_proceso hace lo mismo sin tocar el estado (idempotente)."""
     inv = db.query(InventarioMensual).filter_by(tienda_id=tienda_id, anio=anio, mes=mes).first()
     if not inv:
         raise HTTPException(404, "No hay conteo mensual para ese período")
 
-    existentes = {it.producto_id for it in inv.items}
     val = _valor_unitario_map(db)
     rows = (
         db.query(Inventario, Producto)
         .join(Producto, Producto.id == Inventario.producto_id)
-        .filter(Inventario.tienda_id == tienda_id, Producto.controla_stock == True)  # noqa: E712
+        .filter(Inventario.tienda_id == tienda_id)
         .all()
     )
+    vivo = {prod.id: (invrow, prod) for invrow, prod in rows}
+
+    # 1) Sincronizar los renglones existentes con el producto/stock vivos.
+    unidades_cambiadas = 0
+    for it in inv.items:
+        par = vivo.get(it.producto_id)
+        if par is None:
+            continue   # sin fila de inventario en la sede: se deja la foto congelada
+        invrow, prod = par
+        u_vieja = (it.unidad_medida or "").strip().lower()
+        u_nueva = (prod.unidad_medida or "").strip().lower()
+        if u_vieja != u_nueva:
+            it.cantidad_real = None
+            unidades_cambiadas += 1
+        it.unidad_medida = prod.unidad_medida
+        it.categoria = prod.categoria.value
+        it.cantidad_sistema = invrow.stock_actual or 0
+        it.valor_unitario = val.get(prod.id, float(prod.precio_venta or 0))
+
+    # 2) Agregar los productos que faltan (creados después de abrir el conteo).
+    existentes = {it.producto_id for it in inv.items}
     agregados = 0
     for invrow, prod in rows:
-        if prod.id in existentes:
+        if prod.id in existentes or not prod.controla_stock:
             continue
         db.add(InventarioMensualItem(
             inventario_id=inv.id, producto_id=prod.id,
@@ -144,15 +171,16 @@ def reabrir(db: Session, tienda_id: int, anio: int, mes: int, usuario_id: int) -
     if reabierto:
         inv.estado = "en_proceso"
         inv.fecha_cierre = None
-        inv.valor_diferencia_total = 0
-        for it in inv.items:
-            it.diferencia = 0
-            it.valor_diferencia = 0
+    inv.valor_diferencia_total = 0
+    for it in inv.items:
+        it.diferencia = 0
+        it.valor_diferencia = 0
 
     audit.registrar(
         db, accion="reabrir_inventario_mensual", tabla="inventarios_mensuales",
         registro_id=inv.id, usuario_id=usuario_id, tienda_id=tienda_id,
-        datos_despues={"anio": anio, "mes": mes, "reabierto": reabierto, "productos_agregados": agregados},
+        datos_despues={"anio": anio, "mes": mes, "reabierto": reabierto,
+                       "productos_agregados": agregados, "unidades_cambiadas": unidades_cambiadas},
     )
     db.commit()
     db.refresh(inv)

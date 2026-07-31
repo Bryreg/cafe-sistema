@@ -88,6 +88,40 @@ class ReabrirMensualTest(unittest.TestCase):
         self.assertIn(nuevo.id, pids)
         self.assertEqual(len(pids), 2)
 
+    def test_reabrir_sincroniza_unidad_y_sistema_del_producto_vivo(self):
+        # El caso real del 31-jul: el conteo se abrió ANTES de la conversión a
+        # gramos — quedó con unidad "botella", sistema en envases y conteos en
+        # fracciones de envase (0.45). Al reabrir debe quedar en la unidad viva.
+        salsa = Producto(nombre="Salsa Chocolate", categoria=CategoriaProductoEnum.insumo,
+                         unidad_medida="botella", controla_stock=True)
+        self.db.add(salsa)
+        self.db.flush()
+        inv_salsa = Inventario(producto_id=salsa.id, tienda_id=self.t1.id, stock_actual=2)
+        self.db.add(inv_salsa)
+        self.db.commit()
+
+        inv = svc.iniciar(self.db, self.t1.id, 2026, 7, self.admin.id)
+        por_pid = {i["producto_id"]: i for i in inv["items"]}
+        svc.guardar(self.db, inv["id"], [
+            {"id": por_pid[salsa.id]["id"], "cantidad_real": 0.45},   # fracción de botella
+            {"id": por_pid[self.prod.id]["id"], "cantidad_real": 8},  # unidad sin cambio
+        ])
+        svc.cerrar(self.db, inv["id"], self.admin.id)
+
+        # Conversión a gramos posterior a la apertura del conteo
+        salsa.unidad_medida = "gr"
+        inv_salsa.stock_actual = 3695
+        self.db.commit()
+
+        out = svc.reabrir(self.db, self.t1.id, 2026, 7, self.admin.id)
+
+        por_pid = {i["producto_id"]: i for i in out["items"]}
+        self.assertEqual(por_pid[salsa.id]["unidad_medida"], "gr")          # unidad viva
+        self.assertEqual(por_pid[salsa.id]["cantidad_sistema"], 3695)      # sistema actual
+        self.assertIsNone(por_pid[salsa.id]["cantidad_real"])              # 0.45 botellas no sirve en gr
+        self.assertEqual(por_pid[self.prod.id]["cantidad_real"], 8)        # sin cambio de unidad: se conserva
+        self.assertEqual(por_pid[self.prod.id]["cantidad_sistema"], 10)    # sistema refrescado (igual acá)
+
     def test_reabrir_sin_conteo_da_404(self):
         from fastapi import HTTPException
         with self.assertRaises(HTTPException):

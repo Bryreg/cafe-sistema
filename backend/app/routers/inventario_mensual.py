@@ -32,6 +32,16 @@ def reiniciar(
     return svc.reiniciar(db, tienda_id, anio, mes, user.id)
 
 
+@router.post("/reabrir")
+def reabrir(
+    tienda_id: int = Query(...), anio: int = Query(...), mes: int = Query(...),
+    db: Session = Depends(get_db), user: Usuario = Depends(require_admin),
+):
+    """Admin: reabre el conteo mensual cerrado por error (conserva lo contado) y
+    agrega los productos del catálogo que le falten al conteo."""
+    return svc.reabrir(db, tienda_id, anio, mes, user.id)
+
+
 @router.get("/actual")
 def actual(
     tienda_id: int = Query(...), anio: int = Query(...), mes: int = Query(...),

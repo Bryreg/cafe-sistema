@@ -107,6 +107,58 @@ def reiniciar(db: Session, tienda_id: int, anio: int, mes: int, usuario_id: int)
     return iniciar(db, tienda_id, anio, mes, usuario_id)
 
 
+def reabrir(db: Session, tienda_id: int, anio: int, mes: int, usuario_id: int) -> dict:
+    """Reabre un conteo mensual cerrado (p.ej. cerrado por error antes de terminar):
+    vuelve a en_proceso conservando lo contado y limpia las diferencias del cierre
+    prematuro (cerrar() las recalcula al finalizar de verdad). Además agrega los
+    productos con controla_stock que entraron al catálogo después de iniciarlo —
+    el conteo se congela con el catálogo del momento de apertura. Sobre un conteo
+    en_proceso solo agrega los faltantes (idempotente)."""
+    inv = db.query(InventarioMensual).filter_by(tienda_id=tienda_id, anio=anio, mes=mes).first()
+    if not inv:
+        raise HTTPException(404, "No hay conteo mensual para ese período")
+
+    existentes = {it.producto_id for it in inv.items}
+    val = _valor_unitario_map(db)
+    rows = (
+        db.query(Inventario, Producto)
+        .join(Producto, Producto.id == Inventario.producto_id)
+        .filter(Inventario.tienda_id == tienda_id, Producto.controla_stock == True)  # noqa: E712
+        .all()
+    )
+    agregados = 0
+    for invrow, prod in rows:
+        if prod.id in existentes:
+            continue
+        db.add(InventarioMensualItem(
+            inventario_id=inv.id, producto_id=prod.id,
+            categoria=prod.categoria.value, unidad_medida=prod.unidad_medida,
+            cantidad_sistema=invrow.stock_actual or 0,
+            cantidad_real=None, diferencia=0,
+            valor_unitario=val.get(prod.id, float(prod.precio_venta or 0)),
+            valor_diferencia=0,
+        ))
+        agregados += 1
+
+    reabierto = inv.estado == "cerrado"
+    if reabierto:
+        inv.estado = "en_proceso"
+        inv.fecha_cierre = None
+        inv.valor_diferencia_total = 0
+        for it in inv.items:
+            it.diferencia = 0
+            it.valor_diferencia = 0
+
+    audit.registrar(
+        db, accion="reabrir_inventario_mensual", tabla="inventarios_mensuales",
+        registro_id=inv.id, usuario_id=usuario_id, tienda_id=tienda_id,
+        datos_despues={"anio": anio, "mes": mes, "reabierto": reabierto, "productos_agregados": agregados},
+    )
+    db.commit()
+    db.refresh(inv)
+    return _serializar(inv)
+
+
 def get_actual(db: Session, tienda_id: int, anio: int, mes: int):
     inv = db.query(InventarioMensual).filter_by(tienda_id=tienda_id, anio=anio, mes=mes).first()
     return _serializar(inv) if inv else None

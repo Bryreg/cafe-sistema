@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { ChevronDown, ChevronUp, Download, ListChecks, Sun, Moon, User, DatabaseZap } from 'lucide-react'
+import { ChevronDown, ChevronUp, Download, ListChecks, Sun, Moon, User, DatabaseZap, Boxes, ChevronRight } from 'lucide-react'
 import { hoyLocal, haceDiasLocal } from '../utils/fechaLocal'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
@@ -28,6 +29,18 @@ interface Conteo {
 }
 
 interface Sede { id: number; nombre: string }
+
+interface Mensual {
+  id: number
+  anio: number
+  mes: number
+  estado: string // en_proceso | cerrado
+  barista_nombre: string | null
+  valor_diferencia_total: number
+  items: { cantidad_real: number | null }[]
+}
+
+const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
 interface Verif {
   id: number
@@ -131,6 +144,22 @@ export default function ConteosAdmin() {
 
   useEffect(() => { cargar() }, [tiendaId, desde, hasta]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Inventario mensual del mes en curso: se muestra identificado arriba de los
+  // conteos diarios — es OTRO conteo (foto completa del mes), no uno de turno.
+  const [mensual, setMensual] = useState<Mensual | null>(null)
+  useEffect(() => {
+    // El cleanup invalida la respuesta si tiendaId cambió antes de resolver:
+    // una respuesta vieja no debe pisar la de la sede actualmente seleccionada.
+    let vivo = true
+    const now = new Date()
+    api.get<Mensual | null>('/inventario-mensual/actual', {
+      params: { tienda_id: tiendaId, anio: now.getFullYear(), mes: now.getMonth() + 1 },
+    })
+      .then(r => { if (vivo) setMensual(r.data) })
+      .catch(() => { if (vivo) setMensual(null) })
+    return () => { vivo = false }
+  }, [tiendaId])
+
   const exportar = () => {
     if (!conteos) return
     const filas: (string | number | null)[][] = []
@@ -199,6 +228,38 @@ export default function ConteosAdmin() {
             <ListChecks size={12} /> Pedir conteo desechables
           </button>
         </div>
+
+        {/* Inventario mensual del mes en curso */}
+        {mensual && (
+          <Link to="/conciliacion-inventario"
+            className="flex items-center gap-3 px-4 py-3 mb-3 bg-white rounded-2xl border hover:bg-gray-50"
+            style={{ borderColor: mensual.estado === 'cerrado' ? 'oklch(85% 0.07 155)' : 'oklch(84% 0.08 70)' }}>
+            <span className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: 'oklch(95% 0.045 70)' }}>
+              <Boxes size={15} style={{ color: 'oklch(48% 0.12 70)' }} />
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-gray-800 flex items-center gap-2 flex-wrap m-0">
+                Inventario mensual — {MESES[mensual.mes - 1]} {mensual.anio}
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                  style={mensual.estado === 'cerrado'
+                    ? { background: 'oklch(95% 0.04 155)', color: 'oklch(40% 0.12 155)' }
+                    : { background: 'oklch(95% 0.045 70)', color: 'oklch(48% 0.12 70)' }}>
+                  {mensual.estado === 'cerrado' ? 'Cerrado' : 'En proceso'}
+                </span>
+              </p>
+              <p className="text-xs text-gray-500 m-0 flex items-center gap-2">
+                {mensual.estado === 'cerrado'
+                  ? `Diferencia neta $${Math.round(mensual.valor_diferencia_total).toLocaleString('es-CO')}`
+                  : `${mensual.items.filter(i => i.cantidad_real != null).length} de ${mensual.items.length} productos contados`}
+                {mensual.barista_nombre && <span className="inline-flex items-center gap-1"><User size={10} />{mensual.barista_nombre}</span>}
+              </p>
+            </div>
+            <span className="text-xs font-semibold shrink-0 flex items-center gap-0.5" style={{ color: 'oklch(45% 0.1 155)' }}>
+              Conciliación <ChevronRight size={13} />
+            </span>
+          </Link>
+        )}
 
         {/* Lista */}
         {loading ? (

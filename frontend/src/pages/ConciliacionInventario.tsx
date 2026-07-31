@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import api from '../api/client'
-import { Scale, Download, TrendingUp, TrendingDown, Minus, AlertTriangle, RotateCcw, Cpu, Users, ListChecks } from 'lucide-react'
+import { Scale, Download, TrendingUp, TrendingDown, Minus, AlertTriangle, RotateCcw, Cpu, Users, ListChecks, Unlock } from 'lucide-react'
 import { hoyLocal } from '../utils/fechaLocal'
 
 // ── Doble inventario del día (tabla Detalle) ─────────────────────────────────
@@ -182,6 +182,21 @@ export default function ConciliacionInventario() {
     } finally { setReiniciando(false) }
   }
 
+  const [reabriendo, setReabriendo] = useState(false)
+  const reabrirMes = async () => {
+    if (!tiendaId) return
+    if (!window.confirm(`¿Reabrir el conteo de ${MESES[mes - 1]}? Vuelve a "en proceso" para seguir contando — lo ya registrado se conserva — y se agregan los productos nuevos del catálogo que le falten al conteo.`)) return
+    setReabriendo(true)
+    try {
+      await api.post('/inventario-mensual/reabrir', null, { params: { tienda_id: tiendaId, anio, mes } })
+      const r = await api.get<Conciliacion | null>('/inventario-mensual/conciliacion', { params: { tienda_id: tiendaId, anio, mes } })
+      setData(r.data)
+      alert('Conteo reabierto — en el kiosko ya pueden seguir contando.')
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'No se pudo reabrir')
+    } finally { setReabriendo(false) }
+  }
+
   const exportarCSV = () => {
     if (!data) return
     const head = ['Producto', 'Categoria', 'Unidad', 'Sistema', 'Fisico', 'Diferencia', 'Valor unit', 'Valor diferencia']
@@ -208,6 +223,13 @@ export default function ConciliacionInventario() {
           <select value={anio} onChange={e => setAnio(Number(e.target.value))} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white">
             {Array.from({ length: 5 }, (_, i) => now.getFullYear() - i).map(y => <option key={y} value={y}>{y}</option>)}
           </select>
+          {data?.estado === 'cerrado' && (
+            <button onClick={reabrirMes} disabled={reabriendo || !tiendaId}
+              title="Vuelve el conteo del mes a 'en proceso' conservando lo contado y agrega los productos nuevos del catálogo"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-forest hover:bg-forest-700 disabled:opacity-40 text-white">
+              <Unlock size={14} /> {reabriendo ? 'Reabriendo…' : 'Reabrir mes'}
+            </button>
+          )}
           <button onClick={reiniciarMes} disabled={reiniciando || !tiendaId || data?.estado === 'cerrado'}
             title="Borra el avance del mes en proceso y re-siembra con el conteo del sistema actual"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white">

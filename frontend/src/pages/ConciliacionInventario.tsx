@@ -183,17 +183,23 @@ export default function ConciliacionInventario() {
   }
 
   const [reabriendo, setReabriendo] = useState(false)
+  // Reabrir (mes cerrado) y Sincronizar (mes en proceso) usan el mismo endpoint:
+  // agrega productos nuevos y refresca unidad/categoría/sistema desde el catálogo
+  // vivo; si la unidad de un producto cambió, su conteo viejo se borra (recontar).
   const reabrirMes = async () => {
     if (!tiendaId) return
-    if (!window.confirm(`¿Reabrir el conteo de ${MESES[mes - 1]}? Vuelve a "en proceso" para seguir contando — lo ya registrado se conserva — y se agregan los productos nuevos del catálogo que le falten al conteo.`)) return
+    const msg = data?.estado === 'cerrado'
+      ? `¿Reabrir el conteo de ${MESES[mes - 1]}? Vuelve a "en proceso" para seguir contando — lo ya registrado se conserva — y el conteo se sincroniza con el catálogo vivo (productos nuevos, unidades y sistema actuales; lo contado en unidades viejas queda para recontar).`
+      : `¿Sincronizar el conteo de ${MESES[mes - 1]} con el catálogo vivo? Agrega los productos que falten y refresca unidades y sistema. Lo contado se conserva, salvo los productos cuya unidad cambió (quedan para recontar).`
+    if (!window.confirm(msg)) return
     setReabriendo(true)
     try {
       await api.post('/inventario-mensual/reabrir', null, { params: { tienda_id: tiendaId, anio, mes } })
       const r = await api.get<Conciliacion | null>('/inventario-mensual/conciliacion', { params: { tienda_id: tiendaId, anio, mes } })
       setData(r.data)
-      alert('Conteo reabierto — en el kiosko ya pueden seguir contando.')
+      alert('Listo — el conteo quedó sincronizado con el catálogo vivo.')
     } catch (e: any) {
-      alert(e.response?.data?.detail || 'No se pudo reabrir')
+      alert(e.response?.data?.detail || 'No se pudo completar')
     } finally { setReabriendo(false) }
   }
 
@@ -223,11 +229,15 @@ export default function ConciliacionInventario() {
           <select value={anio} onChange={e => setAnio(Number(e.target.value))} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white">
             {Array.from({ length: 5 }, (_, i) => now.getFullYear() - i).map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-          {data?.estado === 'cerrado' && (
+          {data && (
             <button onClick={reabrirMes} disabled={reabriendo || !tiendaId}
-              title="Vuelve el conteo del mes a 'en proceso' conservando lo contado y agrega los productos nuevos del catálogo"
+              title={data.estado === 'cerrado'
+                ? "Vuelve el conteo del mes a 'en proceso' conservando lo contado y lo sincroniza con el catálogo vivo"
+                : 'Agrega los productos que falten y refresca unidades y sistema del conteo en proceso'}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-forest hover:bg-forest-700 disabled:opacity-40 text-white">
-              <Unlock size={14} /> {reabriendo ? 'Reabriendo…' : 'Reabrir mes'}
+              {data.estado === 'cerrado'
+                ? <><Unlock size={14} /> {reabriendo ? 'Reabriendo…' : 'Reabrir mes'}</>
+                : <><RotateCcw size={14} /> {reabriendo ? 'Sincronizando…' : 'Sincronizar catálogo'}</>}
             </button>
           )}
           <button onClick={reiniciarMes} disabled={reiniciando || !tiendaId || data?.estado === 'cerrado'}

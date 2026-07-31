@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { Boxes, Check, Save, AlertTriangle, Lock } from 'lucide-react'
+import { Boxes, Check, Save, AlertTriangle, Lock, X } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
 import NivelEnvase from '../components/NivelEnvase'
 
@@ -30,19 +30,80 @@ export default function InventarioMensual() {
   const [guardando, setGuardando] = useState(false)
   const [cerrando, setCerrando] = useState(false)
   const [msg, setMsg] = useState('')
+  const [borradorInfo, setBorradorInfo] = useState<string | null>(null)
+  const [dirty, setDirty] = useState(false)
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Último estado confirmado por el servidor (para poder descartar el borrador)
+  const serverVals = useRef<Record<number, string>>({})
+  // Contador de ediciones: si tipean mientras el PATCH está en vuelo, no hay que
+  // desarmar el borrador al volver (ese tipeo no viajó en el request).
+  const editGen = useRef(0)
+
+  // ── Borrador persistente: sobrevive si salen a revisar otra pantalla ────────
+  const draftKey = `invmensual_borrador_${user?.tienda_id ?? 0}_${now.getFullYear()}_${now.getMonth() + 1}`
+
+  const valoresDesde = (items: Item[]) => {
+    const v: Record<number, string> = {}
+    items.forEach(it => { if (it.cantidad_real != null) v[it.id] = String(it.cantidad_real) })
+    return v
+  }
 
   useEffect(() => {
     if (!user?.tienda_id) { setLoading(false); setMsg('No se pudo determinar la sede'); return }
     api.post<Inv>('/inventario-mensual/iniciar', null, { params: { tienda_id: user.tienda_id, anio: now.getFullYear(), mes: now.getMonth() + 1 } })
       .then(r => {
         setInv(r.data)
-        const v: Record<number, string> = {}
-        r.data.items.forEach(it => { if (it.cantidad_real != null) v[it.id] = String(it.cantidad_real) })
-        setValores(v)
+        const v = valoresDesde(r.data.items)
+        serverVals.current = v
+        // Restaurar lo tipeado sin "Guardar avance" (borradores de menos de 20h)
+        let merged = v
+        try {
+          const raw = r.data.estado !== 'cerrado' ? localStorage.getItem(draftKey) : null
+          if (raw) {
+            const d = JSON.parse(raw)
+            if (d.ts && Date.now() - d.ts <= 20 * 3600 * 1000 && d.valores && Object.keys(d.valores).length) {
+              merged = { ...v, ...d.valores }
+              setDirty(true)
+              setBorradorInfo(new Date(d.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }))
+            } else {
+              localStorage.removeItem(draftKey)
+            }
+          }
+        } catch { /* borrador corrupto: ignorar */ }
+        setValores(merged)
       })
       .catch(() => setMsg('No se pudo iniciar el conteo'))
       .finally(() => setLoading(false))
   }, [user?.tienda_id])  // eslint-disable-line
+
+  // Autoguardado silencioso del borrador (respaldo del boton "Guardar avance")
+  useEffect(() => {
+    if (!dirty) return
+    if (draftTimer.current) clearTimeout(draftTimer.current)
+    draftTimer.current = setTimeout(() => {
+      try { localStorage.setItem(draftKey, JSON.stringify({ valores, ts: Date.now() })) } catch { /* almacenamiento lleno: no bloquear el conteo */ }
+    }, 800)
+    return () => { if (draftTimer.current) clearTimeout(draftTimer.current) }
+  }, [valores, dirty])  // eslint-disable-line
+
+  const setValor = (id: number, v: string) => {
+    setValores(p => ({ ...p, [id]: v }))
+    editGen.current += 1
+    setDirty(true)
+  }
+
+  // Limpieza síncrona: cancela el timer pendiente ANTES de borrar la clave, para
+  // que un autoguardado en vuelo no resucite el borrador recién eliminado.
+  const limpiarBorrador = () => {
+    if (draftTimer.current) { clearTimeout(draftTimer.current); draftTimer.current = null }
+    localStorage.removeItem(draftKey)
+  }
+
+  const descartarBorrador = () => {
+    limpiarBorrador()
+    setValores({ ...serverVals.current })
+    setDirty(false); setBorradorInfo(null)
+  }
 
   const cerrado = inv?.estado === 'cerrado'
   const grupos = useMemo(() => {
@@ -63,11 +124,18 @@ export default function InventarioMensual() {
     if (!inv) return
     setGuardando(true); setMsg('')
     try {
+      const genAlEnviar = editGen.current
       const items = Object.entries(valores)
         .filter(([, v]) => v !== '')
         .map(([id, v]) => ({ id: Number(id), cantidad_real: Number(v) }))
       const { data } = await api.patch<Inv>(`/inventario-mensual/${inv.id}/guardar`, items)
       setInv(data); setMsg('Guardado')
+      serverVals.current = valoresDesde(data.items)
+      if (editGen.current === genAlEnviar) {
+        // Nada se tipeó durante el request: lo guardado ya vive en el servidor
+        limpiarBorrador()
+        setDirty(false); setBorradorInfo(null)
+      }
       setTimeout(() => setMsg(''), 1500)
     } catch { setMsg('Error al guardar') } finally { setGuardando(false) }
   }
@@ -79,6 +147,8 @@ export default function InventarioMensual() {
       await guardar()
       const { data } = await api.post<Inv>(`/inventario-mensual/${inv.id}/cerrar`)
       setInv(data)
+      limpiarBorrador()   // conteo cerrado: el borrador ya cumplió
+      setDirty(false); setBorradorInfo(null)
     } catch { setMsg('Error al cerrar') } finally { setCerrando(false) }
   }
 
@@ -105,6 +175,17 @@ export default function InventarioMensual() {
                 : <span><b>{contados}</b> de {inv.items.length} productos contados</span>}
             </div>
 
+            {/* Borrador restaurado */}
+            {!cerrado && borradorInfo && (
+              <div className="rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm bg-amber-50 border border-amber-200 text-amber-700">
+                <Save size={14} className="shrink-0" />
+                <span className="flex-1">Se restauró lo que llevabas escrito a las {borradorInfo} — seguí donde ibas.</span>
+                <button onClick={descartarBorrador} className="p-1 rounded-lg" aria-label="Descartar borrador">
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+
             {/* Grupos por categoría */}
             {grupos.map(({ cat, items }) => (
               <div key={cat} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
@@ -130,11 +211,11 @@ export default function InventarioMensual() {
                             unidad={it.unidad_medida}
                             selladas={Math.floor(Number(valores[it.id] ?? 0))}
                             nivel={Number(valores[it.id] ?? 0) - Math.floor(Number(valores[it.id] ?? 0))}
-                            onChange={(s, n) => setValores(p => ({ ...p, [it.id]: String(s + n) }))}
+                            onChange={(s, n) => setValor(it.id, String(s + n))}
                           />
                         ) : (
                           <input type="number" inputMode="numeric" value={valores[it.id] ?? ''}
-                            onChange={e => setValores(p => ({ ...p, [it.id]: e.target.value }))}
+                            onChange={e => setValor(it.id, e.target.value)}
                             placeholder="—"
                             className="w-20 border-2 border-gray-200 rounded-xl px-2 py-1.5 text-center font-mono font-bold focus:outline-none focus:border-forest" />
                         )}

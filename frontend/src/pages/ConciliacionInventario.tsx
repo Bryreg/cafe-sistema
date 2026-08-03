@@ -203,6 +203,38 @@ export default function ConciliacionInventario() {
     } finally { setReabriendo(false) }
   }
 
+  // ── Foto mensual: cálculo VIVO renglón por renglón ─────────────────────────
+  // La diferencia se calcula acá (real − sistema) y no con la almacenada: en un
+  // conteo en proceso la almacenada es 0 hasta el cierre, y así la tabla sirve
+  // igual para seguir el conteo en vivo que para revisar un mes cerrado.
+  const [soloDifMes, setSoloDifMes] = useState(false)
+  const [buscarMes, setBuscarMes] = useState('')
+  const mensual = useMemo(() => {
+    if (!data) return null
+    const items = data.items.map(i => {
+      const contado = i.cantidad_real !== null && i.cantidad_real !== undefined
+      const dif = contado ? (i.cantidad_real as number) - i.cantidad_sistema : 0
+      return { ...i, contado, dif, valorDif: dif * (i.valor_unitario || 0) }
+    })
+    const contados = items.filter(i => i.contado)
+    return {
+      items,
+      nContados: contados.length,
+      positivas: contados.filter(i => i.dif > 0).length,
+      negativas: contados.filter(i => i.dif < 0).length,
+      exactas: contados.filter(i => i.dif === 0).length,
+      valorNeto: contados.reduce((s, i) => s + i.valorDif, 0),
+    }
+  }, [data])
+  const filasMes = useMemo(() => {
+    if (!mensual) return []
+    const q = buscarMes.trim().toLowerCase()
+    return mensual.items
+      .filter(i => !q || i.producto_nombre.toLowerCase().includes(q))
+      .filter(i => !soloDifMes || (i.contado && i.dif !== 0))
+      .sort((a, b) => Math.abs(b.valorDif) - Math.abs(a.valorDif) || Math.abs(b.dif) - Math.abs(a.dif))
+  }, [mensual, soloDifMes, buscarMes])
+
   const exportarCSV = () => {
     if (!data) return
     const head = ['Producto', 'Categoria', 'Unidad', 'Sistema', 'Fisico', 'Diferencia', 'Valor unit', 'Valor diferencia']
@@ -283,6 +315,81 @@ export default function ConciliacionInventario() {
             className={`px-3 py-1.5 rounded-xl text-sm font-semibold transition-colors ${tiendaId === t.id ? 'bg-forest text-white' : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'}`}>{t.nombre}</button>
         ))}
       </div>
+
+      {/* ── Foto MENSUAL: el conteo de fin de mes, renglón por renglón ── */}
+      {loading ? (
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 text-center text-sm text-gray-400 animate-pulse">Cargando conteo mensual…</div>
+      ) : !data || !mensual ? (
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 text-center text-sm text-gray-400">
+          Sin conteo mensual para {MESES[mes - 1]} {anio} en esta sede.
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-gray-200">
+          <div className={`flex flex-wrap items-center gap-3 px-4 py-3 rounded-t-2xl ${data.estado === 'cerrado' ? 'bg-green-50' : 'bg-amber-50'}`}>
+            <p className="text-sm font-bold text-gray-800 m-0">
+              Inventario mensual — {MESES[mes - 1]} {anio}
+            </p>
+            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${data.estado === 'cerrado' ? 'bg-green-600 text-white' : 'bg-amber-500 text-white'}`}>
+              {data.estado === 'cerrado' ? 'Cerrado' : 'En proceso'}
+            </span>
+            <span className="text-xs text-gray-500">
+              {mensual.nContados} de {mensual.items.length} contados
+              · {mensual.positivas} sobran · {mensual.negativas} faltan · {mensual.exactas} exactos
+            </span>
+            <span className={`ml-auto text-sm font-bold font-mono ${mensual.valorNeto < 0 ? 'text-red-600' : mensual.valorNeto > 0 ? 'text-blue-600' : 'text-gray-700'}`}>
+              {fmt(mensual.valorNeto)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 flex-wrap">
+            <input value={buscarMes} onChange={e => setBuscarMes(e.target.value)} placeholder="Buscar producto…"
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 w-48 focus:outline-none focus:border-forest" />
+            <button onClick={() => setSoloDifMes(v => !v)}
+              className={`text-xs px-3 py-1 rounded-lg font-semibold transition-colors ${soloDifMes ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500'}`}>
+              {soloDifMes ? '✓ Solo diferencias' : 'Solo diferencias'}
+            </button>
+            <span className="text-[11px] text-gray-400 ml-auto">ordenado por impacto en $</span>
+          </div>
+          <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-gray-50">
+                <tr className="text-[11px] uppercase tracking-wide text-gray-400">
+                  <th className="text-left px-3 py-2 font-bold">Producto</th>
+                  <th className="text-right px-3 py-2 font-bold">Sistema</th>
+                  <th className="text-right px-3 py-2 font-bold">Físico</th>
+                  <th className="text-right px-3 py-2 font-bold">Diferencia</th>
+                  <th className="text-right px-3 py-2 font-bold">Valor dif.</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filasMes.map(i => (
+                  <tr key={i.id} className={`hover:bg-gray-50 ${!i.contado ? 'bg-gray-50/60' : ''}`}>
+                    <td className="px-3 py-1.5 font-medium text-gray-700">
+                      {i.producto_nombre} <span className="text-xs text-gray-400">{i.unidad_medida}</span>
+                      {!i.contado && <span className="text-[10px] font-bold text-amber-600 ml-1.5">sin contar</span>}
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono text-gray-500">{num(i.cantidad_sistema)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono font-bold text-gray-800">{i.contado ? num(i.cantidad_real as number) : '—'}</td>
+                    <td className={`px-3 py-1.5 text-right font-mono font-bold ${!i.contado ? 'text-gray-300' : i.dif === 0 ? 'text-green-600' : i.dif < 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                      {!i.contado ? '—' : i.dif === 0 ? '✓ 0' : `${i.dif > 0 ? '+' : ''}${num(i.dif)}`}
+                    </td>
+                    <td className={`px-3 py-1.5 text-right font-mono ${!i.contado || i.dif === 0 ? 'text-gray-300' : i.valorDif < 0 ? 'text-red-600 font-bold' : 'text-blue-600 font-bold'}`}>
+                      {!i.contado || i.dif === 0 ? '—' : fmt(i.valorDif)}
+                    </td>
+                  </tr>
+                ))}
+                {filasMes.length === 0 && (
+                  <tr><td colSpan={5} className="px-3 py-6 text-center text-sm text-gray-400">
+                    {soloDifMes ? 'Sin diferencias con este filtro.' : 'Sin productos que coincidan con la búsqueda.'}
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <p className="px-3 py-2 text-[11px] text-gray-400 border-t border-gray-50">
+            La diferencia se calcula en vivo (físico − sistema actual del conteo). "Sin contar" = aún no registrado en el kiosko. El Excel exporta esta misma foto.
+          </p>
+        </div>
+      )}
 
       {/* ── Señales de decisión: ¿a dónde se está yendo el producto? ── */}
       {diaria && (

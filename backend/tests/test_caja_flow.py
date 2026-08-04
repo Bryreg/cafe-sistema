@@ -250,6 +250,29 @@ class CajaFlowTests(BackendTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Se requiere", response.json()["detail"])
 
+    def test_barista_no_puede_registrar_venta_manual(self):
+        # Cierra el hallazgo de la lente review-reliability: los tests de ventas
+        # corren como admin, pero ninguno asertaba el limite admin-only en si.
+        # Sin este test, revertir require_admin en routers/ventas.py:15 dejaria
+        # la suite en verde y la regresion pasaria inadvertida.
+        self.set_current_user(self.barista_1)
+        self.create_turno(self.tienda_1.id, self.barista_1.id, tiene_conteo_apertura=True)
+
+        response = self.client.post(
+            "/api/v1/ventas/",
+            json={
+                "tienda_id": self.tienda_1.id,
+                "venta_total": 50000,
+                "nota_credito": 0,
+                "vales": 0,
+                "tarjetas": 10000,
+                "nota": None,
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "Se requiere rol admin")
+
     def test_venta_se_bloquea_sin_conteo_de_apertura(self):
         # POST /ventas/ es solo-admin desde 07838a4 (entrada manual de emergencia,
         # el POS es la via normal). Las validaciones de negocio siguen en el servicio.

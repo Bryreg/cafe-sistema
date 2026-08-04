@@ -40,6 +40,7 @@ def _serializar(inv: InventarioMensual) -> dict:
         "id": inv.id, "tienda_id": inv.tienda_id, "anio": inv.anio, "mes": inv.mes,
         "estado": inv.estado, "barista_nombre": inv.barista_nombre,
         "fecha_inicio": inv.fecha_inicio, "fecha_cierre": inv.fecha_cierre,
+        "fecha_aplicado": inv.fecha_aplicado,
         "valor_diferencia_total": float(inv.valor_diferencia_total or 0),
         "items": [{
             "id": it.id, "producto_id": it.producto_id,
@@ -124,6 +125,8 @@ def reabrir(db: Session, tienda_id: int, anio: int, mes: int, usuario_id: int) -
     inv = db.query(InventarioMensual).filter_by(tienda_id=tienda_id, anio=anio, mes=mes).first()
     if not inv:
         raise HTTPException(404, "No hay conteo mensual para ese período")
+    if inv.fecha_aplicado:
+        raise HTTPException(400, "Este conteo ya se aplicó al inventario — es histórico y no se reabre")
 
     val = _valor_unitario_map(db)
     rows = (
@@ -237,6 +240,85 @@ def cerrar(db: Session, inv_id: int, usuario_id: int) -> dict:
         db, accion="cerrar_inventario_mensual", tabla="inventarios_mensuales",
         registro_id=inv.id, usuario_id=usuario_id, tienda_id=inv.tienda_id,
         datos_despues={"anio": inv.anio, "mes": inv.mes, "valor_diferencia": inv.valor_diferencia_total},
+    )
+    db.commit()
+    db.refresh(inv)
+    return _serializar(inv)
+
+
+def aplicar(db: Session, inv_id: int, usuario_id: int) -> dict:
+    """Promueve el conteo mensual CERRADO a verdad del inventario. Por cada ítem
+    con diferencia, ajusta stock_actual sumándole la DIFERENCIA del conteo (no el
+    físico absoluto): si se aplica días después del cierre, las ventas posteriores
+    ya descontadas por el sistema no se pisan. Equivale a haber corregido el stock
+    en el momento del cierre. Una sola vez por mes; deja movimiento de ajuste por
+    producto y marca fecha_aplicado (el mes queda histórico)."""
+    from app.services.inventario import registrar_movimiento
+
+    inv = db.query(InventarioMensual).filter_by(id=inv_id).first()
+    if not inv:
+        raise HTTPException(404, "Inventario no encontrado")
+    if inv.estado != "cerrado":
+        raise HTTPException(400, "Solo un conteo cerrado se aplica al inventario")
+    if inv.fecha_aplicado:
+        raise HTTPException(400, "Este conteo ya fue aplicado al inventario")
+
+    ajustados = clampeados = 0
+    for it in inv.items:
+        dif = float(it.diferencia or 0)
+        if abs(dif) < 0.001:
+            continue
+        invrow = db.query(Inventario).filter_by(
+            producto_id=it.producto_id, tienda_id=inv.tienda_id).first()
+        if not invrow:
+            continue
+        nuevo = float(invrow.stock_actual or 0) + dif
+        if nuevo < 0:
+            nuevo = 0.0
+            clampeados += 1
+        registrar_movimiento(
+            db, it.producto_id, inv.tienda_id, "ajuste", nuevo,
+            motivo=f"Inventario mensual {inv.mes:02d}/{inv.anio} aplicado (dif {dif:+g})",
+            usuario_id=usuario_id, commit=False,
+        )
+        ajustados += 1
+
+    inv.fecha_aplicado = datetime.utcnow()
+    audit.registrar(
+        db, accion="aplicar_inventario_mensual", tabla="inventarios_mensuales",
+        registro_id=inv.id, usuario_id=usuario_id, tienda_id=inv.tienda_id,
+        datos_despues={"anio": inv.anio, "mes": inv.mes,
+                       "ajustados": ajustados, "clampeados": clampeados},
+    )
+    db.commit()
+    return {"ok": True, "inventario_id": inv.id, "ajustados": ajustados, "clampeados": clampeados}
+
+
+def corregir_item(db: Session, item_id: int, cantidad_real: float, usuario_id: int) -> dict:
+    """Corrige un renglón de un conteo CERRADO (dedazo detectado en la revisión)
+    sin reabrir el mes — reabrir re-sincroniza el sistema al stock de HOY y
+    arruina la foto del período. Recalcula la diferencia del ítem y el total.
+    Bloqueado si el mes ya se aplicó al inventario."""
+    it = db.query(InventarioMensualItem).filter_by(id=item_id).first()
+    if not it:
+        raise HTTPException(404, "Ítem no encontrado")
+    inv = it.inventario
+    if inv.estado != "cerrado":
+        raise HTTPException(400, "El conteo está en proceso — corregí desde el kiosko")
+    if inv.fecha_aplicado:
+        raise HTTPException(400, "Este conteo ya fue aplicado al inventario — es histórico")
+
+    antes = it.cantidad_real
+    it.cantidad_real = float(cantidad_real)
+    it.diferencia = round(it.cantidad_real - (it.cantidad_sistema or 0), 3)
+    it.valor_diferencia = round(it.diferencia * float(it.valor_unitario or 0), 2)
+    inv.valor_diferencia_total = round(
+        sum(float(x.valor_diferencia or 0) for x in inv.items), 2)
+    audit.registrar(
+        db, accion="corregir_item_inventario_mensual", tabla="inventarios_mensuales_items",
+        registro_id=it.id, usuario_id=usuario_id, tienda_id=inv.tienda_id,
+        datos_antes={"cantidad_real": antes},
+        datos_despues={"cantidad_real": it.cantidad_real, "diferencia": it.diferencia},
     )
     db.commit()
     db.refresh(inv)

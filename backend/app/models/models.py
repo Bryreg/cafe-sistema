@@ -1433,6 +1433,9 @@ class InventarioMensual(Base):
     barista_nombre = Column(String(100), nullable=True)
     fecha_inicio = Column(DateTime, default=datetime.utcnow)
     fecha_cierre = Column(DateTime, nullable=True)
+    # Cuándo se APLICÓ al inventario (stock += diferencia por producto). Null = no
+    # aplicado. Un mes aplicado es histórico: no se reabre, corrige ni re-aplica.
+    fecha_aplicado = Column(DateTime, nullable=True)
     valor_diferencia_total = Column(Numeric(12, 2, asdecimal=False), default=0)
     tienda = relationship("Tienda")
     items = relationship("InventarioMensualItem", back_populates="inventario", cascade="all, delete-orphan")

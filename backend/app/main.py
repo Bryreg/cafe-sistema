@@ -65,6 +65,8 @@ with engine.connect() as _conn:
         "ALTER TABLE mermas ADD COLUMN tienda_destino_id INTEGER",
         "ALTER TABLE mermas ADD COLUMN recibido BOOLEAN DEFAULT FALSE",
         "ALTER TABLE mermas ADD COLUMN fecha_recibido TIMESTAMP",
+        # Inventario mensual: aplicado al inventario (stock += diferencia)
+        "ALTER TABLE inventarios_mensuales ADD COLUMN fecha_aplicado TIMESTAMP",
         "ALTER TABLE movimientos_caja ADD COLUMN imagen_url VARCHAR(300)",
         "ALTER TABLE entregas_turno ADD COLUMN tipo VARCHAR(20) DEFAULT 'entrega' NOT NULL",
         "ALTER TABLE pasteleria_diaria ADD COLUMN numero_lote VARCHAR(100)",

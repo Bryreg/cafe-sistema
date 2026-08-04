@@ -1,5 +1,6 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, Body, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.deps import get_current_user, require_admin, get_barista_actor, ensure_tienda_access
@@ -30,6 +31,30 @@ def reiniciar(
     """Admin: borra el conteo mensual EN PROCESO y lo re-siembra con el conteo del
     sistema actual (p.ej. tras la conversión a gramos). Los cerrados no se tocan."""
     return svc.reiniciar(db, tienda_id, anio, mes, user.id)
+
+
+class CorregirItemBody(BaseModel):
+    cantidad_real: float
+
+
+@router.post("/{inv_id}/aplicar")
+def aplicar(
+    inv_id: int,
+    db: Session = Depends(get_db), user: Usuario = Depends(require_admin),
+):
+    """Admin: aplica el conteo mensual CERRADO al inventario — stock_actual +=
+    diferencia por producto, con movimiento de ajuste. Una sola vez por mes."""
+    return svc.aplicar(db, inv_id, user.id)
+
+
+@router.patch("/items/{item_id}")
+def corregir_item(
+    item_id: int, data: CorregirItemBody,
+    db: Session = Depends(get_db), user: Usuario = Depends(require_admin),
+):
+    """Admin: corrige un renglón de un conteo cerrado (aún no aplicado) sin
+    reabrir el mes. Recalcula diferencia y total."""
+    return svc.corregir_item(db, item_id, data.cantidad_real, user.id)
 
 
 @router.post("/reabrir")

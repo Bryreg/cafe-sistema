@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import api from '../api/client'
-import { Scale, Download, TrendingUp, TrendingDown, Minus, AlertTriangle, RotateCcw, Cpu, Users, ListChecks, Unlock } from 'lucide-react'
+import { Scale, Download, TrendingUp, TrendingDown, Minus, AlertTriangle, RotateCcw, Cpu, Users, ListChecks, Unlock, DatabaseZap } from 'lucide-react'
 import { hoyLocal } from '../utils/fechaLocal'
 
 // ── Doble inventario del día (tabla Detalle) ─────────────────────────────────
@@ -38,6 +38,7 @@ interface Item {
 interface Cat { categoria: string; valor_diferencia: number; items: number; con_diferencia: number }
 interface Conciliacion {
   id: number; anio: number; mes: number; estado: string
+  fecha_aplicado: string | null
   valor_diferencia_total: number; items: Item[]
   resumen: { positivas: number; negativas: number; sin_diferencia: number; valor_positivo: number; valor_negativo: number; valor_neto: number }
   por_categoria: Cat[]; ranking: Item[]
@@ -182,6 +183,39 @@ export default function ConciliacionInventario() {
     } finally { setReiniciando(false) }
   }
 
+  const recargarMes = async () => {
+    const r = await api.get<Conciliacion | null>('/inventario-mensual/conciliacion', { params: { tienda_id: tiendaId, anio, mes } })
+    setData(r.data)
+  }
+
+  const [aplicando, setAplicando] = useState(false)
+  const aplicarMes = async () => {
+    if (!data) return
+    if (!window.confirm(`¿Aplicar el conteo de ${MESES[mes - 1]} al inventario? El stock de cada producto se ajusta SUMANDO la diferencia que descubrió el conteo (equivale a haber corregido el stock al momento del cierre — las ventas posteriores no se pisan). Queda un movimiento de ajuste por producto. No se puede repetir ni deshacer.`)) return
+    setAplicando(true)
+    try {
+      const r = await api.post(`/inventario-mensual/${data.id}/aplicar`)
+      await recargarMes()
+      alert(`Aplicado: ${r.data.ajustados} productos ajustados${r.data.clampeados > 0 ? ` (${r.data.clampeados} topados en 0)` : ''}.`)
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'No se pudo aplicar')
+    } finally { setAplicando(false) }
+  }
+
+  const corregirItem = async (it: Item) => {
+    if (!data || data.estado !== 'cerrado' || data.fecha_aplicado) return
+    const resp = window.prompt(`Corregir físico de ${it.producto_nombre} (${it.unidad_medida}):`, String(it.cantidad_real ?? ''))
+    if (resp === null) return
+    const v = parseFloat(resp.replace(',', '.'))
+    if (isNaN(v) || v < 0) { alert('Valor inválido'); return }
+    try {
+      await api.patch(`/inventario-mensual/items/${it.id}`, { cantidad_real: v })
+      await recargarMes()
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'No se pudo corregir')
+    }
+  }
+
   const [reabriendo, setReabriendo] = useState(false)
   // Reabrir (mes cerrado) y Sincronizar (mes en proceso) usan el mismo endpoint:
   // agrega productos nuevos y refresca unidad/categoría/sistema desde el catálogo
@@ -261,7 +295,7 @@ export default function ConciliacionInventario() {
           <select value={anio} onChange={e => setAnio(Number(e.target.value))} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white">
             {Array.from({ length: 5 }, (_, i) => now.getFullYear() - i).map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-          {data && (
+          {data && !data.fecha_aplicado && (
             <button onClick={reabrirMes} disabled={reabriendo || !tiendaId}
               title={data.estado === 'cerrado'
                 ? "Vuelve el conteo del mes a 'en proceso' conservando lo contado y lo sincroniza con el catálogo vivo"
@@ -336,6 +370,19 @@ export default function ConciliacionInventario() {
               {mensual.nContados} de {mensual.items.length} contados
               · {mensual.positivas} sobran · {mensual.negativas} faltan · {mensual.exactas} exactos
             </span>
+            {data.estado === 'cerrado' && !data.fecha_aplicado && (
+              <button onClick={aplicarMes} disabled={aplicando}
+                title="Ajusta el stock del sistema sumando la diferencia que descubrió el conteo — el físico contado pasa a ser la verdad"
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white">
+                <DatabaseZap size={13} /> {aplicando ? 'Aplicando…' : 'Aplicar al inventario'}
+              </button>
+            )}
+            {data.fecha_aplicado && (
+              <span className="text-[11px] font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-full"
+                title="El stock del sistema ya se ajustó con las diferencias de este conteo — el mes es histórico">
+                ✓ Aplicado al inventario el {data.fecha_aplicado.slice(0, 10)}
+              </span>
+            )}
             <span className={`ml-auto text-sm font-bold font-mono ${mensual.valorNeto < 0 ? 'text-red-600' : mensual.valorNeto > 0 ? 'text-blue-600' : 'text-gray-700'}`}>
               {fmt(mensual.valorNeto)}
             </span>
@@ -368,7 +415,14 @@ export default function ConciliacionInventario() {
                       {!i.contado && <span className="text-[10px] font-bold text-amber-600 ml-1.5">sin contar</span>}
                     </td>
                     <td className="px-3 py-1.5 text-right font-mono text-gray-500">{num(i.cantidad_sistema)}</td>
-                    <td className="px-3 py-1.5 text-right font-mono font-bold text-gray-800">{i.contado ? num(i.cantidad_real as number) : '—'}</td>
+                    <td className="px-3 py-1.5 text-right font-mono font-bold text-gray-800">
+                      {data.estado === 'cerrado' && !data.fecha_aplicado ? (
+                        <button onClick={() => corregirItem(i)} title="Corregir este físico (dedazo del conteo)"
+                          className="underline decoration-dotted decoration-gray-300 underline-offset-2 hover:text-forest">
+                          {i.contado ? num(i.cantidad_real as number) : '—'}
+                        </button>
+                      ) : (i.contado ? num(i.cantidad_real as number) : '—')}
+                    </td>
                     <td className={`px-3 py-1.5 text-right font-mono font-bold ${!i.contado ? 'text-gray-300' : i.dif === 0 ? 'text-green-600' : i.dif < 0 ? 'text-red-600' : 'text-blue-600'}`}>
                       {!i.contado ? '—' : i.dif === 0 ? '✓ 0' : `${i.dif > 0 ? '+' : ''}${num(i.dif)}`}
                     </td>

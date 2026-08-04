@@ -21,7 +21,7 @@ from app.models.models import (
 from app.services.caja import get_turno_activo
 from app.services import inventario as inv_svc, audit
 from app.core.tz import (
-    hoy_col, inicio_dia_col_utc, dia_col, hora_col, rango_col_utc,
+    hoy_col, inicio_dia_col_utc, fin_dia_col_utc, dia_col, hora_col, rango_col_utc,
 )
 
 logger = logging.getLogger(__name__)
@@ -683,8 +683,8 @@ def get_informe_contador(db: Session, anio: int, mes: int, tienda_id: int | None
     from calendar import monthrange
     from collections import defaultdict
     ultimo = monthrange(anio, mes)[1]
-    desde = datetime(anio, mes, 1)
-    hasta = datetime(anio, mes, ultimo, 23, 59, 59)
+    desde = inicio_dia_col_utc(date(anio, mes, 1))
+    hasta = fin_dia_col_utc(date(anio, mes, ultimo))
     filtros = [Ticket.estado.notin_(("anulado", "reversado")), Ticket.fecha >= desde, Ticket.fecha <= hasta]
     if tienda_id is not None:
         filtros.append(Ticket.tienda_id == tienda_id)
@@ -727,7 +727,9 @@ def get_informe_contador(db: Session, anio: int, mes: int, tienda_id: int | None
     promedio_diario = round(total_mes / dias_con_venta, 2) if dias_con_venta else 0.0
     # Promedio de venta diaria sobre los días del MES (no solo los días con venta):
     # mes en curso -> días transcurridos; mes cerrado -> días calendario completos.
-    hoy = datetime.now()
+    # El "hoy" es el día COLOMBIA, igual que las filas: con datetime.now() (reloj
+    # del server, UTC) el divisor iba un día adelante entre 00:00 y 05:00 UTC.
+    hoy = hoy_col()
     if anio == hoy.year and mes == hoy.month:
         dias_periodo = hoy.day
     else:

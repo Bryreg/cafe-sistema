@@ -138,6 +138,10 @@ class BackendTestCase(unittest.TestCase):
             total_efectivo=overrides.get("total_efectivo", 0.0),
             total_tarjeta=overrides.get("total_tarjeta", 0.0),
             tiene_conteo_apertura=overrides.get("tiene_conteo_apertura", False),
+            # El cuadre inicial (registrar_cuadre_inicial) fija la base de la caja y es
+            # requisito de movimientos/cuadres/entradas desde 7f45f1e (gate del POS).
+            # El helper modela un turno YA en operacion, asi que viene en True.
+            tiene_cuadre_llegada=overrides.get("tiene_cuadre_llegada", True),
             tiene_ventas=overrides.get("tiene_ventas", False),
             tiene_conteo_cierre=overrides.get("tiene_conteo_cierre", False),
             estado=overrides.get("estado", EstadoTurnoEnum.abierto),
@@ -247,7 +251,9 @@ class CajaFlowTests(BackendTestCase):
         self.assertIn("Se requiere", response.json()["detail"])
 
     def test_venta_se_bloquea_sin_conteo_de_apertura(self):
-        self.set_current_user(self.barista_1)
+        # POST /ventas/ es solo-admin desde 07838a4 (entrada manual de emergencia,
+        # el POS es la via normal). Las validaciones de negocio siguen en el servicio.
+        self.set_current_user(self.admin)
         self.create_turno(self.tienda_1.id, self.barista_1.id, tiene_conteo_apertura=False)
 
         response = self.client.post(
@@ -266,7 +272,7 @@ class CajaFlowTests(BackendTestCase):
         self.assertEqual(response.json()["detail"], "Debes completar el conteo de apertura primero")
 
     def test_venta_exitosa_actualiza_totales_del_turno(self):
-        self.set_current_user(self.barista_1)
+        self.set_current_user(self.admin)
         turno = self.create_turno(
             self.tienda_1.id,
             self.barista_1.id,
@@ -293,7 +299,7 @@ class CajaFlowTests(BackendTestCase):
         self.assertTrue(turno.tiene_ventas)
 
     def test_venta_rechaza_total_en_cero(self):
-        self.set_current_user(self.barista_1)
+        self.set_current_user(self.admin)
         self.create_turno(
             self.tienda_1.id,
             self.barista_1.id,
@@ -312,11 +318,15 @@ class CajaFlowTests(BackendTestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("mayor a 0", response.json()["detail"])
+        # El rechazo lo hace el validador del schema (RegistrarVentaRequest.venta_mayor_cero),
+        # que corre ANTES del handler: FastAPI responde 422, no el 400 del servicio.
+        # La validación no se perdió — el guard de services/ventas.py:22 queda como
+        # defensa en profundidad para las llamadas internas.
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("mayor a 0", str(response.json()["detail"]))
 
     def test_venta_rechaza_desglose_incoherente(self):
-        self.set_current_user(self.barista_1)
+        self.set_current_user(self.admin)
         self.create_turno(
             self.tienda_1.id,
             self.barista_1.id,
@@ -338,7 +348,11 @@ class CajaFlowTests(BackendTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("no puede superar", response.json()["detail"])
 
-    def test_entrega_se_bloquea_si_siigo_no_coincide(self):
+    def test_entrega_se_bloquea_sin_cuadre_inicial(self):
+        # El cruce contra Siigo ("el efectivo reportado no coincide") se eliminó en
+        # 07838a4 y el parámetro murió en 8461930: el esperado sale del POS, no de Siigo.
+        # El guard vigente de /entrega es el cuadre inicial (services/caja.py:638): sin
+        # él la base es 0 y el snapshot del cuadre quedaría mal.
         self.set_current_user(self.barista_1)
         turno = self.create_turno(
             self.tienda_1.id,
@@ -348,6 +362,7 @@ class CajaFlowTests(BackendTestCase):
             total_tarjeta=10000.0,
             tiene_conteo_apertura=True,
             tiene_ventas=True,
+            tiene_cuadre_llegada=False,
         )
 
         response = self.client.post(
@@ -359,7 +374,7 @@ class CajaFlowTests(BackendTestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("no coincide", response.json()["detail"])
+        self.assertIn("cuadre inicial", response.json()["detail"])
 
     def test_entrega_exitosa_guarda_diferencias(self):
         self.set_current_user(self.barista_1)
@@ -485,13 +500,22 @@ class CajaFlowTests(BackendTestCase):
 
 
 class PermissionTests(BackendTestCase):
-    def test_barista_no_puede_ver_dashboard(self):
+    def test_barista_ve_dashboard_de_su_tienda(self):
+        # f435c26 abrió GET/PATCH /dashboard/{tienda_id} a las baristas (lo usa el
+        # kiosko para el checklist del día). El aislamiento por sede sigue vigente.
         self.set_current_user(self.barista_1)
 
         response = self.client.get(f"/api/v1/dashboard/{self.tienda_1.id}")
 
+        self.assertEqual(response.status_code, 200)
+
+    def test_barista_no_puede_ver_dashboard_de_otra_tienda(self):
+        self.set_current_user(self.barista_1)
+
+        response = self.client.get(f"/api/v1/dashboard/{self.tienda_2.id}")
+
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["detail"], "Se requiere rol admin")
+        self.assertEqual(response.json()["detail"], "No tienes acceso a esta tienda")
 
     def test_admin_puede_ver_dashboard_de_otra_tienda(self):
         self.set_current_user(self.admin)
@@ -574,15 +598,17 @@ class PermissionTests(BackendTestCase):
 
 class ConteoAndMovementTests(BackendTestCase):
     def test_movimiento_caja_invalido_por_tipo(self):
+        # /movimiento es multipart desde bc717b4 (acepta foto del soporte): el payload
+        # va en `data`, no en `json` — con json FastAPI corta en 422 antes del handler.
         self.set_current_user(self.barista_1)
         turno = self.create_turno(self.tienda_1.id, self.barista_1.id)
 
         response = self.client.post(
             f"/api/v1/caja/{turno.id}/movimiento",
-            json={
+            data={
                 "tipo": "retiro",
                 "concepto": "Prueba",
-                "valor": 5000,
+                "valor": "5000",
             },
         )
 
@@ -595,10 +621,10 @@ class ConteoAndMovementTests(BackendTestCase):
 
         response = self.client.post(
             f"/api/v1/caja/{turno.id}/movimiento",
-            json={
+            data={
                 "tipo": "egreso",
                 "concepto": "Cambio",
-                "valor": 0,
+                "valor": "0",
             },
         )
 
@@ -614,14 +640,16 @@ class ConteoAndMovementTests(BackendTestCase):
             total_efectivo=30000.0,
         )
 
-        self.client.post(
+        mov_in = self.client.post(
             f"/api/v1/caja/{turno.id}/movimiento",
-            json={"tipo": "ingreso", "concepto": "Cambio", "valor": 5000},
+            data={"tipo": "ingreso", "concepto": "Cambio", "valor": "5000"},
         )
-        self.client.post(
+        mov_out = self.client.post(
             f"/api/v1/caja/{turno.id}/movimiento",
-            json={"tipo": "egreso", "concepto": "Domicilio", "valor": 2000},
+            data={"tipo": "egreso", "concepto": "Domicilio", "valor": "2000"},
         )
+        self.assertEqual(mov_in.status_code, 200)
+        self.assertEqual(mov_out.status_code, 200)
 
         response = self.client.get(f"/api/v1/caja/activo/{self.tienda_1.id}")
 
@@ -655,9 +683,12 @@ class ConteoAndMovementTests(BackendTestCase):
         self.assertTrue(turno.tiene_conteo_apertura)
         self.assertEqual(response.json()["items"][0]["diferencia"], 0.0)
 
-    def test_conteo_cierre_se_bloquea_sin_ventas(self):
+    def test_conteo_cierre_no_exige_ventas(self):
+        # 07838a4 quitó a propósito el guard `tiene_ventas` del conteo de cierre:
+        # las baristas ya no registran ventas a mano (el POS las genera), así que
+        # exigirlas bloqueaba el cierre de un turno sin ventas manuales.
         self.set_current_user(self.barista_1)
-        self.create_turno(
+        turno = self.create_turno(
             self.tienda_1.id,
             self.barista_1.id,
             tiene_conteo_apertura=True,
@@ -678,8 +709,9 @@ class ConteoAndMovementTests(BackendTestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("ventas primero", response.json()["detail"])
+        self.assertEqual(response.status_code, 200)
+        self.db.refresh(turno)
+        self.assertTrue(turno.tiene_conteo_cierre)
 
     def test_conteo_no_permite_duplicado(self):
         self.set_current_user(self.barista_1)
@@ -725,19 +757,24 @@ class ConteoAndMovementTests(BackendTestCase):
         self.assertEqual(response.json()["detail"], "Stock insuficiente")
 
     def test_inventario_ajuste_actualiza_stock(self):
-        self.set_current_user(self.barista_1)
+        # ea8d79b dejó el ajuste (reescritura absoluta del stock) en manos del admin:
+        # la barista registra hechos (entrada/salida/merma), no correcciones.
         inventario = self.create_inventario(self.tienda_1.id, stock_actual=8.0)
+        payload = {
+            "producto_id": self.producto.id,
+            "tienda_id": self.tienda_1.id,
+            "tipo": "ajuste",
+            "cantidad": 15,
+            "motivo": "Conteo",
+        }
 
-        response = self.client.post(
-            "/api/v1/inventario/movimiento",
-            json={
-                "producto_id": self.producto.id,
-                "tienda_id": self.tienda_1.id,
-                "tipo": "ajuste",
-                "cantidad": 15,
-                "motivo": "Conteo",
-            },
-        )
+        self.set_current_user(self.barista_1)
+        rechazo = self.client.post("/api/v1/inventario/movimiento", json=payload)
+        self.assertEqual(rechazo.status_code, 403)
+        self.assertIn("solo del administrador", rechazo.json()["detail"])
+
+        self.set_current_user(self.admin)
+        response = self.client.post("/api/v1/inventario/movimiento", json=payload)
 
         self.assertEqual(response.status_code, 200)
         self.db.refresh(inventario)

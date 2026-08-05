@@ -684,6 +684,147 @@ def unificar_productos(db: Session, keeper_id: int, archive_ids: list[int],
     return {"dry_run": False, "keeper_id": keeper_id, "archivados": archive_ids, "movidos": movidos}
 
 
+def get_insumos_de_producto(db: Session, producto_id: int) -> list[dict]:
+    """Receta de consumo: insumos que se descuentan del inventario por cada
+    unidad vendida del producto. Sin relationships (dos FKs a productos), se
+    consulta con join explícito."""
+    from app.models.models import ProductoInsumo
+    rows = (
+        db.query(ProductoInsumo, Producto)
+        .join(Producto, Producto.id == ProductoInsumo.insumo_id)
+        .filter(ProductoInsumo.producto_id == producto_id)
+        .order_by(Producto.nombre)
+        .all()
+    )
+    return [{"insumo_id": pi.insumo_id, "nombre": prod.nombre,
+             "unidad_medida": prod.unidad_medida, "cantidad": pi.cantidad}
+            for pi, prod in rows]
+
+
+def get_productos_que_consumen(db: Session, insumo_id: int) -> list[dict]:
+    """El sentido inverso de la receta: qué productos gastan este insumo. Es la
+    pregunta que se hace el admin cuando un insumo baja sin explicación."""
+    from app.models.models import ProductoInsumo
+    rows = (
+        db.query(ProductoInsumo, Producto)
+        .join(Producto, Producto.id == ProductoInsumo.producto_id)
+        .filter(ProductoInsumo.insumo_id == insumo_id)
+        .order_by(Producto.nombre)
+        .all()
+    )
+    return [{"producto_id": pi.producto_id, "nombre": prod.nombre,
+             "unidad_medida": prod.unidad_medida, "cantidad": pi.cantidad}
+            for pi, prod in rows]
+
+
+def get_ficha_producto(db: Session, tienda_id: int, producto_id: int,
+                       n_movimientos: int = 20, n_conteos: int = 5) -> dict:
+    """Ficha de UN producto en UNA sede: junta en una sola lectura lo que hoy
+    obliga a recorrer cuatro pantallas (stock, lotes, conteos, rotación) más la
+    receta en los dos sentidos.
+
+    Es una vista AGREGADA: no recalcula nada que ya tenga dueño. El estado y el
+    % consumido de los lotes salen de get_trazabilidad (la misma verdad que la
+    pantalla de Lotes) y sistema/real/diferencia salen del conteo guardado."""
+    from app.models.models import ConteoFisico, ConteoFisicoItem
+
+    inv = (
+        db.query(Inventario)
+        .options(joinedload(Inventario.producto))
+        .filter_by(tienda_id=tienda_id, producto_id=producto_id)
+        .first()
+    )
+    # Mismo criterio que los vecinos que operan sobre el par producto+sede
+    # (actualizar_minimo / actualizar_umbrales): sin fila de inventario no hay
+    # nada que fichar en esa sede.
+    if not inv:
+        raise HTTPException(404, "Registro de inventario no encontrado")
+    p = inv.producto
+
+    movimientos = (
+        db.query(MovimientoInventario)
+        .filter(MovimientoInventario.producto_id == producto_id,
+                MovimientoInventario.tienda_id == tienda_id)
+        # Desempate por id: varios movimientos del mismo segundo (venta que
+        # descuenta receta) quedarían en orden indefinido solo con la fecha.
+        .order_by(MovimientoInventario.fecha.desc(), MovimientoInventario.id.desc())
+        .limit(n_movimientos)
+        .all()
+    )
+
+    conteos = (
+        db.query(ConteoFisicoItem, ConteoFisico)
+        .join(ConteoFisico, ConteoFisico.id == ConteoFisicoItem.conteo_id)
+        .filter(ConteoFisicoItem.producto_id == producto_id,
+                ConteoFisico.tienda_id == tienda_id)
+        .order_by(ConteoFisico.fecha_registro.desc(), ConteoFisico.id.desc())
+        .limit(n_conteos)
+        .all()
+    )
+
+    lotes = get_trazabilidad(db, tienda_id=tienda_id, producto_id=producto_id)
+
+    return {
+        "producto": {
+            "id": p.id,
+            "nombre": p.nombre,
+            "categoria": p.categoria.value if hasattr(p.categoria, "value") else str(p.categoria),
+            "unidad_medida": p.unidad_medida,
+            "controla_stock": bool(p.controla_stock),
+            "fraccionable": bool(p.fraccionable),
+            "envase": p.envase,
+            "proveedor": p.proveedor,
+            "lead_time_dias": p.lead_time_dias,
+            "contenido_por_empaque": p.contenido_por_empaque,
+            "precio_venta": p.precio_venta or 0.0,
+        },
+        "stock": {
+            "stock_actual": round(inv.stock_actual or 0, 2),
+            "stock_critico": round(inv.stock_critico or 0, 2),
+            "stock_minimo": round(inv.stock_minimo or 0, 2),
+            "stock_ideal": round(inv.stock_ideal or 0, 2),
+        },
+        # Proyección recortada de la trazabilidad: se descartan los campos que la
+        # ficha ya sabe (producto, sede, unidad), nunca los calculados.
+        "lotes": [{
+            "id": l["id"],
+            "numero_lote": l["numero_lote"],
+            "proveedor": l["proveedor"],
+            "cantidad_inicial": l["cantidad_inicial"],
+            "cantidad_restante": l["cantidad_restante"],
+            "consumido_pct": l["consumido_pct"],
+            "fecha_entrada": l["fecha_entrada"],
+            "fecha_vencimiento": l["fecha_vencimiento"],
+            "estado": l["estado"],
+        } for l in lotes],
+        "movimientos": [{
+            "id": m.id,
+            "fecha": m.fecha.isoformat() if m.fecha else None,
+            "tipo": m.tipo.value if hasattr(m.tipo, "value") else str(m.tipo),
+            "cantidad": m.cantidad,
+            "motivo": m.motivo,
+            "barista": m.barista_nombre,
+        } for m in movimientos],
+        "conteos": [{
+            "conteo_id": c.id,
+            "turno_id": c.turno_id,
+            "tipo": c.tipo.value if hasattr(c.tipo, "value") else str(c.tipo),
+            "fecha": c.fecha_registro.isoformat() if c.fecha_registro else None,
+            "cantidad_sistema": float(i.cantidad_sistema or 0),
+            "cantidad_real": float(i.cantidad_real or 0),
+            "diferencia": float(i.diferencia or 0),
+            "barista_nombre": c.barista_nombre,
+            # Atajo "todo coincide": el conteo es un eco del stock, no un conteo
+            # físico. Sin esta bandera una diferencia 0 se lee como confirmación.
+            "es_atajo": bool(c.es_atajo),
+        } for i, c in conteos],
+        "receta": {
+            "insumos": get_insumos_de_producto(db, producto_id),
+            "usado_en": get_productos_que_consumen(db, producto_id),
+        },
+    }
+
+
 def get_movimientos_inventario(db: Session, tienda_id: int, tipo: str | None = None,
                                fecha=None, limite: int = 300) -> list:
     """Revisión de movimientos de inventario (admin): quién movió qué, cuándo y por qué.

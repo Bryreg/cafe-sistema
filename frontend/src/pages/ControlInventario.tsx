@@ -59,6 +59,60 @@ interface ResumenRotacion {
   bajo_minimo: number
 }
 
+// Ficha del producto: una sola llamada que junta lo que hoy obliga a recorrer
+// Control de inventario, Lotes, Conteos y Rotación.
+interface FichaLote {
+  id: number
+  numero_lote: string | null
+  proveedor: string | null
+  cantidad_inicial: number
+  cantidad_restante: number
+  consumido_pct: number
+  fecha_entrada: string | null
+  fecha_vencimiento: string | null
+  estado: 'activo' | 'por_vencer' | 'vencido' | 'agotado'
+}
+
+interface FichaMovimiento {
+  id: number
+  fecha: string | null
+  tipo: string
+  cantidad: number
+  motivo: string | null
+  barista: string | null
+}
+
+interface FichaConteo {
+  conteo_id: number
+  turno_id: number
+  tipo: string
+  fecha: string | null
+  cantidad_sistema: number
+  cantidad_real: number
+  diferencia: number
+  barista_nombre: string | null
+  es_atajo: boolean
+}
+
+interface FichaItemReceta {
+  nombre: string
+  unidad_medida: string
+  cantidad: number
+}
+
+interface Ficha {
+  stock: {
+    stock_actual: number
+    stock_critico: number
+    stock_minimo: number
+    stock_ideal: number
+  }
+  lotes: FichaLote[]
+  movimientos: FichaMovimiento[]
+  conteos: FichaConteo[]
+  receta: { insumos: FichaItemReceta[]; usado_en: FichaItemReceta[] }
+}
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const ESTADO_CFG = {
@@ -107,6 +161,20 @@ function ProductRow({ p, tiendaId, onSaved }: {
   p: ProductoInventario; tiendaId: number; onSaved: () => void
 }) {
   const [open, setOpen] = useState(false)
+
+  // Se carga al abrir la fila y queda cacheada: reabrir no vuelve a pedir. La ficha
+  // es informativa, así que un fallo se muestra y ya — la fila (ajuste, umbrales)
+  // tiene que seguir funcionando igual.
+  const [ficha, setFicha] = useState<Ficha | null>(null)
+  const [fichaErr, setFichaErr] = useState(false)
+  useEffect(() => {
+    if (!open || ficha || fichaErr) return
+    let vivo = true
+    api.get<Ficha>(`/inventario/producto/${p.producto_id}/ficha`, { params: { tienda_id: tiendaId } })
+      .then(r => { if (vivo) setFicha(r.data) })
+      .catch(() => { if (vivo) setFichaErr(true) })
+    return () => { vivo = false }
+  }, [open, ficha, fichaErr, p.producto_id, tiendaId])
 
   const [adjCantidad, setAdjCantidad] = useState('')
   const [adjMotivo, setAdjMotivo]     = useState('')
@@ -255,6 +323,116 @@ function ProductRow({ p, tiendaId, onSaved }: {
 
       {open && (
         <div className="border-t border-gray-100 bg-gray-50/80 px-4 py-4 space-y-5">
+
+          {/* FICHA: lo que antes obligaba a recorrer Lotes, Conteos y Rotación para
+              entender UN producto. Se pide una sola vez por producto y queda cacheada
+              mientras la fila siga abierta. Si falla, la fila sigue funcionando. */}
+          {fichaErr && <p className="text-xs text-gray-400">No se pudo cargar el detalle.</p>}
+          {!ficha && !fichaErr && (
+            <div className="space-y-2">
+              <div className="h-3 w-24 rounded bg-gray-200 animate-pulse" />
+              <div className="h-12 rounded bg-gray-200/70 animate-pulse" />
+            </div>
+          )}
+          {ficha && (
+            <div className="space-y-4">
+              {/* Lotes */}
+              <div>
+                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Lotes</p>
+                {ficha.lotes.length === 0 ? (
+                  <p className="text-xs text-gray-400">Sin lotes registrados.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {ficha.lotes.map(l => (
+                      <div key={l.id} className={`flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg border ${
+                        l.estado === 'vencido' ? 'bg-red-50 border-red-200' :
+                        l.estado === 'por_vencer' ? 'bg-amber-50 border-amber-200' :
+                        l.estado === 'agotado' ? 'bg-gray-100 border-gray-200 opacity-60' :
+                        'bg-white border-gray-200'}`}>
+                        <span className="font-mono font-semibold text-gray-700">{l.numero_lote || 's/lote'}</span>
+                        <span className="text-gray-400">{l.proveedor || '—'}</span>
+                        <span className="ml-auto font-semibold text-gray-700">
+                          {l.cantidad_restante} / {l.cantidad_inicial} {p.unidad}
+                        </span>
+                        <span className={`font-bold ${
+                          l.estado === 'vencido' ? 'text-red-600' :
+                          l.estado === 'por_vencer' ? 'text-amber-700' : 'text-gray-400'}`}>
+                          {l.fecha_vencimiento ? `vence ${l.fecha_vencimiento.slice(0, 10)}` : 'sin vencimiento'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Último conteo — el delta contra el sistema es la señal que importa */}
+              <div>
+                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Últimos conteos</p>
+                {ficha.conteos.length === 0 ? (
+                  <p className="text-xs text-gray-400">Todavía nadie contó este producto.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {ficha.conteos.map(c => (
+                      <div key={c.conteo_id} className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg bg-white border border-gray-200">
+                        <span className="font-semibold text-gray-600 capitalize">{c.tipo}</span>
+                        <span className="text-gray-400">{(c.fecha || '').slice(0, 10)}</span>
+                        <span className="text-gray-500">{c.barista_nombre || '—'}</span>
+                        <span className="ml-auto text-gray-400">
+                          sistema {c.cantidad_sistema} · contó {c.cantidad_real}
+                        </span>
+                        <span className={`font-bold w-14 text-right ${
+                          c.diferencia === 0 ? 'text-gray-400'
+                            : c.diferencia > 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                          {c.diferencia > 0 ? '+' : ''}{c.diferencia}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Movimientos */}
+              <div>
+                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Movimientos recientes</p>
+                {ficha.movimientos.length === 0 ? (
+                  <p className="text-xs text-gray-400">Sin movimientos.</p>
+                ) : (
+                  <div className="space-y-0.5 max-h-44 overflow-y-auto">
+                    {ficha.movimientos.map(m => (
+                      <div key={m.id} className="flex items-center gap-2 text-xs px-2 py-1">
+                        <span className="text-gray-400 w-20 shrink-0">{(m.fecha || '').slice(0, 10)}</span>
+                        <span className="font-semibold text-gray-600 w-16 shrink-0 capitalize">{m.tipo}</span>
+                        <span className={`font-bold w-16 text-right shrink-0 ${
+                          m.tipo === 'entrada' ? 'text-green-600' : 'text-gray-700'}`}>
+                          {m.cantidad} {p.unidad}
+                        </span>
+                        <span className="text-gray-400 truncate">{m.motivo || ''}{m.barista ? ` · ${m.barista}` : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Receta, en los dos sentidos: qué consume y quién lo consume */}
+              {(ficha.receta.insumos.length > 0 || ficha.receta.usado_en.length > 0) && (
+                <div>
+                  <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Receta</p>
+                  {ficha.receta.insumos.length > 0 && (
+                    <p className="text-xs text-gray-500">
+                      <span className="font-semibold text-gray-600">Consume:</span>{' '}
+                      {ficha.receta.insumos.map(i => `${i.nombre} (${i.cantidad} ${i.unidad_medida})`).join(' · ')}
+                    </p>
+                  )}
+                  {ficha.receta.usado_en.length > 0 && (
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      <span className="font-semibold text-gray-600">Se usa en:</span>{' '}
+                      {ficha.receta.usado_en.map(i => i.nombre).join(' · ')}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Quick adjustment */}
           <div>

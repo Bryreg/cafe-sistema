@@ -201,16 +201,7 @@ def editar_producto(producto_id: int, data: ProductoUpdate, db: Session = Depend
 def get_insumos_producto(producto_id: int, db: Session = Depends(get_db),
                          user: Usuario = Depends(get_current_user)):
     """Receta de consumo: insumos que se descuentan del inventario por cada unidad vendida."""
-    rows = (
-        db.query(ProductoInsumo, Producto)
-        .join(Producto, Producto.id == ProductoInsumo.insumo_id)
-        .filter(ProductoInsumo.producto_id == producto_id)
-        .order_by(Producto.nombre)
-        .all()
-    )
-    return [{"insumo_id": pi.insumo_id, "nombre": prod.nombre,
-             "unidad_medida": prod.unidad_medida, "cantidad": pi.cantidad}
-            for pi, prod in rows]
+    return svc.get_insumos_de_producto(db, producto_id)
 
 @router.put("/productos/{producto_id}/insumos")
 def set_insumos_producto(producto_id: int, data: InsumosProductoUpdate,
@@ -382,6 +373,18 @@ def lotes(tienda_id: int, producto_id: int, db: Session = Depends(get_db),
           user: Usuario = Depends(require_admin)):
     ensure_tienda_access(user, tienda_id)
     return svc.get_lotes(db, tienda_id, producto_id)
+
+
+@router.get("/producto/{producto_id}/ficha")
+def ficha_producto(producto_id: int, tienda_id: int = Query(...),
+                   db: Session = Depends(get_db),
+                   user: Usuario = Depends(require_admin)):
+    """Ficha del producto (admin): stock, lotes, últimos conteos, últimos
+    movimientos y receta de un producto en una sede, en UNA sola llamada. Hoy
+    esa información vive repartida en Control de inventario, Lotes, Conteos y
+    Rotación, y nadie la cruza."""
+    ensure_tienda_access(user, tienda_id)
+    return svc.get_ficha_producto(db, tienda_id, producto_id)
 
 
 @router.get("/cobertura")

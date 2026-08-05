@@ -13,6 +13,12 @@ import { dark } from '../constants/darkTheme'
 import MovimientoCajaModal from './MovimientoCajaModal'
 
 const fmt = (v: number) => `$${(v || 0).toLocaleString('es-CO')}`
+// 'YYYY-MM-DD' -> 'dd/mm'. Se parte el string: new Date('2026-08-01') es UTC y en
+// Colombia (UTC-5) mostraría el día anterior.
+const fmtFecha = (iso?: string | null) => {
+  const [, m, d] = (iso || '').split('-')
+  return m && d ? `${d}/${m}` : 'otro día'
+}
 
 interface Pendiente {
   plantilla_id: number; clave: string; nombre: string; categoria: string
@@ -142,6 +148,19 @@ export default function OperativeBanner() {
                     <span>Ventas del día</span>
                     <span className="font-mono font-semibold" style={{ color: dark.ink }}>{fmt(turno.total_ventas)}</span>
                   </div>
+                  {/* Turno de un día anterior que sigue abierto: aviso permanente, sin
+                      bloquear nada. Las ventas ya se cobran con el día de hoy, pero el
+                      cuadre y el conteo siguen colgando del turno viejo. */}
+                  {turno.es_de_dia_anterior && (
+                    <div className="rounded-xl p-2.5 flex gap-2"
+                      style={{ background: dark.amberTint, border: `1px solid ${dark.amberDim}` }}>
+                      <AlertTriangle size={14} style={{ color: dark.amber, flexShrink: 0, marginTop: 1 }} />
+                      <p className="text-[11px] leading-snug" style={{ color: dark.ink }}>
+                        Este turno es del {fmtFecha(turno.dia_operativo_fecha)} y sigue abierto.
+                        Cerralo desde Salida para que las ventas y el cuadre queden en el día correcto.
+                      </p>
+                    </div>
+                  )}
                   {/* Progreso del mes vs meta (solo con meta definida y fetches OK) */}
                   {metaMes && (
                     <div className="space-y-1">

@@ -87,7 +87,7 @@ class InformeContadorTimezoneTest(unittest.TestCase):
     # medianoche cae en un día distinto al de su propio cierre y el informe deja
     # de cuadrar con lo que ella firmó.
 
-    def _turno_con_dia(self, fecha_operativa):
+    def _dia(self, fecha_operativa):
         # Get-or-create: el modelo tiene UniqueConstraint(tienda_id, fecha_operativa)
         # — UN día operativo por sede y fecha, con varios turnos colgando de él.
         dia = self.db.query(DiaOperativo).filter(
@@ -99,17 +99,21 @@ class InformeContadorTimezoneTest(unittest.TestCase):
                                abierto_por_id=self.usuario.id)
             self.db.add(dia)
             self.db.flush()
+        return dia
+
+    def _turno_con_dia(self, fecha_operativa):
         turno = CajaTurno(tienda_id=self.tienda.id, usuario_apertura_id=self.usuario.id,
                           base_real=0.0, estado=EstadoTurnoEnum.abierto,
-                          dia_operativo_id=dia.id)
+                          dia_operativo_id=self._dia(fecha_operativa).id)
         self.db.add(turno)
         self.db.flush()
         return turno
 
-    def _ticket(self, turno, fecha, total):
+    def _ticket(self, turno, fecha, total, dia_operativo_id=None):
         self.db.add(Ticket(tienda_id=self.tienda.id, caja_turno_id=turno.id,
                            usuario_id=self.usuario.id, fecha=fecha, total=total,
-                           estado="completado", metodo_pago="efectivo", monto_efectivo=total))
+                           estado="completado", metodo_pago="efectivo", monto_efectivo=total,
+                           dia_operativo_id=dia_operativo_id))
         self.db.commit()
 
     def test_venta_pasada_la_medianoche_cuenta_en_su_dia_operativo(self):
@@ -181,6 +185,23 @@ class InformeContadorTimezoneTest(unittest.TestCase):
         fechas = [d["fecha"] for d in julio["dias"]]
         self.assertIn("2026-07-15", fechas)
         self.assertNotIn("2026-07-21", fechas)
+
+    def test_el_dia_del_ticket_manda_sobre_el_del_turno(self):
+        # Turno ZOMBIE: abierto el 10-jul y nunca cerrado, siguió facturando. Cada
+        # venta se selló con SU día al cobrarse (Ticket.dia_operativo_id), y ese
+        # sello manda: la del 15 cuenta el 15, no el 10 en que abrió el turno.
+        turno = self._turno_con_dia(date(2026, 7, 10))
+        dia_venta = self._dia(date(2026, 7, 15))
+        self._ticket(turno, datetime(2026, 7, 15, 20, 0, 0), 12000,
+                     dia_operativo_id=dia_venta.id)
+
+        julio = get_informe_contador(self.db, 2026, 7, self.tienda.id)
+        fechas = [d["fecha"] for d in julio["dias"]]
+        self.assertIn("2026-07-15", fechas)
+        self.assertNotIn("2026-07-10", fechas)
+        fila = next(d for d in julio["dias"] if d["fecha"] == "2026-07-15")
+        self.assertEqual(fila["total"], 12000.0)
+        self.assertEqual(fila["facturas"], 1)
 
 
 if __name__ == "__main__":

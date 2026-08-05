@@ -18,6 +18,36 @@ def _fecha_operativa() -> date:
     return (datetime.utcnow() + timedelta(hours=TZ_OFFSET_HORAS)).date()
 
 
+HORA_CORTE_MADRUGADA = 6
+
+
+def es_venta_de_turno_zombie(dia_turno, fecha_venta) -> bool:
+    """¿Esta venta se cobró sobre un turno que ya NO es el de su día de negocio?
+
+    Hay dos situaciones que la aritmética de fechas confunde y el negocio no:
+
+    - CRUCE DE MEDIANOCHE (normal): el turno de cierre abrió ayer y sigue cobrando
+      a las 00:30. Esa venta es del día del turno — entra en el cierre que la
+      barista firma esa misma madrugada, y el informe tiene que mostrarla ahí.
+    - TURNO ZOMBIE (roto): el turno quedó abierto y se sigue vendiendo al otro día
+      en horario de operación, porque no se puede abrir otro mientras tanto. Esas
+      ventas son del día en que se cobraron, no del día en que el turno abrió.
+
+    Se distinguen por la HORA, no por la diferencia de días: hasta las
+    HORA_CORTE_MADRUGADA del día siguiente es cruce de medianoche; más allá de eso
+    ya no hay cierre en curso que las contenga.
+    """
+    from app.core.tz import dia_col, hora_col
+    if dia_turno is None or fecha_venta is None:
+        return False
+    dia_cal = dia_col(fecha_venta)
+    if dia_cal == dia_turno:
+        return False
+    if dia_cal == dia_turno + timedelta(days=1) and hora_col(fecha_venta) < HORA_CORTE_MADRUGADA:
+        return False
+    return True
+
+
 def get_or_create_dia(db: Session, tienda_id: int, usuario_id: int) -> "DiaOperativo":
     """Día operativo de hoy para la tienda; lo crea si no existe (lazy, al abrir el 1er turno)."""
     fecha = _fecha_operativa()
@@ -57,6 +87,14 @@ def _hay_conteo_apertura_en_dia(db: Session, turno) -> bool:
         CajaTurno.fecha_apertura >= desde,
         CajaTurno.tiene_conteo_apertura == True,
     ).first() is not None
+
+
+def _fecha_operativa_turno(turno) -> date | None:
+    """Día-negocio al que pertenece el turno: el de su DiaOperativo (Fase 1) o, para
+    turnos legacy sin día, el día Colombia de su apertura."""
+    if turno.dia_operativo_id and turno.dia:
+        return turno.dia.fecha_operativa
+    return dia_col(turno.fecha_apertura) if turno.fecha_apertura else None
 
 
 def _es_operativo(db: Session, turno) -> bool:
@@ -112,6 +150,12 @@ def get_turno_activo(db: Session, tienda_id: int):
     turno.baristas_salidas = [b.nombre_snapshot for b in baristas_db if b.salida_at is not None]
     turno.dia_tiene_conteo_apertura = _hay_conteo_apertura_en_dia(db, turno)
     turno.es_operativo = _es_operativo(db, turno)
+    # Turno "zombie": quedó abierto de un día anterior y sigue vendiendo (no se puede
+    # abrir otro mientras tanto). Se EXPONE para que el kiosko avise; no bloquea nada
+    # — las ventas ya quedan selladas con el día de hoy en el propio ticket.
+    fecha_op = _fecha_operativa_turno(turno)
+    turno.dia_operativo_fecha = fecha_op.isoformat() if fecha_op else None
+    turno.es_de_dia_anterior = bool(fecha_op and fecha_op != _fecha_operativa())
     return turno
 
 
@@ -396,14 +440,18 @@ def ajustar_apertura(db: Session, turno_id: int, base_real: float,
 
 def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
                 justificacion: str | None, usuario_id: int,
-                datafono_real: float | None = None):
+                datafono_real: float | None = None,
+                permitir_sin_conteo: bool = False):
+    """`permitir_sin_conteo` es de uso INTERNO: solo lo activa el rescate administrativo
+    de un turno de un día anterior (cerrar_turno_administrativo), que valida sus propias
+    condiciones. El flujo normal de la barista nunca se salta el conteo."""
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
         CajaTurno.estado == EstadoTurnoEnum.abierto
     ).first()
     if not turno:
         raise HTTPException(status_code=404, detail="Turno no encontrado o ya cerrado")
-    if not turno.tiene_conteo_cierre:
+    if not turno.tiene_conteo_cierre and not permitir_sin_conteo:
         raise HTTPException(status_code=400, detail="Debes completar el conteo de cierre antes de cerrar la caja")
     if efectivo_final_real < 0:
         raise HTTPException(status_code=400, detail="efectivo_final_real no puede ser negativo")
@@ -492,22 +540,46 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
     return turno
 
 
-def cerrar_turno_administrativo(db: Session, turno_id: int, usuario_id: int):
+def cerrar_turno_administrativo(db: Session, turno_id: int, usuario_id: int,
+                                omitir_conteo: bool = False, motivo: str | None = None):
     """Cierre administrativo de un turno huérfano (quedó abierto de un día anterior):
     cierra con el esperado (diferencia 0) y justificación explícita. La diferencia
-    real la captura el cuadre inicial del día siguiente. Requiere el conteo de
-    cierre hecho — el inventario no se salta."""
+    real la captura el cuadre inicial del día siguiente.
+
+    Con conteo de cierre registrado, el inventario no se salta y el cierre es el de
+    siempre. SIN conteo había un callejón sin salida: el turno viejo seguía abierto —
+    y por lo tanto siendo el único vendible — hasta que la sede registrara desde el PC
+    un conteo que ya no representa nada. Para eso está `omitir_conteo`, con condiciones
+    estrictas: solo un turno de un día ANTERIOR (el conteo de hoy sí se puede hacer) y
+    siempre con motivo, que queda escrito en la justificación y en `cerrado_sin_conteo`
+    para que el cierre sin línea base de inventario sea inconfundible en auditoría."""
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
         CajaTurno.estado == EstadoTurnoEnum.abierto,
     ).first()
     if not turno:
         raise HTTPException(status_code=404, detail="Turno no encontrado o ya cerrado")
-    if not turno.tiene_conteo_cierre:
-        raise HTTPException(
-            status_code=400,
-            detail="Falta el conteo de cierre: la sede debe registrarlo desde el PC antes del cierre administrativo",
-        )
+
+    sin_conteo = not turno.tiene_conteo_cierre
+    if sin_conteo:
+        if not omitir_conteo:
+            raise HTTPException(
+                status_code=400,
+                detail="Falta el conteo de cierre: la sede debe registrarlo desde el PC antes del cierre administrativo",
+            )
+        fecha_op = _fecha_operativa_turno(turno)
+        if fecha_op is None or fecha_op == _fecha_operativa():
+            raise HTTPException(
+                status_code=400,
+                detail=("El turno es del día de hoy: el conteo de cierre todavía se puede registrar "
+                        "desde el PC. Cerrar sin conteo solo se permite en turnos de días anteriores."),
+            )
+        if not (motivo or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Indicá el motivo del cierre sin conteo de inventario: queda registrado en la auditoría.",
+            )
+
     ingresos = db.query(func.sum(MovimientoCaja.valor)).filter(
         MovimientoCaja.caja_turno_id == turno_id, MovimientoCaja.tipo == "ingreso"
     ).scalar() or 0.0
@@ -517,8 +589,12 @@ def cerrar_turno_administrativo(db: Session, turno_id: int, usuario_id: int):
     esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
     justificacion = ("Cierre administrativo: el cuadre de salida no se realizó. Se cierra con el "
                      "esperado (diferencia 0); la diferencia real la captura el cuadre inicial siguiente.")
+    if sin_conteo:
+        justificacion = f"Cierre administrativo SIN conteo de inventario: {motivo.strip()}"
+        turno.cerrado_sin_conteo = True
     return cerrar_caja(db, turno_id, esperado, justificacion, usuario_id,
-                       datafono_real=turno.total_tarjeta if turno.total_tarjeta else None)
+                       datafono_real=turno.total_tarjeta if turno.total_tarjeta else None,
+                       permitir_sin_conteo=sin_conteo)
 
 
 def reabrir_conteo_cierre(db: Session, turno_id: int, usuario_id: int):

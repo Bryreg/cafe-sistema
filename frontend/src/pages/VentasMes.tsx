@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CalendarDays } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
 import BaristaLayout from '../components/BaristaLayout'
 import { StatTile, Card, SectionLabel } from '../components/ui'
@@ -45,6 +46,7 @@ const fmtDia = (iso: string) => {
 
 export default function VentasMes() {
   const { user } = useAuth()
+  const { turno } = useTurno()
 
   const [data, setData] = useState<ContadorMes | null>(null)
   const [meta, setMeta] = useState(0)
@@ -69,10 +71,16 @@ export default function VentasMes() {
       .finally(() => setLoading(false))
   }, [user?.tienda_id]) // eslint-disable-line react-hooks/exhaustive-deps  (anio/mes son del montaje)
 
-  // "Hoy" sale del renglón cuyo fecha coincide con la fecha local del kiosko;
-  // si el último día del contador no es hoy (aún sin ventas), queda en $0.
+  // El informe agrupa por DÍA OPERATIVO, no por fecha del calendario, así que
+  // comparar contra la fecha local del dispositivo no alcanza: si el turno abrió
+  // ayer y sigue abierto (o si son las 00:30 y el día operativo es el de ayer),
+  // no hay renglón con la fecha de hoy y el tile mostraba $0 con la caja vendiendo.
+  // El turno activo es la fuente correcta: es el MISMO número que la barista ve
+  // como "Ventas del día" en el banner, así que los dos no pueden contradecirse.
   const hoyStr = hoyLocal()
-  const ventaHoy = data?.dias.find(d => d.fecha === hoyStr)?.total ?? 0
+  const filaHoy = data?.dias.find(d => d.fecha === hoyStr)?.total
+  const ventaHoy = turno?.total_ventas ?? filaHoy ?? 0
+  const etiquetaHoy = turno ? 'Turno actual' : 'Hoy'
 
   const totalMes = data?.total_mes ?? 0
   const diasEnMes = new Date(anio, mes, 0).getDate()
@@ -144,7 +152,7 @@ export default function VentasMes() {
           {/* ── KPIs del mes ── */}
           <div className="grid grid-cols-2 gap-3 mb-6">
             <StatTile
-              label="Hoy"
+              label={etiquetaHoy}
               value={fmt(ventaHoy)}
               tint="success"
             />

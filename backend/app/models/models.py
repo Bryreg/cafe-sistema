@@ -201,6 +201,10 @@ class CajaTurno(Base):
     diferencia_tarjeta = Column(Numeric(12, 2, asdecimal=False), nullable=True)
     consignaciones_deducidas = Column(Numeric(12, 2, asdecimal=False), default=0.0, nullable=True)
     justificacion_cierre = Column(Text, nullable=True)
+    # Cierre administrativo que SALTÓ el conteo de inventario (rescate de un turno
+    # de un día anterior). Queda visible para el admin: ese cierre no tiene línea
+    # base de inventario detrás.
+    cerrado_sin_conteo = Column(Boolean, default=False)
     tipo_turno = Column(SAEnum(TipoTurnoEnum), nullable=True)
     # Fase 1: enlace al día operativo (continuidad entre turnos)
     dia_operativo_id = Column(Integer, ForeignKey("dias_operativos.id", ondelete="RESTRICT"), nullable=True, index=True)
@@ -1044,6 +1048,12 @@ class Ticket(Base):
     # Barista REAL que vendió (≠ usuario_id del dispositivo/kiosko). Columna PLANA sin FK.
     barista_id = Column(Integer, nullable=True)
     barista_nombre = Column(String(100), nullable=True)
+    # Día del negocio en que se COBRÓ la venta, sellado al crear el ticket e
+    # independiente del día del propio turno: un turno que queda abierto de un día
+    # anterior sigue vendiendo (el índice uq_one_turno_abierto impide abrir otro) y
+    # NO debe arrastrar las ventas de hoy a su día. Columna PLANA sin FK, misma
+    # convención que barista_id (evita un segundo ForeignKey en el mapper).
+    dia_operativo_id = Column(Integer, nullable=True, index=True)
     items = relationship("TicketItem", back_populates="ticket", cascade="all, delete-orphan")
     tienda = relationship("Tienda", foreign_keys=[tienda_id])
     turno = relationship("CajaTurno", foreign_keys=[caja_turno_id])

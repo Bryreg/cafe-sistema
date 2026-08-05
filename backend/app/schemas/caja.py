@@ -26,6 +26,13 @@ class CerrarCajaRequest(BaseModel):
     justificacion_cierre: Optional[str] = None
 
 
+class CerrarAdministrativoRequest(BaseModel):
+    # Rescate de un turno de un día anterior que quedó abierto sin conteo de cierre.
+    # Solo se permite en turnos de días anteriores y exige motivo (queda en auditoría).
+    omitir_conteo: bool = False
+    motivo: Optional[str] = None
+
+
 class MovimientoCajaRequest(BaseModel):
     tipo: str  # ingreso | egreso
     concepto: str
@@ -92,6 +99,12 @@ class TurnoOut(BaseModel):
     tiene_conteo_cierre: bool
     es_operativo: bool = False
     dia_tiene_conteo_apertura: bool = False
+    # Día-negocio del turno y aviso de turno "zombie" (abierto de un día anterior).
+    # Solo lectura: los inyecta get_turno_activo, no bloquean nada.
+    dia_operativo_fecha: Optional[str] = None
+    es_de_dia_anterior: bool = False
+    # NULL en turnos anteriores a la columna (DBs migradas): Optional, no bool a secas.
+    cerrado_sin_conteo: Optional[bool] = False
     ts_conteo_apertura: Optional[datetime] = None
     ts_conteo_cierre: Optional[datetime] = None
     ultima_entrega_fecha: Optional[datetime] = None

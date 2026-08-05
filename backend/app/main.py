@@ -219,6 +219,13 @@ with engine.connect() as _conn:
         # patrón X-Barista-Id). En DBs donde create_all ya creó la tabla vieja.
         "ALTER TABLE producto_aliases ADD COLUMN barista_id INTEGER",
         "ALTER TABLE producto_aliases ADD COLUMN barista_nombre VARCHAR(100)",
+        # Día del negocio sellado en la VENTA (no en el turno): un turno que queda
+        # abierto de un día anterior no arrastra las ventas de hoy a su día. Plano,
+        # sin REFERENCES (misma razón que caja_turnos.dia_operativo_id).
+        "ALTER TABLE tickets ADD COLUMN dia_operativo_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_tickets_dia_operativo ON tickets (dia_operativo_id)",
+        # Cierre administrativo que saltó el conteo de inventario (rescate de turno viejo).
+        "ALTER TABLE caja_turnos ADD COLUMN cerrado_sin_conteo BOOLEAN DEFAULT FALSE",
     ]:
         try:
             _conn.execute(_text(_sql))

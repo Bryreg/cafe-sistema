@@ -18,7 +18,9 @@ from app.models.models import (
     Combo, ComboGrupo, ComboOpcion, ComboOpcionProducto, ComboTienda,
     TicketItemComboSeleccion, DiaOperativo,
 )
-from app.services.caja import get_turno_activo
+from app.services.caja import (
+    get_turno_activo, get_or_create_dia, es_venta_de_turno_zombie, _fecha_operativa_turno,
+)
 from app.services import inventario as inv_svc, audit
 from app.core.tz import (
     hoy_col, inicio_dia_col_utc, fin_dia_col_utc, dia_col, hora_col, rango_col_utc,
@@ -352,10 +354,31 @@ def crear_ticket(db: Session, tienda_id: int, usuario_id: int, items: list,
         monto_efectivo_final = round(monto_efectivo, 2)
         monto_tarjeta_final = round(monto_tarjeta, 2)
 
+    # Día del negocio en que se COBRA, sellado en el ticket. Es el día de HOY, no el
+    # del turno: un turno que quedó abierto de un día anterior sigue vendiendo (no se
+    # puede abrir otro mientras tanto) y sin este sello arrastraba las ventas de hoy a
+    # su día — el Informe Contador las mostraba días antes de haberse cobrado.
+    # Es contabilidad, no un permiso: si la resolución falla, la venta sigue igual y el
+    # ticket queda sin sello (el informe cae al día del turno / al calendario).
+    # SOLO se sella cuando el turno es zombie. Si es el turno del día (o el cierre
+    # cruzando la medianoche, que es normal), el ticket queda SIN sello y el informe
+    # cae al día del turno — que es lo que la barista firma en el cierre. Sellar
+    # siempre con el día de hoy rompería justamente esa igualdad: la venta de las
+    # 00:30 se iría del día del cierre que la contiene.
+    dia_operativo_id = None
+    try:
+        if es_venta_de_turno_zombie(_fecha_operativa_turno(turno), datetime.utcnow()):
+            dia_operativo_id = get_or_create_dia(db, tienda_id, usuario_id).id
+    except Exception as e:  # noqa: BLE001 — una venta jamás falla por contabilidad
+        dia_operativo_id = None
+        logger.warning("No se pudo resolver el día operativo de la venta (tienda %s): %s",
+                       tienda_id, e)
+
     # Crear cabecera + líneas (snapshot de nombre y precio)
     ticket = Ticket(
         tienda_id=tienda_id,
         caja_turno_id=turno.id,
+        dia_operativo_id=dia_operativo_id,
         usuario_id=usuario_id,
         total=total,
         descuento=descuento,
@@ -689,23 +712,31 @@ def get_informe_contador(db: Session, anio: int, mes: int, tienda_id: int | None
     if tienda_id is not None:
         base_filtros.append(Ticket.tienda_id == tienda_id)
 
-    # El día del negocio sale del DÍA OPERATIVO del turno, no del calendario: es el
-    # mismo eje que usan el cierre, las consignaciones y el cuadre de la barista.
-    # Agrupar por calendario hacía que una venta pasada la medianoche cayera en un
-    # día distinto al de su propio cierre, y el informe no cuadraba con lo firmado.
+    # El día del negocio sale del DÍA OPERATIVO, no del calendario: es el mismo eje
+    # que usan el cierre, las consignaciones y el cuadre de la barista. Agrupar por
+    # calendario hacía que una venta pasada la medianoche cayera en un día distinto
+    # al de su propio cierre, y el informe no cuadraba con lo firmado.
+    #
+    # PRECEDENCIA: manda el día sellado en el TICKET (el día en que se cobró), luego
+    # el del turno, y por último el calendario. El sello del ticket existe porque un
+    # turno que queda abierto de un día anterior sigue vendiendo (no se puede abrir
+    # otro mientras tanto): sin él, las ventas de hoy se atribuían al día del turno
+    # viejo y el informe las mostraba días antes de haberse cobrado.
     #
     # DOS consultas en vez de una ventana ensanchada. Un colchón de ±N días siempre
-    # se rompe: un turno que queda abierto dos días (abrir_caja BLOQUEA abrir otro
-    # mientras tanto, así que el POS sigue vendiendo sobre el viejo) tiene su venta
-    # a N+1 días de su día operativo, y esa fila se caía de LOS DOS informes — ni en
-    # el mes de su día operativo ni en el de su calendario. Filtrando cada eje por su
-    # propia columna no hay agujero posible, sin importar cuánto se separen.
-    #   A) turno CON día operativo → se filtra por fecha_operativa, sin tocar Ticket.fecha
-    #   B) turno SIN día operativo (turnos previos a la Fase 1) → cae a día Colombia
+    # se rompe: un turno abierto varios días tiene ventas a N+1 días de su día
+    # operativo, y esa fila se caía de LOS DOS informes — ni en el mes de su día
+    # operativo ni en el de su calendario. Filtrando cada eje por su propia columna
+    # no hay agujero posible, sin importar cuánto se separen.
+    #   A) ticket O turno CON día operativo → filtra por fecha_operativa, sin tocar Ticket.fecha
+    #   B) NINGUNO de los dos (tickets/turnos previos a estas fases) → cae a día Colombia
+    # Los dos conjuntos son complementarios y disjuntos: ningún ticket se pierde ni
+    # se cuenta dos veces.
+    dia_del_ticket = func.coalesce(Ticket.dia_operativo_id, CajaTurno.dia_operativo_id)
     filas_op = (db.query(Ticket.total, Ticket.monto_efectivo, Ticket.monto_tarjeta,
                          DiaOperativo.fecha_operativa)
                 .join(CajaTurno, CajaTurno.id == Ticket.caja_turno_id)
-                .join(DiaOperativo, DiaOperativo.id == CajaTurno.dia_operativo_id)
+                .join(DiaOperativo, DiaOperativo.id == dia_del_ticket)
                 .filter(*base_filtros,
                         DiaOperativo.fecha_operativa >= primero,
                         DiaOperativo.fecha_operativa <= fin_mes).all())
@@ -714,6 +745,7 @@ def get_informe_contador(db: Session, anio: int, mes: int, tienda_id: int | None
                           Ticket.fecha)
                  .join(CajaTurno, CajaTurno.id == Ticket.caja_turno_id)
                  .filter(*base_filtros,
+                         Ticket.dia_operativo_id.is_(None),
                          CajaTurno.dia_operativo_id.is_(None),
                          Ticket.fecha >= inicio_dia_col_utc(primero),
                          Ticket.fecha <= fin_dia_col_utc(fin_mes)).all())
@@ -757,6 +789,12 @@ def get_informe_contador(db: Session, anio: int, mes: int, tienda_id: int | None
     # mes en curso -> días transcurridos; mes cerrado -> días calendario completos.
     # El "hoy" es el día COLOMBIA, igual que las filas: con datetime.now() (reloj
     # del server, UTC) el divisor iba un día adelante entre 00:00 y 05:00 UTC.
+    #
+    # OJO con el eje: el numerador (total_mes) va por DÍA OPERATIVO y el divisor
+    # por días de CALENDARIO. No es un descuido — un mes tiene los días que tiene
+    # y el promedio busca "cuánto vendemos por día del mes", no "por día que
+    # abrimos". Para eso último está promedio_diario, que sí divide por días con
+    # venta y por lo tanto queda enteramente sobre el eje operativo.
     hoy = hoy_col()
     if anio == hoy.year and mes == hoy.month:
         dias_periodo = hoy.day

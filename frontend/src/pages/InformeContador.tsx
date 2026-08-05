@@ -129,7 +129,7 @@ export default function InformeContador() {
   // ── Export CSV (abre en Excel) ──
   const exportarCSV = () => {
     if (!data) return
-    const head = ['Fecha', 'Efectivo', 'Tarjeta', 'Transferencia', 'Otros', 'Total Diario', 'Acumulado Mes', 'Facturas', 'Ticket Promedio']
+    const head = ['Dia operativo', 'Efectivo', 'Tarjeta', 'Transferencia', 'Otros', 'Total Diario', 'Acumulado Mes', 'Facturas', 'Ticket Promedio']
     const filas = data.dias.map(d => [d.fecha, d.efectivo, d.tarjeta, d.transferencia, d.otros, d.total, d.acumulado, d.facturas, d.ticket_promedio])
     const totalRow = ['TOTAL', data.total_efectivo, data.total_tarjeta, data.total_transferencia, data.total_otros, data.total_mes, '', data.total_facturas, data.ticket_promedio_mes]
     const csv = [head, ...filas, totalRow].map(r => r.join(';')).join('\n')
@@ -185,6 +185,13 @@ export default function InformeContador() {
       {/* Título impreso */}
       <div className="hidden print:block">
         <h1 className="text-lg font-bold">Informe Contador — {MESES[mes - 1]} {anio}</h1>
+        {/* El eje importa para conciliar: el adquirente liquida el datáfono por
+            fecha de calendario, y acá las ventas van al día operativo del turno.
+            Difieren solo en las ventas hechas pasada la medianoche. */}
+        <p className="text-[11px] text-gray-500">
+          Agrupado por día operativo (el del turno y su cuadre), no por fecha de calendario.
+          La columna Tarjeta puede no coincidir con la fecha de liquidación del datáfono.
+        </p>
         <p className="text-sm text-gray-500">{tiendas.find(t => t.id === tiendaId)?.nombre}</p>
       </div>
 
@@ -343,7 +350,7 @@ export default function InformeContador() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-400">
-                    <th className="text-left px-3 py-2 font-bold">Fecha</th>
+                    <th className="text-left px-3 py-2 font-bold" title="Día operativo del turno, no fecha de calendario">Día operativo</th>
                     <th className="text-right px-3 py-2 font-bold">Efectivo</th>
                     <th className="text-right px-3 py-2 font-bold">Tarjeta</th>
                     <th className="text-right px-3 py-2 font-bold hidden sm:table-cell">Transf.</th>

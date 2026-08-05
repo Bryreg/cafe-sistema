@@ -35,6 +35,10 @@ export interface Turno {
   tiene_cuadre_llegada: boolean
   es_operativo: boolean
   dia_tiene_conteo_apertura: boolean
+  // Día-negocio del turno y aviso de turno "zombie" (quedó abierto de un día
+  // anterior). Solo informativos: nunca bloquean el POS ni el cobro.
+  dia_operativo_fecha?: string | null
+  es_de_dia_anterior?: boolean
   baristas: string[]
   baristas_salidas: string[]
 }

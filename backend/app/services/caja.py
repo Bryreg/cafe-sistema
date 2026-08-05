@@ -620,12 +620,27 @@ def cerrar_turno_administrativo(db: Session, turno_id: int, usuario_id: int,
     egresos = db.query(func.sum(MovimientoCaja.valor)).filter(
         MovimientoCaja.caja_turno_id == turno_id, MovimientoCaja.tipo == "egreso"
     ).scalar() or 0.0
-    esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
+    # Las consignaciones YA SALIERON de la registradora. En un cierre normal esto no
+    # hace falta porque efectivo_final_real es plata CONTADA y el depósito ya no está
+    # ahí; acá la fórmula REEMPLAZA al conteo, así que si no se restan, el esperado
+    # incluye plata que está en el banco. Y ese esperado se convierte en la base del
+    # turno siguiente (_base_desde_ultimo_cierre, rama "día nuevo"), o sea que la
+    # barista entrante tendría que contar un efectivo que nadie puede encontrar:
+    # faltante fabricado, alerta crítica de descuadre y un cuadre firmado en falso.
+    # Pesa sobre todo en un turno colgado de varios días, donde hubo depósitos en el
+    # medio. Solo las REALIZADAS, mismo criterio que abrir_caja.
+    consignado = db.query(func.sum(Consignacion.valor)).filter(
+        Consignacion.caja_turno_id == turno_id,
+        Consignacion.estado == EstadoConsignacionEnum.realizada,
+    ).scalar() or 0.0
+    esperado = turno.base_real + turno.total_efectivo + ingresos - egresos - consignado
     justificacion = ("Cierre administrativo: el cuadre de salida no se realizó. Se cierra con el "
                      "esperado (diferencia 0); la diferencia real la captura el cuadre inicial siguiente.")
     if sin_conteo:
         justificacion = f"Cierre administrativo SIN conteo de inventario: {motivo.strip()}"
         turno.cerrado_sin_conteo = True
+    if consignado:
+        justificacion += f" Se descontaron ${consignado:,.0f} ya consignados."
     return cerrar_caja(db, turno_id, esperado, justificacion, usuario_id,
                        datafono_real=turno.total_tarjeta if turno.total_tarjeta else None,
                        permitir_sin_conteo=sin_conteo)

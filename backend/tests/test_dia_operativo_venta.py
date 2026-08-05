@@ -427,6 +427,65 @@ class SenalesCoherentesTests(DiaOperativoVentaTestCase):
         self.assertIn("quedó colgado", turno.justificacion_cierre)
 
 
+class BaseDelTurnoSiguienteTests(DiaOperativoVentaTestCase):
+    """El rescate de un zombie no puede dejar una bomba en el turno siguiente.
+
+    El cierre administrativo no cuenta la plata: la CALCULA. Si esa fórmula ignora
+    lo ya consignado, el esperado incluye plata que está en el banco — y ese
+    esperado se vuelve la base del turno siguiente, así que la barista entrante
+    tendría que contar un efectivo que nadie puede encontrar.
+    """
+
+    def _zombie_con_consignacion(self, efectivo, consignado):
+        from app.models.models import Consignacion, EstadoConsignacionEnum
+        ayer = self.hoy - timedelta(days=2)
+        turno = self.crear_turno(self.crear_dia(ayer),
+                                 fecha_apertura=inicio_dia_col_utc(ayer) + timedelta(hours=13),
+                                 total_efectivo=efectivo)
+        turno.base_real = 100000.0
+        if consignado:
+            self.db.add(Consignacion(
+                tienda_id=self.tienda.id, caja_turno_id=turno.id, valor=consignado,
+                usuario_id=self.barista.id, estado=EstadoConsignacionEnum.realizada))
+        self.db.commit()
+        return turno
+
+    def test_el_esperado_descuenta_lo_ya_consignado(self):
+        turno = self._zombie_con_consignacion(efectivo=900000.0, consignado=700000.0)
+
+        caja_svc.cerrar_turno_administrativo(
+            self.db, turno.id, self.admin.id, omitir_conteo=True, motivo="turno colgado")
+
+        self.db.refresh(turno)
+        # base 100.000 + efectivo 900.000 − consignado 700.000
+        self.assertEqual(turno.efectivo_final_real, 300000.0)
+        self.assertIn("consignados", turno.justificacion_cierre)
+
+    def test_la_base_del_turno_siguiente_no_pide_plata_que_esta_en_el_banco(self):
+        turno = self._zombie_con_consignacion(efectivo=900000.0, consignado=700000.0)
+        caja_svc.cerrar_turno_administrativo(
+            self.db, turno.id, self.admin.id, omitir_conteo=True, motivo="turno colgado")
+        self.db.refresh(turno)
+
+        # Rama "día nuevo": lo que debería quedar en la registradora.
+        base = caja_svc._base_desde_ultimo_cierre(turno, 0.0)
+
+        # 300.000 contados − 100.000 de base = 200.000 de ventas en efectivo que
+        # NO se consignaron. Sin el descuento serían 900.000: 700.000 de faltante
+        # fabricado para la barista que abre.
+        self.assertEqual(base, 200000.0)
+
+    def test_sin_consignaciones_el_esperado_no_cambia(self):
+        turno = self._zombie_con_consignacion(efectivo=900000.0, consignado=0.0)
+
+        caja_svc.cerrar_turno_administrativo(
+            self.db, turno.id, self.admin.id, omitir_conteo=True, motivo="turno colgado")
+
+        self.db.refresh(turno)
+        self.assertEqual(turno.efectivo_final_real, 1000000.0)
+        self.assertNotIn("consignados", turno.justificacion_cierre)
+
+
 class CruceMedianocheVsZombieTest(unittest.TestCase):
     """La distinción que la aritmética de fechas confunde y el negocio no.
 

@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime
+from datetime import date, datetime
 
 
 class FacturaItemCreate(BaseModel):
@@ -32,6 +32,12 @@ class FacturaCreate(BaseModel):
     valor_total: float
     tipo_pago: str  # contado | credito | transferencia
     items: List[FacturaItemCreate]
+    # Vencimiento (Fase 2 de Costos), todo opcional: quien recibe la mercancía casi
+    # nunca sabe el plazo, y NO se inventa uno. `date` y no `datetime` porque son
+    # fechas de negocio; el servicio las guarda como medianoche Colombia.
+    fecha_vencimiento: Optional[date] = None
+    plazo_dias: Optional[int] = None        # deriva el vencimiento desde fecha_recibido
+    fecha_programada: Optional[date] = None  # cuándo se DECIDIÓ pagarla (manda en la agenda)
 
 
 class FacturaItemOut(BaseModel):

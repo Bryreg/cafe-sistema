@@ -12,12 +12,15 @@ sus pagos vivos. Lo único persistido es `anulada`. Es una asimetría deliberada
 FacturaCompra.valor_pagado — esa columna es justamente la que se puede
 desincronizar de los movimientos que la originaron.
 """
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.models import CostoCategoria, Obligacion, Pago, Tienda
+from app.core.tz import dia_col, hoy_col
+from app.models.models import (CostoCategoria, FacturaCompra, Obligacion, Pago,
+                               Tienda)
 from app.services import audit
 
 METODOS_PAGO = {"efectivo", "transferencia", "tarjeta", "cheque", "otro"}
@@ -317,6 +320,124 @@ def listar_obligaciones(db: Session, *, tienda_id: int | None = None,
             "saldo": round(max(total_monto - total_pagado, 0), 2),
             "n": len(obligaciones),
         },
+    }
+
+
+# ── Agenda unificada (Fase 2) ───────────────────────────────────────────────
+#
+# La única lista de "qué hay que pagar esta semana", mezclando el proveedor de
+# leche con el arriendo. Es la UNIÓN DE DOS CONSULTAS, jamás una tabla copiada:
+# FacturaCompra sigue siendo la ÚNICA verdad de la deuda con proveedores y NO se
+# crean obligaciones espejo. Copiar esa deuda acá daría dos verdades sobre la
+# misma plata — exactamente lo que este diseño evita.
+
+def _fecha_proyectada(f: FacturaCompra) -> tuple:
+    """(día Colombia en que toca pagar la factura, de dónde salió esa fecha).
+
+    Precedencia = COALESCE(fecha_programada, fecha_vencimiento,
+    fecha_recibido + plazo_dias): lo que el dueño DECIDIÓ manda sobre lo que el
+    proveedor exige, y lo exigido manda sobre lo derivado del plazo.
+
+    Sin ninguna de las tres devuelve (None, ''): la factura NO se agenda. No se
+    inventa un vencimiento — no hay tabla maestra de proveedores de donde sacar un
+    plazo (FacturaCompra.proveedor es un String suelto), así que las históricas
+    entran a la agenda recién cuando alguien les carga el plazo a mano.
+    """
+    if f.fecha_programada is not None:
+        return dia_col(f.fecha_programada), "programada"
+    if f.fecha_vencimiento is not None:
+        return dia_col(f.fecha_vencimiento), "vencimiento"
+    if f.plazo_dias is not None and f.fecha_recibido is not None:
+        return dia_col(f.fecha_recibido) + timedelta(days=int(f.plazo_dias)), "plazo"
+    return None, ""
+
+
+def get_agenda(db: Session, desde: date | None = None, hasta: date | None = None,
+               tienda_id: int | None = None) -> dict:
+    """Facturas con saldo + obligaciones con saldo, ordenadas por fecha de pago.
+
+    El monto de cada ítem es el SALDO, nunca el total: la agenda responde "cuánta
+    plata falta", no "cuánto se facturó".
+
+    Filtro de sede, con la misma regla que `listar_obligaciones`: sin `tienda_id`
+    entra TODO —las obligaciones corporativas (tienda_id NULL) incluidas, una sola
+    vez—; con `tienda_id` entra SOLO esa sede. Repartir las corporativas entre las
+    sedes las duplicaría y el total de la agenda dejaría de cuadrar.
+    """
+    hoy = hoy_col()
+    items: list = []
+
+    # 1) Facturas de proveedor. El rango se filtra en Python y no en SQL porque la
+    #    fecha proyectada puede ser derivada (fecha_recibido + plazo_dias) y esa
+    #    suma no es portable entre SQLite y Postgres.
+    q = db.query(FacturaCompra).filter(
+        FacturaCompra.valor_total - func.coalesce(FacturaCompra.valor_pagado, 0) > 0)
+    if tienda_id is not None:
+        q = q.filter(FacturaCompra.tienda_id == tienda_id)
+    for f in q.all():
+        fecha, origen = _fecha_proyectada(f)
+        if fecha is None:
+            continue
+        if (desde is not None and fecha < desde) or (hasta is not None and fecha > hasta):
+            continue
+        items.append({
+            "tipo": "factura",
+            "id": f.id,
+            "concepto": f.proveedor,
+            "beneficiario": f.proveedor,
+            "referencia": f.numero_factura,
+            "tienda_id": f.tienda_id,
+            "tienda_nombre": f.tienda.nombre if f.tienda else None,
+            "monto": round(float(f.valor_total) - float(f.valor_pagado or 0), 2),
+            "fecha": fecha,
+            "origen_fecha": origen,
+            "vencida": fecha < hoy,
+            "categoria": None,   # las facturas no pasan por el catálogo de costos
+        })
+
+    # 2) Obligaciones (arriendo, nómina, servicios). Sin fecha_vencimiento no se
+    #    agendan: no hay para cuándo pagarlas.
+    qo = db.query(Obligacion).filter(
+        Obligacion.anulada == False,  # noqa: E712
+        Obligacion.fecha_vencimiento.isnot(None),
+    )
+    if tienda_id is not None:
+        qo = qo.filter(Obligacion.tienda_id == tienda_id)
+    if desde is not None:
+        qo = qo.filter(Obligacion.fecha_vencimiento >= desde)
+    if hasta is not None:
+        qo = qo.filter(Obligacion.fecha_vencimiento <= hasta)
+    filas = qo.all()
+    pagos_por_obligacion = _pagos_vivos(db, [o.id for o in filas])
+    for o in filas:
+        pagado = sum(float(p.monto or 0) for p in pagos_por_obligacion.get(o.id, []))
+        saldo = round(float(o.monto or 0) - pagado, 2)
+        if saldo <= 0:   # ya pagada: no es algo que pagar
+            continue
+        fecha = o.fecha_vencimiento
+        items.append({
+            "tipo": "obligacion",
+            "id": o.id,
+            "concepto": o.concepto,
+            "beneficiario": o.beneficiario,
+            "referencia": None,
+            "tienda_id": o.tienda_id,
+            "tienda_nombre": o.tienda.nombre if o.tienda else None,
+            "monto": saldo,
+            "fecha": fecha,
+            "origen_fecha": "vencimiento",
+            "vencida": fecha < hoy,
+            "categoria": o.categoria.clave if o.categoria else None,
+        })
+
+    # tipo+id como desempate: dos cosas que vencen el mismo día tienen que salir
+    # siempre en el mismo orden (si no, la lista "salta" entre cargas).
+    items.sort(key=lambda i: (i["fecha"], i["tipo"], i["id"]))
+    total = round(sum(i["monto"] for i in items), 2)
+    vencido = round(sum(i["monto"] for i in items if i["vencida"]), 2)
+    return {
+        "items": items,
+        "totales": {"monto": total, "vencido": vencido, "n": len(items)},
     }
 
 

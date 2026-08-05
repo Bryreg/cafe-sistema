@@ -3,7 +3,7 @@ import api from '../api/client'
 import { conMiles, soloDigitos } from '../utils/plata'
 import {
   Truck, Wallet, Receipt, Download, Camera, X, Search,
-  CheckCircle, AlertCircle, Clock, Building2, Trash2, Pencil,
+  CheckCircle, AlertCircle, Clock, Building2, Trash2, Pencil, CalendarClock,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -17,6 +17,11 @@ interface Factura {
   forma_pago_real: string | null
   imagen_url: string | null; imagen_soporte_url: string | null
   barista_nombre: string; items: FacturaItem[]
+  // Vencimiento: lo que hace que la factura entre en la agenda de Costos.
+  fecha_vencimiento: string | null
+  plazo_dias: number | null
+  fecha_programada: string | null
+  vencida: boolean            // derivado: hay saldo y el vencimiento ya pasó
 }
 interface Grupo { proveedor?: string; tienda?: string; facturado: number; pagado: number; pendiente: number; n?: number }
 interface Dashboard {
@@ -26,6 +31,9 @@ interface Dashboard {
 interface Tienda { id: number; nombre: string }
 
 const fmt = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO')
+// Los timestamps llegan como medianoche COLOMBIA en UTC: cortar a YYYY-MM-DD y leer
+// ese día tal cual evita que el navegador lo corra al día anterior.
+const fechaCorta = (s: string) => new Date(s.slice(0, 10) + 'T00:00:00').toLocaleDateString('es-CO')
 const ESTADO: Record<string, { label: string; cls: string; Icon: typeof CheckCircle }> = {
   pagado:    { label: 'Pagado',    cls: 'bg-green-100 text-green-700', Icon: CheckCircle },
   parcial:   { label: 'Parcial',   cls: 'bg-amber-100 text-amber-700', Icon: Clock },
@@ -59,6 +67,9 @@ export default function PagosProveedores() {
   const [editNumero, setEditNumero] = useState('')
   const [editFecha, setEditFecha] = useState('')
   const [editTipoPago, setEditTipoPago] = useState('')
+  const [editVence, setEditVence] = useState('')
+  const [editPlazo, setEditPlazo] = useState('')
+  const [editProgramada, setEditProgramada] = useState('')
   const [editItems, setEditItems] = useState<{ id: number; nombre: string; unidad: string; cantidad: string; precio: string }[]>([])
   const [editError, setEditError] = useState('')
 
@@ -99,6 +110,9 @@ export default function PagosProveedores() {
     setEditNumero(f.numero_factura ?? '')
     setEditFecha(f.fecha_recibido ? f.fecha_recibido.slice(0, 10) : '')
     setEditTipoPago(f.tipo_pago)
+    setEditVence(f.fecha_vencimiento ? f.fecha_vencimiento.slice(0, 10) : '')
+    setEditPlazo(f.plazo_dias != null ? String(f.plazo_dias) : '')
+    setEditProgramada(f.fecha_programada ? f.fecha_programada.slice(0, 10) : '')
     setEditItems(f.items.map(i => ({
       id: i.id, nombre: i.producto_nombre, unidad: i.unidad_medida,
       cantidad: String(i.cantidad), precio: String(Math.round(i.precio_unitario || 0)),
@@ -121,6 +135,11 @@ export default function PagosProveedores() {
         numero_factura: editNumero.trim(),
         fecha_recibido: editFecha || undefined,
         tipo_pago: editTipoPago || undefined,
+        // Van SIEMPRE, y en null cuando se vacían: así se puede BORRAR una fecha
+        // programada puesta por error (es la que manda en la agenda).
+        fecha_vencimiento: editVence || null,
+        plazo_dias: editPlazo === '' ? null : Number(editPlazo),
+        fecha_programada: editProgramada || null,
         items: editItems.map(i => ({
           id: i.id,
           cantidad: Number(i.cantidad) || 0,
@@ -293,6 +312,18 @@ export default function PagosProveedores() {
                         {f.numero_factura ? `Fact. ${f.numero_factura} · ` : ''}
                         {f.tienda_nombre || ''}{f.fecha_recibido ? ` · ${new Date(f.fecha_recibido).toLocaleDateString('es-CO')}` : ''}
                       </p>
+                      {/* Cuándo hay que pagarla — lo mismo que ve la agenda de Costos */}
+                      {(f.fecha_vencimiento || f.fecha_programada || f.plazo_dias != null) && (
+                        <p className={`text-xs mt-0.5 flex items-center gap-1 ${f.vencida ? 'text-red-600 font-semibold' : 'text-gray-400'}`}>
+                          <CalendarClock size={12} />
+                          {f.fecha_programada
+                            ? `La pagás el ${fechaCorta(f.fecha_programada)}`
+                            : f.fecha_vencimiento
+                              ? `Vence ${fechaCorta(f.fecha_vencimiento)}`
+                              : `Plazo ${f.plazo_dias} días`}
+                          {f.vencida && ' · VENCIDA'}
+                        </p>
+                      )}
                       <div className="flex items-center gap-3 mt-1.5 text-sm flex-wrap">
                         <span className="text-gray-500">Total: <span className="font-mono font-bold text-gray-800">{fmt(f.valor_total)}</span></span>
                         <span className="text-gray-500">Pagado: <span className="font-mono font-bold text-green-700">{fmt(f.valor_pagado)}</span></span>
@@ -417,6 +448,36 @@ export default function PagosProveedores() {
                   <option value="credito">Crédito</option>
                 </select>
               </div>
+            </div>
+
+            {/* Vencimiento: lo que mete la factura en la agenda de Costos */}
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 flex items-center gap-1">
+                <CalendarClock size={13} /> Cuándo hay que pagarla
+              </p>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[11px] text-gray-500 block mb-1">Vence</label>
+                  <input type="date" value={editVence} onChange={e => setEditVence(e.target.value)}
+                    className="w-full border-2 border-gray-200 rounded-xl px-2 py-2 text-sm focus:outline-none focus:border-forest" />
+                </div>
+                <div>
+                  <label className="text-[11px] text-gray-500 block mb-1">Plazo (días)</label>
+                  <input type="number" inputMode="numeric" min={0} value={editPlazo}
+                    onChange={e => setEditPlazo(e.target.value)} placeholder="30"
+                    className="w-full border-2 border-gray-200 rounded-xl px-2 py-2 text-sm font-mono focus:outline-none focus:border-forest" />
+                </div>
+                <div>
+                  <label className="text-[11px] text-gray-500 block mb-1">La vas a pagar el</label>
+                  <input type="date" value={editProgramada} onChange={e => setEditProgramada(e.target.value)}
+                    className="w-full border-2 border-gray-200 rounded-xl px-2 py-2 text-sm focus:outline-none focus:border-forest" />
+                </div>
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">
+                Si no ponés fecha de vencimiento, se calcula con el plazo desde el día que la
+                recibiste. La fecha que vos elegís para pagarla manda sobre las dos. Sin ninguna
+                de las tres, la factura no entra en la agenda de Costos.
+              </p>
             </div>
 
             {/* Productos */}

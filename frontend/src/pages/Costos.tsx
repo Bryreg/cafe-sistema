@@ -3,7 +3,7 @@ import api from '../api/client'
 import { conMiles, soloDigitos } from '../utils/plata'
 import {
   Wallet, Plus, X, Building2, CheckCircle, Clock, AlertCircle,
-  Trash2, Receipt, CalendarClock,
+  Trash2, Receipt, CalendarClock, CalendarDays, Truck,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -28,10 +28,45 @@ interface Listado {
   obligaciones: Obligacion[]
   totales: { monto: number; pagado: number; saldo: number; n: number }
 }
+// Agenda: la unión de facturas de proveedor y costos fijos. El backend nunca copia
+// la deuda del proveedor acá — la factura sigue siendo su única verdad.
+interface AgendaItem {
+  tipo: 'factura' | 'obligacion'
+  id: number
+  concepto: string; beneficiario: string | null; referencia: string | null
+  tienda_id: number | null; tienda_nombre: string | null
+  monto: number                    // el SALDO, no el total
+  fecha: string                    // YYYY-MM-DD ya proyectada por el backend
+  origen_fecha: string             // programada | vencimiento | plazo
+  vencida: boolean
+  categoria: string | null
+}
+interface Agenda {
+  items: AgendaItem[]
+  totales: { monto: number; vencido: number; n: number }
+}
 
 const fmt = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO')
 const fecha = (s: string | null) => (s ? new Date(s + 'T00:00:00').toLocaleDateString('es-CO') : '—')
 const hoyISO = () => new Date().toLocaleDateString('en-CA')   // YYYY-MM-DD local
+
+// Lunes de la semana a la que pertenece una fecha — la agenda se lee por semana,
+// que es como se planea la plata ("qué pago esta semana").
+const lunesDe = (iso: string) => {
+  const d = new Date(iso + 'T00:00:00')
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7))   // getDay(): 0 = domingo
+  return d.toLocaleDateString('en-CA')
+}
+const rotuloSemana = (iso: string) => {
+  const ini = new Date(iso + 'T00:00:00')
+  const fin = new Date(ini)
+  fin.setDate(fin.getDate() + 6)
+  const corto = (d: Date) => d.toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })
+  return `Semana del ${corto(ini)} al ${corto(fin)}`
+}
+// Clave de agrupación: todo lo vencido va a UN solo bloque arriba en vez de repartirse
+// en semanas viejas — es una sola cosa para resolver, no un historial.
+const VENCIDO = 'vencido'
 
 const ESTADO: Record<string, { label: string; cls: string; Icon: typeof CheckCircle }> = {
   pagada:    { label: 'Pagada',    cls: 'bg-green-100 text-green-700', Icon: CheckCircle },
@@ -44,9 +79,11 @@ const ESTADO: Record<string, { label: string; cls: string; Icon: typeof CheckCir
 const CORPORATIVO = 'corp'
 
 export default function Costos() {
+  const [vista, setVista] = useState<'obligaciones' | 'agenda'>('agenda')
   const [categorias, setCategorias] = useState<Categoria[]>([])
   const [tiendas, setTiendas] = useState<Tienda[]>([])
   const [data, setData] = useState<Listado | null>(null)
+  const [agenda, setAgenda] = useState<Agenda | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -101,7 +138,25 @@ export default function Costos() {
       .catch(e => { setData(null); setError(e.response?.data?.detail || 'No se pudieron cargar los costos') })
       .finally(() => setLoading(false))
   }
-  useEffect(cargar, [sede, fCategoria, fEstado, desde, hasta])
+
+  const cargarAgenda = () => {
+    setLoading(true); setError('')
+    const params: Record<string, string | number> = {}
+    // La agenda no tiene filtro "solo corporativas": con sede en Corporativo el
+    // selector cae a "todas" (donde las corporativas ya están, sin duplicarse).
+    if (sede && sede !== CORPORATIVO) params.tienda_id = Number(sede)
+    if (desde) params.desde = desde
+    if (hasta) params.hasta = hasta
+    api.get<Agenda>('/costos/agenda', { params })
+      .then(r => setAgenda(r.data))
+      .catch(e => { setAgenda(null); setError(e.response?.data?.detail || 'No se pudo cargar la agenda') })
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    if (vista === 'agenda') cargarAgenda()
+    else cargar()
+  }, [vista, sede, fCategoria, fEstado, desde, hasta])
 
   const obligaciones = data?.obligaciones ?? []
   const porCategoria = useMemo(() => {
@@ -113,6 +168,21 @@ export default function Costos() {
     })
     return Object.values(acc).sort((a, b) => b.monto - a.monto)
   }, [obligaciones])
+
+  const gruposAgenda = useMemo(() => {
+    const acc: Record<string, { clave: string; items: AgendaItem[]; total: number }> = {}
+    ;(agenda?.items ?? []).forEach(i => {
+      const clave = i.vencida ? VENCIDO : lunesDe(i.fecha)
+      const g = acc[clave] ?? { clave, items: [], total: 0 }
+      g.items.push(i); g.total += i.monto
+      acc[clave] = g
+    })
+    // Lo vencido primero (hay que resolverlo hoy), después las semanas en orden.
+    return Object.values(acc).sort((a, b) =>
+      a.clave === VENCIDO ? -1 : b.clave === VENCIDO ? 1 : a.clave.localeCompare(b.clave))
+  }, [agenda])
+
+  const semanaActual = lunesDe(hoyISO())
 
   const limpiarNueva = () => {
     setNConcepto(''); setNBeneficiario(''); setNMonto('')
@@ -188,11 +258,11 @@ export default function Costos() {
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-            title="Devengo desde"
+            title={vista === 'agenda' ? 'Pagos desde' : 'Devengo desde'}
             className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
           <span className="text-gray-400 text-sm">→</span>
           <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
-            title="Devengo hasta"
+            title={vista === 'agenda' ? 'Pagos hasta' : 'Devengo hasta'}
             className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
           <button onClick={() => { limpiarNueva(); setNuevaAbierta(true) }}
             className="flex items-center gap-1.5 text-sm font-bold text-white bg-forest hover:bg-forest-700 px-3 py-1.5 rounded-lg">
@@ -201,9 +271,28 @@ export default function Costos() {
         </div>
       </div>
 
-      {/* Sede (con la opción explícita Corporativo) */}
+      {/* Vistas: la agenda mezcla proveedores + costos fijos; la lista es solo costos fijos */}
+      <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+        {[{ v: 'agenda' as const, l: 'Agenda de pagos', Icon: CalendarDays },
+          { v: 'obligaciones' as const, l: 'Obligaciones', Icon: Receipt }].map(op => (
+          <button key={op.v}
+            onClick={() => {
+              // "Corporativo" no existe como filtro en la agenda: cae a todas las sedes.
+              if (op.v === 'agenda' && sede === CORPORATIVO) setSede('')
+              setVista(op.v)
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+              vista === op.v ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}>
+            <op.Icon size={14} /> {op.l}
+          </button>
+        ))}
+      </div>
+
+      {/* Sede (con la opción explícita Corporativo, que solo aplica a la lista) */}
       <div className="flex items-center gap-2 flex-wrap">
-        {[{ v: '', l: 'Todas las sedes' }, { v: CORPORATIVO, l: 'Corporativo' },
+        {[{ v: '', l: 'Todas las sedes' },
+          ...(vista === 'obligaciones' ? [{ v: CORPORATIVO, l: 'Corporativo' }] : []),
           ...tiendas.map(t => ({ v: String(t.id), l: t.nombre }))].map(op => (
           <button key={op.v || 'todas'} onClick={() => setSede(op.v)}
             className={`px-3 py-1.5 rounded-xl text-sm font-semibold transition-colors ${
@@ -212,6 +301,90 @@ export default function Costos() {
         ))}
       </div>
 
+      {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>}
+      {loading && <p className="text-sm text-gray-400 text-center py-8 animate-pulse">Cargando…</p>}
+
+      {/* ─── AGENDA ─────────────────────────────────────────────────────────── */}
+      {vista === 'agenda' && !loading && (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Total a pagar</p>
+              <p className="text-xl font-bold text-gray-800 font-mono">{fmt(agenda?.totales.monto ?? 0)}</p>
+              <p className="text-xs text-gray-400">{agenda?.totales.n ?? 0} pagos del período</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Vencido</p>
+              <p className="text-xl font-bold text-red-600 font-mono">{fmt(agenda?.totales.vencido ?? 0)}</p>
+              <p className="text-xs text-gray-400">Ya se pasó la fecha</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 col-span-2 lg:col-span-1">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Qué ves acá</p>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Facturas de proveedor y costos fijos en una sola lista, con el <b>saldo</b> que
+                falta pagar. Una factura sin vencimiento ni plazo no aparece: cargáselos en
+                Pagos a Proveedores.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {gruposAgenda.map(g => (
+              <div key={g.clave}
+                className={`rounded-2xl border ${g.clave === VENCIDO ? 'border-red-200 bg-red-50/40' : 'border-gray-200 bg-white'}`}>
+                <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-gray-100">
+                  <p className={`text-sm font-bold ${g.clave === VENCIDO ? 'text-red-700' : 'text-gray-700'}`}>
+                    {g.clave === VENCIDO ? 'Vencido — pagalo ya' : rotuloSemana(g.clave)}
+                    {g.clave === semanaActual && (
+                      <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-forest bg-forest/10 px-2 py-0.5 rounded-full">Esta semana</span>
+                    )}
+                  </p>
+                  <span className={`font-mono font-bold text-sm shrink-0 ${g.clave === VENCIDO ? 'text-red-700' : 'text-gray-800'}`}>
+                    {fmt(g.total)}
+                  </span>
+                </div>
+                <div className="divide-y divide-gray-50">
+                  {g.items.map(i => (
+                    <div key={`${i.tipo}-${i.id}`} className="flex items-center gap-3 px-4 py-2.5">
+                      <span className={`shrink-0 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg ${
+                        i.tipo === 'factura' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'
+                      }`}>
+                        {i.tipo === 'factura' ? <Truck size={11} /> : <Building2 size={11} />}
+                        {i.tipo === 'factura' ? 'Proveedor' : 'Costo fijo'}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-gray-800 truncate">{i.concepto}</p>
+                        <p className="text-[11px] text-gray-400 truncate">
+                          {i.tienda_nombre || 'Corporativo'}
+                          {i.referencia ? ` · Fact. ${i.referencia}` : ''}
+                          {` · ${fecha(i.fecha)}`}
+                          {i.origen_fecha === 'programada' ? ' (programado)' : ''}
+                          {i.origen_fecha === 'plazo' ? ' (por plazo del proveedor)' : ''}
+                        </p>
+                      </div>
+                      <span className={`font-mono font-bold text-sm shrink-0 ${i.vencida ? 'text-red-600' : 'text-gray-800'}`}>
+                        {fmt(i.monto)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {gruposAgenda.length === 0 && (
+              <div className="bg-white border border-gray-200 rounded-2xl px-4 py-10 text-center">
+                <CalendarDays size={26} className="text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">No hay nada que pagar en este período</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Las facturas viejas sin fecha de vencimiento no se agendan solas — ponéles el plazo en Pagos a Proveedores.
+                </p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ─── OBLIGACIONES ───────────────────────────────────────────────────── */}
+      {vista === 'obligaciones' && !loading && (<>
       {/* Totales */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="bg-white rounded-2xl border border-gray-200 p-4">
@@ -258,11 +431,8 @@ export default function Costos() {
         </select>
       </div>
 
-      {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>}
-      {loading && <p className="text-sm text-gray-400 text-center py-8 animate-pulse">Cargando costos...</p>}
-
       {/* Lista */}
-      {!loading && (
+      {!error && (
         <div className="space-y-2">
           {obligaciones.map(o => {
             const e = ESTADO[o.estado] ?? ESTADO.pendiente
@@ -344,6 +514,7 @@ export default function Costos() {
           )}
         </div>
       )}
+      </>)}
 
       {/* Modal nueva obligación */}
       {nuevaAbierta && (

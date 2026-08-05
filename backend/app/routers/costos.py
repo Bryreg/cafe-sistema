@@ -22,6 +22,20 @@ def listar_categorias(
     return svc.listar_categorias(db)
 
 
+@router.get("/agenda")
+def agenda(
+    desde: Optional[date] = Query(None),
+    hasta: Optional[date] = Query(None),
+    tienda_id: Optional[int] = Query(None, ge=1),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Qué hay que pagar y cuándo: facturas de proveedor y costos fijos en UNA
+    lista. Es la unión de dos consultas —la deuda con proveedores sigue viviendo
+    solo en facturas_compra—, con el SALDO de cada ítem, no su total."""
+    return svc.get_agenda(db, desde=desde, hasta=hasta, tienda_id=tienda_id)
+
+
 @router.get("/obligaciones")
 def listar_obligaciones(
     tienda_id: Optional[int] = Query(None, ge=1),

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from fastapi import HTTPException
 from datetime import datetime
-from app.core.tz import inicio_dia_col_utc
+from app.core.tz import dia_col, hoy_col, inicio_dia_col_utc
 from app.models.models import (FacturaCompra, FacturaCompraItem, TipoPagoEnum,
                                CajaTurno, MovimientoCaja, EstadoTurnoEnum,
                                LoteInventario, Producto, Inventario)
@@ -13,6 +13,12 @@ from app.services import audit
 from app.services import producto_alias as alias_svc
 
 logger = logging.getLogger(__name__)
+
+# Distingue "no mandaron el campo" de "lo mandaron en null" en editar_factura. Sin
+# esto una fecha_programada puesta por error sería IMBORRABLE — y es justamente la
+# que manda sobre todas las demás en la agenda. Mismo criterio que el exclude_unset
+# de services/costos.py::editar_obligacion.
+_SIN_CAMBIO = object()
 
 
 def eliminar_factura(db: Session, factura_id: int, usuario_id: int) -> dict:
@@ -151,6 +157,13 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
         barista_nombre=barista_nombre,
         valor_pagado=pagado_inicial,
         forma_pago_real=(data.tipo_pago if pagado_inicial > 0 else None),
+        # Vencimiento opcional desde el alta (crédito a 30 días, por ejemplo). Como
+        # fecha_recibido: medianoche COLOMBIA, nunca el date pelado.
+        fecha_vencimiento=(inicio_dia_col_utc(data.fecha_vencimiento)
+                           if getattr(data, "fecha_vencimiento", None) else None),
+        plazo_dias=getattr(data, "plazo_dias", None),
+        fecha_programada=(inicio_dia_col_utc(data.fecha_programada)
+                          if getattr(data, "fecha_programada", None) else None),
     )
     db.add(factura)
     db.flush()
@@ -349,6 +362,7 @@ def get_factura(db: Session, factura_id: int) -> dict:
 
 
 def _serializar(f: FacturaCompra) -> dict:
+    saldo = round(float(f.valor_total) - float(f.valor_pagado or 0), 2)
     return {
         "id": f.id,
         "tienda_id": f.tienda_id,
@@ -366,11 +380,22 @@ def _serializar(f: FacturaCompra) -> dict:
         "tienda_nombre": f.tienda.nombre if f.tienda else None,
         # Pagos a proveedores
         "valor_pagado": round(float(f.valor_pagado or 0), 2),
-        "saldo": round(float(f.valor_total) - float(f.valor_pagado or 0), 2),
+        "saldo": saldo,
         "estado_pago": ("pagado" if float(f.valor_pagado or 0) >= float(f.valor_total)
                         else ("parcial" if float(f.valor_pagado or 0) > 0 else "pendiente")),
         "forma_pago_real": f.forma_pago_real,
         "imagen_soporte_url": f.imagen_soporte_url,
+        # Vencimiento (Fase 2 de Costos)
+        "fecha_vencimiento": f.fecha_vencimiento,
+        "plazo_dias": f.plazo_dias,
+        "fecha_programada": f.fecha_programada,
+        # DERIVADO, sin columna propia: una factura "vencida" es la que todavía debe
+        # plata y cuyo vencimiento ya pasó en día Colombia. Guardarlo sería tener que
+        # recalcularlo cada medianoche. OJO: es el vencimiento del PROVEEDOR — en la
+        # agenda `vencida` se mide contra la fecha proyectada, donde fecha_programada
+        # manda (services/costos.py::get_agenda).
+        "vencida": bool(saldo > 0 and f.fecha_vencimiento is not None
+                        and dia_col(f.fecha_vencimiento) < hoy_col()),
         "items": [
             {
                 "id": i.id,
@@ -392,7 +417,9 @@ def editar_factura(db: Session, factura_id: int, usuario_id: int, *,
                    numero_factura: str | None = None, proveedor: str | None = None,
                    fecha_recibido=None, tipo_pago: str | None = None,
                    forma_pago_real: str | None = None,
-                   items: list[dict] | None = None) -> dict:
+                   items: list[dict] | None = None,
+                   fecha_vencimiento=_SIN_CAMBIO, plazo_dias=_SIN_CAMBIO,
+                   fecha_programada=_SIN_CAMBIO) -> dict:
     """Editor COMPLETO de una factura (solo admin, con auditoría). Corrige metadata,
     montos y productos. Cambiar la cantidad de un producto ajusta el inventario y su
     lote por la diferencia (para que el conteo del sistema no se descuadre); quitar un
@@ -436,6 +463,21 @@ def editar_factura(db: Session, factura_id: int, usuario_id: int, *,
             f.forma_pago_real = tipo_pago
     if forma_pago_real is not None:
         f.forma_pago_real = forma_pago_real.strip() or None
+
+    # ── Vencimiento (Fase 2) ──────────────────────────────────────────────────
+    # Mismas reglas de fecha_recibido: llegan como date y se guardan como la
+    # medianoche COLOMBIA de ese día. `_SIN_CAMBIO` = el cliente no mandó el campo;
+    # None = lo mandó vacío y hay que borrarlo.
+    if fecha_vencimiento is not _SIN_CAMBIO:
+        f.fecha_vencimiento = (inicio_dia_col_utc(fecha_vencimiento)
+                               if fecha_vencimiento else None)
+    if fecha_programada is not _SIN_CAMBIO:
+        f.fecha_programada = (inicio_dia_col_utc(fecha_programada)
+                              if fecha_programada else None)
+    if plazo_dias is not _SIN_CAMBIO:
+        if plazo_dias is not None and int(plazo_dias) < 0:
+            raise HTTPException(400, "El plazo en días no puede ser negativo")
+        f.plazo_dias = int(plazo_dias) if plazo_dias is not None else None
 
     # ── Productos: ajustar inventario + lote por la diferencia ────────────────
     if items is not None:

@@ -946,6 +946,18 @@ class FacturaCompra(Base):
     valor_pagado = Column(Numeric(12, 2, asdecimal=False), default=0)
     forma_pago_real = Column(String(40), nullable=True)
     imagen_soporte_url = Column(String(300), nullable=True)
+    # Vencimientos (Fase 2 de Costos): la factura es la ÚNICA verdad de la deuda con
+    # el proveedor, así que la fecha de pago vive ACÁ y no en una obligación espejo.
+    # TIMESTAMP y no Date por consistencia con su columna hermana fecha_recibido: se
+    # guardan con inicio_dia_col_utc(d) para que el día Colombia no se corra a UTC.
+    fecha_vencimiento = Column(DateTime, nullable=True)   # cuándo hay que pagarla
+    # Plazo del proveedor. Si viene y fecha_vencimiento es NULL, la agenda deriva
+    # fecha_recibido + plazo_dias. No se puede backfillear: no existe tabla maestra de
+    # proveedores (FacturaCompra.proveedor es un String suelto).
+    plazo_dias = Column(Integer, nullable=True)
+    # Cuándo el dueño DECIDIÓ pagarla (puede diferir del vencimiento). MANDA sobre
+    # fecha_vencimiento en la agenda: lo decidido pesa más que lo exigido.
+    fecha_programada = Column(DateTime, nullable=True)
     tienda = relationship("Tienda", back_populates="facturas_compra")
     usuario = relationship("Usuario")
     items = relationship("FacturaCompraItem", back_populates="factura", cascade="all, delete-orphan")

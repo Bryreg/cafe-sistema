@@ -227,6 +227,17 @@ with engine.connect() as _conn:
         "CREATE INDEX IF NOT EXISTS ix_tickets_dia_operativo ON tickets (dia_operativo_id)",
         # Cierre administrativo que saltó el conteo de inventario (rescate de turno viejo).
         "ALTER TABLE caja_turnos ADD COLUMN cerrado_sin_conteo BOOLEAN DEFAULT FALSE",
+        # Costos Fase 2: vencimiento de la factura del proveedor. La deuda sigue viviendo
+        # SOLO en facturas_compra (nada de obligaciones espejo), así que la fecha de pago
+        # es una columna más de la factura. TIMESTAMP como su hermana fecha_recibido.
+        "ALTER TABLE facturas_compra ADD COLUMN fecha_vencimiento TIMESTAMP",
+        "ALTER TABLE facturas_compra ADD COLUMN plazo_dias INTEGER",
+        "ALTER TABLE facturas_compra ADD COLUMN fecha_programada TIMESTAMP",
+        # Perf: la agenda de pagos barre las facturas con saldo por sede y vencimiento.
+        "CREATE INDEX IF NOT EXISTS ix_facturas_vencimiento ON facturas_compra (tienda_id, fecha_vencimiento)",
+        # Perf: movimientos_caja no tenía NINGÚN índice y la query de gastos del P&L
+        # filtra por rango de fecha en CADA carga de Rentabilidad (scan completo).
+        "CREATE INDEX IF NOT EXISTS ix_movcaja_fecha ON movimientos_caja (fecha)",
     ]:
         try:
             _conn.execute(_text(_sql))

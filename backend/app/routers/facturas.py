@@ -153,20 +153,33 @@ class FacturaEditRequest(BaseModel):
     tipo_pago: Optional[str] = None
     forma_pago_real: Optional[str] = None
     items: Optional[list[FacturaEditItem]] = None
+    # Vencimiento (Fase 2 de Costos): mandarlos en null los BORRA (ver abajo).
+    fecha_vencimiento: Optional[date] = None
+    plazo_dias: Optional[int] = None
+    fecha_programada: Optional[date] = None
+
+
+_CAMPOS_VENCIMIENTO = ("fecha_vencimiento", "plazo_dias", "fecha_programada")
 
 
 @router.patch("/{factura_id}")
 def editar(factura_id: int, body: FacturaEditRequest, db: Session = Depends(get_db),
            user: Usuario = Depends(require_admin)):
-    """Editor completo de una factura (metadata, montos y productos)."""
+    """Editor completo de una factura (metadata, montos, productos y vencimiento)."""
     items = ([{"id": i.id, "cantidad": i.cantidad, "precio_unitario": i.precio_unitario}
               for i in body.items] if body.items is not None else None)
+    # Los campos de vencimiento se pasan SOLO si vinieron en el payload: con
+    # Optional a secas, "no lo mandé" y "borralo" son el mismo None y una
+    # fecha_programada equivocada quedaría imborrable (y manda sobre todo lo demás).
+    enviados = body.model_dump(exclude_unset=True)
+    vencimiento = {c: enviados[c] for c in _CAMPOS_VENCIMIENTO if c in enviados}
     return svc.editar_factura(
         db, factura_id, user.id,
         valor_total=body.valor_total, valor_pagado=body.valor_pagado,
         numero_factura=body.numero_factura, proveedor=body.proveedor,
         fecha_recibido=body.fecha_recibido, tipo_pago=body.tipo_pago,
         forma_pago_real=body.forma_pago_real, items=items,
+        **vencimiento,
     )
 
 

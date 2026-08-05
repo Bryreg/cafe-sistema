@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from app.models.models import (
     Producto, ProductoInsumo, Ticket, TicketItem, CajaTurno, Usuario,
     Combo, ComboGrupo, ComboOpcion, ComboOpcionProducto, ComboTienda,
-    TicketItemComboSeleccion,
+    TicketItemComboSeleccion, DiaOperativo,
 )
 from app.services.caja import get_turno_activo
 from app.services import inventario as inv_svc, audit
@@ -683,19 +683,47 @@ def get_informe_contador(db: Session, anio: int, mes: int, tienda_id: int | None
     from calendar import monthrange
     from collections import defaultdict
     ultimo = monthrange(anio, mes)[1]
-    desde = inicio_dia_col_utc(date(anio, mes, 1))
-    hasta = fin_dia_col_utc(date(anio, mes, ultimo))
-    filtros = [Ticket.estado.notin_(("anulado", "reversado")), Ticket.fecha >= desde, Ticket.fecha <= hasta]
+    primero = date(anio, mes, 1)
+    fin_mes = date(anio, mes, ultimo)
+    base_filtros = [Ticket.estado.notin_(("anulado", "reversado"))]
     if tienda_id is not None:
-        filtros.append(Ticket.tienda_id == tienda_id)
+        base_filtros.append(Ticket.tienda_id == tienda_id)
 
-    filas = db.query(
-        Ticket.fecha, Ticket.total, Ticket.monto_efectivo, Ticket.monto_tarjeta,
-    ).filter(*filtros).all()
+    # El día del negocio sale del DÍA OPERATIVO del turno, no del calendario: es el
+    # mismo eje que usan el cierre, las consignaciones y el cuadre de la barista.
+    # Agrupar por calendario hacía que una venta pasada la medianoche cayera en un
+    # día distinto al de su propio cierre, y el informe no cuadraba con lo firmado.
+    #
+    # DOS consultas en vez de una ventana ensanchada. Un colchón de ±N días siempre
+    # se rompe: un turno que queda abierto dos días (abrir_caja BLOQUEA abrir otro
+    # mientras tanto, así que el POS sigue vendiendo sobre el viejo) tiene su venta
+    # a N+1 días de su día operativo, y esa fila se caía de LOS DOS informes — ni en
+    # el mes de su día operativo ni en el de su calendario. Filtrando cada eje por su
+    # propia columna no hay agujero posible, sin importar cuánto se separen.
+    #   A) turno CON día operativo → se filtra por fecha_operativa, sin tocar Ticket.fecha
+    #   B) turno SIN día operativo (turnos previos a la Fase 1) → cae a día Colombia
+    filas_op = (db.query(Ticket.total, Ticket.monto_efectivo, Ticket.monto_tarjeta,
+                         DiaOperativo.fecha_operativa)
+                .join(CajaTurno, CajaTurno.id == Ticket.caja_turno_id)
+                .join(DiaOperativo, DiaOperativo.id == CajaTurno.dia_operativo_id)
+                .filter(*base_filtros,
+                        DiaOperativo.fecha_operativa >= primero,
+                        DiaOperativo.fecha_operativa <= fin_mes).all())
+
+    filas_cal = (db.query(Ticket.total, Ticket.monto_efectivo, Ticket.monto_tarjeta,
+                          Ticket.fecha)
+                 .join(CajaTurno, CajaTurno.id == Ticket.caja_turno_id)
+                 .filter(*base_filtros,
+                         CajaTurno.dia_operativo_id.is_(None),
+                         Ticket.fecha >= inicio_dia_col_utc(primero),
+                         Ticket.fecha <= fin_dia_col_utc(fin_mes)).all())
+
+    filas = ([(total, ef, tar, fo) for total, ef, tar, fo in filas_op] +
+             [(total, ef, tar, dia_col(fecha)) for total, ef, tar, fecha in filas_cal])
 
     por_dia: dict = defaultdict(lambda: {"efectivo": 0.0, "tarjeta": 0.0, "transferencia": 0.0, "otros": 0.0, "total": 0.0, "facturas": 0})
-    for fecha, total, ef, tar in filas:
-        d = dia_col(fecha).isoformat()
+    for total, ef, tar, dia in filas:
+        d = dia.isoformat()
         por_dia[d]["efectivo"] += float(ef or 0)
         por_dia[d]["tarjeta"] += float(tar or 0)
         por_dia[d]["total"] += float(total or 0)

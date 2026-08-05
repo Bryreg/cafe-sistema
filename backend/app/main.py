@@ -249,6 +249,60 @@ def _seed_kiosk_pin():
 
 _seed_kiosk_pin()
 
+
+def _backfill_dia_operativo():
+    """Asigna día operativo a los turnos previos a la Fase 1 (dia_operativo_id NULL).
+
+    La derivación es EXACTA, no una estimación: get_or_create_dia (services/caja.py)
+    fija fecha_operativa = (utcnow - 5h).date() en el momento de la apertura, o sea
+    exactamente dia_col(turno.fecha_apertura). Reconstruirla de la apertura da el
+    mismo valor que habría tenido de haber existido la Fase 1.
+
+    Sin esto el Informe Contador queda MEZCLADO: unas filas agrupadas por día
+    operativo y otras por calendario, dentro de la misma tabla y el mismo CSV, sin
+    forma de distinguirlas. Para un artefacto contable eso es peor que un eje
+    consistentemente equivocado — el equivocado se reconcilia restando, el mezclado
+    no se reconcilia contra nada.
+    """
+    from app.models.models import CajaTurno, DiaOperativo, EstadoDiaEnum
+    from app.core.tz import dia_col
+    db = SessionLocal()
+    try:
+        huerfanos = db.query(CajaTurno).filter(CajaTurno.dia_operativo_id.is_(None)).all()
+        if not huerfanos:
+            return
+        cache: dict = {}
+        for turno in huerfanos:
+            if not turno.fecha_apertura:
+                continue   # sin apertura no hay derivación exacta: se deja NULL
+            fecha = dia_col(turno.fecha_apertura)
+            clave = (turno.tienda_id, fecha)
+            dia = cache.get(clave)
+            if dia is None:
+                dia = db.query(DiaOperativo).filter(
+                    DiaOperativo.tienda_id == turno.tienda_id,
+                    DiaOperativo.fecha_operativa == fecha,
+                ).first()
+                if dia is None:
+                    dia = DiaOperativo(
+                        tienda_id=turno.tienda_id, fecha_operativa=fecha,
+                        estado=EstadoDiaEnum.cerrado, abierto_por_id=turno.usuario_apertura_id,
+                        notas="Día reconstruido desde la apertura del turno (backfill Fase 1)",
+                    )
+                    db.add(dia)
+                    db.flush()
+                cache[clave] = dia
+            turno.dia_operativo_id = dia.id
+        db.commit()
+        logger.info("Backfill día operativo: %d turnos enlazados", len(huerfanos))
+    except Exception as e:
+        db.rollback()
+        logger.warning("No se pudo hacer backfill de día operativo: %s", e)
+    finally:
+        db.close()
+
+_backfill_dia_operativo()
+
 # ─── Seed automático (solo si la base está vacía) ──────────────────────────
 def _seed_if_empty():
     from app.models.models import Tienda, Usuario, Producto, Inventario, CategoriaProductoEnum

@@ -1470,6 +1470,109 @@ class InventarioMensualItem(Base):
     producto = relationship("Producto")
 
 
+# ---------------------------------------------------------------------------
+# Costos — obligaciones y pagos (Fase 1)
+#
+# El arriendo que se paga un sábado por transferencia desde el celular no cabe en
+# MovimientoCaja: ese modelo exige un turno ABIERTO con cuadre de llegada hecho
+# (services/caja.py::registrar_movimiento) y ni siquiera acepta una fecha propia.
+# Acá el costo vive por sí solo, con su fecha de devengo y su fecha de pago.
+# ---------------------------------------------------------------------------
+
+
+class CostoCategoria(Base):
+    """Catálogo de categorías de costo. La `clave` (slug estable) mata el texto
+    libre: hoy 'Arriendo local' / 'arriendo' / 'ARRIENDO LOCAL' serían tres filas
+    distintas al agrupar gastos. El `nombre` es el display y se puede editar sin
+    romper el agrupamiento."""
+    __tablename__ = "costos_categorias"
+    id = Column(Integer, primary_key=True)
+    clave = Column(String(40), unique=True, index=True, nullable=False)
+    nombre = Column(String(100), nullable=False)
+    grupo = Column(String(20), nullable=False)   # 'fijo' | 'variable'
+    orden = Column(Integer, nullable=True)
+    activa = Column(Boolean, default=True)       # baja lógica, nunca DELETE
+
+
+class Obligacion(Base):
+    """Un costo del negocio: qué se debe, a quién, de qué mes y para cuándo."""
+    __tablename__ = "obligaciones"
+    id = Column(Integer, primary_key=True)
+    # NULLABLE A PROPÓSITO: el arriendo o la nómina corporativa NO pertenecen a una
+    # sede. Esa es la razón estructural por la que este modelo no cuelga de
+    # MovimientoCaja, que siempre está atado a un turno —y por lo tanto a una sede.
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), index=True, nullable=True)
+    categoria_id = Column(Integer, ForeignKey("costos_categorias.id"), nullable=False)
+    concepto = Column(String(200), nullable=False)
+    beneficiario = Column(String(150), nullable=True)
+    monto = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    # El día en que el costo SE CAUSA (a qué mes pertenece en el P&L). Date nativo y
+    # NO DateTime: es una fecha de negocio, así esquiva el corrimiento UTC-5.
+    fecha_devengo = Column(Date, index=True, nullable=False)
+    fecha_vencimiento = Column(Date, index=True, nullable=True)  # cuándo hay que pagarla
+    # NULL | 'mensual' | 'quincenal' | 'semanal'. En esta fase es solo metadata:
+    # todavía no genera nada automáticamente.
+    recurrencia = Column(String(20), nullable=True)
+    plantilla_id = Column(Integer, nullable=True)   # columna PLANA sin FK (autorreferencia)
+    nota = Column(Text, nullable=True)
+    imagen_url = Column(String(300), nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    # Barista REAL que operó (≠ usuario_id del dispositivo/kiosko). Columnas PLANAS sin FK
+    # para no introducir un segundo ForeignKey a usuarios (AmbiguousForeignKeysError).
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
+    fecha_registro = Column(DateTime, default=datetime.utcnow)   # cuándo se TECLEÓ (≠ devengo)
+    anulada = Column(Boolean, default=False)   # baja lógica: borrar dejaría pagos huérfanos
+    # NO existe una columna valor_pagado. El estado se DERIVA de la suma de pagos vivos:
+    # pendiente (Σ == 0) | parcial (0 < Σ < monto) | pagada (Σ >= monto). `anulada` es el
+    # único estado almacenado. Asimetría DELIBERADA con FacturaCompra.valor_pagado, que es
+    # justamente la columna que se puede desincronizar de sus movimientos.
+    tienda = relationship("Tienda")
+    categoria = relationship("CostoCategoria")
+    usuario = relationship("Usuario")
+
+
+class Pago(Base):
+    """La plata que efectivamente salió, con SU fecha. Cuelga de una obligación o
+    de una factura de proveedor — exactamente una de las dos (validado en el servicio)."""
+    __tablename__ = "pagos"
+    id = Column(Integer, primary_key=True)
+    obligacion_id = Column(Integer, index=True, nullable=True)   # columna PLANA sin FK
+    # Columna PLANA sin FK por una razón dura: eliminar_factura (services/facturas.py)
+    # hace un db.delete real. Con FK RESTRICT ese borrado quedaría bloqueado; con CASCADE
+    # se perdería la traza del pago. Mismo argumento que ya documenta MovimientoCaja.factura_id.
+    factura_id = Column(Integer, index=True, nullable=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), index=True, nullable=True)  # snapshot del padre
+    monto = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    # EL DÍA QUE SALIÓ LA PLATA — la columna que hoy no existe en ninguna parte del
+    # sistema. Date nativo por la misma razón que fecha_devengo.
+    fecha_pago = Column(Date, index=True, nullable=False)
+    metodo = Column(String(20), nullable=False)   # efectivo|transferencia|tarjeta|cheque|otro
+    # Llave anti-doble-conteo para la fase 3 (adopción de egresos de caja ya registrados).
+    # En ESTA fase la columna se crea pero NADIE la escribe.
+    movimiento_caja_id = Column(Integer, nullable=True)
+    imagen_soporte_url = Column(String(300), nullable=True)
+    nota = Column(String(300), nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    # Barista REAL que operó. Columnas PLANAS sin FK (mismo patrón que el resto del repo).
+    barista_id = Column(Integer, nullable=True)
+    barista_nombre = Column(String(100), nullable=True)
+    fecha_registro = Column(DateTime, default=datetime.utcnow)
+    anulado = Column(Boolean, default=False)
+    tienda = relationship("Tienda")
+    usuario = relationship("Usuario")
+    # Un egreso de caja se adopta UNA sola vez, garantizado por la DB y no por el
+    # servicio. Índice único PARCIAL (mismo patrón que ConteoFisico.uq_conteo_turno_tipo)
+    # porque los pagos que no vienen de caja tienen movimiento_caja_id NULL de a montones.
+    __table_args__ = (
+        Index(
+            "uq_pago_movimiento_caja", "movimiento_caja_id", unique=True,
+            postgresql_where=text("movimiento_caja_id IS NOT NULL"),
+            sqlite_where=text("movimiento_caja_id IS NOT NULL"),
+        ),
+    )
+
+
 class Configuracion(Base):
     """Ajustes globales editables en runtime (key-value). Ej: 'kiosk_pin'."""
     __tablename__ = "configuracion"

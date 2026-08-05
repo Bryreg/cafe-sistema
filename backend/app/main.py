@@ -15,6 +15,7 @@ from app.routers import (auth, caja, inventario, pasteleria, consignaciones,
 from app.routers import config_ticket
 from app.routers import rentabilidad
 from app.routers import combos
+from app.routers import costos
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -405,6 +406,45 @@ def _seed_tareas_limpieza():
         db.close()
 
 _seed_tareas_limpieza()
+
+
+def _seed_categorias_costo():
+    """Siembra el catálogo de categorías de costo si aún no está.
+
+    La `clave` es un slug estable: es lo que mata el texto libre al agrupar gastos
+    ('Arriendo local' / 'arriendo' / 'ARRIENDO LOCAL' serían tres filas distintas).
+    El `nombre` se puede editar después sin romper el agrupamiento.
+
+    NOTA de migración: costos_categorias, obligaciones y pagos NO llevan ninguna
+    entrada en el loop de ALTERs de arriba — ese loop corre ANTES de create_all y
+    un ALTER sobre una tabla que todavía no existe falla. Las tres tablas las crea
+    create_all() desde el modelo; esta función solo las puebla, después.
+    """
+    from app.models.models import CostoCategoria
+    DEFAULTS = [
+        {"clave": "arriendo",      "nombre": "Arriendo",      "grupo": "fijo"},
+        {"clave": "nomina",        "nombre": "Nómina",        "grupo": "fijo"},
+        {"clave": "servicios",     "nombre": "Servicios",     "grupo": "fijo"},
+        {"clave": "proveedores",   "nombre": "Proveedores",   "grupo": "variable"},
+        {"clave": "mantenimiento", "nombre": "Mantenimiento", "grupo": "variable"},
+        {"clave": "impuestos",     "nombre": "Impuestos",     "grupo": "fijo"},
+        {"clave": "otros",         "nombre": "Otros",         "grupo": "variable"},
+    ]
+    db = SessionLocal()
+    try:
+        existentes = {c.clave for c in db.query(CostoCategoria).all()}
+        for i, c in enumerate(DEFAULTS):
+            if c["clave"] not in existentes:
+                db.add(CostoCategoria(clave=c["clave"], nombre=c["nombre"],
+                                      grupo=c["grupo"], orden=i))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("Seed categorias_costo error: %s", e)
+    finally:
+        db.close()
+
+_seed_categorias_costo()
 
 
 # ─── Migración de productos reales (idempotente) ───────────────────────────
@@ -813,6 +853,7 @@ app.include_router(dashboard_ejecutivo.router, prefix="/api/v1")
 app.include_router(config_ticket.router,     prefix="/api/v1")
 app.include_router(rentabilidad.router,      prefix="/api/v1")
 app.include_router(combos.router,            prefix="/api/v1")
+app.include_router(costos.router,            prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────
 _frontend_dist = os.path.abspath(

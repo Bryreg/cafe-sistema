@@ -60,6 +60,7 @@ import NotificacionesConfig from './pages/NotificacionesConfig'
 import CuadreTurnos from './pages/CuadreTurnos'
 import ConfigTicketPage from './pages/ConfigTicket'
 import Rentabilidad from './pages/Rentabilidad'
+import Costos from './pages/Costos'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -200,6 +201,7 @@ function AppRoutes() {
       <Route path="/cumplimiento"     element={<RequireAdmin><Layout><CumplimientoAdmin /></Layout></RequireAdmin>} />
       <Route path="/config-ticket"   element={<RequireAdmin><Layout><ConfigTicketPage /></Layout></RequireAdmin>} />
       <Route path="/rentabilidad"    element={<RequireAdmin><Layout><Rentabilidad /></Layout></RequireAdmin>} />
+      <Route path="/costos"          element={<RequireAdmin><Layout><Costos /></Layout></RequireAdmin>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

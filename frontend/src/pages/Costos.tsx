@@ -1,0 +1,474 @@
+import { useEffect, useMemo, useState } from 'react'
+import api from '../api/client'
+import { conMiles, soloDigitos } from '../utils/plata'
+import {
+  Wallet, Plus, X, Building2, CheckCircle, Clock, AlertCircle,
+  Trash2, Receipt, CalendarClock,
+} from 'lucide-react'
+
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+interface Categoria { id: number; clave: string; nombre: string; grupo: string }
+interface Tienda { id: number; nombre: string }
+interface Pago {
+  id: number; monto: number; fecha_pago: string; metodo: string
+  nota: string | null; anulado: boolean
+}
+interface Obligacion {
+  id: number
+  tienda_id: number | null; tienda_nombre: string | null
+  categoria_id: number; categoria_clave: string; categoria_nombre: string; categoria_grupo: string
+  concepto: string; beneficiario: string | null
+  monto: number; pagado: number; saldo: number
+  estado: 'pendiente' | 'parcial' | 'pagada' | 'anulada'
+  fecha_devengo: string; fecha_vencimiento: string | null
+  nota: string | null
+  pagos: Pago[]
+}
+interface Listado {
+  obligaciones: Obligacion[]
+  totales: { monto: number; pagado: number; saldo: number; n: number }
+}
+
+const fmt = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO')
+const fecha = (s: string | null) => (s ? new Date(s + 'T00:00:00').toLocaleDateString('es-CO') : '—')
+const hoyISO = () => new Date().toLocaleDateString('en-CA')   // YYYY-MM-DD local
+
+const ESTADO: Record<string, { label: string; cls: string; Icon: typeof CheckCircle }> = {
+  pagada:    { label: 'Pagada',    cls: 'bg-green-100 text-green-700', Icon: CheckCircle },
+  parcial:   { label: 'Parcial',   cls: 'bg-amber-100 text-amber-700', Icon: Clock },
+  pendiente: { label: 'Pendiente', cls: 'bg-red-100 text-red-700',     Icon: AlertCircle },
+}
+
+// Sede "Corporativo": el arriendo y la nómina no pertenecen a ninguna sede, así que
+// el filtro necesita una opción explícita para ellos (no es lo mismo que "todas").
+const CORPORATIVO = 'corp'
+
+export default function Costos() {
+  const [categorias, setCategorias] = useState<Categoria[]>([])
+  const [tiendas, setTiendas] = useState<Tienda[]>([])
+  const [data, setData] = useState<Listado | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  // filtros
+  const [sede, setSede] = useState<string>('')          // '' = todas · 'corp' · id de tienda
+  const [fCategoria, setFCategoria] = useState('')
+  const [fEstado, setFEstado] = useState('')
+  const [desde, setDesde] = useState('')
+  const [hasta, setHasta] = useState('')
+
+  // alta de obligación
+  const [nuevaAbierta, setNuevaAbierta] = useState(false)
+  const [nConcepto, setNConcepto] = useState('')
+  const [nCategoria, setNCategoria] = useState('')
+  const [nBeneficiario, setNBeneficiario] = useState('')
+  const [nMonto, setNMonto] = useState('')
+  const [nDevengo, setNDevengo] = useState(hoyISO())
+  const [nVencimiento, setNVencimiento] = useState('')
+  const [nSede, setNSede] = useState<string>(CORPORATIVO)
+  const [nNota, setNNota] = useState('')
+  const [nError, setNError] = useState('')
+
+  // registrar pago
+  const [pagoDe, setPagoDe] = useState<Obligacion | null>(null)
+  const [pMonto, setPMonto] = useState('')
+  const [pFecha, setPFecha] = useState(hoyISO())
+  const [pMetodo, setPMetodo] = useState('transferencia')
+  const [pNota, setPNota] = useState('')
+  const [pError, setPError] = useState('')
+
+  const [guardando, setGuardando] = useState(false)
+  const [detalle, setDetalle] = useState<number | null>(null)
+
+  useEffect(() => {
+    api.get<Categoria[]>('/costos/categorias')
+      .then(r => { setCategorias(r.data); if (r.data.length) setNCategoria(String(r.data[0].id)) })
+      .catch(() => {})
+    api.get<Tienda[]>('/auth/tiendas').then(r => setTiendas(r.data)).catch(() => {})
+  }, [])
+
+  const cargar = () => {
+    setLoading(true); setError('')
+    const params: Record<string, string | number | boolean> = {}
+    if (sede === CORPORATIVO) params.solo_corporativas = true
+    else if (sede) params.tienda_id = Number(sede)
+    if (fCategoria) params.categoria = fCategoria
+    if (fEstado) params.estado = fEstado
+    if (desde) params.desde = desde
+    if (hasta) params.hasta = hasta
+    api.get<Listado>('/costos/obligaciones', { params })
+      .then(r => setData(r.data))
+      .catch(e => { setData(null); setError(e.response?.data?.detail || 'No se pudieron cargar los costos') })
+      .finally(() => setLoading(false))
+  }
+  useEffect(cargar, [sede, fCategoria, fEstado, desde, hasta])
+
+  const obligaciones = data?.obligaciones ?? []
+  const porCategoria = useMemo(() => {
+    const acc: Record<string, { nombre: string; monto: number; saldo: number }> = {}
+    obligaciones.forEach(o => {
+      const g = acc[o.categoria_clave] ?? { nombre: o.categoria_nombre, monto: 0, saldo: 0 }
+      g.monto += o.monto; g.saldo += o.saldo
+      acc[o.categoria_clave] = g
+    })
+    return Object.values(acc).sort((a, b) => b.monto - a.monto)
+  }, [obligaciones])
+
+  const limpiarNueva = () => {
+    setNConcepto(''); setNBeneficiario(''); setNMonto('')
+    setNDevengo(hoyISO()); setNVencimiento(''); setNNota(''); setNError('')
+  }
+
+  const crearObligacion = async () => {
+    if (!nConcepto.trim()) { setNError('Poné un concepto'); return }
+    if (!(Number(nMonto) > 0)) { setNError('El monto tiene que ser mayor a 0'); return }
+    if (!nDevengo) { setNError('Elegí la fecha de devengo'); return }
+    setGuardando(true); setNError('')
+    try {
+      await api.post('/costos/obligaciones', {
+        categoria_id: Number(nCategoria),
+        concepto: nConcepto.trim(),
+        beneficiario: nBeneficiario.trim() || null,
+        monto: Number(nMonto),
+        fecha_devengo: nDevengo,
+        fecha_vencimiento: nVencimiento || null,
+        // Corporativo = sin sede: es el caso del arriendo y la nómina.
+        tienda_id: nSede === CORPORATIVO ? null : Number(nSede),
+        nota: nNota.trim() || null,
+      })
+      setNuevaAbierta(false); limpiarNueva(); cargar()
+    } catch (e: any) {
+      setNError(e.response?.data?.detail || 'No se pudo guardar. Reintentá.')
+    } finally { setGuardando(false) }
+  }
+
+  const registrarPago = async () => {
+    if (!pagoDe) return
+    if (!(Number(pMonto) > 0)) { setPError('El monto tiene que ser mayor a 0'); return }
+    if (!pFecha) { setPError('Poné el día en que salió la plata'); return }
+    setGuardando(true); setPError('')
+    try {
+      await api.post('/costos/pagos', {
+        obligacion_id: pagoDe.id,
+        monto: Number(pMonto),
+        fecha_pago: pFecha,
+        metodo: pMetodo,
+        nota: pNota.trim() || null,
+      })
+      setPagoDe(null); setPMonto(''); setPNota(''); cargar()
+    } catch (e: any) {
+      setPError(e.response?.data?.detail || 'No se pudo registrar el pago. Reintentá.')
+    } finally { setGuardando(false) }
+  }
+
+  const anularObligacion = async (o: Obligacion) => {
+    if (!window.confirm(`¿Anular «${o.concepto}» por ${fmt(o.monto)}?\n\nSale de la lista y de los totales. Los pagos ya registrados quedan como traza.`)) return
+    try { await api.delete(`/costos/obligaciones/${o.id}`); cargar() }
+    catch (e: any) { alert(e.response?.data?.detail || 'No se pudo anular') }
+  }
+
+  const anularPago = async (p: Pago) => {
+    if (!window.confirm(`¿Anular el pago de ${fmt(p.monto)} del ${fecha(p.fecha_pago)}?`)) return
+    try { await api.delete(`/costos/pagos/${p.id}`); cargar() }
+    catch (e: any) { alert(e.response?.data?.detail || 'No se pudo anular el pago') }
+  }
+
+  const abrirPago = (o: Obligacion) => {
+    setPagoDe(o); setPMonto(String(Math.round(o.saldo)))
+    setPFecha(hoyISO()); setPMetodo('transferencia'); setPNota(''); setPError('')
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          <Wallet size={20} className="text-forest" />
+          <h1 className="text-lg font-bold text-gray-800">Costos</h1>
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
+            title="Devengo desde"
+            className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
+          <span className="text-gray-400 text-sm">→</span>
+          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
+            title="Devengo hasta"
+            className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
+          <button onClick={() => { limpiarNueva(); setNuevaAbierta(true) }}
+            className="flex items-center gap-1.5 text-sm font-bold text-white bg-forest hover:bg-forest-700 px-3 py-1.5 rounded-lg">
+            <Plus size={15} /> Nueva obligación
+          </button>
+        </div>
+      </div>
+
+      {/* Sede (con la opción explícita Corporativo) */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {[{ v: '', l: 'Todas las sedes' }, { v: CORPORATIVO, l: 'Corporativo' },
+          ...tiendas.map(t => ({ v: String(t.id), l: t.nombre }))].map(op => (
+          <button key={op.v || 'todas'} onClick={() => setSede(op.v)}
+            className={`px-3 py-1.5 rounded-xl text-sm font-semibold transition-colors ${
+              sede === op.v ? 'bg-forest text-white' : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'
+            }`}>{op.l}</button>
+        ))}
+      </div>
+
+      {/* Totales */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-white rounded-2xl border border-gray-200 p-4">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Total causado</p>
+          <p className="text-xl font-bold text-gray-800 font-mono">{fmt(data?.totales.monto ?? 0)}</p>
+          <p className="text-xs text-gray-400">{data?.totales.n ?? 0} obligaciones</p>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 p-4">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Ya pagado</p>
+          <p className="text-xl font-bold text-green-700 font-mono">{fmt(data?.totales.pagado ?? 0)}</p>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 p-4">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Saldo pendiente</p>
+          <p className="text-xl font-bold text-red-600 font-mono">{fmt(data?.totales.saldo ?? 0)}</p>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 p-4">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Por categoría</p>
+          <div className="space-y-0.5 mt-1">
+            {porCategoria.slice(0, 3).map(c => (
+              <div key={c.nombre} className="flex items-center justify-between text-xs">
+                <span className="text-gray-600 truncate">{c.nombre}</span>
+                <span className="font-mono text-gray-700 shrink-0 ml-2">{fmt(c.monto)}</span>
+              </div>
+            ))}
+            {porCategoria.length === 0 && <p className="text-xs text-gray-400">Sin datos</p>}
+          </div>
+        </div>
+      </div>
+
+      {/* Filtros de lista */}
+      <div className="flex flex-wrap items-center gap-2">
+        <select value={fCategoria} onChange={e => setFCategoria(e.target.value)}
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">Todas las categorías</option>
+          {categorias.map(c => <option key={c.id} value={c.clave}>{c.nombre}</option>)}
+        </select>
+        <select value={fEstado} onChange={e => setFEstado(e.target.value)}
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">Todo estado</option>
+          <option value="pendiente">Pendiente</option>
+          <option value="parcial">Parcial</option>
+          <option value="pagada">Pagada</option>
+          <option value="anulada">Anuladas</option>
+        </select>
+      </div>
+
+      {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>}
+      {loading && <p className="text-sm text-gray-400 text-center py-8 animate-pulse">Cargando costos...</p>}
+
+      {/* Lista */}
+      {!loading && (
+        <div className="space-y-2">
+          {obligaciones.map(o => {
+            const e = ESTADO[o.estado] ?? ESTADO.pendiente
+            const pagosVivos = o.pagos.filter(p => !p.anulado)
+            return (
+              <div key={o.id} className="bg-white border border-gray-200 rounded-2xl p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-gray-800 truncate">{o.concepto}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {o.categoria_nombre} · {o.tienda_nombre || 'Corporativo'}
+                      {o.beneficiario ? ` · ${o.beneficiario}` : ''}
+                    </p>
+                  </div>
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 shrink-0 ${e.cls}`}>
+                    <e.Icon size={11} /> {e.label}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3 mt-1.5 text-sm flex-wrap">
+                  <span className="text-gray-500">Monto: <span className="font-mono font-bold text-gray-800">{fmt(o.monto)}</span></span>
+                  <span className="text-gray-500">Pagado: <span className="font-mono font-bold text-green-700">{fmt(o.pagado)}</span></span>
+                  {o.saldo > 0 && <span className="text-gray-500">Saldo: <span className="font-mono font-bold text-red-600">{fmt(o.saldo)}</span></span>}
+                </div>
+                <p className="text-xs text-gray-400 mt-1 flex items-center gap-1">
+                  <CalendarClock size={12} /> Devengo {fecha(o.fecha_devengo)}
+                  {o.fecha_vencimiento ? ` · vence ${fecha(o.fecha_vencimiento)}` : ''}
+                </p>
+
+                {pagosVivos.length > 0 && (
+                  <div className="mt-2">
+                    <button onClick={() => setDetalle(d => (d === o.id ? null : o.id))}
+                      className="text-xs font-semibold text-gray-500 hover:text-gray-700">
+                      {detalle === o.id ? '▾' : '▸'} Pagos ({pagosVivos.length})
+                    </button>
+                    {detalle === o.id && (
+                      <div className="mt-1.5 ml-3 pl-3 border-l-2 border-gray-100 space-y-1">
+                        {pagosVivos.map(p => (
+                          <div key={p.id} className="flex items-center justify-between gap-2 text-xs">
+                            <span className="text-gray-600 truncate">
+                              {fecha(p.fecha_pago)} · {p.metodo}{p.nota ? ` · ${p.nota}` : ''}
+                            </span>
+                            <span className="flex items-center gap-2 shrink-0">
+                              <span className="font-mono font-semibold text-gray-800">{fmt(p.monto)}</span>
+                              <button onClick={() => anularPago(p)} title="Anular pago"
+                                className="text-red-400 hover:text-red-600"><X size={12} /></button>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {o.estado !== 'anulada' && (
+                  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-50 flex-wrap">
+                    {o.saldo > 0 && (
+                      <button onClick={() => abrirPago(o)}
+                        className="flex items-center gap-1.5 text-xs font-bold text-white bg-forest hover:bg-forest-700 px-3 py-1.5 rounded-lg">
+                        <Wallet size={13} /> Registrar pago
+                      </button>
+                    )}
+                    <button onClick={() => anularObligacion(o)}
+                      title="Anular (baja lógica: no borra los pagos)"
+                      className="ml-auto flex items-center gap-1 text-xs font-semibold text-red-500 hover:text-red-700 px-2 py-1 rounded-lg border border-red-100 hover:border-red-300">
+                      <Trash2 size={12} /> Anular
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {obligaciones.length === 0 && (
+            <div className="bg-white border border-gray-200 rounded-2xl px-4 py-10 text-center">
+              <Receipt size={26} className="text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-500">No hay obligaciones con esos filtros</p>
+              <p className="text-xs text-gray-400 mt-1">Registrá acá el arriendo, la nómina y los servicios — aunque se paguen fuera del turno.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modal nueva obligación */}
+      {nuevaAbierta && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4" onClick={() => setNuevaAbierta(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-4 max-h-[90vh] overflow-y-auto" onClick={ev => ev.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-gray-800">Nueva obligación</h3>
+              <button onClick={() => setNuevaAbierta(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Concepto</label>
+              <input value={nConcepto} onChange={ev => setNConcepto(ev.target.value)}
+                placeholder="Arriendo agosto, energía, nómina quincena…"
+                className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-forest" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Categoría</label>
+                <select value={nCategoria} onChange={ev => setNCategoria(ev.target.value)}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:border-forest">
+                  {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Monto</label>
+                <input type="text" inputMode="numeric" value={conMiles(nMonto)}
+                  onChange={ev => setNMonto(soloDigitos(ev.target.value))}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-base font-bold font-mono focus:outline-none focus:border-forest" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Fecha de devengo</label>
+                <input type="date" value={nDevengo} onChange={ev => setNDevengo(ev.target.value)}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-forest" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Vence (opcional)</label>
+                <input type="date" value={nVencimiento} onChange={ev => setNVencimiento(ev.target.value)}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-forest" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Beneficiario (opcional)</label>
+                <input value={nBeneficiario} onChange={ev => setNBeneficiario(ev.target.value)}
+                  placeholder="A quién se le paga"
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-forest" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Sede</label>
+                <select value={nSede} onChange={ev => setNSede(ev.target.value)}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:border-forest">
+                  <option value={CORPORATIVO}>Corporativo / todas las sedes</option>
+                  {tiendas.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                </select>
+              </div>
+            </div>
+            <p className="text-[11px] text-gray-400 -mt-1 flex items-start gap-1">
+              <Building2 size={12} className="mt-0.5 shrink-0" />
+              La fecha de devengo es el mes al que pertenece el costo. Si el gasto no es de una sede
+              puntual (arriendo, nómina), dejalo en Corporativo.
+            </p>
+
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Nota (opcional)</label>
+              <input value={nNota} onChange={ev => setNNota(ev.target.value)}
+                className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-forest" />
+            </div>
+
+            {nError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{nError}</p>}
+            <button onClick={crearObligacion} disabled={guardando}
+              className="w-full bg-forest hover:bg-forest-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl">
+              {guardando ? 'Guardando…' : 'Guardar obligación'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal registrar pago */}
+      {pagoDe && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPagoDe(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-4" onClick={ev => ev.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-gray-800">Registrar pago</h2>
+              <button onClick={() => setPagoDe(null)} className="text-gray-400"><X size={18} /></button>
+            </div>
+            <div className="text-sm text-gray-500">
+              <p className="font-semibold text-gray-700">{pagoDe.concepto}</p>
+              <p>Saldo pendiente: <span className="font-mono font-bold text-red-600">{fmt(pagoDe.saldo)}</span></p>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Monto pagado</label>
+              <input type="text" inputMode="numeric" value={conMiles(pMonto)}
+                onChange={ev => setPMonto(soloDigitos(ev.target.value))}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-lg font-bold font-mono focus:outline-none focus:border-forest" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Día en que salió la plata</label>
+              <input type="date" value={pFecha} onChange={ev => setPFecha(ev.target.value)}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-forest" />
+              <p className="text-[11px] text-gray-400 mt-1">Puede ser un sábado o cualquier día sin turno abierto — por eso este módulo existe.</p>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Método</label>
+              <select value={pMetodo} onChange={ev => setPMetodo(ev.target.value)}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm bg-white">
+                <option value="transferencia">Transferencia</option>
+                <option value="efectivo">Efectivo</option>
+                <option value="tarjeta">Tarjeta</option>
+                <option value="cheque">Cheque</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Nota (opcional)</label>
+              <input value={pNota} onChange={ev => setPNota(ev.target.value)}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-forest" />
+            </div>
+            {pError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{pError}</p>}
+            <button onClick={registrarPago} disabled={guardando || !pFecha || !(Number(pMonto) > 0)}
+              className="w-full bg-forest hover:bg-forest-700 disabled:opacity-40 text-white font-bold py-3 rounded-xl text-sm">
+              {guardando ? 'Guardando...' : 'Confirmar pago'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

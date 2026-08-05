@@ -18,6 +18,7 @@ export const NAV_GROUPS: NavGroup[] = [
   { label: 'Resumen', items: [
     { to: '/dashboard',           label: 'Dashboard',    icon: LayoutDashboard },
     { to: '/rentabilidad',        label: 'Rentabilidad', icon: TrendingUp },
+    { to: '/costos',              label: 'Costos',       icon: Wallet },
   ]},
   { label: 'Ventas', items: [
     { to: '/informe-contador',   label: 'Informe Contador', icon: Calculator      },

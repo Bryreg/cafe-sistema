@@ -751,7 +751,10 @@ export default function Dashboard() {
               label={`agotados · ${criticosN} críticos`}
               severity="danger"
               ctaLabel="Pedir"
-              to="/pedidos-admin"
+              /* Al inventario, no a /pedidos-admin: es la misma sugerencia (las dos
+                 pantallas consumen /pedidos/sugerencia) pero ahí se ve junto al
+                 stock, los días que alcanza y cuánto pedir. Pedidos salió del nav. */
+              to="/control-inventario"
             />
           )}
           {hayConsign && (

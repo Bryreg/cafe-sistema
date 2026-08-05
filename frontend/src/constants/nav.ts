@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, Layers, ClipboardList,
+  LayoutDashboard, Layers,
   Banknote, Wrench, ClipboardCheck, Activity,
   Bell, Inbox, BarChart2, Users, Tag, RotateCcw, Calculator, Truck, Scale, Boxes, Wallet,
   Receipt, ShieldCheck, ListChecks, BookOpen, TrendingUp, Package,
@@ -24,21 +24,20 @@ export const NAV_GROUPS: NavGroup[] = [
     { to: '/informes',           label: 'Informes',         icon: BarChart2       },
     { to: '/notas-credito',      label: 'Notas crédito',    icon: RotateCcw       },
   ]},
+  // Inventario habla de UNA sola cosa —el stock físico— en tres momentos: qué hay
+  // hoy, qué contaron las baristas y cómo cierra el mes. Catálogo y Combos NO son
+  // inventario: son maestros (definen productos, no existencias) y por eso se fueron
+  // al grupo Maestros. Lotes es un detalle del producto, no un tema aparte.
   { label: 'Inventario', items: [
     { to: '/control-inventario',      label: 'Inventario',     icon: Layers          },
     { to: '/conteos-admin',           label: 'Conteos',        icon: ListChecks      },
+    { to: '/conciliacion-inventario', label: 'Cierre de mes',  icon: Scale           },
     { to: '/lotes',                   label: 'Lotes',          icon: Boxes           },
-    { to: '/conciliacion-inventario', label: 'Conciliación',   icon: Scale           },
-    { to: '/catalogo',                label: 'Catálogo',       icon: Tag             },
-    { to: '/combos',                  label: 'Combos',         icon: Package         },
-  ]},
-  { label: 'Pedidos y compras', items: [
-    { to: '/pedidos-admin',      label: 'Pedidos',        icon: ClipboardList   },
-    { to: '/pagos-proveedores',  label: 'Pagos proveedores', icon: Truck        },
   ]},
   { label: 'Caja', items: [
     { to: '/cuadre-turnos',     label: 'Cuadres',        icon: Wallet          },
     { to: '/consignaciones',    label: 'Consignaciones', icon: Banknote        },
+    { to: '/pagos-proveedores', label: 'Pagos proveedores', icon: Truck        },
   ]},
   { label: 'Operación', items: [
     { to: '/mantenimientos',      label: 'Mantenimientos', icon: Wrench          },
@@ -52,6 +51,8 @@ export const NAV_GROUPS: NavGroup[] = [
     { to: '/audit-log',          label: 'Historial',      icon: Activity        },
   ]},
   { label: 'Maestros', items: [
+    { to: '/catalogo',           label: 'Catálogo',       icon: Tag             },
+    { to: '/combos',             label: 'Combos',         icon: Package         },
     { to: '/usuarios',           label: 'Usuarios',       icon: Users           },
     { to: '/config-ticket',      label: 'Config ticket',  icon: Receipt         },
   ]},

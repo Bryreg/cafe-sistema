@@ -219,6 +219,21 @@ function ProductRow({ p, tiendaId, onSaved }: {
             </p>
           </div>
 
+          {/* CUÁNTO PEDIR. El backend ya lo calcula (services/pedidos.py: consumo
+              diario × (lead time + colchón) − stock) y esta pantalla lo recibía y lo
+              tiraba: estaba declarado en el tipo y no se pintaba en ningún lado.
+              Sin este número la pantalla dice que algo falta pero no cuánto traer,
+              que es justo la decisión que hay que tomar. */}
+          {p.cantidad_sugerida > 0 && (
+            <div className="shrink-0 text-right px-2 py-1 rounded-lg bg-amber-50 border border-amber-200"
+                 title={`Sugerido para cubrir ${p.lead_time_dias} día(s) de entrega${p.proveedor ? ` · ${p.proveedor}` : ''}`}>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-amber-600 leading-none">Pedir</p>
+              <p className="text-sm font-bold text-amber-800 leading-tight">
+                {p.cantidad_sugerida} <span className="font-normal text-amber-500 text-xs">{p.unidad}</span>
+              </p>
+            </div>
+          )}
+
           <ChevronDown
             size={14}
             className={`text-gray-400 shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}

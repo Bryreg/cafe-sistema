@@ -253,9 +253,17 @@ export default function Catalogo() {
       const { contenido_por_empaque, ...base } = nuevoForm
       const res = await api.post('/inventario/productos', base)
       // El POST de creación no acepta contenido_por_empaque: se aplica con el
-      // mismo PATCH del editor sobre el producto recién creado.
+      // mismo PATCH del editor sobre el producto recién creado. NO puede tumbar
+      // el flujo: el producto YA existe y el backend no valida nombre único, así
+      // que si el PATCH rompe la pantalla el reintento crea un duplicado (los
+      // duplicados reaparecen en el buscador de Ingresos y se les da entrada).
+      // Se avisa aparte y el factor queda para editarlo con el lápiz.
       if (Number(contenido_por_empaque) > 0) {
-        await api.patch(`/inventario/productos/${res.data.id}`, { contenido_por_empaque: Number(contenido_por_empaque) })
+        try {
+          await api.patch(`/inventario/productos/${res.data.id}`, { contenido_por_empaque: Number(contenido_por_empaque) })
+        } catch {
+          setError(`Se creó "${base.nombre}", pero no se pudo guardar el contenido por empaque — editalo con el lápiz.`)
+        }
       }
       setMostrarNuevo(false)
       setNuevoForm({ nombre: '', categoria: 'insumo', unidad_medida: 'und', controla_stock: true, contenido_por_empaque: '' })

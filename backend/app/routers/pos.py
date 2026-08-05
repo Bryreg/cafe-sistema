@@ -146,8 +146,10 @@ def revertir_ticket(ticket_id: int, data: RevertirRequest,
 
 
 # ---------------------------------------------------------------------------
-# Analytics (read-only, admin) — agregaciones sobre tickets reales del POS.
-# Rango de fechas opcional (default = hoy) y tienda_id opcional.
+# Analytics (read-only) — agregaciones sobre tickets reales del POS.
+# TODOS son solo-admin MENOS /analytics/contador, que la barista consulta scopeado
+# a su sede (ver su docstring). Rango de fechas opcional (default = hoy) salvo el
+# contador, que va por anio/mes. tienda_id opcional.
 # ---------------------------------------------------------------------------
 
 @router.get("/analytics/resumen", response_model=AnalyticsResumenOut)
@@ -160,7 +162,8 @@ def analytics_resumen(fecha_desde: Optional[date] = Query(None),
 
 
 @router.get("/analytics/contador")
-def analytics_contador(anio: int = Query(...), mes: int = Query(...),
+def analytics_contador(anio: int = Query(..., ge=2000, le=2100),
+                       mes: int = Query(..., ge=1, le=12),
                        tienda_id: Optional[int] = Query(None),
                        db: Session = Depends(get_db),
                        user: Usuario = Depends(get_current_user)):

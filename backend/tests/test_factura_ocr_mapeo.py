@@ -78,6 +78,31 @@ class ConvertirCantidadTest(unittest.TestCase):
         self.assertIsNone(c)
         self.assertIn("empaque", adv)
 
+    def test_torta_sin_cpe_no_dropea_el_renglon(self):
+        # 'torta' entró a _U_EMPAQUE, pero las tortas sembradas no traen
+        # contenido_por_empaque y se compran cada semana: devolver None obligaría
+        # a recargar el renglón a mano en cada factura. Se toma 1 torta = 1 und
+        # (lo de antes) y se avisa cómo activar el factor.
+        c, emp, factor, adv = _convertir_cantidad(prod(unidad="und"), 2, "tortas")
+        self.assertEqual(c, 2)
+        self.assertFalse(emp)
+        self.assertEqual(factor, 1.0)
+        self.assertIn("contenido por empaque", adv)
+
+    def test_torta_con_cpe_multiplica(self):
+        c, emp, factor, adv = _convertir_cantidad(prod(unidad="und", cpe=12), 2, "tortas")
+        self.assertEqual(c, 2)
+        self.assertTrue(emp)
+        self.assertEqual(factor, 12)
+        self.assertIsNone(adv)
+
+    def test_empaque_granel_sin_cpe_sigue_pidiendo_la_cantidad(self):
+        # El fallback de arriba es SOLO para contables: en granel una "caja" sin
+        # factor no se puede interpretar como gramos.
+        c, emp, factor, adv = _convertir_cantidad(prod(unidad="ml"), 2, "botellas")
+        self.assertIsNone(c)
+        self.assertIn("empaque", adv)
+
     def test_gramos_en_producto_de_unidades_advierte(self):
         c, emp, factor, adv = _convertir_cantidad(prod(unidad="unidad"), 500, "gr")
         self.assertIsNone(c)

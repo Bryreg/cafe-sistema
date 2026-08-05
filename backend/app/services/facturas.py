@@ -174,6 +174,16 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
             if cpe <= 0:
                 raise HTTPException(400, f"{prod.nombre if prod else 'El producto'} no tiene "
                                           "configurado el contenido por empaque — registrá en gramos totales")
+            # Piso de plausibilidad del lado servidor: en_empaques llega del cliente
+            # y acá multiplica stock real. El escáner ya descarta >50 empaques, pero
+            # ese límite vivía SOLO en la ruta OCR: un payload armado a mano (o un
+            # renglón editado a mano) entraba sin tope y multiplicaba x cpe. Mismo
+            # umbral _MAX_EMPAQUES_PLAUSIBLE, estricto igual que el guard de abajo.
+            if item.cantidad >= 50:
+                raise HTTPException(400, (
+                    f"{prod.nombre if prod else 'El producto'}: {item.cantidad:g} empaques es una cantidad "
+                    f"rara (1 empaque = {cpe:g} {prod.unidad_medida if prod else ''}). "
+                    "Revisá el renglón o escribí la cantidad total en unidades."))
             cantidad = round(item.cantidad * cpe, 2)
         elif (prod and (prod.unidad_medida or "").lower() in UNIDADES_GRANEL
               and (prod.contenido_por_empaque or 0) > 0 and item.cantidad < 50):

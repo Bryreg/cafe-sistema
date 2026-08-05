@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 class LoginRequest(BaseModel):
@@ -52,4 +52,8 @@ class KioskPinRequest(BaseModel):
     pin: str
 
 class MetaVentasRequest(BaseModel):
+    # El rango se valida en el handler, no acá: con restricciones de pydantic el 422
+    # arrastra el valor ofensivo en el cuerpo del error, y un inf NO es serializable
+    # a JSON — la respuesta de error reventaba con ValueError. Además el resto del
+    # router responde 400 a los rangos inválidos.
     meta: float

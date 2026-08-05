@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime, timedelta
+import math
 import secrets
 from app.database import get_db
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UsuarioPublic, UsuarioAdmin, ActualizarUsuario, SetPasswordRequest, KioskPinRequest, MetaVentasRequest
@@ -23,8 +24,16 @@ def _get_kiosk_pin(db: Session) -> str:
 
 @router.post("/seleccionar-sede", response_model=TokenResponse)
 def seleccionar_sede(tienda_id: int, db: Session = Depends(get_db),
-                     user: Usuario = Depends(get_current_user)):
-    """Emite un nuevo token con la sede seleccionada embebida, para que el backend la use en lugar de la DB."""
+                     user: Usuario = Depends(require_admin)):
+    """Emite un nuevo token con la sede seleccionada embebida, para que el backend la use en lugar de la DB.
+
+    SOLO ADMIN. Antes bastaba con estar autenticado, y esto es la primitiva que
+    define el alcance por sede de TODA la app: get_current_user (core/deps.py)
+    pisa user.tienda_id con el claim del token, así que cualquier usuario podía
+    re-apuntar su sesión a otra sede y pasar todos los ensure_tienda_access —
+    leyendo caja, dashboard, tickets y el consolidado contable de esa sede.
+    No lo llama ningún componente del frontend (endpoint dormido), así que
+    cerrarlo no cambia ningún flujo en uso."""
     tienda = db.query(Tienda).filter(Tienda.id == tienda_id, Tienda.activa == True).first()
     if not tienda:
         raise HTTPException(status_code=404, detail="Sede no encontrada")
@@ -197,8 +206,14 @@ def set_meta_ventas(tienda_id: int, data: MetaVentasRequest, db: Session = Depen
                     _: Usuario = Depends(require_admin)):
     """Define la meta de ventas mensual de la sede (se guarda en la DB, clave
     meta_ventas_mes_{tienda_id}). Solo admin; meta=0 significa "sin meta"."""
+    # La meta se persiste como TEXTO y se relee con float() en cada request: un
+    # inf/NaN guardado rompe toda lectura futura de esa sede, no solo la escritura.
+    if not math.isfinite(data.meta):
+        raise HTTPException(status_code=400, detail="La meta debe ser un número válido")
     if data.meta < 0:
         raise HTTPException(status_code=400, detail="La meta no puede ser negativa")
+    if data.meta > 1e12:
+        raise HTTPException(status_code=400, detail="La meta es demasiado grande")
     clave = f"meta_ventas_mes_{tienda_id}"
     row = db.query(Configuracion).filter(Configuracion.clave == clave).first()
     if row:

@@ -824,6 +824,15 @@ def _convertir_cantidad(prod, cantidad, unidad) -> tuple[float | None, bool, flo
             if c > _MAX_EMPAQUES_PLAUSIBLE:
                 return None, False, 1.0, f"{c:g} '{unidad}' es una cantidad rara — revisala y ponela a mano"
             return c, True, cpe, None
+        if not granel:
+            # Contable sin factor: la unidad de la factura NOMBRA la cosa que se
+            # cuenta ("2 TORTAS" de un producto que se lleva en und). Sin factor
+            # configurado, 2 tortas = 2 und — que es lo que hacía antes de que
+            # 'torta' entrara acá. Dropear el renglón sería una regresión: las
+            # tortas sembradas no traen contenido_por_empaque y se compran cada
+            # semana. Con el factor puesto, la rama de arriba lo multiplica.
+            return c, False, 1.0, (f"'{unidad}' se tomó como {c:g} {prod.unidad_medida}; si cada una trae "
+                                   f"varias porciones, configurá el contenido por empaque en el catálogo")
         return None, False, 1.0, (f"viene en '{unidad}' y el producto no tiene contenido por empaque configurado — "
                                   "poné la cantidad total a mano")
 

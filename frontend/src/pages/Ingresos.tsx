@@ -410,7 +410,12 @@ export default function Ingresos() {
       // con empaque configurado casi seguro son empaques sellados (el backend
       // multiplica por contenido_por_empaque al registrar). Estricto (<),
       // igual que el guard del backend (ver MAX_EMPAQUES_PLAUSIBLE arriba).
-      const enEmpaques = cpe > 0 && cant > 0 && cant < MAX_EMPAQUES_PLAUSIBLE
+      // Solo se AUTO-asume empaques en granel, donde "3" de un producto en gr es
+      // inequívocamente 3 envases. En contables "3 und" es ambiguo (¿3 bolsas o 3
+      // pulpas?) y acá hay un humano corrigiendo con la factura a la vista: dar
+      // por hecho x10 en la acción de mayor confianza del flujo infla el stock en
+      // silencio. Para contables queda apagado y la barista lo prende con el toggle.
+      const enEmpaques = granel && cpe > 0 && cant > 0 && cant < MAX_EMPAQUES_PLAUSIBLE
       return {
         ...it,
         producto_id:  p.id,
@@ -436,8 +441,26 @@ export default function Ingresos() {
   const setCantidadItem = (idx: number, v: string) =>
     setItems(prev => prev.map((it, i) => (i === idx ? { ...it, cantidad: v } : it)))
 
+  // precio_unitario SIEMPRE viaja por unidad de inventario: al escanear, el server
+  // ya dividió el precio de la factura por el contenido del empaque. Si acá se
+  // invierte la bandera hay que rebasarlo, o el costo unitario queda x cpe mal
+  // (silencioso: el precio se muestra como chip read-only) y contamina el COGS.
+  //   prender empaques  -> la cantidad pasa a ser empaques  -> precio /= cpe
+  //   apagar empaques   -> la cantidad pasa a ser unidades  -> precio *= cpe
   const toggleEmpaquesItem = (idx: number) =>
-    setItems(prev => prev.map((it, i) => (i === idx ? { ...it, en_empaques: !it.en_empaques } : it)))
+    setItems(prev => prev.map((it, i) => {
+      if (i !== idx) return it
+      const cpe = it.contenido_por_empaque || 0
+      const activando = !it.en_empaques
+      const precio = it.precio_unitario
+      return {
+        ...it,
+        en_empaques: activando,
+        precio_unitario: precio != null && cpe > 0
+          ? Math.round((activando ? precio / cpe : precio * cpe) * 10000) / 10000
+          : precio,
+      }
+    }))
 
   const seleccionarProveedor = (p: string) => {
     setProveedor(p); setShowPickerProv(false); setQueryProv('')
@@ -787,8 +810,12 @@ export default function Ingresos() {
                       />
                     </div>
                   )}
-                  {/* Equivalencia de la cantidad editable en empaques */}
-                  {it.origen_match === 'correccion' && it.en_empaques && (
+                  {/* Equivalencia SIEMPRE que haya empaques: es el único lugar donde
+                      se ve el total multiplicado que va a entrar al inventario. Antes
+                      dependía de 'correccion' y las filas del escáner lo mostraban en
+                      el span read-only; ahora esas filas son editables y sin esto el
+                      x10 no se vería en ningún lado. */}
+                  {it.en_empaques && (
                     <p className="text-[11px] font-semibold text-amber-700 mb-1.5">
                       {it.cantidad || 0} empaque{Number(it.cantidad) !== 1 ? 's' : ''} ={' '}
                       {Math.round(Number(it.cantidad) * (it.contenido_por_empaque || 0) * 100) / 100} {it.unidad_medida}

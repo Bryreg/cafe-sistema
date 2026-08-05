@@ -78,6 +78,20 @@ class AuditoriaP1Test(unittest.TestCase):
         fac.crear_factura(self.db, self._data(1500, False), None, self.admin.id)
         self.assertEqual(self._stock(), 1500)
 
+    def test_empaques_implausibles_se_rechazan_en_el_servidor(self):
+        # en_empaques llega del cliente y multiplica stock real. El tope de 50 vivía
+        # SOLO en la ruta del escáner: un payload armado a mano entraba sin límite
+        # (50 "botellas" × 1000 = 50.000 gr de golpe). Ahora el servidor lo corta.
+        with self.assertRaises(HTTPException) as ctx:
+            fac.crear_factura(self.db, self._data(50, True), None, self.admin.id)
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("rara", ctx.exception.detail.lower())
+        self.assertEqual(self._stock(), 0)   # no escribió nada
+
+    def test_empaques_justo_bajo_el_tope_pasan(self):
+        fac.crear_factura(self.db, self._data(49, True), None, self.admin.id)
+        self.assertEqual(self._stock(), 49000)
+
     def test_conteo_rechaza_es_atajo(self):
         with self.assertRaises(HTTPException) as ctx:
             cont.registrar_conteo(self.db, self.t.id, "cierre",

@@ -111,6 +111,41 @@ class MetaVentasYContadorBaristaTest(unittest.TestCase):
         r = self.client.put(self._meta_url(self.tienda_1.id), json={"meta": 1000})
         self.assertEqual(r.status_code, 403)
 
+    def test_meta_no_finita_se_rechaza(self):
+        # La meta se persiste como texto y se lee con float() en cada request:
+        # un inf/NaN guardado rompe TODA lectura de esa sede, no solo la escritura.
+        self.set_current_user(self.admin)
+        for valor in ("Infinity", "NaN"):
+            r = self.client.put(self._meta_url(self.tienda_1.id), content=f'{{"meta": {valor}}}',
+                                headers={"Content-Type": "application/json"})
+            self.assertEqual(r.status_code, 400, valor)
+        r = self.client.get(self._meta_url(self.tienda_1.id))
+        self.assertEqual(r.json()["meta"], 0.0)   # nada quedó persistido
+
+    def test_meta_absurdamente_grande_se_rechaza(self):
+        self.set_current_user(self.admin)
+        r = self.client.put(self._meta_url(self.tienda_1.id), json={"meta": 1e15})
+        self.assertEqual(r.status_code, 400)
+
+    def test_mes_invalido_no_revienta_el_contador(self):
+        # anio/mes entraban sin validar y calendar.monthrange levanta
+        # IllegalMonthError -> 500. Esa superficie ahora la alcanza cualquier
+        # token autenticado (kiosko incluido), así que tiene que ser un 422.
+        self.set_current_user(self.barista)
+        for mes in (0, 13):
+            r = self.client.get("/api/v1/pos/analytics/contador", params={"anio": 2026, "mes": mes})
+            self.assertEqual(r.status_code, 422, f"mes={mes}")
+
+    def test_barista_no_puede_reapuntar_su_token_a_otra_sede(self):
+        # seleccionar-sede es la primitiva que define el alcance por sede de toda
+        # la app: get_current_user pisa user.tienda_id con el claim del token, así
+        # que si una barista puede emitirse un token de otra sede, TODOS los
+        # ensure_tienda_access dejan de ser barrera.
+        self.set_current_user(self.barista)
+        r = self.client.post("/api/v1/auth/seleccionar-sede", params={"tienda_id": self.tienda_2.id})
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(r.json()["detail"], "Se requiere rol admin")
+
     def test_meta_negativa_400(self):
         self.set_current_user(self.admin)
         r = self.client.put(self._meta_url(self.tienda_1.id), json={"meta": -1})

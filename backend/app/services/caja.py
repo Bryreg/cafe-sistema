@@ -178,7 +178,12 @@ def get_turno_activo(db: Session, tienda_id: int):
     # — las ventas ya quedan selladas con el día de hoy en el propio ticket.
     fecha_op = _fecha_operativa_turno(turno)
     turno.dia_operativo_fecha = fecha_op.isoformat() if fecha_op else None
-    turno.es_de_dia_anterior = bool(fecha_op and fecha_op != _fecha_operativa())
+    # MISMO criterio que el sello de la venta (es_venta_de_turno_zombie): comparar
+    # solo la fecha marcaría como zombie al turno de cierre que sigue cobrando a las
+    # 00:30 — que es un martes normal, no un turno colgado. Avisarle ahí que "cerrá
+    # el turno de ayer" mientras lo está cerrando es ruido en el peor momento, y
+    # además contradice al sello, que a esa hora lo trata como venta del día del turno.
+    turno.es_de_dia_anterior = es_venta_de_turno_zombie(fecha_op, datetime.utcnow())
     return turno
 
 
@@ -591,11 +596,17 @@ def cerrar_turno_administrativo(db: Session, turno_id: int, usuario_id: int,
                 detail="Falta el conteo de cierre: la sede debe registrarlo desde el PC antes del cierre administrativo",
             )
         fecha_op = _fecha_operativa_turno(turno)
-        if fecha_op is None or fecha_op == _fecha_operativa():
+        # MISMO criterio que el sello y que el aviso del kiosko. Comparar solo la
+        # fecha dejaba pasar el caso peor: entre las 00:00 y las 06:00, el turno de
+        # cierre que TODAVÍA está vendiendo cuenta como "de un día anterior", así que
+        # un admin podía cerrarlo salteando el conteo mientras las baristas siguen
+        # cobrando — justo lo que el mensaje de abajo promete que es imposible.
+        if not es_venta_de_turno_zombie(fecha_op, datetime.utcnow()):
             raise HTTPException(
                 status_code=400,
-                detail=("El turno es del día de hoy: el conteo de cierre todavía se puede registrar "
-                        "desde el PC. Cerrar sin conteo solo se permite en turnos de días anteriores."),
+                detail=("El turno todavía está en curso (o es de hoy): el conteo de cierre se puede "
+                        "registrar desde el PC. Cerrar sin conteo solo se permite en turnos que "
+                        "quedaron colgados de un día anterior."),
             )
         if not (motivo or "").strip():
             raise HTTPException(

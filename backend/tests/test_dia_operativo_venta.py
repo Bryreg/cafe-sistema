@@ -372,6 +372,61 @@ class CarreraDelDiaOperativoTests(DiaOperativoVentaTestCase):
         self.assertEqual(self.db.query(Ticket).count(), 1)
 
 
+class SenalesCoherentesTests(DiaOperativoVentaTestCase):
+    """Las TRES señales del cambio tienen que usar el MISMO criterio.
+
+    Se introdujeron juntas: el sello de la venta, el aviso del kiosko y el permiso
+    de cierre sin conteo. Si el sello es consciente de la hora y las otras dos
+    comparan fechas a secas, entre las 00:00 y las 06:00 se contradicen: el turno
+    de cierre que sigue cobrando queda marcado "de un día anterior" y —lo grave—
+    un admin puede cerrarlo salteando el conteo MIENTRAS las baristas cobran.
+    """
+
+    def _turno_de_ayer_cobrando_de_madrugada(self):
+        from unittest.mock import patch
+        ayer = self.hoy - timedelta(days=1)
+        turno = self.crear_turno(self.crear_dia(ayer),
+                                 fecha_apertura=inicio_dia_col_utc(ayer) + timedelta(hours=14))
+        # "Ahora" = 00:30 hora Colombia de hoy → 05:30 UTC.
+        ahora = inicio_dia_col_utc(self.hoy) + timedelta(minutes=30)
+        return turno, ayer, patch("app.services.caja.datetime") , ahora
+
+    def test_de_madrugada_el_turno_de_ayer_NO_se_marca_como_colgado(self):
+        from unittest.mock import patch
+        turno, ayer, _, ahora = self._turno_de_ayer_cobrando_de_madrugada()
+        with patch("app.services.caja.datetime") as dt:
+            dt.utcnow.return_value = ahora
+            activo = caja_svc.get_turno_activo(self.db, self.tienda.id)
+            self.assertFalse(activo.es_de_dia_anterior,
+                             "a las 00:30 el cierre sigue en curso: avisar es ruido y contradice al sello")
+        self.assertEqual(turno.dia_operativo_id, self.dia_de(ayer).id)
+
+    def test_de_madrugada_el_admin_NO_puede_cerrar_sin_conteo(self):
+        from unittest.mock import patch
+        turno, _, _, ahora = self._turno_de_ayer_cobrando_de_madrugada()
+        with patch("app.services.caja.datetime") as dt:
+            dt.utcnow.return_value = ahora
+            with self.assertRaises(HTTPException) as ctx:
+                caja_svc.cerrar_turno_administrativo(
+                    self.db, turno.id, self.admin.id, omitir_conteo=True, motivo="apuro")
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("todavía está en curso", ctx.exception.detail)
+
+    def test_en_horario_de_operacion_el_turno_colgado_si_se_puede_rescatar(self):
+        # Mismo turno de ayer, pero a las 10:00 de hoy: ya no hay cierre en curso.
+        from unittest.mock import patch
+        turno, _, _, _ = self._turno_de_ayer_cobrando_de_madrugada()
+        ahora = inicio_dia_col_utc(self.hoy) + timedelta(hours=10)
+        with patch("app.services.caja.datetime") as dt:
+            dt.utcnow.return_value = ahora
+            caja_svc.cerrar_turno_administrativo(
+                self.db, turno.id, self.admin.id, omitir_conteo=True, motivo="quedó colgado")
+        self.db.refresh(turno)
+        self.assertEqual(turno.estado, EstadoTurnoEnum.cerrado)
+        self.assertTrue(turno.cerrado_sin_conteo)
+        self.assertIn("quedó colgado", turno.justificacion_cierre)
+
+
 class CruceMedianocheVsZombieTest(unittest.TestCase):
     """La distinción que la aritmética de fechas confunde y el negocio no.
 

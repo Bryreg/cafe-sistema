@@ -71,16 +71,16 @@ export default function VentasMes() {
       .finally(() => setLoading(false))
   }, [user?.tienda_id]) // eslint-disable-line react-hooks/exhaustive-deps  (anio/mes son del montaje)
 
-  // El informe agrupa por DÍA OPERATIVO, no por fecha del calendario, así que
-  // comparar contra la fecha local del dispositivo no alcanza: si el turno abrió
-  // ayer y sigue abierto (o si son las 00:30 y el día operativo es el de ayer),
-  // no hay renglón con la fecha de hoy y el tile mostraba $0 con la caja vendiendo.
-  // El turno activo es la fuente correcta: es el MISMO número que la barista ve
-  // como "Ventas del día" en el banner, así que los dos no pueden contradecirse.
-  const hoyStr = hoyLocal()
-  const filaHoy = data?.dias.find(d => d.fecha === hoyStr)?.total
-  const ventaHoy = turno?.total_ventas ?? filaHoy ?? 0
-  const etiquetaHoy = turno ? 'Turno actual' : 'Hoy'
+  // El informe agrupa por DÍA OPERATIVO, no por la fecha del dispositivo. El día a
+  // mostrar es el del turno abierto cuando lo hay (a las 00:30 el día operativo
+  // sigue siendo el de ayer, y con la fecha local no habría renglón: mostraba $0
+  // con la caja vendiendo); si no hay turno, el día de hoy.
+  // Se usa el renglón del INFORME, no turno.total_ventas: en un día con turno de
+  // apertura y turno de cierre, el turno solo trae lo suyo, así que el número
+  // bajaría al relevar y saltaría al cerrar. El informe trae el día completo.
+  const diaAMostrar = turno?.dia_operativo_fecha || hoyLocal()
+  const ventaHoy = data?.dias.find(d => d.fecha === diaAMostrar)?.total ?? 0
+  const etiquetaHoy = 'Ventas del día'
 
   const totalMes = data?.total_mes ?? 0
   const diasEnMes = new Date(anio, mes, 0).getDate()

@@ -124,6 +124,46 @@ class ConvertirCantidadTest(unittest.TestCase):
         self.assertEqual((c, emp), (4.0, False))
         self.assertIsNotNone(adv)
 
+    # ── Contables (unidad/und) CON contenido_por_empaque configurado ─────────
+    # Casos reales: pulpa (1 bolsa = 10 und) y torta (1 torta = 12 porciones).
+    # La factura dice "1 UND"/"1 TORTA" y sin el factor el form prellenaba 1.
+
+    def test_unidades_de_contable_con_cpe_asume_empaques_con_advertencia(self):
+        # "1 UND" de pulpa (bolsa x10): se asume el EMPAQUE (el backend
+        # multiplica) — pero con advertencia, porque en un contable "und"
+        # también podría ser la unidad final (a diferencia del granel).
+        c, emp, factor, adv = _convertir_cantidad(prod(unidad="und", cpe=10), 1, "UND")
+        self.assertEqual((c, emp, factor), (1.0, True, 10.0))
+        self.assertIsNotNone(adv)
+
+    def test_sin_unidad_contable_con_cpe_asume_empaques_con_advertencia(self):
+        c, emp, factor, adv = _convertir_cantidad(prod(unidad="unidad", cpe=12), 1, None)
+        self.assertEqual((c, emp, factor), (1.0, True, 12.0))
+        self.assertIsNotNone(adv)
+
+    def test_bolsa_de_contable_con_cpe_sin_advertencia(self):
+        # Empaque EXPLÍCITO en la factura: camino limpio que ya funcionaba
+        # (la rama _U_EMPAQUE no filtra por granel) — se pinea.
+        c, emp, factor, adv = _convertir_cantidad(prod(unidad="und", cpe=10), 2, "bolsa")
+        self.assertEqual((c, emp, factor, adv), (2.0, True, 10.0, None))
+
+    def test_torta_es_empaque_explicito_sin_advertencia(self):
+        # "1 TORTA" (12 porciones vendibles): unidad de empaque explícita →
+        # camino limpio, sin advertencia.
+        c, emp, factor, adv = _convertir_cantidad(prod(unidad="unidad", cpe=12), 1, "TORTA")
+        self.assertEqual((c, emp, factor, adv), (1.0, True, 12.0, None))
+
+    def test_unidad_rara_en_contable_con_cpe_asume_empaques_con_advertencia(self):
+        c, emp, factor, adv = _convertir_cantidad(prod(unidad="und", cpe=10), 3, "REF-22")
+        self.assertEqual((c, emp, factor), (3.0, True, 10.0))
+        self.assertIn("revisá", adv)
+
+    def test_und_contable_cantidad_grande_no_adivina(self):
+        # >_MAX_EMPAQUES_PLAUSIBLE: casi seguro NO son empaques — no se adivina.
+        c, emp, factor, adv = _convertir_cantidad(prod(unidad="und", cpe=10), 60, "und")
+        self.assertEqual((c, emp, factor), (None, False, 1.0))
+        self.assertIsNotNone(adv)
+
 
 class MapearItemsTest(unittest.TestCase):
     def test_item_completo_con_precio_ajustado(self):
@@ -155,6 +195,20 @@ class MapearItemsTest(unittest.TestCase):
         self.assertTrue(it["en_empaques"])
         self.assertEqual(it["cantidad"], 6.0)
         self.assertAlmostEqual(it["precio_unitario"], 5.0)  # $/ml
+
+    def test_precio_por_empaque_contable_se_divide_por_cpe(self):
+        # Espejo del caso granel: pulpa CONTABLE (bolsa x10 und) — el precio de
+        # la factura es por EMPAQUE y debe bajar a $/und.
+        pulpa = prod(id=4, nombre="Pulpa de fruta", unidad="und", cpe=10)
+        extr = {"items": [{
+            "descripcion": "PULPA MORA X10", "cantidad": 1, "unidad": "und",
+            "precio_unitario": 25000, "subtotal": 25000,
+            "numero_lote": None, "fecha_vencimiento": None, "producto_id": 4,
+        }]}
+        it = mapear_items(extr, [pulpa])[0]
+        self.assertTrue(it["en_empaques"])
+        self.assertEqual(it["cantidad"], 1.0)
+        self.assertAlmostEqual(it["precio_unitario"], 2500.0)  # $/und
 
     def test_producto_no_encontrado(self):
         extr = {"items": [{

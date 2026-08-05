@@ -297,10 +297,11 @@ export default function Ingresos() {
     if (!addProducto) return
     const cpe = addProducto.contenido_por_empaque || 0
     const granel = esGranel(addProducto.unidad_medida)
-    // Camino EMPAQUES: la barista contó botellas/frascos. Se manda el nº de
-    // empaques + en_empaques=true; el backend convierte a gr/ml (× cpe) y NO
-    // aplica el guard. No hay conversión en el cliente (evita valores fantasma).
-    const usaEmpaques = granel && cpe > 0 && Number(addEmpaques) > 0
+    // Camino EMPAQUES: la barista contó empaques (botellas, bolsas, tortas).
+    // Se manda el nº de empaques + en_empaques=true; el backend convierte a la
+    // unidad del inventario (× cpe, cualquier unidad) y NO aplica el guard.
+    // No hay conversión en el cliente (evita valores fantasma).
+    const usaEmpaques = cpe > 0 && Number(addEmpaques) > 0
     const cantidadStr = usaEmpaques ? addEmpaques : addCantidad
     if (!cantidadStr || Number(cantidadStr) <= 0) return
 
@@ -405,11 +406,11 @@ export default function Ingresos() {
     setItems(prev => prev.map((it, i) => {
       if (i !== idx) return it
       const cant = Number(it.cantidad) || 0
-      // Espejo de la heurística del backend: pocas "unidades" de un granel con
-      // empaque configurado casi seguro son empaques sellados (el backend
+      // Espejo de la heurística del backend: pocas "unidades" de un producto
+      // con empaque configurado casi seguro son empaques sellados (el backend
       // multiplica por contenido_por_empaque al registrar). Estricto (<),
       // igual que el guard del backend (ver MAX_EMPAQUES_PLAUSIBLE arriba).
-      const enEmpaques = granel && cpe > 0 && cant > 0 && cant < MAX_EMPAQUES_PLAUSIBLE
+      const enEmpaques = cpe > 0 && cant > 0 && cant < MAX_EMPAQUES_PLAUSIBLE
       return {
         ...it,
         producto_id:  p.id,
@@ -713,9 +714,14 @@ export default function Ingresos() {
                       : <Box size={13} className="text-warm-400 shrink-0" />
                     }
                     <span className="flex-1 text-[13px] font-bold text-warm-800 truncate">{it.nombre}</span>
-                    {it.origen_match === 'correccion' ? (
-                      /* Recién asignado a mano: la cantidad vino cruda de la
-                         factura — dejarla editable, con toggle de empaques. */
+                    {it.origen_match === 'correccion' || it.en_empaques ? (
+                      /* Editable en dos casos:
+                         - Recién asignado a mano: la cantidad vino cruda de la factura.
+                         - en_empaques: la cantidad se va a MULTIPLICAR por el contenido
+                           del empaque al registrar. En contables la unidad "und" es
+                           ambigua (¿1 bolsa o 1 pulpa?), así que si el escáner asumió
+                           empaques la barista tiene que poder desarmarlo con el toggle;
+                           read-only entraría x10 sin manera de corregirlo. */
                       <span className="flex items-center gap-1 shrink-0">
                         <input
                           value={it.cantidad}
@@ -723,7 +729,7 @@ export default function Ingresos() {
                           inputMode="decimal"
                           className="w-16 px-1.5 py-1 border border-amber-300 rounded-md text-[13px] font-bold text-warm-700 font-mono text-right focus:outline-none focus:border-amber-500 bg-white"
                         />
-                        {esGranel(it.unidad_medida) && (it.contenido_por_empaque || 0) > 0 ? (
+                        {(it.contenido_por_empaque || 0) > 0 ? (
                           <button
                             onClick={() => toggleEmpaquesItem(idx)}
                             className={`px-1.5 py-1 rounded-md text-[10px] font-bold border transition-colors ${
@@ -1082,8 +1088,9 @@ function QuickAddPanel({
   useEffect(() => { inputRef.current?.focus() }, [])
   // Empaques y cantidad son excluyentes: escribir en uno limpia el otro. NO se
   // convierte en el cliente — el backend recibe el nº de empaques + en_empaques.
+  // Aplica a CUALQUIER unidad con empaque configurado (gr/ml y también und).
   const cpe = addProducto?.contenido_por_empaque || 0
-  const conEmpaques = !!addProducto && esGranel(addProducto.unidad_medida) && cpe > 0
+  const conEmpaques = !!addProducto && cpe > 0
   const onEmpaques = (v: string) => { setAddEmpaques(v); if (v) setAddCantidad('') }
   const onCantidad = (v: string) => { setAddCantidad(v); if (v) setAddEmpaques('') }
 

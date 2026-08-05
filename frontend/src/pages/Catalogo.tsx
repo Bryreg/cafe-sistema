@@ -13,6 +13,7 @@ interface Producto {
   precio_venta?: number
   fraccionable?: boolean
   envase?: 'bolsa' | 'botella' | null
+  contenido_por_empaque?: number | null
 }
 
 // Archivado = fuera de POS, conteo y stock: duplicados fusionados o productos retirados.
@@ -150,9 +151,9 @@ export default function Catalogo() {
   const [catFiltro, setCatFiltro] = useState<Cat | 'todas'>('todas')
   const [busqueda, setBusqueda] = useState('')
   const [editandoId, setEditandoId] = useState<number | null>(null)
-  const [editForm, setEditForm] = useState({ nombre: '', categoria: '', unidad_medida: '', controla_stock: true, envase: '' as '' | 'bolsa' | 'botella' })
+  const [editForm, setEditForm] = useState({ nombre: '', categoria: '', unidad_medida: '', controla_stock: true, envase: '' as '' | 'bolsa' | 'botella', contenido_por_empaque: '' })
   const [verArchivados, setVerArchivados] = useState(false)
-  const [nuevoForm, setNuevoForm] = useState({ nombre: '', categoria: 'insumo', unidad_medida: 'und', controla_stock: true })
+  const [nuevoForm, setNuevoForm] = useState({ nombre: '', categoria: 'insumo', unidad_medida: 'und', controla_stock: true, contenido_por_empaque: '' })
   const [mostrarNuevo, setMostrarNuevo] = useState(false)
   const [minimoEditing, setMinimoEditing] = useState<{ productoId: number; tiendaId: number; valor: string } | null>(null)
   const [precioEditing, setPrecioEditing] = useState<{ productoId: number; valor: string } | null>(null)
@@ -192,9 +193,27 @@ export default function Catalogo() {
   })()
 
   const load = async () => {
-    const res = await api.get('/inventario/admin/resumen')
+    // El resumen admin no trae contenido_por_empaque; /productos sí (la misma
+    // fuente que usa Recibir) — se funde por id para prefilar el editor.
+    const [res, lista] = await Promise.all([
+      api.get('/inventario/admin/resumen'),
+      api.get('/inventario/productos').catch(() => null),
+    ])
+    const cpePorId = new Map<number, number | null>()
+    if (lista) {
+      for (const p of lista.data as { id: number; contenido_por_empaque?: number | null }[]) {
+        cpePorId.set(p.id, p.contenido_por_empaque ?? null)
+      }
+    }
     setTiendas(res.data.tiendas)
-    setProductos(res.data.productos)
+    setProductos(res.data.productos.map((p: Producto) => ({
+      ...p,
+      // undefined = NO conocemos el valor real: se cayó /productos, o el producto
+      // está archivado (ese endpoint los excluye). Distinto de null, que sí
+      // significa "sin empaque". guardarEdicion no manda la clave si es undefined,
+      // para no borrar un factor que nunca llegamos a leer.
+      contenido_por_empaque: cpePorId.has(p.id) ? cpePorId.get(p.id)! : undefined,
+    })))
   }
 
   useEffect(() => { load() }, [])
@@ -211,7 +230,17 @@ export default function Catalogo() {
     if (!editandoId) return
     setSaving(true)
     try {
-      await api.patch(`/inventario/productos/${editandoId}`, { ...editForm, fraccionable: editForm.envase !== '' })
+      const { contenido_por_empaque: cpeEditado, ...resto } = editForm
+      const payload: Record<string, unknown> = { ...resto, fraccionable: editForm.envase !== '' }
+      // Solo mandamos el empaque si conocemos su valor real (load() lo dejó en
+      // undefined cuando no pudo leerlo) o si el admin escribió algo. Omitir la
+      // clave deja el factor intacto: el backend ignora lo que no viene. Mandar
+      // 0 a ciegas lo borraría, y sin factor el escáner deja de convertir.
+      const cpeConocido = productos.find(p => p.id === editandoId)?.contenido_por_empaque !== undefined
+      if (cpeConocido || cpeEditado.trim() !== '') {
+        payload.contenido_por_empaque = Number(cpeEditado) || 0   // 0 = quitar
+      }
+      await api.patch(`/inventario/productos/${editandoId}`, payload)
       setEditandoId(null)
       load()
     } catch (e: any) { setError(e.response?.data?.detail || 'Error') }
@@ -221,9 +250,15 @@ export default function Catalogo() {
   const crearProducto = async () => {
     setSaving(true)
     try {
-      await api.post('/inventario/productos', nuevoForm)
+      const { contenido_por_empaque, ...base } = nuevoForm
+      const res = await api.post('/inventario/productos', base)
+      // El POST de creación no acepta contenido_por_empaque: se aplica con el
+      // mismo PATCH del editor sobre el producto recién creado.
+      if (Number(contenido_por_empaque) > 0) {
+        await api.patch(`/inventario/productos/${res.data.id}`, { contenido_por_empaque: Number(contenido_por_empaque) })
+      }
       setMostrarNuevo(false)
-      setNuevoForm({ nombre: '', categoria: 'insumo', unidad_medida: 'und', controla_stock: true })
+      setNuevoForm({ nombre: '', categoria: 'insumo', unidad_medida: 'und', controla_stock: true, contenido_por_empaque: '' })
       load()
     } catch (e: any) { setError(e.response?.data?.detail || 'Error') }
     finally { setSaving(false) }
@@ -381,6 +416,17 @@ export default function Catalogo() {
                 className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm">
                 {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
               </select>
+            </div>
+            <div className="col-span-2">
+              <label className="text-xs font-semibold text-gray-500 block mb-1">Contenido por empaque</label>
+              <input type="number" min="0" step="0.5" inputMode="decimal"
+                value={nuevoForm.contenido_por_empaque}
+                onChange={e => setNuevoForm(f => ({ ...f, contenido_por_empaque: e.target.value }))}
+                placeholder="0" className="w-32 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm text-right" />
+              <p className="text-xs text-gray-400 mt-1">
+                Cuántas unidades trae 1 empaque del proveedor (bolsa de pulpas = 10, torta = 12 porciones).
+                El escáner de facturas lo usa para convertir. 0 = no aplica.
+              </p>
             </div>
             <div className="col-span-2 flex items-center gap-2">
               <input type="checkbox" id="ctrl" checked={nuevoForm.controla_stock}
@@ -549,8 +595,18 @@ export default function Catalogo() {
                               </select>
                             </div>
                           </td>
-                          {tiendas.map(t => <td key={t.id} />)}
-                          <td /><td />
+                          {/* Contenido por empaque: usa las celdas libres de la fila en edición */}
+                          <td colSpan={tiendas.length + 2} className="px-3 py-2 align-top">
+                            <label className="text-xs font-semibold text-gray-500 block mb-1">Contenido por empaque</label>
+                            <input type="number" min="0" step="0.5" inputMode="decimal"
+                              value={editForm.contenido_por_empaque}
+                              onChange={e => setEditForm(f => ({ ...f, contenido_por_empaque: e.target.value }))}
+                              placeholder="0" className="w-24 border-2 border-gray-200 rounded-lg px-2 py-1 text-sm text-right" />
+                            <p className="text-xs text-gray-400 mt-1">
+                              Cuántas unidades trae 1 empaque del proveedor (bolsa de pulpas = 10, torta = 12 porciones).
+                              El escáner de facturas lo usa para convertir. 0 = no aplica.
+                            </p>
+                          </td>
                           <td className="px-3 py-2">
                             <div className="flex gap-1">
                               <button onClick={guardarEdicion} disabled={saving}
@@ -653,7 +709,7 @@ export default function Catalogo() {
                           <td className="px-3 py-2">
                             <div className="flex items-center gap-1">
                               <button
-                                onClick={() => { setEditandoId(p.id); setEditForm({ nombre: p.nombre, categoria: p.categoria, unidad_medida: p.unidad_medida, controla_stock: p.controla_stock, envase: p.fraccionable ? (p.envase === 'botella' ? 'botella' : 'bolsa') : '' }) }}
+                                onClick={() => { setEditandoId(p.id); setEditForm({ nombre: p.nombre, categoria: p.categoria, unidad_medida: p.unidad_medida, controla_stock: p.controla_stock, envase: p.fraccionable ? (p.envase === 'botella' ? 'botella' : 'bolsa') : '', contenido_por_empaque: p.contenido_por_empaque ? String(p.contenido_por_empaque) : '' }) }}
                                 className="p-1.5 rounded-lg border-2 border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600 transition-colors">
                                 <Pencil size={12} />
                               </button>

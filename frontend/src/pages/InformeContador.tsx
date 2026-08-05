@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../api/client'
+import { conMiles, soloDigitos } from '../utils/plata'
 import {
   Calculator, Download, Printer, TrendingUp, TrendingDown,
-  Wallet, CreditCard, Receipt, CalendarDays,
+  Wallet, CreditCard, Receipt, CalendarDays, Target, Pencil, Check, X,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -63,12 +64,28 @@ export default function InformeContador() {
   const [data, setData] = useState<Contador | null>(null)
   const [dataPrev, setDataPrev] = useState<Contador | null>(null)
   const [loading, setLoading] = useState(false)
+  // Meta de ventas de la sede (una por tienda, NO por mes): null = aún no cargó.
+  const [meta, setMeta] = useState<number | null>(null)
+  const [editandoMeta, setEditandoMeta] = useState(false)
+  const [metaInput, setMetaInput] = useState('')
+  const [savingMeta, setSavingMeta] = useState(false)
 
   useEffect(() => {
     api.get<Tienda[]>('/auth/tiendas')
       .then(r => { setTiendas(r.data); setTiendaId(prev => prev ?? (r.data[0]?.id ?? null)) })
       .catch(() => {})
   }, [])
+
+  // La meta depende solo de la sede: cambiar de mes NO la refetchea (el progreso
+  // se recalcula contra el total_mes del mes seleccionado).
+  useEffect(() => {
+    setMeta(null)
+    setEditandoMeta(false)
+    if (!tiendaId) return
+    api.get<{ tienda_id: number; meta: number }>(`/auth/config/meta-ventas/${tiendaId}`)
+      .then(r => setMeta(r.data.meta ?? 0))
+      .catch(() => setMeta(null))
+  }, [tiendaId])
 
   useEffect(() => {
     if (!tiendaId) return
@@ -88,6 +105,23 @@ export default function InformeContador() {
   // Delta % vs mes anterior (null si el mes anterior no tuvo venta → evita dividir por 0).
   const pctDelta = (cur: number, prev: number | undefined | null) =>
     prev && prev > 0 ? Math.round((cur - prev) / prev * 100) : null
+
+  // Guarda la meta con update optimista: se pinta ya y se revierte si el PUT falla.
+  const guardarMeta = async () => {
+    if (!tiendaId) return
+    const nueva = Number(metaInput) || 0
+    const anterior = meta
+    setMeta(nueva)
+    setEditandoMeta(false)
+    setSavingMeta(true)
+    try {
+      await api.put(`/auth/config/meta-ventas/${tiendaId}`, { meta: nueva })
+    } catch {
+      setMeta(anterior)
+    } finally {
+      setSavingMeta(false)
+    }
+  }
 
   const maxDia = useMemo(() => Math.max(1, ...(data?.dias.map(d => d.total) ?? [1])), [data])
   const maxAcum = useMemo(() => Math.max(1, ...(data?.dias.map(d => d.acumulado) ?? [1])), [data])
@@ -167,6 +201,72 @@ export default function InformeContador() {
         <>
           {/* KPIs */}
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            {/* Meta del mes: valor único por sede (no por mes) — el progreso se
+                recalcula contra el total del mes seleccionado. */}
+            {tiendaId != null && meta != null && (
+              <div className="bg-white rounded-2xl border border-gray-200 p-4 col-span-2 lg:col-span-5">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Target size={14} style={{ color: '#2d5a3f' }} />
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Meta del mes</p>
+                  {meta > 0 && !editandoMeta && (
+                    <button
+                      onClick={() => { setMetaInput(String(Math.round(meta))); setEditandoMeta(true) }}
+                      disabled={savingMeta}
+                      className="ml-auto p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 print:hidden"
+                      title="Editar meta">
+                      <Pencil size={12} />
+                    </button>
+                  )}
+                </div>
+                {editandoMeta || meta === 0 ? (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {meta === 0 && !editandoMeta && (
+                      <p className="text-sm text-gray-500">Sin meta — definila acá:</p>
+                    )}
+                    <span className="text-sm text-gray-400">$</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={conMiles(metaInput)}
+                      onChange={e => setMetaInput(soloDigitos(e.target.value))}
+                      placeholder="0"
+                      disabled={savingMeta}
+                      className="w-36 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right font-semibold font-mono focus:outline-none focus:ring-2 focus:ring-green-600 disabled:opacity-40"
+                      autoFocus={editandoMeta}
+                      onKeyDown={e => { if (e.key === 'Enter') guardarMeta(); if (e.key === 'Escape') setEditandoMeta(false) }}
+                    />
+                    <button onClick={guardarMeta} disabled={savingMeta}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-semibold bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white transition-colors">
+                      <Check size={13} /> Guardar
+                    </button>
+                    {editandoMeta && (
+                      <button onClick={() => setEditandoMeta(false)} disabled={savingMeta}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 disabled:opacity-40">
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-baseline gap-3 flex-wrap">
+                      <p className="text-xl font-bold text-gray-800 font-mono leading-none">{fmt(meta)}</p>
+                      <span className="text-xs font-bold text-gray-600">
+                        {Math.round((data.total_mes / meta) * 100)}%
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <div className="flex-1 h-3 rounded-full bg-gray-100 overflow-hidden">
+                        <div className="h-full bg-green-500" style={{ width: `${Math.min(100, (data.total_mes / meta) * 100)}%` }} />
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {fmt(data.total_mes)} de {fmt(meta)} en {MESES[mes - 1]}
+                      {data.total_mes >= meta ? ' · meta cumplida' : ` · faltan ${fmt(meta - data.total_mes)}`}
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
             <Kpi label="Total del mes" value={fmt(data.total_mes)} sub={`${data.dias_con_venta} días con venta · vs ${MESES[(mes === 1 ? 12 : mes - 1) - 1]}`} Icon={Receipt} tint="#2d5a3f" delta={pctDelta(data.total_mes, dataPrev?.total_mes)} />
             <Kpi label="Venta diaria (mes)" value={fmt(data.promedio_venta_diaria)} sub={`${data.total_mes ? fmt(data.total_mes) : '$0'} ÷ ${data.dias_periodo} días`} Icon={TrendingUp} tint="#2d5a3f" delta={pctDelta(data.promedio_venta_diaria, dataPrev?.promedio_venta_diaria)} />
             <Kpi label="Promedio por día con venta" value={fmt(data.promedio_diario)} sub={`${data.dias_con_venta} días`} Icon={TrendingUp} tint="#5b8def" delta={pctDelta(data.promedio_diario, dataPrev?.promedio_diario)} />

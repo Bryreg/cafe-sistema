@@ -7,7 +7,7 @@ import {
   Menu, X, Check, Circle, AlertTriangle, ClipboardList, Megaphone,
   Trash2, Package, ShoppingCart, Coins, Truck, Thermometer, ArrowRightLeft, LogOut,
   Calculator, CalendarClock, Banknote, Receipt, Boxes, Sparkles, Cake, ClipboardCheck,
-  FlaskConical, BookOpen,
+  FlaskConical, BookOpen, TrendingUp,
 } from 'lucide-react'
 import { dark } from '../constants/darkTheme'
 import MovimientoCajaModal from './MovimientoCajaModal'
@@ -27,6 +27,7 @@ interface Novedad {
 // Las rutas siguen vivas por si hay enlaces viejos.
 const QUICK = [
   { label: 'Ventas',          to: '/historial-ventas', icon: Receipt },
+  { label: 'Ventas del mes',  to: '/ventas-mes',     icon: TrendingUp },
   { label: 'Recibir',         to: '/ingresos',       icon: Truck },
   { label: 'Merma',           to: '/mermas',         icon: Trash2 },
   { label: 'Preparaciones',   to: '/preparaciones',  icon: FlaskConical },
@@ -49,11 +50,24 @@ export default function OperativeBanner() {
   const [modal, setModal] = useState<null | 'rutinas' | 'novedad' | 'recepcion' | 'temperatura' | 'caja'>(null)
   const [pendientes, setPendientes] = useState<Pendiente[]>([])
   const [novedades, setNovedades] = useState<Novedad[]>([])
+  // Progreso del mes vs meta de la sede: solo se pinta si ambos fetches
+  // responden y la meta es > 0 (tolerancia kiosko: cualquier falla lo omite).
+  const [metaMes, setMetaMes] = useState<{ meta: number; total: number } | null>(null)
 
   const cargar = useCallback(() => {
     if (!tiendaId) return
     api.get(`/rutinas/pendientes?tienda_id=${tiendaId}`).then(r => setPendientes(r.data)).catch(() => {})
     api.get(`/novedades/pendientes?tienda_id=${tiendaId}`).then(r => setNovedades(r.data)).catch(() => {})
+    const now = new Date()
+    Promise.all([
+      api.get('/pos/analytics/contador', { params: { anio: now.getFullYear(), mes: now.getMonth() + 1 } }),
+      api.get(`/auth/config/meta-ventas/${tiendaId}`),
+    ])
+      .then(([c, m]) => {
+        const meta = Number(m.data?.meta) || 0
+        setMetaMes(meta > 0 ? { meta, total: c.data?.total_mes ?? 0 } : null)
+      })
+      .catch(() => setMetaMes(null))
   }, [tiendaId])
 
   useEffect(() => { cargar() }, [cargar, open])
@@ -128,6 +142,21 @@ export default function OperativeBanner() {
                     <span>Ventas del día</span>
                     <span className="font-mono font-semibold" style={{ color: dark.ink }}>{fmt(turno.total_ventas)}</span>
                   </div>
+                  {/* Progreso del mes vs meta (solo con meta definida y fetches OK) */}
+                  {metaMes && (
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[12px]" style={{ color: dark.inkMuted }}>
+                        <span>Meta del mes</span>
+                        <span className="font-mono font-semibold" style={{ color: dark.ink }}>
+                          {fmt(metaMes.total)} / {fmt(metaMes.meta)}
+                        </span>
+                      </div>
+                      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: dark.border }}>
+                        <div className="h-full rounded-full"
+                          style={{ width: `${Math.min(100, (metaMes.total / metaMes.meta) * 100)}%`, background: dark.green }} />
+                      </div>
+                    </div>
+                  )}
                   {!turno.es_operativo && (
                     <button onClick={() => go('/gestion-turno')}
                       className="w-full mt-1 py-2 rounded-xl text-[12px] font-bold"

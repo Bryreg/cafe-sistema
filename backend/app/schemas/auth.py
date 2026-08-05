@@ -50,3 +50,6 @@ class SetPasswordRequest(BaseModel):
 
 class KioskPinRequest(BaseModel):
     pin: str
+
+class MetaVentasRequest(BaseModel):
+    meta: float

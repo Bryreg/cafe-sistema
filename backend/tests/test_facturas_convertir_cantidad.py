@@ -47,6 +47,7 @@ class ConvertirCantidadEndpointTest(unittest.TestCase):
         self.cafe = self._producto("Café alta tostión", unidad="gr")               # granel sin cpe
         self.leche = self._producto("Leche entera", unidad="ml", cpe=1100)         # granel con empaque
         self.croissant = self._producto("Croissant", unidad="unidad")              # por unidades
+        self.pulpa = self._producto("Pulpa de fruta", unidad="und", cpe=10)        # contable con empaque
 
         app = FastAPI(title="Test convertir-cantidad")
         app.include_router(facturas_router.router, prefix="/api/v1")
@@ -118,6 +119,17 @@ class ConvertirCantidadEndpointTest(unittest.TestCase):
         self.assertEqual(body["cantidad"], 6.0)
         self.assertFalse(body["en_empaques"])
         self.assertIsNone(body["advertencia"])
+
+    def test_unidades_de_contable_con_empaque_asume_empaques(self):
+        # "2 und" de pulpa (bolsa x10): se asumen EMPAQUES (el backend
+        # multiplica por cpe al registrar) — siempre con advertencia, porque en
+        # un contable "und" también podría ser la unidad final del inventario.
+        r = self._post(self.pulpa.id, 2, "und")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["cantidad"], 2.0)
+        self.assertTrue(body["en_empaques"])
+        self.assertIsNotNone(body["advertencia"])
 
     def test_producto_inexistente_404(self):
         r = self._post(99999, 2, "kg")

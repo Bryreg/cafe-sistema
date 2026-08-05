@@ -4,10 +4,10 @@ from typing import List
 from datetime import datetime, timedelta
 import secrets
 from app.database import get_db
-from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UsuarioPublic, UsuarioAdmin, ActualizarUsuario, SetPasswordRequest, KioskPinRequest
+from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UsuarioPublic, UsuarioAdmin, ActualizarUsuario, SetPasswordRequest, KioskPinRequest, MetaVentasRequest
 from app.models.models import Usuario, Tienda, RolEnum, Configuracion
 from app.core.security import verify_password, hash_password, create_access_token
-from app.core.deps import require_admin, get_current_user
+from app.core.deps import require_admin, get_current_user, ensure_tienda_access
 from app.config import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -173,6 +173,40 @@ def set_kiosk_pin(data: KioskPinRequest, db: Session = Depends(get_db), _: Usuar
         db.add(Configuracion(clave="kiosk_pin", valor=pin))
     db.commit()
     return {"ok": True}
+
+
+@router.get("/config/meta-ventas/{tienda_id}")
+def get_meta_ventas(tienda_id: int, db: Session = Depends(get_db),
+                    user: Usuario = Depends(get_current_user)):
+    """Meta de ventas mensual de la sede. La barista consulta la de SU tienda
+    (para el contador del turno); el admin, la de cualquiera. 0 = sin meta."""
+    ensure_tienda_access(user, tienda_id)
+    row = db.query(Configuracion).filter(
+        Configuracion.clave == f"meta_ventas_mes_{tienda_id}").first()
+    meta = 0.0
+    if row and row.valor:
+        try:
+            meta = float(row.valor)
+        except ValueError:
+            meta = 0.0
+    return {"tienda_id": tienda_id, "meta": meta}
+
+
+@router.put("/config/meta-ventas/{tienda_id}")
+def set_meta_ventas(tienda_id: int, data: MetaVentasRequest, db: Session = Depends(get_db),
+                    _: Usuario = Depends(require_admin)):
+    """Define la meta de ventas mensual de la sede (se guarda en la DB, clave
+    meta_ventas_mes_{tienda_id}). Solo admin; meta=0 significa "sin meta"."""
+    if data.meta < 0:
+        raise HTTPException(status_code=400, detail="La meta no puede ser negativa")
+    clave = f"meta_ventas_mes_{tienda_id}"
+    row = db.query(Configuracion).filter(Configuracion.clave == clave).first()
+    if row:
+        row.valor = str(data.meta)
+    else:
+        db.add(Configuracion(clave=clave, valor=str(data.meta)))
+    db.commit()
+    return {"tienda_id": tienda_id, "meta": data.meta}
 
 
 @router.post("/kiosk-init", response_model=TokenResponse)

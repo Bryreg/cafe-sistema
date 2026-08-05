@@ -49,7 +49,8 @@ _U_EMPAQUE = {"caja", "cajas", "paca", "pacas", "bolsa", "bolsas", "botella",
               "botellas", "paquete", "paquetes", "bulto", "bultos", "frasco",
               "frascos", "tarro", "tarros", "galon", "garrafa", "garrafas",
               "display", "docena", "docenas", "six", "sixpack", "pack",
-              "bandeja", "bandejas", "canasta", "canastas", "lata", "latas"}
+              "bandeja", "bandejas", "canasta", "canastas", "lata", "latas",
+              "torta", "tortas"}
 
 _TIPOS_PAGO = {"contado", "credito", "transferencia"}
 
@@ -792,6 +793,17 @@ def _convertir_cantidad(prod, cantidad, unidad) -> tuple[float | None, bool, flo
 
     if u in _U_UND or u == "":
         if not granel:
+            if cpe > 0:
+                # Contable con empaque configurado (pulpa: bolsa x10 und;
+                # torta: 12 porciones): "1 und" en la factura casi siempre
+                # nombra el EMPAQUE, no la porción → se asume empaques PERO
+                # siempre con advertencia, porque acá "und" también podría ser
+                # la unidad final (a diferencia del granel, donde es inequívoco).
+                if c > _MAX_EMPAQUES_PLAUSIBLE:
+                    return None, False, 1.0, (f"dice {c:g} y como empaques serían "
+                                              f"{c * cpe:g} {prod.unidad_medida} — poné la cantidad a mano")
+                return c, True, cpe, (f"se tomó {c:g} empaque(s) de {cpe:g} {prod.unidad_medida} = "
+                                      f"{c * cpe:g} {prod.unidad_medida} — revisá")
             return c, False, 1.0, None
         if cpe > 0:
             # N "unidades" de un producto a granel = N empaques sellados. PERO un
@@ -816,10 +828,12 @@ def _convertir_cantidad(prod, cantidad, unidad) -> tuple[float | None, bool, flo
                                   "poné la cantidad total a mano")
 
     # Unidad no reconocida.
-    if not granel:
-        return c, False, 1.0, f"unidad '{unidad}' no reconocida — revisá que la cantidad esté en {prod.unidad_medida}"
     if cpe > 0 and c <= _MAX_EMPAQUES_PLAUSIBLE:
+        # Con empaque configurado (granel O contable), lo más probable es que
+        # la unidad rara nombre el empaque comercial — se asume con advertencia.
         return c, True, cpe, f"asumí que '{unidad}' son empaques de {cpe:g} {prod.unidad_medida} — revisá"
+    if not granel and cpe <= 0:
+        return c, False, 1.0, f"unidad '{unidad}' no reconocida — revisá que la cantidad esté en {prod.unidad_medida}"
     return None, False, 1.0, f"unidad '{unidad}' no reconocida y el producto se maneja en {prod.unidad_medida} — poné la cantidad a mano"
 
 

@@ -163,8 +163,23 @@ def analytics_resumen(fecha_desde: Optional[date] = Query(None),
 def analytics_contador(anio: int = Query(...), mes: int = Query(...),
                        tienda_id: Optional[int] = Query(None),
                        db: Session = Depends(get_db),
-                       user: Usuario = Depends(require_admin)):
-    """Informe Contador: consolidado contable diario/mensual por método de pago."""
+                       user: Usuario = Depends(get_current_user)):
+    """Informe Contador: consolidado contable diario/mensual por método de pago.
+
+    Accesible para la barista scopeada a la sede de SU token (sin tienda_id se
+    fuerza esa); el admin conserva tienda_id opcional (None = todas). Mismo
+    patrón que /tickets/historial.
+
+    OJO — el scope sale del claim `tienda_id` del token, no de la fila en DB
+    (deps.get_current_user lo sobrescribe), y /auth/seleccionar-sede emite token
+    para CUALQUIER sede activa a cualquier usuario autenticado. O sea que esto NO
+    es una barrera contra una barista que pida otra sede a propósito: solo evita
+    la fuga accidental del consolidado de todas las sedes. Cerrar eso de verdad
+    exige acotar /auth/seleccionar-sede, que es transversal a toda la app."""
+    if user.rol != "admin":
+        if tienda_id is None:
+            tienda_id = user.tienda_id
+        ensure_tienda_access(user, tienda_id)
     return svc.get_informe_contador(db, anio, mes, tienda_id)
 
 

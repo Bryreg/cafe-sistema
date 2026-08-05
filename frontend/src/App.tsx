@@ -16,6 +16,7 @@ import SalidaEfectivo from './pages/SalidaEfectivo'
 import Cierre from './pages/Cierre'
 import Entrega from './pages/Entrega'
 import VentasHoy from './pages/VentasHoy'
+import VentasMes from './pages/VentasMes'
 import Inventario from './pages/Inventario'
 import Mermas from './pages/Mermas'
 import Preparaciones from './pages/Preparaciones'
@@ -149,6 +150,7 @@ function AppRoutes() {
       <Route path="/conteo-desechables" element={hasSession ? <ConteoDesechables /> : <KioskSetup />} />
       <Route path="/cuadre-inicial" element={hasSession ? <CuadreInicial />  : <KioskSetup />} />
       <Route path="/ventas-hoy"     element={hasSession ? <VentasHoy />      : <KioskSetup />} />
+      <Route path="/ventas-mes"     element={hasSession ? <VentasMes />      : <KioskSetup />} />
       <Route path="/limpieza"       element={
         hasSession
           ? isAdmin ? <Layout><Limpieza /></Layout> : <Limpieza />

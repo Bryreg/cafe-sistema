@@ -12,16 +12,20 @@ sus pagos vivos. Lo único persistido es `anulada`. Es una asimetría deliberada
 FacturaCompra.valor_pagado — esa columna es justamente la que se puede
 desincronizar de los movimientos que la originaron.
 """
+import math
 from datetime import date, timedelta
+from statistics import median
 
 from fastapi import HTTPException
 from sqlalchemy import func, not_, or_
 from sqlalchemy.orm import Session
 
 from app.core.tz import dia_col, hoy_col, rango_col_utc
-from app.models.models import (CajaTurno, CostoCategoria, FacturaCompra,
-                               MovimientoCaja, Obligacion, Pago, Tienda,
-                               TipoMovCajaEnum)
+from app.models.models import (CajaTurno, Configuracion, Consignacion,
+                               CostoCategoria, EntregaTurno,
+                               EstadoConsignacionEnum, EstadoTurnoEnum,
+                               FacturaCompra, MovimientoCaja, Obligacion, Pago,
+                               Ticket, Tienda, TipoMovCajaEnum)
 from app.services import audit
 # La lista de conceptos reservados que services/facturas.py escribe para los pagos
 # a proveedor vive en rentabilidad.py y se REUSA, no se copia: si allá cambia, acá
@@ -732,3 +736,378 @@ def listar_pagos(db: Session, *, obligacion_id: int | None = None,
     if not incluir_anulados:
         q = q.filter(Pago.anulado == False)  # noqa: E712
     return [_serializar_pago(p) for p in q.order_by(Pago.fecha_pago.desc(), Pago.id.desc()).all()]
+
+
+# ── Flujo de caja proyectado (Fase 4) ───────────────────────────────────────
+#
+# El único número que ningún otro reporte del sistema puede producir: EL DÍA EN
+# QUE SE ACABA LA PLATA. Ventas, P&L y agenda miran para atrás o miran una sola
+# dimensión; esto cruza lo que hay con lo que entra y lo que sale.
+#
+#   saldo_proyectado(D) = caja_hoy + Σ entradas(d) − Σ salidas(d),  d en (hoy, D]
+#
+# Las tres reglas anti-doble-conteo que sostienen la fórmula:
+#
+#   1. las consignaciones NO son entrada — mueven plata del cajón al banco: no se
+#      suman como entrada Y se restan del efectivo del turno, porque si no la
+#      misma plata quedaría contada en la registradora y otra vez en el banco;
+#   2. los MovimientoCaja egreso YA registrados NO se restan como salida futura
+#      — son pasado y ya están descontados dentro del efectivo de la registradora;
+#   3. la deuda con proveedores se lee de la agenda (unión de dos consultas) y
+#      nunca de una copia: FacturaCompra sigue siendo su única verdad.
+
+HORIZONTE_DEFAULT = 30
+HORIZONTE_MAX = 180
+SEMANAS_HISTORIA = 8          # 56 días = exactamente 8 muestras de cada día de semana
+DIAS_SALDO_BANCO_VIGENTE = 7  # más viejo que esto y la respuesta se marca desactualizada
+SALDO_BANCO_MAX = 1e12
+CLAVE_SALDO_BANCO = "saldo_banco"
+CLAVE_SALDO_BANCO_FECHA = "saldo_banco_fecha"
+
+
+def _efectivo_en_registradora(db: Session, tienda_id: int) -> tuple:
+    """(efectivo que hay AHORA en el cajón de la sede, de dónde salió el dato).
+
+    Con turno abierto es la fórmula del cuadre —base_real + total_efectivo +
+    ingresos − egresos, services/caja.py:1016-1024— MENOS lo ya consignado, que
+    es plata que salió del cajón y hoy está en el banco. Se replica acá porque
+    allá vive inline dentro de `registrar_cuadre_llegada` y no hay función que
+    extraer sin tocar caja.py: si esa fórmula cambia, esta línea cambia en el
+    mismo commit.
+
+    Sin turno abierto manda el `efectivo_final_real` del ÚLTIMO TURNO CERRADO: el
+    conteo físico del cierre. `cerrar_caja` NO crea ningún EntregaTurno —guarda el
+    conteo en la columna del turno (services/caja.py:518)— y el único cierre que
+    deja EntregaTurno es el del kiosko, y solo si hay imagen. Leer "el último
+    EntregaTurno de cualquier tipo" devolvía entonces el cuadre de LLEGADA: la
+    base de la mañana. De noche, con la sede cerrada —justo cuando el dueño mira—
+    una sede que abrió con 100.000 y cerró con 1.000.000 volvía a 100.000 e
+    inventaba un punto de quiebre con alerta roja en el Dashboard.
+
+    El EntregaTurno queda solo como respaldo, para el turno que cerró sin conteo
+    (efectivo_final_real NULL) y para los cierres viejos anteriores a la columna.
+    Ahí no se descuentan consignaciones: el número es un CONTEO FÍSICO y lo que ya
+    se depositó no estaba en el cajón cuando se contó. Restarlo otra vez subestima
+    la caja, que es el error que fabrica quiebres falsos.
+    """
+    turno = db.query(CajaTurno).filter(
+        CajaTurno.tienda_id == tienda_id,
+        CajaTurno.estado == EstadoTurnoEnum.abierto,
+    ).first()
+    if turno is not None:
+        ingresos = db.query(func.sum(MovimientoCaja.valor)).filter(
+            MovimientoCaja.caja_turno_id == turno.id,
+            MovimientoCaja.tipo == "ingreso",
+        ).scalar() or 0.0
+        egresos = db.query(func.sum(MovimientoCaja.valor)).filter(
+            MovimientoCaja.caja_turno_id == turno.id,
+            MovimientoCaja.tipo == "egreso",
+        ).scalar() or 0.0
+        # Deliberado, y la razón es el doble conteo: `Consignacion` no genera
+        # MovimientoCaja, así que la plata ya depositada seguiría contando en la
+        # registradora Y otra vez dentro del `saldo_banco` que declara el dueño.
+        # Solo las REALIZADAS, mismo criterio que abrir_caja (caja.py:257-260).
+        consignado = db.query(func.sum(Consignacion.valor)).filter(
+            Consignacion.caja_turno_id == turno.id,
+            Consignacion.estado == EstadoConsignacionEnum.realizada,
+        ).scalar() or 0.0
+        esperado = (float(turno.base_real or 0) + float(turno.total_efectivo or 0)
+                    + float(ingresos) - float(egresos) - float(consignado))
+        return round(esperado, 2), "turno_abierto"
+
+    # `fecha_cierre.isnot(None)` no es cosmético: SQLite y Postgres ordenan los
+    # NULL al revés en un ORDER BY DESC, así que un turno cerrado sin fecha
+    # (legacy) se colaría como "el último" en un motor y no en el otro.
+    cerrado = db.query(CajaTurno).filter(
+        CajaTurno.tienda_id == tienda_id,
+        CajaTurno.estado == EstadoTurnoEnum.cerrado,
+        CajaTurno.fecha_cierre.isnot(None),
+    ).order_by(CajaTurno.fecha_cierre.desc(), CajaTurno.id.desc()).first()
+    if cerrado is not None and cerrado.efectivo_final_real is not None:
+        return round(float(cerrado.efectivo_final_real), 2), "ultimo_cierre"
+
+    ultima = db.query(EntregaTurno).filter(
+        EntregaTurno.tienda_id == tienda_id,
+    ).order_by(EntregaTurno.fecha_hora.desc(), EntregaTurno.id.desc()).first()
+    if ultima is not None:
+        return round(float(ultima.efectivo_real or 0), 2), "ultimo_cuadre"
+    return 0.0, "sin_datos"
+
+
+def _leer_saldo_banco(db: Session) -> tuple:
+    """(saldo declarado, fecha de la declaración) desde `configuracion`.
+
+    Tolera basura guardada: la fila es TEXTO y un 'inf' o una fecha inválida de
+    otra versión no puede tumbar la pantalla entera del dueño. Ante cualquier
+    duda devuelve 0 / None, que además deja la respuesta marcada desactualizada.
+    """
+    filas = {c.clave: c.valor for c in db.query(Configuracion).filter(
+        Configuracion.clave.in_((CLAVE_SALDO_BANCO, CLAVE_SALDO_BANCO_FECHA))).all()}
+    try:
+        saldo = float(filas.get(CLAVE_SALDO_BANCO) or 0)
+    except (TypeError, ValueError):
+        saldo = 0.0
+    if not math.isfinite(saldo) or saldo < 0 or saldo > SALDO_BANCO_MAX:
+        saldo = 0.0
+    fecha = None
+    crudo = (filas.get(CLAVE_SALDO_BANCO_FECHA) or "").strip()
+    if crudo:
+        try:
+            fecha = date.fromisoformat(crudo)
+        except ValueError:
+            fecha = None
+    return round(saldo, 2), fecha
+
+
+def _caja_hoy(db: Session, hoy: date, tienda_id: int | None) -> dict:
+    """Con cuánta plata arranca la proyección. Dos sumandos, porque el sistema
+    solo conoce uno:
+
+    - el efectivo de cada registradora, que SÍ se deriva de los datos;
+    - el saldo del banco, que es un INPUT DEL DUEÑO. El sistema registra
+      Consignacion (depósitos) pero jamás un saldo bancario: no hay de dónde
+      derivarlo. Si la declaración tiene más de una semana, la respuesta lo dice
+      en vez de mentir.
+
+    DECISIÓN (opción a de la revisión): con `tienda_id` el saldo del banco NO
+    entra al total. La cuenta es de la EMPRESA — una sede no "tiene" el banco— y
+    no hay dato para repartirla entre sedes. Sumarla completa mientras `get_agenda`
+    excluye las obligaciones corporativas (tienda_id NULL) dejaba la serie de la
+    sede SISTEMÁTICAMENTE OPTIMISTA: toda la plata del negocio contra solo una
+    parte de sus salidas, o sea un quiebre real convertido en verde tranquilizador
+    con solo mover el filtro.
+
+    Se descartó la opción (b) —meter las corporativas en la agenda de cada sede—
+    porque no hay forma de repartirlas: sumar las dos sedes contaría el arriendo
+    dos veces y el total dejaría de cuadrar con la agenda global (la misma razón
+    por la que `get_agenda` y `listar_obligaciones` ya las excluyen). Lo que la
+    vista por sede ignora se declara aparte, en `advertencias.excluye_corporativas`.
+
+    El saldo declarado se sigue devolviendo aunque no entre al total: es un dato
+    real que el dueño tiene que poder ver. `saldo_banco_incluido` dice si suma.
+    """
+    q = db.query(Tienda).filter(Tienda.activa == True)  # noqa: E712
+    if tienda_id is not None:
+        q = q.filter(Tienda.id == tienda_id)
+
+    detalle = []
+    efectivo = 0.0
+    for t in q.order_by(Tienda.id).all():
+        monto, origen = _efectivo_en_registradora(db, t.id)
+        efectivo += monto
+        detalle.append({"tienda_id": t.id, "tienda_nombre": t.nombre,
+                        "efectivo": monto, "origen": origen})
+
+    saldo_banco, fecha_banco = _leer_saldo_banco(db)
+    desactualizado = (fecha_banco is None
+                      or (hoy - fecha_banco).days > DIAS_SALDO_BANCO_VIGENTE)
+    incluye_banco = tienda_id is None
+    return {
+        "efectivo_registradora": round(efectivo, 2),
+        "por_tienda": detalle,
+        "saldo_banco": saldo_banco,
+        "saldo_banco_fecha": fecha_banco,
+        "saldo_banco_desactualizado": desactualizado,
+        "saldo_banco_incluido": incluye_banco,
+        "total": round(efectivo + (saldo_banco if incluye_banco else 0.0), 2),
+    }
+
+
+def _venta_esperada_por_dia_semana(db: Session, hoy: date,
+                                   tienda_id: int | None) -> dict:
+    """{día de la semana (0=lunes): venta esperada} — MEDIANA, no promedio.
+
+    Un solo día atípico (un evento, una venta corporativa) movería el promedio y
+    con él TODAS las proyecciones de ese día de semana. La mediana lo ignora, que
+    es exactamente lo que se quiere de una proyección de caja: ser aburrida.
+
+    Ventana: [hoy-56, hoy-1]. Cualquier ventana de 56 días tiene exactamente 8
+    muestras de cada día de la semana. HOY queda fuera a propósito: es un día a
+    medio vender y hundiría la mediana de su propio día de semana.
+
+    Solo se promedian días CON ventas: un lunes cerrado no entra como 0 (no es
+    "vendimos nada", es "no abrimos"), así que no contamina la mediana.
+
+    Sin rezago de cobro: en el POS toda venta se cobra el mismo día — no hay
+    cuentas por cobrar que diferir.
+    """
+    d_utc, h_utc = rango_col_utc(hoy - timedelta(days=SEMANAS_HISTORIA * 7),
+                                 hoy - timedelta(days=1))
+    q = db.query(Ticket.fecha, Ticket.total).filter(
+        Ticket.fecha >= d_utc,
+        Ticket.fecha <= h_utc,
+        Ticket.estado.notin_(("anulado", "reversado")),
+    )
+    if tienda_id is not None:
+        q = q.filter(Ticket.tienda_id == tienda_id)
+
+    por_dia: dict = {}
+    for fecha, total in q.all():
+        if fecha is None:
+            continue
+        # dia_col es Python puro: agrupar por día COLOMBIA en SQL exigiría
+        # funciones de fecha distintas en SQLite y en Postgres.
+        d = dia_col(fecha)
+        por_dia[d] = por_dia.get(d, 0.0) + float(total or 0)
+
+    muestras: dict = {}
+    for d, total in por_dia.items():
+        muestras.setdefault(d.weekday(), []).append(total)
+    return {dow: round(median(vals), 2) for dow, vals in muestras.items()}
+
+
+def _salidas_por_dia(db: Session, hoy: date, dias: int,
+                     tienda_id: int | None) -> dict:
+    """{día: plata que hay que pagar ese día} — REUSA `get_agenda`, no la duplica.
+
+    Así la proyección hereda gratis toda la semántica ya probada de la agenda:
+    la precedencia COALESCE(programada, vencimiento, recibido+plazo), el saldo en
+    vez del total, las obligaciones anuladas y los pagos anulados que devuelven
+    saldo. Una segunda implementación de esas reglas se desincronizaría.
+
+    Todo lo que ya se debe se acumula ENTERO en hoy+1: es plata que se debe AHORA.
+    Repartirla en el horizonte o dejarla fuera haría desaparecer la mora de la
+    proyección justo cuando más importa.
+
+    Lo que vence HOY entra en ese mismo bloque. La serie arranca en hoy+1, así
+    que sin esto un pago de hoy no caería en ningún día y se perdería en silencio.
+
+    Los MovimientoCaja egreso NO se restan acá: son pasado y ya están descontados
+    dentro del efectivo de la registradora (`_efectivo_en_registradora`).
+    """
+    agenda = get_agenda(db, desde=None, hasta=hoy + timedelta(days=dias),
+                        tienda_id=tienda_id)
+    manana = hoy + timedelta(days=1)
+    por_dia: dict = {}
+    for item in agenda["items"]:
+        fecha = item["fecha"]
+        if fecha <= hoy:
+            fecha = manana
+        por_dia[fecha] = round(por_dia.get(fecha, 0.0) + item["monto"], 2)
+    return por_dia
+
+
+def _corporativas_fuera(db: Session, hoy: date, dias: int) -> float:
+    """Plata que la vista de UNA sede no muestra: el saldo de las obligaciones
+    CORPORATIVAS (tienda_id NULL — arriendo, nómina) que vencen en el horizonte.
+
+    Reusa `get_agenda` global y filtra en Python, igual que `_salidas_por_dia`: la
+    semántica de fechas y saldos se hereda en vez de reimplementarse. Las facturas
+    nunca son corporativas (FacturaCompra.tienda_id es NOT NULL), así que este
+    total sale entero de obligaciones.
+    """
+    agenda = get_agenda(db, desde=None, hasta=hoy + timedelta(days=dias),
+                        tienda_id=None)
+    return round(sum(i["monto"] for i in agenda["items"] if i["tienda_id"] is None), 2)
+
+
+def get_flujo_proyectado(db: Session, dias: int = HORIZONTE_DEFAULT,
+                         tienda_id: int | None = None) -> dict:
+    """Serie diaria del saldo proyectado y, sobre todo, el PUNTO DE QUIEBRE: el
+    primer día en que el saldo cruza a negativo, o None si nunca cruza.
+
+    El punto de quiebre es el único número que el dueño realmente necesita: le
+    dice el día en que se queda sin plata ANTES de que pase.
+
+    Con `advertencias` va lo que la serie NO sabe, porque las dos mitades de la
+    fórmula no se ganan igual: las ENTRADAS se derivan solas de cada ticket, pero
+    las SALIDAS existen únicamente si un humano las tecleó (`recurrencia` todavía
+    no genera nada, la compra que no llegó no está, el costo de mercadería aparece
+    recién cuando alguien registra la factura). O sea: la PRESENCIA de un punto de
+    quiebre significa algo; su AUSENCIA, sola, no significa nada. Estos flags son
+    los que le permiten a la pantalla decir "falta información" en vez de vender
+    tranquilidad con un verde.
+    """
+    try:
+        dias = int(dias or HORIZONTE_DEFAULT)
+    except (TypeError, ValueError):
+        dias = HORIZONTE_DEFAULT
+    dias = max(1, min(dias, HORIZONTE_MAX))
+
+    hoy = hoy_col()
+    caja = _caja_hoy(db, hoy, tienda_id)
+    entradas_dow = _venta_esperada_por_dia_semana(db, hoy, tienda_id)
+    salidas_dia = _salidas_por_dia(db, hoy, dias, tienda_id)
+
+    serie = []
+    saldo = caja["total"]
+    quiebre = None
+    total_entradas = total_salidas = 0.0
+    for n in range(1, dias + 1):
+        d = hoy + timedelta(days=n)
+        entradas = entradas_dow.get(d.weekday(), 0.0)
+        salidas = salidas_dia.get(d, 0.0)
+        saldo = round(saldo + entradas - salidas, 2)
+        total_entradas += entradas
+        total_salidas += salidas
+        if quiebre is None and saldo < 0:
+            quiebre = d
+        serie.append({"fecha": d, "entradas": entradas, "salidas": salidas,
+                      "saldo": saldo})
+
+    corporativas_fuera = _corporativas_fuera(db, hoy, dias) if tienda_id else 0.0
+    return {
+        "hoy": hoy,
+        "dias": dias,
+        "tienda_id": tienda_id,
+        "caja_hoy": caja,
+        "serie": serie,
+        "punto_de_quiebre": quiebre,
+        "dias_hasta_quiebre": (quiebre - hoy).days if quiebre else None,
+        "advertencias": {
+            # Solo molesta si el banco de verdad entra al total: filtrando por
+            # sede no suma, y avisar de un dato que no se usa es ruido.
+            "saldo_banco_desactualizado": bool(caja["saldo_banco_incluido"]
+                                               and caja["saldo_banco_desactualizado"]),
+            # Ni una sola salida en el horizonte: casi siempre significa que nadie
+            # cargó las cuentas por pagar, no que no haya nada que pagar.
+            "sin_salidas_cargadas": not salidas_dia,
+            # Sin muestras no hay venta esperada: la serie asume que no entra nada.
+            "sin_historia_ventas": not entradas_dow,
+            # La vista de una sede no ve el arriendo ni la nómina corporativa.
+            "excluye_corporativas": bool(tienda_id and corporativas_fuera > 0),
+            "corporativas_fuera": corporativas_fuera,
+        },
+        "totales": {
+            "entradas": round(total_entradas, 2),
+            "salidas": round(total_salidas, 2),
+            "saldo_final": saldo,
+        },
+    }
+
+
+def guardar_saldo_banco(db: Session, saldo: float, fecha: date,
+                        usuario_id: int) -> dict:
+    """Persiste la declaración del dueño en `configuracion` (dos claves).
+
+    OJO: este servicio asume que el handler ya rechazó inf/NaN/negativos. Se
+    guarda como TEXTO, así que un valor podrido acá envenena toda lectura futura,
+    no solo esta escritura — mismo motivo por el que la meta de ventas se valida
+    antes de tocar la fila (routers/auth.py).
+    """
+    valores = {CLAVE_SALDO_BANCO: str(round(float(saldo), 2)),
+               CLAVE_SALDO_BANCO_FECHA: fecha.isoformat()}
+    filas = {c.clave: c for c in db.query(Configuracion).filter(
+        Configuracion.clave.in_(tuple(valores))).all()}
+    for clave, valor in valores.items():
+        fila = filas.get(clave)
+        if fila is not None:
+            fila.valor = valor
+        else:
+            db.add(Configuracion(clave=clave, valor=valor))
+
+    audit.registrar(
+        db, accion="declarar_saldo_banco", tabla="configuracion",
+        registro_id=None, usuario_id=usuario_id, tienda_id=None,
+        datos_despues={"saldo_banco": round(float(saldo), 2),
+                       "saldo_banco_fecha": fecha},
+    )
+    db.commit()
+    saldo_guardado, fecha_guardada = _leer_saldo_banco(db)
+    return {
+        "saldo_banco": saldo_guardado,
+        "saldo_banco_fecha": fecha_guardada,
+        "saldo_banco_desactualizado": (
+            fecha_guardada is None
+            or (hoy_col() - fecha_guardada).days > DIAS_SALDO_BANCO_VIGENTE),
+    }

@@ -1,14 +1,16 @@
+import math
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_barista_actor, require_admin
+from app.core.tz import hoy_col
 from app.database import get_db
 from app.models.models import Usuario
 from app.schemas.costos import (AdopcionEgresoRequest, ObligacionCreate,
-                                ObligacionUpdate, PagoCreate)
+                                ObligacionUpdate, PagoCreate, SaldoBancoRequest)
 from app.services import costos as svc
 
 router = APIRouter(prefix="/costos", tags=["costos"])
@@ -35,6 +37,54 @@ def agenda(
     lista. Es la unión de dos consultas —la deuda con proveedores sigue viviendo
     solo en facturas_compra—, con el SALDO de cada ítem, no su total."""
     return svc.get_agenda(db, desde=desde, hasta=hasta, tienda_id=tienda_id)
+
+
+@router.get("/flujo")
+def flujo_proyectado(
+    dias: int = Query(svc.HORIZONTE_DEFAULT, ge=1, le=svc.HORIZONTE_MAX),
+    tienda_id: Optional[int] = Query(None, ge=1),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """El día en que se acaba la plata, ANTES de que pase.
+
+    Serie diaria de saldo proyectado = efectivo en caja + saldo del banco
+    declarado, más la venta esperada (MEDIANA por día de semana) y menos lo que
+    hay que pagar. `punto_de_quiebre` es el primer día en negativo, o null.
+
+    Con `tienda_id` la proyección es SOLO de esa sede: el saldo del banco (que es
+    de la empresa) no suma y las obligaciones corporativas quedan fuera, declaradas
+    en `advertencias`. `advertencias` también dice cuándo faltan datos para que la
+    respuesta signifique algo — un null en `punto_de_quiebre` no es un all-clear si
+    nadie cargó las salidas."""
+    return svc.get_flujo_proyectado(db, dias=dias, tienda_id=tienda_id)
+
+
+@router.post("/saldo-banco")
+def declarar_saldo_banco(
+    data: SaldoBancoRequest,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Declara cuánta plata hay en el banco. Es un dato del dueño: el sistema
+    registra consignaciones, nunca un saldo bancario, así que no puede derivarlo.
+
+    La validación va acá y NO en el schema (mismo patrón que la meta de ventas en
+    routers/auth.py): con Field(ge=..) el valor rechazado vuelve dentro del cuerpo
+    del 422 y un `inf` no es serializable a JSON — la respuesta de error revienta.
+    El saldo además se persiste como TEXTO: un inf/NaN guardado rompería toda
+    lectura futura, no solo esta escritura.
+    """
+    if not math.isfinite(data.saldo):
+        raise HTTPException(400, "El saldo del banco debe ser un número válido")
+    if data.saldo < 0:
+        raise HTTPException(400, "El saldo del banco no puede ser negativo")
+    if data.saldo > svc.SALDO_BANCO_MAX:
+        raise HTTPException(400, "El saldo del banco es demasiado grande")
+    fecha = data.fecha or hoy_col()
+    if fecha > hoy_col():
+        raise HTTPException(400, "La fecha del saldo no puede ser futura")
+    return svc.guardar_saldo_banco(db, data.saldo, fecha, admin.id)
 
 
 @router.get("/obligaciones")

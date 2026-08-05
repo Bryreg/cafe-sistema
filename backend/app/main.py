@@ -458,6 +458,38 @@ def _seed_categorias_costo():
 _seed_categorias_costo()
 
 
+def _seed_config_flujo():
+    """Siembra las dos claves del flujo de caja proyectado (Fase 4).
+
+    El saldo del banco es el único término de la proyección que el sistema NO
+    puede derivar: registra Consignacion (los depósitos) pero jamás un saldo
+    bancario. Es un input del dueño, y por eso vive en `configuracion` —la misma
+    tabla key-value del PIN de kiosko— y no en una tabla propia.
+
+    `saldo_banco_fecha` nace VACÍA a propósito: sin declaración, el flujo marca
+    la respuesta como desactualizada en vez de hacer pasar un 0 sembrado por un
+    saldo real de hoy. Idempotente, al estilo de `_seed_kiosk_pin`: solo inserta
+    la clave que falta.
+    """
+    from app.models.models import Configuracion
+    db = SessionLocal()
+    try:
+        existentes = {c.clave for c in db.query(Configuracion).filter(
+            Configuracion.clave.in_(("saldo_banco", "saldo_banco_fecha"))).all()}
+        if "saldo_banco" not in existentes:
+            db.add(Configuracion(clave="saldo_banco", valor="0"))
+        if "saldo_banco_fecha" not in existentes:
+            db.add(Configuracion(clave="saldo_banco_fecha", valor=""))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("Seed config flujo error: %s", e)
+    finally:
+        db.close()
+
+_seed_config_flujo()
+
+
 # ─── Migración de productos reales (idempotente) ───────────────────────────
 def _migrate_productos_reales():
     """

@@ -107,6 +107,53 @@ class ListadoEgresosSinAdoptarOut(BaseModel):
     totales: dict
 
 
+class SaldoBancoRequest(BaseModel):
+    """Saldo bancario declarado por el dueño (Fase 4).
+
+    Es un INPUT, no un cálculo: el sistema registra Consignacion (depósitos) pero
+    nunca un saldo bancario, así que no puede derivarlo.
+
+    SIN restricciones de pydantic a propósito (nada de Field(ge=0) ni
+    allow_inf_nan=False): un valor rechazado por el schema vuelve DENTRO del
+    cuerpo del 422, y un `inf` no es serializable a JSON — la propia respuesta de
+    error revienta. La validación vive en el handler y responde 400 con un texto.
+    """
+    saldo: float
+    # Cuándo se miró ese saldo. None = hoy. Sirve para declarar el saldo del
+    # extracto del viernes un lunes, sin que el dato aparente ser de hoy.
+    fecha: Optional[date] = None
+
+
+class SaldoBancoOut(BaseModel):
+    saldo_banco: float
+    saldo_banco_fecha: Optional[date]
+    # True = la declaración tiene más de una semana. Se dice en vez de mentir.
+    saldo_banco_desactualizado: bool
+
+
+class PuntoFlujoOut(BaseModel):
+    fecha: date
+    entradas: float          # venta esperada = MEDIANA del mismo día de semana
+    salidas: float           # saldo de facturas + obligaciones que vencen ese día
+    saldo: float             # acumulado desde caja_hoy
+
+
+class FlujoProyectadoOut(BaseModel):
+    hoy: date
+    dias: int
+    tienda_id: Optional[int]
+    caja_hoy: dict
+    serie: List[PuntoFlujoOut]
+    # El día en que se acaba la plata. None = la serie nunca cruza cero.
+    punto_de_quiebre: Optional[date]
+    dias_hasta_quiebre: Optional[int]
+    # Lo que la serie NO sabe: sin salidas cargadas, sin historia de ventas, saldo
+    # del banco viejo o corporativas fuera de una vista por sede. Sin esto, la
+    # ausencia de punto de quiebre se leería como "estás bien" y no lo dice nadie.
+    advertencias: dict
+    totales: dict
+
+
 class ObligacionOut(BaseModel):
     id: int
     tienda_id: Optional[int]

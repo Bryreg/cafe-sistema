@@ -4,7 +4,7 @@ import api from '../api/client'
 import {
   BarChart3, TrendingUp, TrendingDown, ShoppingCart, Package,
   AlertTriangle, Download, RefreshCw, Layers, Store, Banknote,
-  Wallet, Check, ChevronRight, Inbox, Sparkles, Cake,
+  Wallet, Check, ChevronRight, Inbox, Sparkles, Cake, AlertCircle,
 } from 'lucide-react'
 // Hora LOCAL (Colombia): toISOString es UTC y despues de las 19:00 devuelve manana,
 // haciendo que el panel consulte un dia futuro y muestre todo en cero.
@@ -297,6 +297,12 @@ export default function Dashboard() {
   const [descuadres, setDescuadres] = useState<DescuadresResumen | null>(null)
   const [lotesVencer, setLotesVencer] = useState<LoteVencer[]>([])
   const [solicitudesPend, setSolicitudesPend] = useState(0)
+  // Flujo proyectado: el día en que se acaba la plata. Solo se muestra si EXISTE
+  // (null = la proyección nunca cruza cero, y entonces no hay nada que atender).
+  const [quiebre, setQuiebre] = useState<{ fecha: string; dias: number } | null>(null)
+  // Y lo que la proyección NO sabe. Sin esto, la AUSENCIA de quiebre se leería
+  // como "estás bien" cuando en realidad puede ser "nadie cargó los pagos".
+  const [faltaFlujo, setFaltaFlujo] = useState<string[]>([])
 
   // ── Banda 3 ──
   const [resumen, setResumen] = useState<Resumen | null>(null)
@@ -468,6 +474,27 @@ export default function Dashboard() {
     // Lotes por vencer.
     api.get('/inventario/lotes-trazabilidad', { params: { estado: 'por_vencer', ...paramsSede } })
       .then(r => setLotesVencer((r.data ?? []).slice(0, 10))).catch(() => setLotesVencer([]))
+
+    // Punto de quiebre del flujo proyectado — el único dato del panel que habla
+    // del futuro. Sin quiebre no se muestra la tarjeta roja: no hay nada que
+    // atender. Pero si a la proyección le faltan datos, eso SÍ hay que atenderlo:
+    // un panel silencioso equivale a decir "todo bien", y nadie lo verificó.
+    api.get('/costos/flujo', { params: { dias: 30, ...paramsSede } })
+      .then(r => {
+        const f = r.data?.punto_de_quiebre
+        setQuiebre(f ? { fecha: f, dias: r.data?.dias_hasta_quiebre ?? 0 } : null)
+        const a = r.data?.advertencias
+        const falta: string[] = []
+        if (a?.sin_salidas_cargadas) falta.push('no hay pagos cargados')
+        if (a?.sin_historia_ventas) falta.push('no hay ventas para estimar lo que entra')
+        if (a?.excluye_corporativas) falta.push('esta sede no incluye los gastos corporativos')
+        if (a?.saldo_banco_desactualizado) falta.push(
+          r.data?.caja_hoy?.saldo_banco_fecha
+            ? 'el saldo del banco está viejo'
+            : 'falta el saldo del banco')
+        setFaltaFlujo(falta)
+      })
+      .catch(() => { setQuiebre(null); setFaltaFlujo([]) })
   }, [sedeId, sedes])
 
   // ── Banda 3: análisis (deps: periodo, sedeId) ──
@@ -589,7 +616,10 @@ export default function Dashboard() {
   const haySolicitudes = solicitudesPend > 0
   const hayDescuadres = (descuadres?.con_diferencia ?? 0) > 0
   const hayLotes = lotesVencer.length > 0
+  const hayQuiebre = quiebre !== null
+  const faltaInfoFlujo = faltaFlujo.length > 0
   const hayAlgo = hayStock || hayConsign || hayPagos || hayDescuadres || hayLotes
+    || hayQuiebre || faltaInfoFlujo
 
   // ─── Derived — Banda 3 ──
   const ventasPorSedeFiltradas = sedeId === null
@@ -744,6 +774,30 @@ export default function Dashboard() {
       <BandLabel label="Requiere tu atención" />
       {hayAlgo ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(178px, 1fr))', gap: 10, marginBottom: 22 }}>
+          {/* Va primero: es lo único que avisa ANTES de que pase. */}
+          {hayQuiebre && (
+            <AlertCard
+              icon={TrendingDown}
+              primary={`${quiebre!.dias} día${quiebre!.dias !== 1 ? 's' : ''}`}
+              label={`hasta quedarte sin plata · ${new Date(quiebre!.fecha + 'T00:00:00')
+                .toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}`}
+              severity="danger"
+              ctaLabel="Ver flujo"
+              to="/costos"
+            />
+          )}
+          {/* El silencio no es un all-clear: si a la proyección le faltan datos, se
+              dice qué falta en vez de dejar que el panel vacío hable por ella. */}
+          {faltaInfoFlujo && (
+            <AlertCard
+              icon={AlertCircle}
+              primary="Falta info"
+              label={`para proyectar la plata: ${faltaFlujo.join(' · ')}`}
+              severity="warning"
+              ctaLabel="Completar"
+              to="/costos"
+            />
+          )}
           {hayStock && (
             <AlertCard
               icon={AlertTriangle}

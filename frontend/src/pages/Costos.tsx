@@ -4,6 +4,7 @@ import { conMiles, soloDigitos } from '../utils/plata'
 import {
   Wallet, Plus, X, Building2, CheckCircle, Clock, AlertCircle,
   Trash2, Receipt, CalendarClock, CalendarDays, Truck, Inbox, Tag,
+  TrendingDown, Landmark, Pencil,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -60,6 +61,52 @@ interface Bandeja {
   egresos: EgresoSuelto[]
   totales: { monto: number; n: number }
 }
+// Flujo proyectado: el día en que se acaba la plata, ANTES de que pase.
+// saldo(D) = caja de hoy + venta esperada acumulada − lo que hay que pagar.
+interface PuntoFlujo {
+  fecha: string
+  entradas: number                 // venta esperada = MEDIANA del mismo día de semana
+  salidas: number                  // saldo de facturas + obligaciones que vencen ese día
+  saldo: number                    // acumulado desde la caja de hoy
+}
+interface CajaHoy {
+  efectivo_registradora: number
+  por_tienda: { tienda_id: number; tienda_nombre: string; efectivo: number; origen: string }[]
+  // Dato del DUEÑO, no del sistema: acá se registran consignaciones, nunca un saldo bancario.
+  saldo_banco: number
+  saldo_banco_fecha: string | null
+  saldo_banco_desactualizado: boolean
+  // false filtrando por sede: la cuenta es de la empresa, no de la sede.
+  saldo_banco_incluido: boolean
+  total: number
+}
+// Lo que la proyección NO sabe. Las entradas se derivan solas de cada ticket, pero
+// las salidas existen solo si alguien las tecleó: la PRESENCIA de un punto de
+// quiebre significa algo, su AUSENCIA sola no significa nada.
+interface AdvertenciasFlujo {
+  saldo_banco_desactualizado: boolean
+  sin_salidas_cargadas: boolean
+  sin_historia_ventas: boolean
+  excluye_corporativas: boolean
+  corporativas_fuera: number
+}
+interface Flujo {
+  hoy: string
+  dias: number
+  caja_hoy: CajaHoy
+  serie: PuntoFlujo[]
+  punto_de_quiebre: string | null  // null = la proyección nunca cruza cero
+  dias_hasta_quiebre: number | null
+  advertencias: AdvertenciasFlujo
+  totales: { entradas: number; salidas: number; saldo_final: number }
+}
+
+const ORIGEN_CAJA: Record<string, string> = {
+  turno_abierto: 'turno abierto',
+  ultimo_cierre: 'conteo del cierre',   // el dato bueno con la sede cerrada
+  ultimo_cuadre: 'último cuadre',       // respaldo: turno cerrado sin conteo
+  sin_datos: 'sin datos',
+}
 
 const fmt = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO')
 const fecha = (s: string | null) => (s ? new Date(s + 'T00:00:00').toLocaleDateString('es-CO') : '—')
@@ -94,14 +141,21 @@ const ESTADO: Record<string, { label: string; cls: string; Icon: typeof CheckCir
 const CORPORATIVO = 'corp'
 
 export default function Costos() {
-  const [vista, setVista] = useState<'obligaciones' | 'agenda' | 'sinCategorizar'>('agenda')
+  const [vista, setVista] = useState<'obligaciones' | 'agenda' | 'sinCategorizar' | 'flujo'>('agenda')
   const [categorias, setCategorias] = useState<Categoria[]>([])
   const [tiendas, setTiendas] = useState<Tienda[]>([])
   const [data, setData] = useState<Listado | null>(null)
   const [agenda, setAgenda] = useState<Agenda | null>(null)
   const [bandeja, setBandeja] = useState<Bandeja | null>(null)
+  const [flujo, setFlujo] = useState<Flujo | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  // editor del saldo del banco (input del dueño: el sistema no puede derivarlo)
+  const [bancoAbierto, setBancoAbierto] = useState(false)
+  const [bSaldo, setBSaldo] = useState('')
+  const [bFecha, setBFecha] = useState(hoyISO())
+  const [bError, setBError] = useState('')
 
   // filtros
   const [sede, setSede] = useState<string>('')          // '' = todas · 'corp' · id de tienda
@@ -187,9 +241,22 @@ export default function Costos() {
       .finally(() => setLoading(false))
   }
 
+  // El flujo NO usa el rango de fechas del header: su eje es siempre "de hoy en
+  // adelante". Un rango que empiece ayer no significaría nada para una proyección.
+  const cargarFlujo = () => {
+    setLoading(true); setError('')
+    const params: Record<string, string | number> = { dias: 30 }
+    if (sede && sede !== CORPORATIVO) params.tienda_id = Number(sede)
+    api.get<Flujo>('/costos/flujo', { params })
+      .then(r => setFlujo(r.data))
+      .catch(e => { setFlujo(null); setError(e.response?.data?.detail || 'No se pudo cargar el flujo') })
+      .finally(() => setLoading(false))
+  }
+
   useEffect(() => {
     if (vista === 'agenda') cargarAgenda()
     else if (vista === 'sinCategorizar') cargarBandeja()
+    else if (vista === 'flujo') cargarFlujo()
     else cargar()
   }, [vista, sede, fCategoria, fEstado, desde, hasta])
 
@@ -218,6 +285,54 @@ export default function Costos() {
   }, [agenda])
 
   const semanaActual = lunesDe(hoyISO())
+
+  // Escala del gráfico: el mayor valor absoluto de la serie. Con una escala solo
+  // sobre los positivos, un saldo muy negativo se saldría del cajón y el día del
+  // quiebre —lo único que importa acá— se vería como una barrita cualquiera.
+  const escalaFlujo = useMemo(() => {
+    const vals = (flujo?.serie ?? []).map(p => Math.abs(p.saldo))
+    return Math.max(1, ...vals)
+  }, [flujo])
+  // Solo los días con movimiento: 30 filas de ceros esconden las 4 que importan.
+  const diasConMovimiento = useMemo(
+    () => (flujo?.serie ?? []).filter(p => p.entradas > 0 || p.salidas > 0),
+    [flujo])
+
+  // Lo que le falta a la proyección para significar algo. Se arma en UN solo lugar
+  // porque el mismo listado gobierna el color del banner y su texto: sin salidas
+  // cargadas, un verde estaría afirmando una seguridad que nadie verificó.
+  type Faltante = { titulo: string; detalle: string; banco?: boolean }
+  const faltantes = useMemo<Faltante[]>(() => {
+    const a = flujo?.advertencias
+    if (!flujo || !a) return []
+    const items: Faltante[] = []
+    if (a.sin_salidas_cargadas) items.push({
+      titulo: `No hay pagos cargados en los próximos ${flujo.dias} días`,
+      detalle: 'Si tenés cuentas por pagar —arriendo, nómina, proveedores—, cargalas para que '
+        + 'esta proyección signifique algo. Como está, solo sabe de la plata que entra.',
+    })
+    if (a.sin_historia_ventas) items.push({
+      titulo: 'No hay ventas de las últimas 8 semanas para estimar lo que entra',
+      detalle: 'La proyección está asumiendo que no entra un peso. Con ventas registradas, cada '
+        + 'día toma la mediana de su mismo día de la semana.',
+    })
+    if (a.excluye_corporativas) items.push({
+      titulo: `Esta sede no incluye ${fmt(a.corporativas_fuera)} de gastos corporativos`,
+      detalle: 'El arriendo y la nómina no pertenecen a ninguna sede, así que quedan afuera — y '
+        + 'el saldo del banco tampoco suma acá, porque la cuenta es de la empresa. Sacá el filtro '
+        + 'de sede para ver el negocio completo.',
+    })
+    if (a.saldo_banco_desactualizado) items.push({
+      titulo: flujo.caja_hoy.saldo_banco_fecha
+        ? `El saldo del banco es del ${fecha(flujo.caja_hoy.saldo_banco_fecha)}`
+        : 'Todavía no cargaste el saldo del banco',
+      detalle: 'El sistema registra las consignaciones pero nunca el saldo de la cuenta: ese '
+        + 'número lo tenés que mirar vos. Mientras esté viejo, la proyección arranca de una plata '
+        + 'que puede no ser la que hay.',
+      banco: true,
+    })
+    return items
+  }, [flujo])
 
   const limpiarNueva = () => {
     setNConcepto(''); setNBeneficiario(''); setNMonto('')
@@ -278,6 +393,25 @@ export default function Costos() {
     catch (e: any) { alert(e.response?.data?.detail || 'No se pudo anular el pago') }
   }
 
+  const abrirEditorBanco = () => {
+    setBSaldo(String(Math.round(flujo?.caja_hoy.saldo_banco ?? 0)))
+    setBFecha(hoyISO())
+    setBError('')
+    setBancoAbierto(true)
+  }
+
+  const guardarSaldoBanco = async () => {
+    const saldo = Number(bSaldo)
+    if (!Number.isFinite(saldo) || saldo < 0) { setBError('Poné un saldo válido (0 o más)'); return }
+    setGuardando(true); setBError('')
+    try {
+      await api.post('/costos/saldo-banco', { saldo, fecha: bFecha })
+      setBancoAbierto(false); cargarFlujo()
+    } catch (e: any) {
+      setBError(e.response?.data?.detail || 'No se pudo guardar. Reintentá.')
+    } finally { setGuardando(false) }
+  }
+
   const abrirPago = (o: Obligacion) => {
     setPagoDe(o); setPMonto(String(Math.round(o.saldo)))
     setPFecha(hoyISO()); setPMetodo('transferencia'); setPNota(''); setPError('')
@@ -317,13 +451,16 @@ export default function Costos() {
           <h1 className="text-lg font-bold text-gray-800">Costos</h1>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-            title={vista === 'agenda' ? 'Pagos desde' : 'Devengo desde'}
-            className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
-          <span className="text-gray-400 text-sm">→</span>
-          <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
-            title={vista === 'agenda' ? 'Pagos hasta' : 'Devengo hasta'}
-            className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
+          {/* El flujo no lleva rango: su eje es siempre "de hoy en adelante". */}
+          {vista !== 'flujo' && (<>
+            <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
+              title={vista === 'agenda' ? 'Pagos desde' : 'Devengo desde'}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
+            <span className="text-gray-400 text-sm">→</span>
+            <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
+              title={vista === 'agenda' ? 'Pagos hasta' : 'Devengo hasta'}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
+          </>)}
           <button onClick={() => { limpiarNueva(); setNuevaAbierta(true) }}
             className="flex items-center gap-1.5 text-sm font-bold text-white bg-forest hover:bg-forest-700 px-3 py-1.5 rounded-lg">
             <Plus size={15} /> Nueva obligación
@@ -334,6 +471,7 @@ export default function Costos() {
       {/* Vistas: la agenda mezcla proveedores + costos fijos; la lista es solo costos fijos */}
       <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1 w-fit">
         {[{ v: 'agenda' as const, l: 'Agenda de pagos', Icon: CalendarDays },
+          { v: 'flujo' as const, l: 'Flujo proyectado', Icon: TrendingDown },
           { v: 'obligaciones' as const, l: 'Obligaciones', Icon: Receipt },
           { v: 'sinCategorizar' as const, l: 'Egresos sin categorizar', Icon: Inbox }].map(op => (
           <button key={op.v}
@@ -440,6 +578,201 @@ export default function Costos() {
                 </p>
               </div>
             )}
+          </div>
+        </>
+      )}
+
+      {/* ─── FLUJO PROYECTADO ───────────────────────────────────────────────── */}
+      {vista === 'flujo' && !loading && flujo && (
+        <>
+          {/* Punto de quiebre: es EL número de esta pantalla, así que va primero
+              y ocupa el ancho — no una tarjetita más en una grilla de cuatro.
+
+              Tres estados, no dos: rojo (hay quiebre), ÁMBAR (no hay quiebre pero
+              faltan datos para afirmar nada) y verde (no hay quiebre y los datos
+              están). El verde solo aparece cuando de verdad se puede sostener. */}
+          <div className={`rounded-2xl border p-4 ${
+            flujo.punto_de_quiebre ? 'border-red-200 bg-red-50'
+              : faltantes.length > 0 ? 'border-amber-200 bg-amber-50'
+              : 'border-green-200 bg-green-50'
+          }`}>
+            <div className="flex items-start gap-3">
+              {flujo.punto_de_quiebre
+                ? <TrendingDown size={22} className="text-red-600 mt-0.5 shrink-0" />
+                : faltantes.length > 0
+                ? <AlertCircle size={22} className="text-amber-600 mt-0.5 shrink-0" />
+                : <CheckCircle size={22} className="text-green-600 mt-0.5 shrink-0" />}
+              <div className="min-w-0">
+                {flujo.punto_de_quiebre ? (<>
+                  <p className="text-sm font-bold text-red-700">
+                    Te quedás sin plata el {fecha(flujo.punto_de_quiebre)}
+                    {flujo.dias_hasta_quiebre != null && (
+                      <span className="font-semibold"> — en {flujo.dias_hasta_quiebre} día{flujo.dias_hasta_quiebre !== 1 ? 's' : ''}</span>
+                    )}
+                  </p>
+                  <p className="text-xs text-red-600/90 mt-0.5 leading-relaxed">
+                    Con lo que hay en caja hoy, lo que se espera vender y lo que hay que pagar,
+                    ese día el saldo se va a negativo. Movés la fecha pagando algo más tarde
+                    o consiguiendo plata antes.
+                  </p>
+                </>) : faltantes.length > 0 ? (<>
+                  <p className="text-sm font-bold text-amber-800">
+                    Falta información para saber si estás bien
+                  </p>
+                  <p className="text-xs text-amber-700/90 mt-0.5 leading-relaxed">
+                    La proyección no encontró ningún día en rojo, pero eso no alcanza para
+                    afirmar nada: lo que entra lo calcula sola con tus ventas, lo que sale
+                    solo existe si alguien lo cargó. Esto es lo que falta:
+                  </p>
+                </>) : (<>
+                  <p className="text-sm font-bold text-green-700">
+                    No te quedás sin plata en los próximos {flujo.dias} días
+                  </p>
+                  <p className="text-xs text-green-700/80 mt-0.5">
+                    El saldo proyectado nunca cruza cero. Terminás el período con {fmt(flujo.totales.saldo_final)}.
+                  </p>
+                </>)}
+              </div>
+            </div>
+          </div>
+
+          {/* Lo que falta va acá arriba y no al pie: enterrarlo es exactamente lo
+              que convierte un "no sé" en un "estás bien". */}
+          {faltantes.map((f, i) => (
+            <div key={i}
+              className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <AlertCircle size={16} className="text-amber-700 mt-0.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-amber-800">{f.titulo}</p>
+                <p className="text-xs text-amber-700/90 mt-0.5 leading-relaxed">{f.detalle}</p>
+              </div>
+              {f.banco && (
+                <button onClick={abrirEditorBanco}
+                  className="shrink-0 flex items-center gap-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 px-3 py-1.5 rounded-lg">
+                  <Pencil size={12} /> Actualizar
+                </button>
+              )}
+            </div>
+          ))}
+
+          {/* Con cuánta plata arranca la proyección */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Plata hoy</p>
+              <p className="text-xl font-bold text-gray-800 font-mono">{fmt(flujo.caja_hoy.total)}</p>
+              <p className="text-xs text-gray-400">
+                {flujo.caja_hoy.saldo_banco_incluido ? 'Caja + banco' : 'Solo la caja de esta sede'}
+              </p>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">En la registradora</p>
+              <p className="text-xl font-bold text-gray-800 font-mono">{fmt(flujo.caja_hoy.efectivo_registradora)}</p>
+              <div className="space-y-0.5 mt-1">
+                {flujo.caja_hoy.por_tienda.map(t => (
+                  <div key={t.tienda_id} className="flex items-center justify-between text-[11px]">
+                    <span className="text-gray-500 truncate">{t.tienda_nombre}</span>
+                    <span className="font-mono text-gray-600 shrink-0 ml-2">
+                      {fmt(t.efectivo)} <span className="text-gray-400">· {ORIGEN_CAJA[t.origen] ?? t.origen}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <button onClick={abrirEditorBanco}
+              className="bg-white rounded-2xl border border-gray-200 p-4 text-left hover:border-forest transition-colors">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1 flex items-center gap-1">
+                <Landmark size={12} /> En el banco
+              </p>
+              <p className={`text-xl font-bold font-mono ${
+                flujo.caja_hoy.saldo_banco_desactualizado && flujo.caja_hoy.saldo_banco_incluido
+                  ? 'text-amber-600'
+                  : !flujo.caja_hoy.saldo_banco_incluido ? 'text-gray-400' : 'text-gray-800'}`}>
+                {fmt(flujo.caja_hoy.saldo_banco)}
+              </p>
+              <p className="text-xs text-gray-400 flex items-center gap-1">
+                {flujo.caja_hoy.saldo_banco_fecha
+                  ? `Declarado el ${fecha(flujo.caja_hoy.saldo_banco_fecha)}`
+                  : 'Sin declarar'}
+                <Pencil size={10} />
+              </p>
+              {/* La cuenta es de la empresa: en la vista de una sede se muestra
+                  pero NO suma, y decirlo acá evita leer un total que no existe. */}
+              {!flujo.caja_hoy.saldo_banco_incluido && (
+                <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">
+                  No entra en esta vista: la cuenta es de la empresa, no de la sede
+                </p>
+              )}
+            </button>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Próximos {flujo.dias} días</p>
+              <p className="text-sm font-mono font-bold text-green-700">+ {fmt(flujo.totales.entradas)}</p>
+              <p className="text-sm font-mono font-bold text-red-600">− {fmt(flujo.totales.salidas)}</p>
+              <p className="text-xs text-gray-400 mt-0.5">Entra / sale</p>
+            </div>
+          </div>
+
+          {/* Serie diaria. Barras hacia abajo = saldo negativo. */}
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <p className="text-sm font-bold text-gray-700 mb-3">Saldo proyectado día a día</p>
+            <div className="flex items-stretch gap-[3px] overflow-x-auto pb-1" style={{ minHeight: 132 }}>
+              {flujo.serie.map(p => {
+                const alto = Math.round((Math.abs(p.saldo) / escalaFlujo) * 56)
+                const neg = p.saldo < 0
+                const esQuiebre = p.fecha === flujo.punto_de_quiebre
+                return (
+                  <div key={p.fecha} className="flex flex-col items-center justify-center flex-1 min-w-[13px]"
+                    title={`${fecha(p.fecha)}\nSaldo: ${fmt(p.saldo)}\nEntra: ${fmt(p.entradas)}\nSale: ${fmt(p.salidas)}`}>
+                    <div className="flex flex-col justify-end" style={{ height: 60 }}>
+                      {!neg && <div className="w-full rounded-t"
+                        style={{ height: alto, minHeight: 2, background: esQuiebre ? '#dc2626' : '#5c7a4e' }} />}
+                    </div>
+                    <div className="w-full border-t border-gray-200" />
+                    <div className="flex flex-col justify-start" style={{ height: 60 }}>
+                      {neg && <div className="w-full rounded-b"
+                        style={{ height: alto, minHeight: 2, background: esQuiebre ? '#dc2626' : '#f87171' }} />}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-gray-400 mt-1">
+              <span>{fecha(flujo.serie[0]?.fecha ?? null)}</span>
+              <span>{fecha(flujo.serie[flujo.serie.length - 1]?.fecha ?? null)}</span>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">
+              La venta esperada de cada día es la <b>mediana</b> del mismo día de la semana en las
+              últimas 8 semanas — no el promedio, para que un solo día raro no infle la proyección.
+              Todo lo que ya está vencido se carga entero a mañana: se debe ahora.
+            </p>
+          </div>
+
+          {/* Detalle de los días que mueven la aguja */}
+          <div className="bg-white rounded-2xl border border-gray-200">
+            <p className="text-sm font-bold text-gray-700 px-4 py-2.5 border-b border-gray-100">
+              Días con movimiento
+            </p>
+            <div className="divide-y divide-gray-50">
+              {diasConMovimiento.map(p => (
+                <div key={p.fecha}
+                  className={`flex items-center gap-3 px-4 py-2.5 ${p.fecha === flujo.punto_de_quiebre ? 'bg-red-50/60' : ''}`}>
+                  <span className="text-xs text-gray-500 w-24 shrink-0">{fecha(p.fecha)}</span>
+                  <span className="font-mono text-xs text-green-700 w-24 shrink-0 text-right">
+                    {p.entradas > 0 ? `+ ${fmt(p.entradas)}` : ''}
+                  </span>
+                  <span className="font-mono text-xs text-red-600 w-24 shrink-0 text-right">
+                    {p.salidas > 0 ? `− ${fmt(p.salidas)}` : ''}
+                  </span>
+                  <span className={`font-mono text-sm font-bold ml-auto ${p.saldo < 0 ? 'text-red-600' : 'text-gray-800'}`}>
+                    {fmt(p.saldo)}
+                  </span>
+                </div>
+              ))}
+              {diasConMovimiento.length === 0 && (
+                <p className="px-4 py-8 text-center text-sm text-gray-500">
+                  No hay ni ventas esperadas ni pagos agendados en el período
+                </p>
+              )}
+            </div>
           </div>
         </>
       )}
@@ -747,6 +1080,43 @@ export default function Costos() {
             <button onClick={adoptarEgreso} disabled={guardando || !aCategoria || !aDevengo}
               className="w-full bg-forest hover:bg-forest-700 disabled:opacity-40 text-white font-bold py-3 rounded-xl text-sm">
               {guardando ? 'Guardando...' : 'Adoptar como obligación'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal saldo del banco */}
+      {bancoAbierto && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setBancoAbierto(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-4" onClick={ev => ev.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-gray-800 flex items-center gap-2"><Landmark size={17} /> Saldo del banco</h2>
+              <button onClick={() => setBancoAbierto(false)} className="text-gray-400"><X size={18} /></button>
+            </div>
+            <p className="text-xs text-gray-500 leading-relaxed">
+              Abrí la app del banco y copiá el saldo de la cuenta. El sistema registra las
+              consignaciones que hacen las baristas, pero no tiene forma de saber cuánta plata
+              hay en la cuenta: sin este dato la proyección arranca incompleta.
+            </p>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Saldo</label>
+              <input type="text" inputMode="numeric" value={conMiles(bSaldo)}
+                onChange={ev => setBSaldo(soloDigitos(ev.target.value))}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-lg font-bold font-mono focus:outline-none focus:border-forest" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">¿De qué día es?</label>
+              <input type="date" value={bFecha} max={hoyISO()} onChange={ev => setBFecha(ev.target.value)}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-forest" />
+              <p className="text-[11px] text-gray-400 mt-1">
+                Si el saldo es del extracto del viernes, poné el viernes. Pasada una semana
+                la proyección te avisa que el dato está viejo.
+              </p>
+            </div>
+            {bError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{bError}</p>}
+            <button onClick={guardarSaldoBanco} disabled={guardando || !bFecha}
+              className="w-full bg-forest hover:bg-forest-700 disabled:opacity-40 text-white font-bold py-3 rounded-xl text-sm">
+              {guardando ? 'Guardando...' : 'Guardar saldo'}
             </button>
           </div>
         </div>

@@ -15,13 +15,18 @@ desincronizar de los movimientos que la originaron.
 from datetime import date, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, not_, or_
 from sqlalchemy.orm import Session
 
-from app.core.tz import dia_col, hoy_col
-from app.models.models import (CostoCategoria, FacturaCompra, Obligacion, Pago,
-                               Tienda)
+from app.core.tz import dia_col, hoy_col, rango_col_utc
+from app.models.models import (CajaTurno, CostoCategoria, FacturaCompra,
+                               MovimientoCaja, Obligacion, Pago, Tienda,
+                               TipoMovCajaEnum)
 from app.services import audit
+# La lista de conceptos reservados que services/facturas.py escribe para los pagos
+# a proveedor vive en rentabilidad.py y se REUSA, no se copia: si allá cambia, acá
+# tiene que cambiar en el mismo commit o el anti-doble-conteo se abre un agujero.
+from app.services.rentabilidad import _CONCEPTOS_COMPRA
 
 METODOS_PAGO = {"efectivo", "transferencia", "tarjeta", "cheque", "otro"}
 RECURRENCIAS = {"mensual", "quincenal", "semanal"}
@@ -109,6 +114,8 @@ def _serializar_pago(p: Pago) -> dict:
         "monto": round(float(p.monto or 0), 2),
         "fecha_pago": p.fecha_pago,
         "metodo": p.metodo,
+        # Con valor = el pago es el espejo de un egreso de caja adoptado (Fase 3).
+        "movimiento_caja_id": p.movimiento_caja_id,
         "imagen_soporte_url": p.imagen_soporte_url,
         "nota": p.nota,
         "anulado": bool(p.anulado),
@@ -513,6 +520,199 @@ def anular_pago(db: Session, pago_id: int, usuario_id: int, motivo: str | None =
         db.commit()
         db.refresh(pago)
     return _serializar_pago(pago)
+
+
+# ── Adopción de egresos históricos (Fase 3) ─────────────────────────────────
+#
+# Los gastos fijos que YA se registraron como egreso suelto de caja ("Arriendo
+# local", texto libre) se pueden ADOPTAR: nace una Obligacion devengada y un Pago
+# espejo con `movimiento_caja_id`. El MovimientoCaja NO SE TOCA NI SE BORRA — el
+# cuadre del turno tiene que seguir dando exactamente lo mismo.
+#
+# La plata cambia de bolsa, no de tamaño: el P&L excluye los movimientos adoptados
+# de la query de gastos y suma las obligaciones devengadas. Las dos mitades son
+# inseparables; con una sola, el total de gastos se movería.
+
+
+def _es_egreso_de_compra(db: Session, movimiento_id: int) -> bool:
+    """¿El concepto matchea un patrón reservado de pago a proveedor? Se evalúa con
+    el MISMO `LIKE` en SQL que usa el P&L, no con una reimplementación en Python:
+    dos motores de match distintos se desincronizan en el primer caso raro."""
+    return db.query(MovimientoCaja.id).filter(
+        MovimientoCaja.id == movimiento_id,
+        or_(*[MovimientoCaja.concepto.like(p) for p in _CONCEPTOS_COMPRA]),
+    ).first() is not None
+
+
+def _query_egresos_adoptables(db: Session):
+    """Egresos de caja que PODRÍAN adoptarse: los mismos que el P&L cuenta hoy como
+    gasto de texto libre. Excluye lo ligado a compras por las dos vías (factura_id
+    estructural + concepto reservado histórico)."""
+    return (
+        db.query(MovimientoCaja, CajaTurno.tienda_id)
+        .join(CajaTurno, MovimientoCaja.caja_turno_id == CajaTurno.id)
+        .filter(
+            MovimientoCaja.tipo == TipoMovCajaEnum.egreso,
+            MovimientoCaja.factura_id.is_(None),
+            not_(or_(*[MovimientoCaja.concepto.like(p) for p in _CONCEPTOS_COMPRA])),
+        )
+    )
+
+
+def _subquery_adoptados(db: Session):
+    """movimiento_caja_id de los pagos VIVOS. Se usa como SUBCONSULTA y nunca como
+    lista de ids: en una caja con años de movimientos, un `IN (...)` explícito
+    revienta el tope de variables de SQLite."""
+    return (db.query(Pago.movimiento_caja_id)
+              .filter(Pago.movimiento_caja_id.isnot(None), Pago.anulado.is_(False))
+              .distinct().subquery())
+
+
+def listar_egresos_sin_adoptar(db: Session, *, desde: date | None = None,
+                               hasta: date | None = None,
+                               tienda_id: int | None = None,
+                               limite: int = 200) -> dict:
+    """Bandeja de "egresos sin categorizar": lo que el P&L todavía muestra como texto
+    libre. Solo lectura — adoptar es una acción aparte y explícita."""
+    d_utc, h_utc = rango_col_utc(desde or (hoy_col() - timedelta(days=90)), hasta)
+    adoptados = _subquery_adoptados(db)
+    q = _query_egresos_adoptables(db).filter(
+        MovimientoCaja.fecha >= d_utc,
+        MovimientoCaja.fecha <= h_utc,
+        MovimientoCaja.id.notin_(db.query(adoptados.c.movimiento_caja_id)),
+    )
+    if tienda_id is not None:
+        q = q.filter(CajaTurno.tienda_id == tienda_id)
+    filas = q.order_by(MovimientoCaja.fecha.desc(), MovimientoCaja.id.desc()).limit(
+        max(1, min(int(limite or 200), 500))).all()
+
+    tiendas = {t.id: t.nombre for t in db.query(Tienda).all()}
+    egresos = [{
+        "id": mov.id,
+        "concepto": mov.concepto,
+        "valor": round(float(mov.valor or 0), 2),
+        # El día de NEGOCIO en que se tecleó. Es el devengo por defecto y también lo
+        # que la UI muestra para que el admin decida si hay que corregirlo.
+        "fecha": dia_col(mov.fecha) if mov.fecha else None,
+        "tienda_id": tid,
+        "tienda_nombre": tiendas.get(tid),
+        "barista_nombre": mov.barista_nombre,
+    } for mov, tid in filas]
+    return {
+        "egresos": egresos,
+        "totales": {"monto": round(sum(e["valor"] for e in egresos), 2), "n": len(egresos)},
+    }
+
+
+def adoptar_egreso(db: Session, movimiento_id: int, categoria_id: int, usuario_id: int,
+                   fecha_devengo: date | None = None, concepto: str | None = None,
+                   beneficiario: str | None = None, nota: str | None = None,
+                   barista_id: int | None = None,
+                   barista_nombre: str | None = None) -> dict:
+    """Convierte un egreso suelto de caja en obligación devengada + pago espejo.
+
+    NO cambia ningún total: el MovimientoCaja queda intacto (el turno cuadra igual)
+    y el P&L lo deja de contar como gasto de texto libre justo cuando empieza a
+    contar la obligación. Lo único que cambia es dónde aparece la plata.
+
+    `fecha_devengo` es un OVERRIDE EXPLÍCITO y nunca silencioso. Por defecto vale
+    `dia_col(mov.fecha)`, pero `mov.fecha` es cuándo se TECLEÓ el egreso, no cuándo
+    salió la plata: `MovimientoCajaRequest` (schemas/caja.py) no acepta fecha y el
+    modelo la fija con `default=datetime.utcnow`, así que registrar un pago de un
+    día pasado es imposible por cualquier camino. Si el arriendo de julio se tecleó
+    en agosto, corregir esta fecha MUEVE EL COSTO DE MES en el P&L — por eso la UI
+    lo muestra editable y avisa, en vez de decidirlo sola.
+
+    `fecha_pago` del espejo, en cambio, siempre es `dia_col(mov.fecha)`: la plata
+    salió de ESA caja ese día, y eso no se corrige desde acá.
+    """
+    mov = db.query(MovimientoCaja).filter(MovimientoCaja.id == movimiento_id).first()
+    if not mov:
+        raise HTTPException(404, "Movimiento de caja no encontrado")
+
+    tipo = getattr(mov.tipo, "value", mov.tipo)
+    if tipo != "egreso":
+        raise HTTPException(400, "Solo se adoptan egresos — un ingreso no es un costo")
+
+    # Guarda 1: vínculo ESTRUCTURAL con una compra. La deuda ya vive en
+    # FacturaCompra y adoptarla crearía una obligación espejo de esa misma plata.
+    if mov.factura_id is not None:
+        raise HTTPException(
+            400, "Este egreso es el pago de una factura de proveedor — ya está contado "
+                 "en Compras. Manejalo desde Pagos a Proveedores.")
+
+    # Guarda 2: filas ANTERIORES a la columna factura_id, donde el único vínculo con
+    # la compra es el concepto reservado que escribe services/facturas.py.
+    if _es_egreso_de_compra(db, mov.id):
+        raise HTTPException(
+            400, "El concepto de este egreso es de pago a proveedor — ya está contado "
+                 "en Compras y adoptarlo lo contaría dos veces.")
+
+    # Guarda 3: se adopta UNA sola vez. El servicio responde 409 en vez de dejar que
+    # reviente el índice único parcial de la DB (que es la garantía final, no esta).
+    ya = db.query(Pago).filter(Pago.movimiento_caja_id == mov.id).order_by(
+        Pago.anulado, Pago.id).first()
+    if ya is not None:
+        if ya.anulado:
+            raise HTTPException(
+                409, "Este egreso ya se adoptó una vez y su pago fue anulado — la "
+                     "adopción no se puede rehacer. Editá la obligación existente.")
+        raise HTTPException(409, "Este egreso ya fue adoptado")
+
+    cat = _validar_categoria(db, categoria_id)
+    # La sede sale del turno del movimiento: así el P&L por sede no se mueve un peso.
+    turno = db.query(CajaTurno).filter(CajaTurno.id == mov.caja_turno_id).first()
+    tienda_id = turno.tienda_id if turno else None
+
+    dia_mov = dia_col(mov.fecha) if mov.fecha else hoy_col()
+    obligacion = Obligacion(
+        tienda_id=tienda_id,
+        categoria_id=cat.id,
+        concepto=_validar_concepto(concepto or mov.concepto),
+        beneficiario=(beneficiario or "").strip() or None,
+        monto=_validar_monto(mov.valor),
+        fecha_devengo=fecha_devengo or dia_mov,
+        # Ya está pagada: no hay nada que agendar, así que no lleva vencimiento.
+        fecha_vencimiento=None,
+        nota=nota,
+        usuario_id=usuario_id,
+        barista_id=barista_id,
+        barista_nombre=barista_nombre,
+    )
+    db.add(obligacion)
+    db.flush()
+
+    pago = Pago(
+        obligacion_id=obligacion.id,
+        factura_id=None,
+        tienda_id=tienda_id,
+        monto=float(obligacion.monto),
+        fecha_pago=dia_mov,
+        # Un egreso de caja es plata que salió del cajón, siempre.
+        metodo="efectivo",
+        movimiento_caja_id=mov.id,   # la llave anti-doble-conteo
+        nota="Adopción del egreso de caja",
+        usuario_id=usuario_id,
+        barista_id=barista_id,
+        barista_nombre=barista_nombre,
+    )
+    db.add(pago)
+    db.flush()
+
+    audit.registrar(
+        db, accion="adoptar_egreso_caja", tabla="obligaciones",
+        registro_id=obligacion.id, usuario_id=usuario_id, tienda_id=tienda_id,
+        datos_antes={"movimiento_caja_id": mov.id, "concepto": mov.concepto,
+                     "valor": float(mov.valor or 0), "dia_movimiento": dia_mov},
+        datos_despues={"categoria": cat.clave, "monto": float(obligacion.monto),
+                       "fecha_devengo": obligacion.fecha_devengo,
+                       "devengo_corregido": bool(fecha_devengo and fecha_devengo != dia_mov),
+                       "pago_id": pago.id},
+    )
+    db.commit()
+    db.refresh(obligacion)
+    db.refresh(pago)
+    return _serializar(obligacion, [pago])
 
 
 def listar_pagos(db: Session, *, obligacion_id: int | None = None,

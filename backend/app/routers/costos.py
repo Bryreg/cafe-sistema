@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_barista_actor, require_admin
 from app.database import get_db
 from app.models.models import Usuario
-from app.schemas.costos import ObligacionCreate, ObligacionUpdate, PagoCreate
+from app.schemas.costos import (AdopcionEgresoRequest, ObligacionCreate,
+                                ObligacionUpdate, PagoCreate)
 from app.services import costos as svc
 
 router = APIRouter(prefix="/costos", tags=["costos"])
@@ -113,6 +114,43 @@ def registrar_pago(
     """Un pago apunta a una obligación O a una factura, nunca a las dos.
     `fecha_pago` es obligatoria: es EL DÍA QUE SALIÓ LA PLATA."""
     return svc.registrar_pago(db, data, admin.id,
+                              barista_id=barista[0], barista_nombre=barista[1])
+
+
+@router.get("/egresos-sin-adoptar")
+def listar_egresos_sin_adoptar(
+    desde: Optional[date] = Query(None),
+    hasta: Optional[date] = Query(None),
+    tienda_id: Optional[int] = Query(None, ge=1),
+    limite: int = Query(200, ge=1, le=500),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Egresos de caja que el P&L todavía muestra como texto libre. Solo lectura:
+    no modifica nada, solo dice qué hay para categorizar. Sin `desde` toma los
+    últimos 90 días."""
+    return svc.listar_egresos_sin_adoptar(db, desde=desde, hasta=hasta,
+                                          tienda_id=tienda_id, limite=limite)
+
+
+@router.post("/egresos/{movimiento_id}/adoptar")
+def adoptar_egreso(
+    movimiento_id: int,
+    data: AdopcionEgresoRequest,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+    barista: tuple = Depends(get_barista_actor),
+):
+    """Convierte un egreso suelto en obligación devengada + pago espejo. El
+    MovimientoCaja NO se toca: el turno cuadra igual y el total de gastos del
+    período no se mueve — la plata solo cambia de bolsa.
+
+    400 si el egreso es un pago a proveedor (ya está contado en Compras),
+    409 si ya fue adoptado."""
+    return svc.adoptar_egreso(db, movimiento_id, data.categoria_id, admin.id,
+                              fecha_devengo=data.fecha_devengo,
+                              concepto=data.concepto,
+                              beneficiario=data.beneficiario, nota=data.nota,
                               barista_id=barista[0], barista_nombre=barista[1])
 
 

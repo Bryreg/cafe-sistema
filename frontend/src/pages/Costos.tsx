@@ -3,7 +3,7 @@ import api from '../api/client'
 import { conMiles, soloDigitos } from '../utils/plata'
 import {
   Wallet, Plus, X, Building2, CheckCircle, Clock, AlertCircle,
-  Trash2, Receipt, CalendarClock, CalendarDays, Truck,
+  Trash2, Receipt, CalendarClock, CalendarDays, Truck, Inbox, Tag,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -45,6 +45,21 @@ interface Agenda {
   items: AgendaItem[]
   totales: { monto: number; vencido: number; n: number }
 }
+// Egresos de caja que el P&L todavía muestra como texto libre. Adoptarlos NO cambia
+// ningún total: el movimiento de caja queda intacto y el gasto pasa de "concepto
+// suelto" a "categoría". Es puro ordenamiento, no plata nueva.
+interface EgresoSuelto {
+  id: number
+  concepto: string
+  valor: number
+  fecha: string | null             // día Colombia en que se TECLEÓ el egreso
+  tienda_id: number | null; tienda_nombre: string | null
+  barista_nombre: string | null
+}
+interface Bandeja {
+  egresos: EgresoSuelto[]
+  totales: { monto: number; n: number }
+}
 
 const fmt = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO')
 const fecha = (s: string | null) => (s ? new Date(s + 'T00:00:00').toLocaleDateString('es-CO') : '—')
@@ -79,11 +94,12 @@ const ESTADO: Record<string, { label: string; cls: string; Icon: typeof CheckCir
 const CORPORATIVO = 'corp'
 
 export default function Costos() {
-  const [vista, setVista] = useState<'obligaciones' | 'agenda'>('agenda')
+  const [vista, setVista] = useState<'obligaciones' | 'agenda' | 'sinCategorizar'>('agenda')
   const [categorias, setCategorias] = useState<Categoria[]>([])
   const [tiendas, setTiendas] = useState<Tienda[]>([])
   const [data, setData] = useState<Listado | null>(null)
   const [agenda, setAgenda] = useState<Agenda | null>(null)
+  const [bandeja, setBandeja] = useState<Bandeja | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -113,6 +129,12 @@ export default function Costos() {
   const [pMetodo, setPMetodo] = useState('transferencia')
   const [pNota, setPNota] = useState('')
   const [pError, setPError] = useState('')
+
+  // adoptar un egreso suelto
+  const [adoptando, setAdoptando] = useState<EgresoSuelto | null>(null)
+  const [aCategoria, setACategoria] = useState('')
+  const [aDevengo, setADevengo] = useState('')
+  const [aError, setAError] = useState('')
 
   const [guardando, setGuardando] = useState(false)
   const [detalle, setDetalle] = useState<number | null>(null)
@@ -153,8 +175,21 @@ export default function Costos() {
       .finally(() => setLoading(false))
   }
 
+  const cargarBandeja = () => {
+    setLoading(true); setError('')
+    const params: Record<string, string | number> = {}
+    if (sede && sede !== CORPORATIVO) params.tienda_id = Number(sede)
+    if (desde) params.desde = desde
+    if (hasta) params.hasta = hasta
+    api.get<Bandeja>('/costos/egresos-sin-adoptar', { params })
+      .then(r => setBandeja(r.data))
+      .catch(e => { setBandeja(null); setError(e.response?.data?.detail || 'No se pudieron cargar los egresos') })
+      .finally(() => setLoading(false))
+  }
+
   useEffect(() => {
     if (vista === 'agenda') cargarAgenda()
+    else if (vista === 'sinCategorizar') cargarBandeja()
     else cargar()
   }, [vista, sede, fCategoria, fEstado, desde, hasta])
 
@@ -248,6 +283,31 @@ export default function Costos() {
     setPFecha(hoyISO()); setPMetodo('transferencia'); setPNota(''); setPError('')
   }
 
+  const abrirAdopcion = (e: EgresoSuelto) => {
+    setAdoptando(e)
+    setACategoria(categorias.length ? String(categorias[0].id) : '')
+    // Arranca en el día en que se tecleó el egreso; el admin lo corrige si el costo
+    // era de otro mes (y eso mueve el mes en el P&L, así que se avisa en el modal).
+    setADevengo(e.fecha || hoyISO())
+    setAError('')
+  }
+
+  const adoptarEgreso = async () => {
+    if (!adoptando) return
+    if (!aCategoria) { setAError('Elegí la categoría del gasto'); return }
+    if (!aDevengo) { setAError('Poné a qué día pertenece el costo'); return }
+    setGuardando(true); setAError('')
+    try {
+      await api.post(`/costos/egresos/${adoptando.id}/adoptar`, {
+        categoria_id: Number(aCategoria),
+        fecha_devengo: aDevengo,
+      })
+      setAdoptando(null); cargarBandeja()
+    } catch (e: any) {
+      setAError(e.response?.data?.detail || 'No se pudo adoptar. Reintentá.')
+    } finally { setGuardando(false) }
+  }
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -274,11 +334,12 @@ export default function Costos() {
       {/* Vistas: la agenda mezcla proveedores + costos fijos; la lista es solo costos fijos */}
       <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1 w-fit">
         {[{ v: 'agenda' as const, l: 'Agenda de pagos', Icon: CalendarDays },
-          { v: 'obligaciones' as const, l: 'Obligaciones', Icon: Receipt }].map(op => (
+          { v: 'obligaciones' as const, l: 'Obligaciones', Icon: Receipt },
+          { v: 'sinCategorizar' as const, l: 'Egresos sin categorizar', Icon: Inbox }].map(op => (
           <button key={op.v}
             onClick={() => {
-              // "Corporativo" no existe como filtro en la agenda: cae a todas las sedes.
-              if (op.v === 'agenda' && sede === CORPORATIVO) setSede('')
+              // "Corporativo" no es un filtro válido acá: caen a todas las sedes.
+              if (op.v !== 'obligaciones' && sede === CORPORATIVO) setSede('')
               setVista(op.v)
             }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
@@ -376,6 +437,56 @@ export default function Costos() {
                 <p className="text-sm text-gray-500">No hay nada que pagar en este período</p>
                 <p className="text-xs text-gray-400 mt-1">
                   Las facturas viejas sin fecha de vencimiento no se agendan solas — ponéles el plazo en Pagos a Proveedores.
+                </p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ─── EGRESOS SIN CATEGORIZAR ────────────────────────────────────────── */}
+      {vista === 'sinCategorizar' && !loading && (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Sin categorizar</p>
+              <p className="text-xl font-bold text-gray-800 font-mono">{fmt(bandeja?.totales.monto ?? 0)}</p>
+              <p className="text-xs text-gray-400">{bandeja?.totales.n ?? 0} egresos de caja</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 col-span-2 lg:col-span-2">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Qué hace adoptar</p>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Estos son egresos que se registraron en caja con texto libre. Al adoptarlos les
+                ponés una categoría y una fecha de devengo: el gasto deja de aparecer suelto en
+                el P&amp;L y pasa a contar como categoría. <b>El movimiento de caja no se toca</b> —
+                el cuadre del turno y el total de gastos del período quedan exactamente iguales.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {(bandeja?.egresos ?? []).map(e => (
+              <div key={e.id} className="bg-white border border-gray-200 rounded-2xl p-4 flex items-center gap-3 flex-wrap">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-gray-800 truncate">{e.concepto}</p>
+                  <p className="text-[11px] text-gray-400 truncate">
+                    {e.tienda_nombre || 'Sin sede'} · registrado {fecha(e.fecha)}
+                    {e.barista_nombre ? ` · ${e.barista_nombre}` : ''}
+                  </p>
+                </div>
+                <span className="font-mono font-bold text-sm text-gray-800 shrink-0">{fmt(e.valor)}</span>
+                <button onClick={() => abrirAdopcion(e)}
+                  className="flex items-center gap-1.5 text-xs font-bold text-white bg-forest hover:bg-forest-700 px-3 py-1.5 rounded-lg shrink-0">
+                  <Tag size={13} /> Adoptar
+                </button>
+              </div>
+            ))}
+            {(bandeja?.egresos.length ?? 0) === 0 && !error && (
+              <div className="bg-white border border-gray-200 rounded-2xl px-4 py-10 text-center">
+                <Inbox size={26} className="text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">No hay egresos sueltos para categorizar</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Los pagos a proveedor no aparecen acá: ya están contados dentro de Compras.
                 </p>
               </div>
             )}
@@ -587,6 +698,55 @@ export default function Costos() {
             <button onClick={crearObligacion} disabled={guardando}
               className="w-full bg-forest hover:bg-forest-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl">
               {guardando ? 'Guardando…' : 'Guardar obligación'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal adoptar egreso */}
+      {adoptando && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setAdoptando(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-4" onClick={ev => ev.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-gray-800">Adoptar egreso</h2>
+              <button onClick={() => setAdoptando(null)} className="text-gray-400"><X size={18} /></button>
+            </div>
+            <div className="text-sm text-gray-500">
+              <p className="font-semibold text-gray-700">{adoptando.concepto}</p>
+              <p>Monto: <span className="font-mono font-bold text-gray-800">{fmt(adoptando.valor)}</span>
+                {adoptando.tienda_nombre ? ` · ${adoptando.tienda_nombre}` : ''}</p>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Categoría</label>
+              <select value={aCategoria} onChange={ev => setACategoria(ev.target.value)}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm bg-white focus:outline-none focus:border-forest">
+                {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">A qué día pertenece el costo</label>
+              <input type="date" value={aDevengo} onChange={ev => setADevengo(ev.target.value)}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-forest" />
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 mt-1.5 flex items-start gap-1.5">
+                <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                <span>
+                  Viene del día en que se <b>tecleó</b> el egreso en caja, que no siempre es el mes
+                  al que pertenece el gasto. Si lo corregís, el costo <b>se mueve de mes</b> en el P&amp;L.
+                </span>
+              </p>
+            </div>
+
+            <p className="text-[11px] text-gray-400 leading-relaxed">
+              El movimiento de caja queda intacto: el cuadre del turno y el total de gastos del
+              período no cambian. El gasto solo deja de verse como texto libre.
+            </p>
+
+            {aError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{aError}</p>}
+            <button onClick={adoptarEgreso} disabled={guardando || !aCategoria || !aDevengo}
+              className="w-full bg-forest hover:bg-forest-700 disabled:opacity-40 text-white font-bold py-3 rounded-xl text-sm">
+              {guardando ? 'Guardando...' : 'Adoptar como obligación'}
             </button>
           </div>
         </div>

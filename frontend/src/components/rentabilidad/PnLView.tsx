@@ -201,7 +201,7 @@ export default function PnLView({ onVerMetodologia }: { onVerMetodologia: () => 
           {!tiendaId && data.por_sede.length > 1 && (
             <div className="grid sm:grid-cols-2 gap-3">
               {data.por_sede.map(s => (
-                <div key={s.tienda_id} className="bg-white rounded-2xl border border-warm-200 p-4">
+                <div key={s.tienda_id ?? 'corporativo'} className="bg-white rounded-2xl border border-warm-200 p-4">
                   <p className="text-sm font-bold text-warm-700 mb-2">{s.tienda}</p>
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <div>

@@ -5,9 +5,12 @@ Cruza las tres fuentes de dinero del sistema, cada una en su base:
   - COMPRAS: Σ FacturaCompra.valor_total por fecha de recibido — mercancía que
     ENTRÓ en el período (base de recepción, no de consumo: un mes donde se
     stockea fuerte se ve peor de lo que fue; se documenta en `nota`).
-  - GASTOS:  Σ MovimientoCaja tipo=egreso EXCLUYENDO los ligados a facturas de
-    proveedor (concepto 'Pago proveedor:%' / 'Ajuste factura%'), que ya están
-    contados dentro de COMPRAS — sin esta exclusión se contarían dos veces.
+  - GASTOS:  dos mitades que se suman. (a) Σ MovimientoCaja tipo=egreso EXCLUYENDO
+    los ligados a facturas de proveedor (concepto 'Pago proveedor:%' /
+    'Ajuste factura%'), que ya están contados dentro de COMPRAS, y EXCLUYENDO los
+    ya adoptados por el módulo Costos; (b) Σ Obligacion.monto por fecha_devengo.
+    Adoptar un egreso lo pasa de (a) a (b) sin cambiar el total: sin cualquiera de
+    las dos exclusiones, la misma plata se contaría dos veces.
 
 margen_bruto = ventas - compras;  margen_neto = margen_bruto - gastos.
 """
@@ -18,7 +21,8 @@ from sqlalchemy import func, not_, or_
 
 from app.core.tz import dia_col, hora_col, hoy_col, rango_col_utc
 from app.models.models import (
-    CajaTurno, Combo, FacturaCompra, FacturaCompraItem, MovimientoCaja, Producto,
+    CajaTurno, Combo, CostoCategoria, FacturaCompra, FacturaCompraItem,
+    MovimientoCaja, Obligacion, Pago, Producto,
     ProductoInsumo, ProductoDesechable, Ticket, TicketItem,
     TicketItemComboSeleccion, Tienda, TipoMovCajaEnum,
 )
@@ -91,6 +95,17 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # ── Gastos operativos (egresos de caja NO ligados a compras) ─────────────
     # Ligado a compra = tiene factura_id (vínculo estructural) o, para movimientos
     # anteriores a esa columna, el concepto reservado que escribe services/facturas.
+    #
+    # Y ligado a una obligación = ya fue ADOPTADO (Fase 3): el egreso sigue vivo en
+    # caja pero su plata ahora se cuenta abajo, como obligación devengada. Sin esta
+    # exclusión el mismo gasto se contaría dos veces. Va como SUBCONSULTA y no como
+    # lista de ids: un `IN (...)` explícito revienta el tope de variables de SQLite
+    # (mismo patrón deliberado que get_attach_producto).
+    adoptados = (
+        db.query(Pago.movimiento_caja_id)
+        .filter(Pago.movimiento_caja_id.isnot(None), Pago.anulado.is_(False))
+        .distinct().subquery()
+    )
     q_gastos = (
         db.query(MovimientoCaja.fecha, MovimientoCaja.valor,
                  MovimientoCaja.concepto, CajaTurno.tienda_id)
@@ -101,11 +116,35 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             MovimientoCaja.fecha <= h_utc,
             MovimientoCaja.factura_id.is_(None),
             not_(or_(*[MovimientoCaja.concepto.like(p) for p in _CONCEPTOS_COMPRA])),
+            MovimientoCaja.id.notin_(db.query(adoptados.c.movimiento_caja_id)),
         )
     )
     if tienda_id is not None:
         q_gastos = q_gastos.filter(CajaTurno.tienda_id == tienda_id)
     gastos_rows = q_gastos.all()
+
+    # ── Obligaciones devengadas (módulo Costos) ──────────────────────────────
+    # Término NUEVO del gasto, en QUERY SEPARADA a propósito: la de arriba hace
+    # `join(CajaTurno)` y filtra sede por `CajaTurno.tienda_id`, y una obligación
+    # corporativa (arriendo, nómina) tiene tienda_id NULL y ningún turno — ese join
+    # la BORRARÍA. Además `fecha_devengo` es Date, o sea fecha de NEGOCIO ya
+    # resuelta: se compara contra desde/hasta y NUNCA contra d_utc/h_utc, que son
+    # instantes UTC para columnas de instante.
+    q_oblig = (
+        db.query(Obligacion.fecha_devengo, Obligacion.monto,
+                 Obligacion.tienda_id, CostoCategoria.nombre)
+        .join(CostoCategoria, CostoCategoria.id == Obligacion.categoria_id)
+        .filter(
+            Obligacion.anulada.is_(False),
+            Obligacion.fecha_devengo >= desde,
+            Obligacion.fecha_devengo <= hasta,
+        )
+    )
+    if tienda_id is not None:
+        # Con sede filtrada las corporativas NO se cuelan ni se prorratean: repartirlas
+        # las duplicaría y Σ por_sede dejaría de dar el global.
+        q_oblig = q_oblig.filter(Obligacion.tienda_id == tienda_id)
+    oblig_rows = q_oblig.all()
 
     # ── COGS teórico: lo VENDIDO × costo de receta (base de consumo, no de
     # recepción). Da el margen bruto real del período sin la distorsión de los
@@ -163,10 +202,14 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # ── Agregaciones ──────────────────────────────────────────────────────────
     tot_ventas = round(sum(float(r[1] or 0) for r in ventas_rows), 2)
     tot_compras = round(sum(float(r[1] or 0) for r in compras_rows), 2)
-    tot_gastos = round(sum(float(r[1] or 0) for r in gastos_rows), 2)
+    # El gasto del período son las DOS mitades: lo que sigue suelto en caja y lo ya
+    # adoptado como obligación. Adoptar mueve plata de una a la otra sin cambiar el total.
+    tot_gastos = round(sum(float(r[1] or 0) for r in gastos_rows)
+                       + sum(float(r[1] or 0) for r in oblig_rows), 2)
 
     por_mes: dict[str, dict] = defaultdict(lambda: {"ventas": 0.0, "compras": 0.0, "gastos": 0.0})
-    por_sede: dict[int, dict] = defaultdict(lambda: {"ventas": 0.0, "compras": 0.0, "gastos": 0.0})
+    # Clave int o None: None = gasto CORPORATIVO (sin sede), no un dato faltante.
+    por_sede: dict = defaultdict(lambda: {"ventas": 0.0, "compras": 0.0, "gastos": 0.0})
     for fecha, total, tid in ventas_rows:
         por_mes[_mes(fecha)]["ventas"] += float(total or 0)
         por_sede[tid]["ventas"] += float(total or 0)
@@ -179,6 +222,16 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
         por_sede[tid]["gastos"] += float(valor or 0)
         g = gastos_por_concepto[(concepto or "(sin concepto)").strip()]
         g["total"] += float(valor or 0)
+        g["n"] += 1
+    # Las obligaciones agrupan por NOMBRE DE CATEGORÍA (no por texto libre): a medida
+    # que se adoptan egresos, el bloque de conceptos sueltos se vacía solo.
+    # `fecha_devengo` ya es fecha Colombia: se formatea directo, sin pasar por _mes
+    # (que convierte de UTC y espera un datetime).
+    for devengo, monto, tid, categoria in oblig_rows:
+        por_mes[devengo.strftime("%Y-%m")]["gastos"] += float(monto or 0)
+        por_sede[tid]["gastos"] += float(monto or 0)
+        g = gastos_por_concepto[(categoria or "(sin categoría)").strip()]
+        g["total"] += float(monto or 0)
         g["n"] += 1
 
     def _cerrar(d: dict) -> dict:
@@ -216,8 +269,14 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             for mes, vals in sorted(por_mes.items())
         ],
         "por_sede": [
-            {"tienda_id": tid, "tienda": tiendas.get(tid, f"Sede {tid}"), **_cerrar(vals)}
-            for tid, vals in sorted(por_sede.items())
+            # tienda_id None es un gasto CORPORATIVO (arriendo, nómina): fila propia
+            # "Corporativo", nunca el literal "Sede None". Va primero y ordena aparte
+            # porque None no se puede comparar con un int.
+            {"tienda_id": tid,
+             "tienda": "Corporativo" if tid is None else tiendas.get(tid, f"Sede {tid}"),
+             **_cerrar(vals)}
+            for tid, vals in sorted(por_sede.items(),
+                                    key=lambda kv: (kv[0] is not None, kv[0] or 0))
         ],
         "gastos_detalle": sorted(
             [{"concepto": c, "total": round(v["total"], 2), "n": v["n"]}
@@ -227,8 +286,9 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
         "nota": (
             "Compras = facturas de proveedor RECIBIDAS en el período (no el consumo real): "
             "un mes donde se stockea fuerte se ve con menos margen del real. "
-            "Gastos = egresos de caja manuales; los pagos a proveedor por caja se excluyen "
-            "porque ya están dentro de Compras."
+            "Gastos = egresos de caja manuales + obligaciones devengadas (arriendo, nómina, "
+            "servicios); los pagos a proveedor por caja se excluyen porque ya están dentro "
+            "de Compras, y un egreso adoptado cuenta como obligación, nunca dos veces."
         ),
     }
 

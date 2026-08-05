@@ -17,7 +17,9 @@ export interface RentabilidadData {
     pct_venta_costeada?: number | null
   }
   por_mes: ({ mes: string } & Bucket)[]
-  por_sede: ({ tienda_id: number; tienda: string } & Bucket)[]
+  // tienda_id null = gasto CORPORATIVO (arriendo, nómina): fila propia "Corporativo",
+  // no se reparte entre sedes (si se repartiera, Σ por_sede dejaría de dar el global).
+  por_sede: ({ tienda_id: number | null; tienda: string } & Bucket)[]
   gastos_detalle: { concepto: string; total: number; n: number }[]
   nota: string
 }

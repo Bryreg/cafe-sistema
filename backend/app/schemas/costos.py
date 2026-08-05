@@ -68,6 +68,8 @@ class PagoOut(BaseModel):
     monto: float
     fecha_pago: date
     metodo: str
+    # Con valor = el pago es el espejo de un egreso de caja adoptado (Fase 3).
+    movimiento_caja_id: Optional[int] = None
     imagen_soporte_url: Optional[str]
     nota: Optional[str]
     anulado: bool
@@ -75,6 +77,34 @@ class PagoOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AdopcionEgresoRequest(BaseModel):
+    """Adopta un egreso de caja ya registrado como obligación devengada + pago espejo.
+    El MovimientoCaja no se toca: ningún total del P&L ni del turno cambia."""
+    categoria_id: int
+    # OVERRIDE explícito. Por defecto = el día en que se TECLEÓ el egreso, que no
+    # siempre es el mes al que pertenece el costo (MovimientoCaja no admite fecha
+    # pasada por ningún camino). Corregirla MUEVE el costo de mes en el P&L.
+    fecha_devengo: Optional[date] = None
+    concepto: Optional[str] = None       # None = se conserva el del movimiento
+    beneficiario: Optional[str] = None
+    nota: Optional[str] = None
+
+
+class EgresoSinAdoptarOut(BaseModel):
+    id: int
+    concepto: str
+    valor: float
+    fecha: Optional[date]                # día Colombia en que se tecleó
+    tienda_id: Optional[int]
+    tienda_nombre: Optional[str]
+    barista_nombre: Optional[str] = None
+
+
+class ListadoEgresosSinAdoptarOut(BaseModel):
+    egresos: List[EgresoSinAdoptarOut]
+    totales: dict
 
 
 class ObligacionOut(BaseModel):

@@ -63,7 +63,9 @@ export default function PulsoView({ pulso, plMes, jugadas, onVerJugadas }: {
   const dTicketProm = act?.ticket_promedio && ant?.ticket_promedio
     ? pctDelta(act.ticket_promedio, ant.ticket_promedio) : null
 
-  const sedes = plMes?.por_sede ?? []
+  // El duelo compara SEDES entre sí: la fila "Corporativo" (tienda_id null, arriendo y
+  // nómina sin sede) no compite con nadie y falsearía la barra con ventas en 0.
+  const sedes = (plMes?.por_sede ?? []).filter(s => s.tienda_id !== null)
   const maxSedeVenta = Math.max(1, ...sedes.map(s => s.ventas))
 
   return (

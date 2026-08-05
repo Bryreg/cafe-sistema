@@ -49,20 +49,43 @@ def es_venta_de_turno_zombie(dia_turno, fecha_venta) -> bool:
 
 
 def get_or_create_dia(db: Session, tienda_id: int, usuario_id: int) -> "DiaOperativo":
-    """Día operativo de hoy para la tienda; lo crea si no existe (lazy, al abrir el 1er turno)."""
+    """Día operativo de hoy para la tienda; lo crea si no existe (lazy, al abrir el 1er turno).
+
+    Carrera del get-or-create: hay UniqueConstraint(tienda_id, fecha_operativa), así
+    que si dos dispositivos de la misma sede cobran a la vez y ambos pasan el SELECT,
+    el segundo INSERT viola el UNIQUE. Ese IntegrityError sale de db.flush() y, sin
+    SAVEPOINT, deja la transacción del caller en estado rollback-required: atraparlo
+    afuera NO salva nada, el commit siguiente falla igual y la VENTA se cae. Con
+    begin_nested se revierte SOLO este INSERT, se re-consulta y el caller sigue vivo.
+    Mismo patrón que producto_alias.upsert_alias.
+    """
     fecha = _fecha_operativa()
-    dia = db.query(DiaOperativo).filter(
-        DiaOperativo.tienda_id == tienda_id,
-        DiaOperativo.fecha_operativa == fecha,
-    ).first()
-    if not dia:
-        dia = DiaOperativo(
-            tienda_id=tienda_id, fecha_operativa=fecha,
-            estado=EstadoDiaEnum.abierto, abierto_por_id=usuario_id,
-        )
-        db.add(dia)
-        db.flush()
-    return dia
+
+    def _buscar():
+        return db.query(DiaOperativo).filter(
+            DiaOperativo.tienda_id == tienda_id,
+            DiaOperativo.fecha_operativa == fecha,
+        ).first()
+
+    dia = _buscar()
+    if dia:
+        return dia
+    nuevo = DiaOperativo(
+        tienda_id=tienda_id, fecha_operativa=fecha,
+        estado=EstadoDiaEnum.abierto, abierto_por_id=usuario_id,
+    )
+    try:
+        with db.begin_nested():
+            db.add(nuevo)
+            db.flush()
+        return nuevo
+    except IntegrityError:
+        # Otro request ganó el INSERT entre el SELECT y el flush. El SAVEPOINT
+        # revirtió solo eso; el día que buscábamos ahora existe.
+        dia = _buscar()
+        if dia is None:
+            raise
+        return dia
 from app.services import audit, notificaciones
 import logging
 

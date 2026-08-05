@@ -327,6 +327,51 @@ class TurnoActivoDiaAnteriorTests(DiaOperativoVentaTestCase):
         self.assertTrue(turno.es_de_dia_anterior)
 
 
+class CarreraDelDiaOperativoTests(DiaOperativoVentaTestCase):
+    """La carrera del get-or-create tiene que dejar VIVA la transacción del caller.
+
+    Hay UniqueConstraint(tienda_id, fecha_operativa): si dos dispositivos de la
+    misma sede cobran a la vez y ambos pasan el SELECT, el segundo INSERT viola el
+    UNIQUE. Ese IntegrityError sale de db.flush() y, sin SAVEPOINT, deja la sesión
+    en rollback-required — atraparlo por fuera NO salva la venta, el commit
+    siguiente falla igual. Con begin_nested se revierte solo el INSERT.
+    """
+
+    def test_el_dia_duplicado_no_mata_la_transaccion(self):
+        from unittest.mock import patch
+        existente = self.crear_dia(self.hoy)
+
+        # Simula perder la carrera: el SELECT no ve el día (como el request que
+        # entró antes de que el otro hiciera commit) y se va derecho al INSERT.
+        real_first = caja_svc.DiaOperativo
+        llamadas = {"n": 0}
+        orig_query = self.db.query
+
+        def query_ciego(*a, **k):
+            q = orig_query(*a, **k)
+            if a and a[0] is real_first and llamadas["n"] == 0:
+                llamadas["n"] += 1
+                class _Ciego:
+                    def filter(self, *_a, **_k): return self
+                    def first(self): return None
+                return _Ciego()
+            return q
+
+        with patch.object(self.db, "query", side_effect=query_ciego):
+            dia = caja_svc.get_or_create_dia(self.db, self.tienda.id, self.admin.id)
+
+        # Se recuperó con el día que ya existía...
+        self.assertEqual(dia.id, existente.id)
+        # ...y lo que de verdad importa: la transacción sigue usable.
+        self.db.add(Ticket(
+            tienda_id=self.tienda.id, caja_turno_id=self.crear_turno(existente).id,
+            usuario_id=self.barista.id, fecha=datetime.utcnow(), total=1000,
+            estado="completado", metodo_pago="efectivo", monto_efectivo=1000,
+        ))
+        self.db.commit()   # sin el SAVEPOINT esto explota con PendingRollbackError
+        self.assertEqual(self.db.query(Ticket).count(), 1)
+
+
 class CruceMedianocheVsZombieTest(unittest.TestCase):
     """La distinción que la aritmética de fechas confunde y el negocio no.
 

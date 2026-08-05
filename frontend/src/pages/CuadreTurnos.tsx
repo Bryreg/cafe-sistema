@@ -955,9 +955,25 @@ export default function CuadreTurnos() {
         (d.getMonth() === h.getMonth() && d.getDate() < h.getDate())))
   }
   const cerrarPendiente = async (t: TurnoItem) => {
-    if (!window.confirm(`¿Cerrar el turno del ${fmtDate(t.fecha_apertura)} con el esperado (diferencia 0)? La diferencia real la captura el cuadre inicial siguiente.`)) return
+    // Sin conteo de cierre el backend rechaza el cierre normal, y eso dejaba al
+    // turno zombie SIN salida: la sede ya no puede contar la plata de un día que
+    // pasó. Para ese caso el admin puede omitir el conteo, pero con motivo
+    // obligatorio y quedando marcado (cerrado_sin_conteo) — es saltarse el control
+    // de caja, así que tiene que ser una decisión explícita y atribuible.
+    let body: { omitir_conteo?: boolean; motivo?: string } | undefined
+    if (!t.tiene_conteo_cierre) {
+      const motivo = window.prompt(
+        `El turno del ${fmtDate(t.fecha_apertura)} no tiene conteo de cierre. ` +
+        `Cerrarlo así SALTEA el conteo de caja y queda marcado como tal.\n\n` +
+        `Escribí el motivo (queda en la auditoría):`)
+      if (motivo === null) return
+      if (!motivo.trim()) { alert('El motivo es obligatorio para cerrar sin conteo.'); return }
+      body = { omitir_conteo: true, motivo: motivo.trim() }
+    } else if (!window.confirm(`¿Cerrar el turno del ${fmtDate(t.fecha_apertura)} con el esperado (diferencia 0)? La diferencia real la captura el cuadre inicial siguiente.`)) {
+      return
+    }
     try {
-      await api.post(`/caja/${t.id}/cerrar-administrativo`)
+      await api.post(`/caja/${t.id}/cerrar-administrativo`, body)
       api.get(`/caja/historial/${histTiendaId}`).then(r => setTurnos(r.data)).catch(() => null)
     } catch (e: any) {
       alert(e.response?.data?.detail || 'No se pudo cerrar')

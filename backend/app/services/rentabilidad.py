@@ -132,7 +132,7 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # instantes UTC para columnas de instante.
     q_oblig = (
         db.query(Obligacion.fecha_devengo, Obligacion.monto,
-                 Obligacion.tienda_id, CostoCategoria.nombre)
+                 Obligacion.tienda_id, CostoCategoria.nombre, CostoCategoria.grupo)
         .join(CostoCategoria, CostoCategoria.id == Obligacion.categoria_id)
         .filter(
             Obligacion.anulada.is_(False),
@@ -227,12 +227,20 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # que se adoptan egresos, el bloque de conceptos sueltos se vacía solo.
     # `fecha_devengo` ya es fecha Colombia: se formatea directo, sin pasar por _mes
     # (que convierte de UTC y espera un datetime).
-    for devengo, monto, tid, categoria in oblig_rows:
+    for devengo, monto, tid, categoria, _grupo in oblig_rows:
         por_mes[devengo.strftime("%Y-%m")]["gastos"] += float(monto or 0)
         por_sede[tid]["gastos"] += float(monto or 0)
         g = gastos_por_concepto[(categoria or "(sin categoría)").strip()]
         g["total"] += float(monto or 0)
         g["n"] += 1
+
+    # ── Cobertura de costos FIJOS (arriendo, nómina, servicios, impuestos) ────
+    # Campo ADITIVO: no entra en ninguna fórmula, solo declara si el margen neto
+    # de este período está mirando los costos fijos o no. Sin esto la pantalla no
+    # puede distinguir "el negocio no tiene costos fijos" de "nadie los cargó", y
+    # un semáforo en verde sobre el segundo caso es una mentira tranquilizadora.
+    fijos_rows = [r for r in oblig_rows if (r[4] or "") == "fijo"]
+    costos_fijos_devengados = round(sum(float(r[1] or 0) for r in fijos_rows), 2)
 
     def _cerrar(d: dict) -> dict:
         v, c, g = round(d["ventas"], 2), round(d["compras"], 2), round(d["gastos"], 2)
@@ -263,6 +271,12 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             "pct_margen_bruto_real": round((tot_ventas - cogs_teorico) / tot_ventas * 100, 1) if tot_ventas > 0 else None,
             "brecha_compras": round(tot_compras - cogs_teorico, 2),
             "pct_venta_costeada": round(venta_costeada / venta_items * 100, 1) if venta_items > 0 else None,
+            # Cobertura de costos fijos del período (ADITIVO — ya está DENTRO de
+            # `gastos` y de `margen_neto`; se expone aparte solo para que la UI
+            # sepa si puede emitir un veredicto o tiene que pedir el dato).
+            "costos_fijos_devengados": costos_fijos_devengados,
+            "n_costos_fijos": len(fijos_rows),
+            "tiene_costos_fijos": bool(fijos_rows),
         },
         "por_mes": [
             {"mes": mes, **_cerrar(vals)}

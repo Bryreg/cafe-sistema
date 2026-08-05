@@ -828,7 +828,7 @@ export default function Dashboard() {
               label="pagos a proveedores"
               severity="warning"
               ctaLabel="Pagar"
-              to="/pagos-proveedores"
+              to="/costos"
             />
           )}
           {haySolicitudes && (

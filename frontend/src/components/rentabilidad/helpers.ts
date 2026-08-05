@@ -15,6 +15,13 @@ export interface RentabilidadData {
     pct_margen_bruto_real?: number | null
     brecha_compras?: number
     pct_venta_costeada?: number | null
+    // Cobertura de costos FIJOS del período (arriendo, nómina, servicios,
+    // impuestos). Ya están DENTRO de `gastos` y `margen_neto`: se exponen aparte
+    // para distinguir "el negocio no tiene costos fijos" de "nadie los cargó".
+    // Sin esta distinción un semáforo verde afirmaría algo que nadie verificó.
+    costos_fijos_devengados?: number
+    n_costos_fijos?: number
+    tiene_costos_fijos?: boolean
   }
   por_mes: ({ mes: string } & Bucket)[]
   // tienda_id null = gasto CORPORATIVO (arriendo, nómina): fila propia "Corporativo",

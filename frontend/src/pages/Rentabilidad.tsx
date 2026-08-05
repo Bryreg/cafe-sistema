@@ -71,10 +71,15 @@ export default function Rentabilidad() {
   const jugadas = useMemo(() => computeJugadas(prodData, pulso), [prodData, pulso])
   const pendientesDatos = useMemo(() => {
     if (!prodData) return 0
+    // Sin costos fijos devengados en el mes, el margen neto está inflado: es un
+    // pendiente de datos igual de real que un insumo sin costear, y esconderlo
+    // dejaría el badge en "Datos sanos" con el arriendo entero faltando.
+    const faltanFijos = plMes && !plMes.resumen.tiene_costos_fijos ? 1 : 0
     return computeOutliers(prodData.productos).length
       + computeInsumosSinCosto(prodData.productos).length
       + (prodData.facturas_pendientes_de_costos || 0)
-  }, [prodData])
+      + faltanFijos
+  }, [prodData, plMes])
 
   return (
     <div className="space-y-3">

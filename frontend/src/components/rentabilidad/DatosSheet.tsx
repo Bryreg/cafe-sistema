@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { X, ShieldAlert, ScanLine, Loader2, Trash2 } from 'lucide-react'
 import api from '../../api/client'
 import {
@@ -45,6 +46,10 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh }
   const completos = all.filter(p => p.costo_completo).length
   const cobertura = all.length ? Math.round((completos / all.length) * 100) : 0
   const pendientes = prodData?.facturas_pendientes_de_costos ?? 0
+  // Cobertura de COSTOS FIJOS del mes. Sin esto, "Datos sanos" podía afirmarse
+  // mirando solo el costeo de producto — o sea, con el arriendo entero faltando.
+  const nFijos = plMes?.resumen.n_costos_fijos ?? 0
+  const montoFijos = plMes?.resumen.costos_fijos_devengados ?? 0
 
   const toggleAliases = async () => {
     const abrir = !verAliases
@@ -170,6 +175,31 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh }
             })()}
           </div>
 
+          {/* Costos fijos del mes */}
+          <div className={`rounded-xl border p-4 ${nFijos === 0 ? 'border-l-[3px] border-gold-500 border-warm-200 bg-gold-50' : 'border-warm-200'}`}>
+            <div className="flex items-baseline justify-between">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-warm-500">Costos fijos del mes</p>
+              <p className="text-lg font-mono font-extrabold text-warm-700 tabular-nums">
+                {nFijos === 0 ? '0' : fmt(montoFijos)}
+              </p>
+            </div>
+            {nFijos === 0 ? (
+              <p className="text-[11px] text-warm-600 mt-1.5 leading-relaxed">
+                No hay arriendo, nómina ni servicios devengados este mes. Mientras falten, el
+                margen neto se ve MÁS ALTO de lo que es y el semáforo no puede decir si el
+                negocio va bien.{' '}
+                <Link to="/costos" className="font-bold text-gold-700 underline decoration-dotted">
+                  Cargalos en Costos
+                </Link>.
+              </p>
+            ) : (
+              <p className="text-[11px] text-warm-400 mt-1.5">
+                {nFijos} {nFijos === 1 ? 'obligación fija devengada' : 'obligaciones fijas devengadas'} —
+                el margen neto ya las descuenta.
+              </p>
+            )}
+          </div>
+
           {/* Backfill OCR */}
           {pendientes > 0 && (
             <div className="rounded-xl border-l-[3px] border-clay-500 border border-warm-200 bg-clay-50 p-4">
@@ -236,9 +266,11 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh }
               {plMes?.nota && <p>{plMes.nota}</p>}
               {prodData?.nota && <p>{prodData.nota}</p>}
               <p>
-                El "margen operativo de caja" NO incluye nómina, arriendo ni servicios — no es la utilidad real.
-                El costo de lo vendido (COGS teórico) usa las recetas y costos confirmados, y complementa a
-                "Compras", que va por recepción (un mes que stockea fuerte se ve peor de lo que fue).
+                El margen neto ya descuenta los costos fijos que estén cargados en Costos (arriendo,
+                nómina, servicios, impuestos) — pero solo esos: lo que nadie cargó no se resta, y por
+                eso arriba se declara la cobertura del mes. El costo de lo vendido (COGS teórico) usa
+                las recetas y costos confirmados, y complementa a "Compras", que va por recepción (un
+                mes que stockea fuerte se ve peor de lo que fue).
               </p>
             </div>
           </details>

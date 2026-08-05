@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
-import { Wallet, ShoppingCart, Receipt, TrendingUp, TrendingDown, HelpCircle } from 'lucide-react'
+import { ReactNode, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { Wallet, ShoppingCart, Receipt, TrendingUp, TrendingDown, HelpCircle, ArrowRight } from 'lucide-react'
 import api from '../../api/client'
 import { RentabilidadData, fmt } from './helpers'
 
@@ -38,7 +39,7 @@ const nombreMes = (ym: string) => {
 }
 
 function Kpi({ label, value, sub, Icon, tint }: {
-  label: string; value: string; sub?: string; Icon: typeof Wallet; tint: string
+  label: string; value: string; sub?: ReactNode; Icon: typeof Wallet; tint: string
 }) {
   return (
     <div className="bg-white rounded-2xl border border-warm-200 p-4">
@@ -113,18 +114,31 @@ export default function PnLView({ onVerMetodologia }: { onVerMetodologia: () => 
               sub={`${r.n_tickets} tickets`} />
             <Kpi label="Compras proveedor" value={fmt(r.compras)} Icon={ShoppingCart} tint="text-gold-600"
               sub={`${r.n_facturas} facturas recibidas`} />
-            <Kpi label="Gastos de caja" value={fmt(r.gastos)} Icon={Receipt} tint="text-danger-500"
-              sub="egresos manuales" />
+            {/* El valor ya son las DOS mitades: egresos de caja sin adoptar +
+                obligaciones devengadas (services/rentabilidad.py). El detalle por
+                categoría vive en Costos, no acá. */}
+            <Kpi label="Costos operativos" value={fmt(r.gastos)} Icon={Receipt} tint="text-danger-500"
+              sub={<Link to="/costos" className="font-semibold text-forest underline decoration-dotted">
+                Ver el detalle en Costos
+              </Link>} />
             <div className={`rounded-2xl border p-4 border-l-[3px] ${margenPositivo ? 'bg-success-50 border-success-200 border-l-success-500' : 'bg-danger-50 border-danger-200 border-l-danger-500'}`}>
               <div className="flex items-center gap-2 mb-1.5">
                 {margenPositivo ? <TrendingUp size={14} className="text-success-600" /> : <TrendingDown size={14} className="text-danger-500" />}
-                <p className="text-[11px] font-bold uppercase tracking-wide text-warm-400">Margen operativo</p>
+                {/* MISMO número que el hero del Pulso (resumen.margen_neto). Se
+                    llamaba "Margen operativo" acá y "Margen neto" allá: dos nombres
+                    para la misma plata es exactamente la confusión que este módulo
+                    vino a sacar. Un número, un nombre. */}
+                <p className="text-[11px] font-bold uppercase tracking-wide text-warm-400">Margen neto</p>
               </div>
               <p className={`text-xl font-bold font-mono leading-none tabular-nums ${margenPositivo ? 'text-success-600' : 'text-danger-700'}`}>
                 {fmt(r.margen_neto)}
               </p>
+              {/* Sin muletilla cuando hay cobertura: el número ya resta arriendo y
+                  nómina. Cuando NO la hay, se declara — un margen sin costos fijos
+                  leído como si los tuviera es la mentira que esta fase corrige. */}
               <p className="text-xs text-warm-400 mt-1.5">
-                {r.pct_margen_neto != null ? `${r.pct_margen_neto}% de la venta` : 'sin ventas'} · sin nómina/arriendo
+                {r.pct_margen_neto != null ? `${r.pct_margen_neto}% de la venta` : 'sin ventas'}
+                {r.tiene_costos_fijos ? '' : ' · sin costos fijos cargados'}
               </p>
             </div>
           </div>
@@ -224,23 +238,20 @@ export default function PnLView({ onVerMetodologia }: { onVerMetodologia: () => 
             </div>
           )}
 
-          {/* Gastos de caja: colapsado (no justifica sección completa) */}
-          {data.gastos_detalle.length > 0 && (
-            <details className="bg-white rounded-2xl border border-warm-200 overflow-hidden">
-              <summary className="px-4 py-3 text-sm font-bold text-warm-700 cursor-pointer select-none">
-                En qué se fue el gasto de caja · {fmt(r.gastos)}
-              </summary>
-              <div className="border-t border-warm-100">
-                {data.gastos_detalle.map((g, i) => (
-                  <div key={i} className="flex items-center gap-3 px-4 py-2 border-b border-warm-100 last:border-0">
-                    <span className="flex-1 text-sm text-warm-600 truncate">{g.concepto}</span>
-                    <span className="text-xs text-warm-400 shrink-0">{g.n}×</span>
-                    <span className="text-sm font-mono font-bold text-warm-700 shrink-0 w-24 text-right tabular-nums">{fmt(g.total)}</span>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
+          {/* El detalle del gasto se AMPUTÓ de acá: eran conceptos de texto libre
+              agrupados por string crudo. En Costos el mismo dinero está agrupado por
+              categoría, que es la única forma de leerlo sin adivinar. */}
+          <Link to="/costos"
+            className="flex items-center gap-3 bg-white rounded-2xl border border-warm-200 px-4 py-3">
+            <Receipt size={16} className="text-danger-500 shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-bold text-warm-700">En qué se fueron los {fmt(r.gastos)}</span>
+              <span className="block text-xs text-warm-400">
+                El detalle vive en Costos, agrupado por categoría
+              </span>
+            </span>
+            <ArrowRight size={15} className="text-warm-400 shrink-0" />
+          </Link>
 
           <button onClick={onVerMetodologia}
             className="flex items-center gap-1.5 text-xs text-warm-500 font-semibold min-h-[44px] px-1">

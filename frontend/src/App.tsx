@@ -51,7 +51,6 @@ import CombosAdmin from './pages/CombosAdmin'
 import NotaCredito from './pages/NotaCredito'
 import CumplimientoAdmin from './pages/CumplimientoAdmin'
 import InformeContador from './pages/InformeContador'
-import PagosProveedores from './pages/PagosProveedores'
 import InventarioMensual from './pages/InventarioMensual'
 import ConciliacionInventario from './pages/ConciliacionInventario'
 import ConteosAdmin from './pages/ConteosAdmin'
@@ -183,7 +182,9 @@ function AppRoutes() {
       <Route path="/bandeja"          element={<RequireAdmin><Layout><Bandeja /></Layout></RequireAdmin>} />
       <Route path="/informes"         element={<RequireAdmin><Layout><Informes /></Layout></RequireAdmin>} />
       <Route path="/informe-contador" element={<RequireAdmin><Layout><InformeContador /></Layout></RequireAdmin>} />
-      <Route path="/pagos-proveedores" element={<RequireAdmin><Layout><PagosProveedores /></Layout></RequireAdmin>} />
+      {/* Pagos a proveedores se mudó a una pestaña de Costos (fase 5). La ruta vieja
+          se conserva como redirect: nadie con un bookmark se queda colgado. */}
+      <Route path="/pagos-proveedores" element={<Navigate to="/costos" replace />} />
       <Route path="/conciliacion-inventario" element={<RequireAdmin><Layout><ConciliacionInventario /></Layout></RequireAdmin>} />
       <Route path="/conteos-admin"    element={<RequireAdmin><Layout><ConteosAdmin /></Layout></RequireAdmin>} />
       <Route path="/lotes"            element={<RequireAdmin><Layout><LotesTrazabilidad /></Layout></RequireAdmin>} />

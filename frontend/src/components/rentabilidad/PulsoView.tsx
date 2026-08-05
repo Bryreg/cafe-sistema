@@ -1,8 +1,15 @@
-import { TrendingUp, TrendingDown, ArrowRight } from 'lucide-react'
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
+import { TrendingUp, TrendingDown, ArrowRight, Info, X } from 'lucide-react'
 import {
   RentabilidadData, PorProductoData, PulsoData, Jugada,
   fmt, fmtK, pctDelta,
 } from './helpers'
+
+// El aviso de que el margen neto CAMBIÓ DE VALOR se muestra una sola vez por
+// navegador: el dueño ya conoce el número viejo y verlo bajar sin explicación se
+// lee como un error del sistema, no como una mejora de la medición.
+const CLAVE_AVISO_FIJOS = 'rentabilidad.aviso_margen_con_fijos.v1'
 
 function Delta({ v }: { v: number | null }) {
   if (v == null) return null
@@ -50,13 +57,34 @@ export default function PulsoView({ pulso, plMes, jugadas, onVerJugadas }: {
   const act = pulso?.mes_actual
   const ant = pulso?.mes_anterior
   const pct = r?.pct_margen_neto ?? null
-  // Semáforo del margen operativo de caja (no incluye nómina/arriendo).
-  const estado = pct == null ? null : pct >= 65 ? 'bien' : pct >= 50 ? 'ojo' : 'alerta'
+  // Con la fase 3 el margen neto YA resta las obligaciones devengadas (arriendo,
+  // nómina, servicios). Pero solo resta las que alguien cargó: sin una sola
+  // obligación fija en el período, este número sigue siendo el margen de antes y
+  // cualquier veredicto sobre él es aire. Por eso hay un tercer estado.
+  const tieneFijos = r?.tiene_costos_fijos ?? false
+  // Umbrales RECALIBRADOS. Los viejos (65 / 50) medían un margen que no restaba
+  // costos fijos: aplicados al margen real marcarían "Alerta" a un negocio sano.
+  // Sobre utilidad operativa de gastronomía, ~15% es bueno y <5% es delgado.
+  const estado = r == null ? null
+    : !tieneFijos ? 'sinFijos'
+    : pct == null ? null
+    : pct >= 15 ? 'bien' : pct >= 5 ? 'ojo' : 'alerta'
   const estadoUi = {
     bien: { label: 'Sano', cls: 'bg-success-50 text-success-600 border-success-200' },
     ojo: { label: 'Ojo', cls: 'bg-gold-50 text-gold-700 border-gold-200' },
     alerta: { label: 'Alerta', cls: 'bg-danger-50 text-danger-700 border-danger-200' },
+    sinFijos: { label: 'Sin costos fijos', cls: 'bg-warm-100 text-warm-600 border-warm-200' },
   } as const
+
+  // El aviso solo tiene sentido cuando el número YA cambió de valor (o sea, cuando
+  // de verdad hay costos fijos restándose). Sin cobertura el problema es otro y ya
+  // lo dice el semáforo.
+  const [avisoVisto, setAvisoVisto] = useState(
+    () => localStorage.getItem(CLAVE_AVISO_FIJOS) === '1')
+  const ocultarAviso = () => {
+    localStorage.setItem(CLAVE_AVISO_FIJOS, '1')
+    setAvisoVisto(true)
+  }
 
   const dVentas = act && ant ? pctDelta(act.ventas, ant.ventas) : null
   const dTickets = act && ant ? pctDelta(act.tickets, ant.tickets) : null
@@ -70,24 +98,60 @@ export default function PulsoView({ pulso, plMes, jugadas, onVerJugadas }: {
 
   return (
     <div className="space-y-3">
-      {/* Hero: margen operativo de caja del mes */}
+      {/* Por qué el número no es el que el dueño recordaba. Se muestra una vez. */}
+      {tieneFijos && !avisoVisto && (
+        <div className="flex items-start gap-2 rounded-2xl border border-gold-200 bg-gold-50 px-4 py-3">
+          <Info size={16} className="text-gold-700 mt-0.5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-gold-800">El margen neto cambió de valor</p>
+            <p className="text-xs text-gold-700/90 mt-0.5 leading-relaxed">
+              Ahora descuenta los costos fijos del mes ({fmt(r?.costos_fijos_devengados ?? 0)} en
+              arriendo, nómina y servicios). Antes no los restaba, así que se veía más alto de lo
+              que era. El negocio no cambió: cambió lo que el número mira.
+            </p>
+          </div>
+          <button onClick={ocultarAviso} aria-label="Entendido, no mostrar más"
+            className="shrink-0 p-1.5 -mr-1 -mt-1 rounded-lg text-gold-700 hover:bg-gold-100">
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      {/* Hero: margen neto del mes (ya con costos fijos adentro) */}
       <div className="bg-white rounded-2xl border border-warm-200 shadow-sm p-5">
         <div className="flex items-start justify-between gap-2">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-wide text-warm-500">
-              Margen operativo de caja · mes en curso
+              Margen neto · mes en curso
             </p>
             <p className="text-[32px] leading-tight font-extrabold font-mono text-warm-700 tabular-nums">
               {r ? fmt(r.margen_neto) : '—'}
             </p>
+            {/* Sin la muletilla: su desaparición ES la señal de que el número por
+                fin resta arriendo y nómina. Cuando NO hay cobertura, el texto lo
+                dice — la ausencia de dato no puede leerse como buena noticia. */}
             <p className="text-xs text-warm-500 mt-0.5">
-              {pct != null ? `${pct}% de la venta` : ''} · no incluye nómina ni arriendo
+              {!r ? '' : tieneFijos ? (pct != null ? `${pct}% de la venta` : 'Sin ventas en el período') : (
+                <>
+                  Faltan los costos fijos del mes —{' '}
+                  <Link to="/costos" className="font-bold text-forest underline decoration-dotted">
+                    cargalos en Costos
+                  </Link>
+                </>
+              )}
             </p>
           </div>
           {estado && (
-            <span className={`px-2.5 py-1 rounded-full border text-xs font-bold ${estadoUi[estado].cls}`}>
-              {estadoUi[estado].label}
-            </span>
+            estado === 'sinFijos' ? (
+              <Link to="/costos"
+                className={`px-2.5 py-1 rounded-full border text-xs font-bold ${estadoUi.sinFijos.cls}`}>
+                {estadoUi.sinFijos.label}
+              </Link>
+            ) : (
+              <span className={`px-2.5 py-1 rounded-full border text-xs font-bold ${estadoUi[estado].cls}`}>
+                {estadoUi[estado].label}
+              </span>
+            )
           )}
         </div>
         {pulso && <div className="mt-3"><Sparkline dias={pulso.ventas_diarias} /></div>}

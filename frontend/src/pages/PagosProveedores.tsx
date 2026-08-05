@@ -40,7 +40,11 @@ const ESTADO: Record<string, { label: string; cls: string; Icon: typeof CheckCir
   pendiente: { label: 'Pendiente', cls: 'bg-red-100 text-red-700',     Icon: AlertCircle },
 }
 
-export default function PagosProveedores() {
+/** `embebido` = renderizado como pestaña DENTRO de Costos (su casa desde la fase 5).
+ *  Solo apaga el título propio: dos <h1> en la misma página rompen la jerarquía y
+ *  repiten el nombre del módulo. Todo lo demás —filtros, KPIs, acciones— es idéntico:
+ *  la vista se reusa, no se duplica. */
+export default function PagosProveedores({ embebido = false }: { embebido?: boolean }) {
   const [tiendas, setTiendas] = useState<Tienda[]>([])
   const [tiendaId, setTiendaId] = useState<number | null>(null)  // null = todas
   const [desde, setDesde] = useState('')
@@ -174,10 +178,12 @@ export default function PagosProveedores() {
     <div className="space-y-4">
       {/* Header + filtros */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <Truck size={20} className="text-forest" />
-          <h1 className="text-lg font-bold text-gray-800">Pagos a Proveedores</h1>
-        </div>
+        {!embebido && (
+          <div className="flex items-center gap-2">
+            <Truck size={20} className="text-forest" />
+            <h1 className="text-lg font-bold text-gray-800">Pagos a Proveedores</h1>
+          </div>
+        )}
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
             className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />

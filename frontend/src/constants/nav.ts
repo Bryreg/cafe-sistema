@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Layers,
   Banknote, Wrench, ClipboardCheck, Activity,
-  Bell, Inbox, BarChart2, Users, Tag, RotateCcw, Calculator, Truck, Scale, Boxes, Wallet,
+  Bell, Inbox, BarChart2, Users, Tag, RotateCcw, Calculator, Scale, Boxes, Wallet,
   Receipt, ShieldCheck, ListChecks, BookOpen, TrendingUp, Package,
 } from 'lucide-react'
 
@@ -35,10 +35,11 @@ export const NAV_GROUPS: NavGroup[] = [
     { to: '/conciliacion-inventario', label: 'Cierre de mes',  icon: Scale           },
     { to: '/lotes',                   label: 'Lotes',          icon: Boxes           },
   ]},
+  // "Pagos proveedores" salió de acá en la fase 5: vive como pestaña dentro de
+  // Costos, junto a la agenda y al flujo. La plata que sale es un solo tema.
   { label: 'Caja', items: [
     { to: '/cuadre-turnos',     label: 'Cuadres',        icon: Wallet          },
     { to: '/consignaciones',    label: 'Consignaciones', icon: Banknote        },
-    { to: '/pagos-proveedores', label: 'Pagos proveedores', icon: Truck        },
   ]},
   { label: 'Operación', items: [
     { to: '/mantenimientos',      label: 'Mantenimientos', icon: Wrench          },

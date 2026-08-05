@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../api/client'
+import PagosProveedores from './PagosProveedores'
 import { conMiles, soloDigitos } from '../utils/plata'
 import {
   Wallet, Plus, X, Building2, CheckCircle, Clock, AlertCircle,
@@ -140,8 +141,15 @@ const ESTADO: Record<string, { label: string; cls: string; Icon: typeof CheckCir
 // el filtro necesita una opción explícita para ellos (no es lo mismo que "todas").
 const CORPORATIVO = 'corp'
 
+// 'proveedores' reusa la pantalla completa de PagosProveedores: la plata que sale
+// por proveedor y la que sale por costo fijo son el mismo tema y ahora viven juntas.
+// Esa vista trae sus PROPIOS filtros (rango, sede) y datos, así que los del header
+// de Costos se apagan mientras esté activa — dos juegos de filtros compitiendo por
+// la misma pantalla es peor que ninguno.
+type Vista = 'obligaciones' | 'agenda' | 'sinCategorizar' | 'flujo' | 'proveedores'
+
 export default function Costos() {
-  const [vista, setVista] = useState<'obligaciones' | 'agenda' | 'sinCategorizar' | 'flujo'>('agenda')
+  const [vista, setVista] = useState<Vista>('agenda')
   const [categorias, setCategorias] = useState<Categoria[]>([])
   const [tiendas, setTiendas] = useState<Tienda[]>([])
   const [data, setData] = useState<Listado | null>(null)
@@ -254,6 +262,10 @@ export default function Costos() {
   }
 
   useEffect(() => {
+    // 'proveedores' se carga sola (trae su propio fetch y sus propios filtros): si
+    // cayera en el `else`, pediría obligaciones que nadie va a mostrar y dejaría el
+    // spinner de Costos tapando la vista.
+    if (vista === 'proveedores') { setLoading(false); setError(''); return }
     if (vista === 'agenda') cargarAgenda()
     else if (vista === 'sinCategorizar') cargarBandeja()
     else if (vista === 'flujo') cargarFlujo()
@@ -451,8 +463,9 @@ export default function Costos() {
           <h1 className="text-lg font-bold text-gray-800">Costos</h1>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {/* El flujo no lleva rango: su eje es siempre "de hoy en adelante". */}
-          {vista !== 'flujo' && (<>
+          {/* El flujo no lleva rango (su eje es "de hoy en adelante") y proveedores
+              trae el suyo propio. */}
+          {vista !== 'flujo' && vista !== 'proveedores' && (<>
             <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
               title={vista === 'agenda' ? 'Pagos desde' : 'Devengo desde'}
               className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
@@ -461,10 +474,12 @@ export default function Costos() {
               title={vista === 'agenda' ? 'Pagos hasta' : 'Devengo hasta'}
               className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
           </>)}
-          <button onClick={() => { limpiarNueva(); setNuevaAbierta(true) }}
-            className="flex items-center gap-1.5 text-sm font-bold text-white bg-forest hover:bg-forest-700 px-3 py-1.5 rounded-lg">
-            <Plus size={15} /> Nueva obligación
-          </button>
+          {vista !== 'proveedores' && (
+            <button onClick={() => { limpiarNueva(); setNuevaAbierta(true) }}
+              className="flex items-center gap-1.5 text-sm font-bold text-white bg-forest hover:bg-forest-700 px-3 py-1.5 rounded-lg">
+              <Plus size={15} /> Nueva obligación
+            </button>
+          )}
         </div>
       </div>
 
@@ -473,6 +488,7 @@ export default function Costos() {
         {[{ v: 'agenda' as const, l: 'Agenda de pagos', Icon: CalendarDays },
           { v: 'flujo' as const, l: 'Flujo proyectado', Icon: TrendingDown },
           { v: 'obligaciones' as const, l: 'Obligaciones', Icon: Receipt },
+          { v: 'proveedores' as const, l: 'Pagos proveedores', Icon: Truck },
           { v: 'sinCategorizar' as const, l: 'Egresos sin categorizar', Icon: Inbox }].map(op => (
           <button key={op.v}
             onClick={() => {
@@ -488,8 +504,10 @@ export default function Costos() {
         ))}
       </div>
 
-      {/* Sede (con la opción explícita Corporativo, que solo aplica a la lista) */}
-      <div className="flex items-center gap-2 flex-wrap">
+      {/* Sede (con la opción explícita Corporativo, que solo aplica a la lista).
+          Proveedores trae su propio selector de sede: mostrar dos sería mentir
+          sobre cuál manda. */}
+      <div className={`flex items-center gap-2 flex-wrap ${vista === 'proveedores' ? 'hidden' : ''}`}>
         {[{ v: '', l: 'Todas las sedes' },
           ...(vista === 'obligaciones' ? [{ v: CORPORATIVO, l: 'Corporativo' }] : []),
           ...tiendas.map(t => ({ v: String(t.id), l: t.nombre }))].map(op => (
@@ -502,6 +520,9 @@ export default function Costos() {
 
       {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>}
       {loading && <p className="text-sm text-gray-400 text-center py-8 animate-pulse">Cargando…</p>}
+
+      {/* ─── PAGOS A PROVEEDORES (la pantalla completa, reusada) ────────────── */}
+      {vista === 'proveedores' && <PagosProveedores embebido />}
 
       {/* ─── AGENDA ─────────────────────────────────────────────────────────── */}
       {vista === 'agenda' && !loading && (

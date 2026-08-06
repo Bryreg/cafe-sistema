@@ -60,6 +60,7 @@ import CuadreTurnos from './pages/CuadreTurnos'
 import ConfigTicketPage from './pages/ConfigTicket'
 import Rentabilidad from './pages/Rentabilidad'
 import Costos from './pages/Costos'
+import Carta from './pages/Carta'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -192,6 +193,7 @@ function AppRoutes() {
       <Route path="/usuarios"         element={<RequireAdmin><Layout><Usuarios /></Layout></RequireAdmin>} />
       <Route path="/control-inventario" element={<RequireAdmin><Layout><ControlInventario /></Layout></RequireAdmin>} />
       <Route path="/catalogo"         element={<RequireAdmin><Layout><Catalogo /></Layout></RequireAdmin>} />
+      <Route path="/carta"           element={<RequireAdmin><Layout><Carta /></Layout></RequireAdmin>} />
       <Route path="/combos"           element={<RequireAdmin><Layout><CombosAdmin /></Layout></RequireAdmin>} />
       <Route path="/notas-credito"    element={<RequireAdmin><Layout><NotaCredito /></Layout></RequireAdmin>} />
       <Route path="/pedidos-admin"    element={<RequireAdmin><Layout><PedidosAdmin /></Layout></RequireAdmin>} />

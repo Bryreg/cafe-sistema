@@ -1,32 +1,34 @@
 import { useEffect, useMemo, useState } from 'react'
-import { TrendingUp, Activity, Zap, Coffee, Wallet, Database } from 'lucide-react'
+import { TrendingUp, Activity, Wallet, Database } from 'lucide-react'
 import api from '../api/client'
 import {
   RentabilidadData, PorProductoData, PulsoData,
-  computeJugadas, computeOutliers, computeInsumosSinCosto,
+  computeOutliers, computeInsumosSinCosto,
 } from '../components/rentabilidad/helpers'
 import PulsoView from '../components/rentabilidad/PulsoView'
-import JugadasView from '../components/rentabilidad/JugadasView'
-import MenuView from '../components/rentabilidad/MenuView'
 import PnLView from '../components/rentabilidad/PnLView'
 import DatosSheet from '../components/rentabilidad/DatosSheet'
-import SimuladorSheet from '../components/rentabilidad/SimuladorSheet'
 
-// ─── Cockpit de rentabilidad: 4 vistas (una pregunta cada una) + sheet Datos ──
-//   Pulso   → ¿cómo vamos?          Jugadas → ¿qué hago esta semana?
-//   Menú    → ¿qué productos funcionan?   P&L → ¿dónde está la plata?
-// El estado de la tab vive en el hash de la URL (#pulso · #jugadas · #menu · #pyl).
+// ─── Cockpit de rentabilidad: DOS vistas + sheet Datos ───────────────────────
+//   Pulso → ¿cómo vamos?        P&L → ¿dónde está la plata?
+// El estado de la tab vive en el hash de la URL (#pulso · #pyl).
+//
+// Eran cuatro. Se podaron dos porque no se miran un martes:
+//   - Jugadas: sugerencias calculadas ENTERAS en el cliente con constantes
+//     inventadas ahí (precio objetivo 62%, add-on $2.900, umbral de "caballo").
+//     No consultaba ningún endpoint: se leía una vez y no cambiaba. Lo único
+//     operativo que tenía —los insumos que se encarecieron— se rescató al Pulso.
+//   - Menú: decide carta y precios, o sea trabajo trimestral, no diario. Sigue
+//     entera en /carta, junto a Catálogo, que es donde se toma esa decisión.
 
-type Tab = 'pulso' | 'jugadas' | 'menu' | 'pyl'
+type Tab = 'pulso' | 'pyl'
 const TABS: { id: Tab; label: string; Icon: typeof Activity }[] = [
   { id: 'pulso', label: 'Pulso', Icon: Activity },
-  { id: 'jugadas', label: 'Jugadas', Icon: Zap },
-  { id: 'menu', label: 'Menú', Icon: Coffee },
   { id: 'pyl', label: 'P&L', Icon: Wallet },
 ]
 const tabFromHash = (): Tab => {
   const h = window.location.hash.replace('#', '')
-  return (['pulso', 'jugadas', 'menu', 'pyl'] as Tab[]).includes(h as Tab) ? (h as Tab) : 'pulso'
+  return (['pulso', 'pyl'] as Tab[]).includes(h as Tab) ? (h as Tab) : 'pulso'
 }
 
 // "Hoy"/inicio de mes según el reloj de Colombia (no el del navegador).
@@ -42,7 +44,6 @@ export default function Rentabilidad() {
   const [prodData, setProdData] = useState<PorProductoData | null>(null)
   const [plMes, setPlMes] = useState<RentabilidadData | null>(null)
   const [datosOpen, setDatosOpen] = useState(false)
-  const [simProd, setSimProd] = useState<number | null>(null)
 
   const fetchProductos = () =>
     api.get<PorProductoData>('/rentabilidad/por-producto')
@@ -67,8 +68,6 @@ export default function Rentabilidad() {
     setTab(t)
     window.scrollTo({ top: 0 })
   }
-
-  const jugadas = useMemo(() => computeJugadas(prodData, pulso), [prodData, pulso])
   const pendientesDatos = useMemo(() => {
     if (!prodData) return 0
     // Sin costos fijos devengados en el mes, el margen neto está inflado: es un
@@ -99,7 +98,7 @@ export default function Rentabilidad() {
 
       {/* Tabs sticky */}
       <div className="sticky top-0 z-20 -mx-1 px-1 py-1.5 bg-warm-50/90 backdrop-blur-sm">
-        <div className="grid grid-cols-4 gap-1 bg-warm-100 rounded-xl p-1">
+        <div className="grid grid-cols-2 gap-1 bg-warm-100 rounded-xl p-1">
           {TABS.map(({ id, label, Icon }) => (
             <button key={id} onClick={() => goTab(id)}
               className={`flex items-center justify-center gap-1.5 min-h-[42px] rounded-lg text-xs font-bold transition-colors ${
@@ -112,17 +111,12 @@ export default function Rentabilidad() {
 
       {tab === 'pulso' && (
         <PulsoView pulso={pulso} plMes={plMes} prodData={prodData}
-          jugadas={jugadas} onVerJugadas={() => goTab('jugadas')} />
+        />
       )}
-      {tab === 'jugadas' && (
-        <JugadasView jugadas={jugadas} pulso={pulso} listo={prodData != null} onSimular={id => setSimProd(id)} />
-      )}
-      {tab === 'menu' && <MenuView prodData={prodData} pulso={pulso} />}
       {tab === 'pyl' && <PnLView onVerMetodologia={() => setDatosOpen(true)} />}
 
       <DatosSheet open={datosOpen} prodData={prodData} plMes={plMes}
         onClose={() => setDatosOpen(false)} onRefresh={fetchProductos} />
-      <SimuladorSheet prodData={prodData} productoId={simProd} onClose={() => setSimProd(null)} />
     </div>
   )
 }

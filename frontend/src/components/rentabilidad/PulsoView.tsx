@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { TrendingUp, TrendingDown, ArrowRight, Info, X } from 'lucide-react'
+import { TrendingUp, TrendingDown, Info, X } from 'lucide-react'
 import {
-  RentabilidadData, PorProductoData, PulsoData, Jugada,
+  RentabilidadData, PorProductoData, PulsoData,
   fmt, fmtK, pctDelta,
 } from './helpers'
 
@@ -42,17 +42,15 @@ function Sparkline({ dias }: { dias: { dia: string; ventas: number }[] }) {
   )
 }
 
-const JUGADA_ICON: Record<Jugada['tipo'], string> = {
-  costo: '🔧', combo: '🎁', addon: '➕', daypart: '🕒', precio: '⚠️',
-}
 
-export default function PulsoView({ pulso, plMes, jugadas, onVerJugadas }: {
+export default function PulsoView({ pulso, plMes, prodData }: {
   pulso: PulsoData | null
   plMes: RentabilidadData | null
   prodData: PorProductoData | null
-  jugadas: Jugada[]
-  onVerJugadas: () => void
 }) {
+  // Las 3 subas de costo más grandes. prodData ya llegaba a esta vista como prop
+  // y no se usaba: el dato estaba acá y se pintaba en otra pestaña.
+  const alertasCosto = (prodData?.alertas_costo ?? []).slice(0, 3)
   const r = plMes?.resumen
   const act = pulso?.mes_actual
   const ant = pulso?.mes_anterior
@@ -210,25 +208,33 @@ export default function PulsoView({ pulso, plMes, jugadas, onVerJugadas }: {
         </div>
       )}
 
-      {/* Teaser: tus próximas 3 jugadas */}
-      {jugadas.length > 0 && (
+      {/* INSUMOS QUE SE ENCARECIERON — lo único operativo que tenía la pestaña
+          Jugadas. El resto de sus sugerencias (combos, add-ons, hora valle,
+          precio objetivo) era consultoría estática con constantes inventadas en
+          el cliente: se leía una vez y no cambiaba. Un insumo que subió, en
+          cambio, se quiere saber HOY: es plata que ya se está yendo en cada
+          venta. Sale de prodData, que esta vista ya recibía y no usaba. */}
+      {alertasCosto.length > 0 && (
         <div className="bg-white rounded-2xl border border-warm-200 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-warm-100">
-            <p className="text-sm font-bold text-warm-700">Tus próximas jugadas</p>
-            <button onClick={onVerJugadas}
-              className="flex items-center gap-1 text-xs font-bold text-forest min-h-[44px] px-2 -mr-2">
-              Ver todas <ArrowRight size={13} />
-            </button>
+          <div className="px-4 py-3 border-b border-warm-100">
+            <p className="text-sm font-bold text-warm-700">Insumos que subieron de precio</p>
+            <p className="text-[11px] text-warm-500">Renegociá o buscá alternativa: esto te come el margen en cada venta.</p>
           </div>
-          {jugadas.slice(0, 3).map(j => (
-            <button key={j.id} onClick={onVerJugadas}
-              className="w-full text-left flex items-center gap-3 px-4 py-2.5 border-b border-warm-100 last:border-0 active:scale-[0.99] transition-transform">
-              <span className="text-lg" aria-hidden="true">{JUGADA_ICON[j.tipo]}</span>
+          {alertasCosto.map(a => (
+            <div key={a.insumo_id}
+              className="flex items-center gap-3 px-4 py-2.5 border-b border-warm-100 last:border-0">
+              <span className="text-lg" aria-hidden="true">🔧</span>
               <span className="flex-1 min-w-0">
-                <span className="block text-sm font-semibold text-warm-700 truncate">{j.titulo}</span>
-                <span className="block text-[11px] text-success-600 font-bold">{j.impacto}</span>
+                <span className="block text-sm font-semibold text-warm-700 truncate">{a.nombre}</span>
+                <span className="block text-[11px] text-warm-500">
+                  {fmt(a.costo_usado)} → {fmt(a.costo_ultimo)}
+                  {a.productos_afectados.length > 0 && ` · afecta ${a.productos_afectados.length} producto${a.productos_afectados.length !== 1 ? 's' : ''}`}
+                </span>
               </span>
-            </button>
+              <span className="text-sm font-bold text-danger-700 tabular-nums shrink-0">
+                +{a.pct_suba}%
+              </span>
+            </div>
           ))}
         </div>
       )}

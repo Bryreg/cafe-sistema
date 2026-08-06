@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, Layers,
+  LayoutDashboard, Layers, Coffee,
   Banknote, Wrench, ClipboardCheck, Activity,
   Bell, Inbox, BarChart2, Users, Tag, RotateCcw, Calculator, Scale, Boxes, Wallet,
   Receipt, ShieldCheck, ListChecks, BookOpen, TrendingUp, Package,
@@ -53,6 +53,7 @@ export const NAV_GROUPS: NavGroup[] = [
     { to: '/audit-log',          label: 'Historial',      icon: Activity        },
   ]},
   { label: 'Maestros', items: [
+    { to: '/carta',              label: 'Carta',          icon: Coffee          },
     { to: '/catalogo',           label: 'Catálogo',       icon: Tag             },
     { to: '/combos',             label: 'Combos',         icon: Package         },
     { to: '/usuarios',           label: 'Usuarios',       icon: Users           },

@@ -26,6 +26,10 @@ interface Tienda { id: number; nombre: string }
 
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 const fmt = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO')
+// Alto del área de barras, en px. Es px y no una clase h-* porque las barras se
+// dibujan con altura calculada en píxeles: así no dependen de que el padre tenga
+// una altura resoluble (ver el comentario del gráfico).
+const ALTO_BARRAS = 128
 const fmtDia = (iso: string) => {
   const [, m, d] = iso.split('-')
   return `${d}/${m}`
@@ -319,16 +323,18 @@ export default function InformeContador() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <div className="bg-white rounded-2xl border border-gray-200 p-4">
               <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-3">Tendencia diaria</p>
-              {/* La columna necesita h-full SÍ o SÍ. El contenedor trae items-end,
-                  que anula el stretch por defecto: sin h-full la columna toma la
-                  altura de su contenido (cero) y el height:% de la barra se calcula
-                  contra un padre de altura auto — que en CSS no resuelve. Resultado:
-                  TODAS las barras quedaban en el minHeight de 3px, con cualquier
-                  dato. El gráfico se veía plano aunque las ventas no lo fueran. */}
-              <div className="flex items-end gap-[3px] h-32">
+              {/* Alturas en PÍXELES, no en porcentaje. Un height:% depende de que el
+                  padre tenga altura resoluble, y acá no la tenía: el contenedor usa
+                  items-end (que anula el stretch) y la columna quedaba con altura de
+                  contenido. Todas las barras terminaban en el minHeight de 3px, con
+                  cualquier dato — el gráfico se veía plano aunque las ventas no lo
+                  fueran. Analytics nunca tuvo el bug justamente porque calcula px.
+                  Con px la barra no depende de nadie: se dibuja o no se dibuja. */}
+              <div className="flex items-end gap-[3px]" style={{ height: ALTO_BARRAS }}>
                 {data.dias.map(d => (
-                  <div key={d.fecha} className="flex-1 h-full flex flex-col items-center justify-end group relative" title={`${fmtDia(d.fecha)} · ${fmt(d.total)}`}>
-                    <div className="w-full rounded-t transition-opacity hover:opacity-80" style={{ height: `${(d.total / maxDia) * 100}%`, minHeight: 3, background: '#2d5a3f' }} />
+                  <div key={d.fecha} className="flex-1 flex flex-col items-center justify-end group relative" title={`${fmtDia(d.fecha)} · ${fmt(d.total)}`}>
+                    <div className="w-full rounded-t transition-opacity hover:opacity-80"
+                      style={{ height: Math.max(3, Math.round((d.total / maxDia) * ALTO_BARRAS)), background: '#2d5a3f' }} />
                   </div>
                 ))}
               </div>

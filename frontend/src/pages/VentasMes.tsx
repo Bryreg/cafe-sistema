@@ -27,6 +27,8 @@ interface ContadorMes {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const fmt = (v: number) => `$${Math.round(v || 0).toLocaleString('es-CO')}`
+// Alto del sparkline en px: las barras se calculan en píxeles, no en %.
+const ALTO_SPARK = 96
 
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
@@ -183,16 +185,16 @@ export default function VentasMes() {
             <>
               <SectionLabel className="mb-2">Tendencia diaria</SectionLabel>
               <Card>
-                {/* h-full en la columna: el contenedor trae items-end, que anula el
-                    stretch, y sin altura definida el height:% de la barra no resuelve
-                    y todas quedan en 3px. Mismo error que tenía la Tendencia diaria
-                    del Informe Contador — este sparkline lo copió de ahí. */}
-                <div className="flex items-end gap-[3px] h-24">
+                {/* Altura en PÍXELES: un height:% necesita que el padre tenga altura
+                    resoluble y acá no la tiene (items-end anula el stretch). Con % todas
+                    las barras quedaban en 3px con cualquier dato. Mismo bug que tenía la
+                    Tendencia diaria del Informe Contador — este sparkline lo copió de ahí. */}
+                <div className="flex items-end gap-[3px]" style={{ height: ALTO_SPARK }}>
                   {data.dias.map(d => (
-                    <div key={d.fecha} className="flex-1 h-full flex flex-col items-center justify-end" title={`${fmtDia(d.fecha)} · ${fmt(d.total)}`}>
+                    <div key={d.fecha} className="flex-1 flex flex-col items-center justify-end" title={`${fmtDia(d.fecha)} · ${fmt(d.total)}`}>
                       <div
                         className="w-full rounded-t bg-forest"
-                        style={{ height: `${(d.total / maxDia) * 100}%`, minHeight: 3 }}
+                        style={{ height: Math.max(3, Math.round((d.total / maxDia) * ALTO_SPARK)) }}
                       />
                     </div>
                   ))}

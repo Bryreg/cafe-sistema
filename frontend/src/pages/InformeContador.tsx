@@ -319,9 +319,15 @@ export default function InformeContador() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <div className="bg-white rounded-2xl border border-gray-200 p-4">
               <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-3">Tendencia diaria</p>
+              {/* La columna necesita h-full SÍ o SÍ. El contenedor trae items-end,
+                  que anula el stretch por defecto: sin h-full la columna toma la
+                  altura de su contenido (cero) y el height:% de la barra se calcula
+                  contra un padre de altura auto — que en CSS no resuelve. Resultado:
+                  TODAS las barras quedaban en el minHeight de 3px, con cualquier
+                  dato. El gráfico se veía plano aunque las ventas no lo fueran. */}
               <div className="flex items-end gap-[3px] h-32">
                 {data.dias.map(d => (
-                  <div key={d.fecha} className="flex-1 flex flex-col items-center justify-end group relative" title={`${fmtDia(d.fecha)} · ${fmt(d.total)}`}>
+                  <div key={d.fecha} className="flex-1 h-full flex flex-col items-center justify-end group relative" title={`${fmtDia(d.fecha)} · ${fmt(d.total)}`}>
                     <div className="w-full rounded-t transition-opacity hover:opacity-80" style={{ height: `${(d.total / maxDia) * 100}%`, minHeight: 3, background: '#2d5a3f' }} />
                   </div>
                 ))}

@@ -183,9 +183,13 @@ export default function VentasMes() {
             <>
               <SectionLabel className="mb-2">Tendencia diaria</SectionLabel>
               <Card>
+                {/* h-full en la columna: el contenedor trae items-end, que anula el
+                    stretch, y sin altura definida el height:% de la barra no resuelve
+                    y todas quedan en 3px. Mismo error que tenía la Tendencia diaria
+                    del Informe Contador — este sparkline lo copió de ahí. */}
                 <div className="flex items-end gap-[3px] h-24">
                   {data.dias.map(d => (
-                    <div key={d.fecha} className="flex-1 flex flex-col items-center justify-end" title={`${fmtDia(d.fecha)} · ${fmt(d.total)}`}>
+                    <div key={d.fecha} className="flex-1 h-full flex flex-col items-center justify-end" title={`${fmtDia(d.fecha)} · ${fmt(d.total)}`}>
                       <div
                         className="w-full rounded-t bg-forest"
                         style={{ height: `${(d.total / maxDia) * 100}%`, minHeight: 3 }}

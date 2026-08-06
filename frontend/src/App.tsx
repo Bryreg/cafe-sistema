@@ -58,8 +58,7 @@ import LotesTrazabilidad from './pages/LotesTrazabilidad'
 import NotificacionesConfig from './pages/NotificacionesConfig'
 import CuadreTurnos from './pages/CuadreTurnos'
 import ConfigTicketPage from './pages/ConfigTicket'
-import Rentabilidad from './pages/Rentabilidad'
-import Costos from './pages/Costos'
+import Plata from './pages/Plata'
 import Carta from './pages/Carta'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
@@ -183,9 +182,10 @@ function AppRoutes() {
       <Route path="/bandeja"          element={<RequireAdmin><Layout><Bandeja /></Layout></RequireAdmin>} />
       <Route path="/informes"         element={<RequireAdmin><Layout><Informes /></Layout></RequireAdmin>} />
       <Route path="/informe-contador" element={<RequireAdmin><Layout><InformeContador /></Layout></RequireAdmin>} />
-      {/* Pagos a proveedores se mudó a una pestaña de Costos (fase 5). La ruta vieja
-          se conserva como redirect: nadie con un bookmark se queda colgado. */}
-      <Route path="/pagos-proveedores" element={<Navigate to="/costos" replace />} />
+      {/* Pagos a proveedores se mudó adentro del módulo de la plata (fase 5, y de
+          nuevo con la fusión). La ruta vieja se conserva como redirect: nadie con
+          un bookmark se queda colgado. */}
+      <Route path="/pagos-proveedores" element={<Navigate to="/plata#calendario" replace />} />
       <Route path="/conciliacion-inventario" element={<RequireAdmin><Layout><ConciliacionInventario /></Layout></RequireAdmin>} />
       <Route path="/conteos-admin"    element={<RequireAdmin><Layout><ConteosAdmin /></Layout></RequireAdmin>} />
       <Route path="/lotes"            element={<RequireAdmin><Layout><LotesTrazabilidad /></Layout></RequireAdmin>} />
@@ -203,8 +203,13 @@ function AppRoutes() {
       <Route path="/notificaciones-config" element={<RequireAdmin><Layout><NotificacionesConfig /></Layout></RequireAdmin>} />
       <Route path="/cumplimiento"     element={<RequireAdmin><Layout><CumplimientoAdmin /></Layout></RequireAdmin>} />
       <Route path="/config-ticket"   element={<RequireAdmin><Layout><ConfigTicketPage /></Layout></RequireAdmin>} />
-      <Route path="/rentabilidad"    element={<RequireAdmin><Layout><Rentabilidad /></Layout></RequireAdmin>} />
-      <Route path="/costos"          element={<RequireAdmin><Layout><Costos /></Layout></RequireAdmin>} />
+      {/* «Plata» = la fusión de /rentabilidad y /costos. Las dos rutas viejas
+          redirigen a la pestaña que respondía su pregunta: /rentabilidad al Hoy
+          (cómo vamos) y /costos al Calendario (qué hay que pagar). Ningún
+          bookmark ni ningún link viejo se rompe. */}
+      <Route path="/plata"           element={<RequireAdmin><Layout><Plata /></Layout></RequireAdmin>} />
+      <Route path="/rentabilidad"    element={<Navigate to="/plata" replace />} />
+      <Route path="/costos"          element={<Navigate to="/plata#calendario" replace />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

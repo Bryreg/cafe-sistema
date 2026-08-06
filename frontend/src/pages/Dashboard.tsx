@@ -783,7 +783,7 @@ export default function Dashboard() {
                 .toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}`}
               severity="danger"
               ctaLabel="Ver flujo"
-              to="/costos"
+              to="/plata#calendario"
             />
           )}
           {/* El silencio no es un all-clear: si a la proyección le faltan datos, se
@@ -795,7 +795,7 @@ export default function Dashboard() {
               label={`para proyectar la plata: ${faltaFlujo.join(' · ')}`}
               severity="warning"
               ctaLabel="Completar"
-              to="/costos"
+              to="/plata#calendario"
             />
           )}
           {hayStock && (
@@ -828,7 +828,7 @@ export default function Dashboard() {
               label="pagos a proveedores"
               severity="warning"
               ctaLabel="Pagar"
-              to="/costos"
+              to="/plata#calendario"
             />
           )}
           {haySolicitudes && (

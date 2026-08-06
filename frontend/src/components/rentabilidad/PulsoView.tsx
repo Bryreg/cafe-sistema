@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { ReactNode, useState } from 'react'
 import { TrendingUp, TrendingDown, Info, X } from 'lucide-react'
 import {
   RentabilidadData, PorProductoData, PulsoData,
@@ -43,10 +42,27 @@ function Sparkline({ dias }: { dias: { dia: string; ventas: number }[] }) {
 }
 
 
-export default function PulsoView({ pulso, plMes, prodData }: {
+/**
+ * Plata · Hoy. El slot es la costura de la fusión: «lo que se viene» tiene que
+ * entrar JUSTO DEBAJO de los KPIs —pegado al margen, que es el punto: el margen
+ * del mes y la plata que se va la semana próxima ahora se leen de un vistazo—. Se
+ * pasa como nodo y no se calcula acá para que esta vista siga siendo solo el pulso
+ * y no vuelva a ser una pantalla que hace de todo.
+ *
+ * Lo que NO entra acá: el comportamiento de compra (hora pico/valle, attach, pares
+ * que se venden juntos). Estuvo un rato al final de esta pantalla y era
+ * contemplación pura —tres bloques de cifras sin un solo camino a una acción— y
+ * encima empujaba «Hoy» a 7 bloques. Se mudó a /carta, que es donde se decide el
+ * menú y los combos: ahí «qué se vende junto con qué» termina en armar un combo.
+ */
+export default function PulsoView({
+  pulso, plMes, prodData, onIrACalendario, slotCompromisos,
+}: {
   pulso: PulsoData | null
   plMes: RentabilidadData | null
   prodData: PorProductoData | null
+  onIrACalendario: () => void
+  slotCompromisos?: ReactNode
 }) {
   // Las 3 subas de costo más grandes. prodData ya llegaba a esta vista como prop
   // y no se usaba: el dato estaba acá y se pintaba en otra pestaña.
@@ -132,19 +148,19 @@ export default function PulsoView({ pulso, plMes, prodData }: {
               {!r ? '' : tieneFijos ? (pct != null ? `${pct}% de la venta` : 'Sin ventas en el período') : (
                 <>
                   Faltan los costos fijos del mes —{' '}
-                  <Link to="/costos" className="font-bold text-forest underline decoration-dotted">
-                    cargalos en Costos
-                  </Link>
+                  <button onClick={onIrACalendario} className="font-bold text-forest underline decoration-dotted">
+                    cargalos en Calendario
+                  </button>
                 </>
               )}
             </p>
           </div>
           {estado && (
             estado === 'sinFijos' ? (
-              <Link to="/costos"
+              <button onClick={onIrACalendario}
                 className={`px-2.5 py-1 rounded-full border text-xs font-bold ${estadoUi.sinFijos.cls}`}>
                 {estadoUi.sinFijos.label}
-              </Link>
+              </button>
             ) : (
               <span className={`px-2.5 py-1 rounded-full border text-xs font-bold ${estadoUi[estado].cls}`}>
                 {estadoUi[estado].label}
@@ -184,6 +200,10 @@ export default function PulsoView({ pulso, plMes, prodData }: {
           <Delta v={dVentas} />
         </div>
       </div>
+
+      {/* «Lo que se viene»: pegado al margen a propósito. Vivía en otra pantalla y
+          por eso el dueño nunca cruzaba "cuánto gané" con "cuánto tengo que pagar". */}
+      {slotCompromisos}
 
       {/* Duelo de sedes */}
       {sedes.length > 1 && (

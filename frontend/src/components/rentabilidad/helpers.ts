@@ -22,12 +22,22 @@ export interface RentabilidadData {
     costos_fijos_devengados?: number
     n_costos_fijos?: number
     tiene_costos_fijos?: boolean
+    // Plata REGALADA en mostrador (Ticket.descuento). ADITIVA: `ventas` ya viene
+    // neto, así que esto cuenta lo que se resignó, nunca lo vuelve a restar. Sin
+    // el número, un descuento y una venta que no ocurrió se ven igual.
+    descuentos?: number
+    n_tickets_con_descuento?: number
+    pct_descuento?: number | null   // medido sobre la venta BRUTA (venta + descuento)
   }
   por_mes: ({ mes: string } & Bucket)[]
   // tienda_id null = gasto CORPORATIVO (arriendo, nómina): fila propia "Corporativo",
   // no se reparte entre sedes (si se repartiera, Σ por_sede dejaría de dar el global).
   por_sede: ({ tienda_id: number | null; tienda: string } & Bucket)[]
   gastos_detalle: { concepto: string; total: number; n: number }[]
+  // PARTICIÓN de resumen.gastos por categoría de costo (Σ total == resumen.gastos).
+  // `clave` es el slug estable del catálogo; 'sin_categorizar' es la bolsa de los
+  // egresos de caja que todavía nadie adoptó, y su `grupo` es null a propósito.
+  gastos_por_categoria?: { clave: string; nombre: string; grupo: string | null; total: number; n: number }[]
   nota: string
 }
 

@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { X, ShieldAlert, ScanLine, Loader2, Trash2 } from 'lucide-react'
 import api from '../../api/client'
 import {
@@ -21,12 +20,16 @@ interface AliasRow {
 /** Bottom-sheet "Salud de datos": todo el mantenimiento de la calidad del
  *  costeo en un solo lugar — cobertura, márgenes atípicos, insumos sin costo,
  *  backfill OCR y metodología. Un margen falso lleva a decisiones falsas. */
-export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh }: {
+export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh, onIrACalendario }: {
   open: boolean
   prodData: PorProductoData | null
   plMes: RentabilidadData | null
   onClose: () => void
   onRefresh: () => void
+  // Navegación por CALLBACK y no por <Link>: la pestaña de Plata vive en el hash
+  // y react-router hace pushState sin disparar `hashchange`, así que un link a
+  // /plata#calendario cambiaría la URL sin cambiar la pantalla.
+  onIrACalendario: () => void
 }) {
   const [leyendo, setLeyendo] = useState(false)
   const [msg, setMsg] = useState('')
@@ -188,9 +191,10 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh }
                 No hay arriendo, nómina ni servicios devengados este mes. Mientras falten, el
                 margen neto se ve MÁS ALTO de lo que es y el semáforo no puede decir si el
                 negocio va bien.{' '}
-                <Link to="/costos" className="font-bold text-gold-700 underline decoration-dotted">
-                  Cargalos en Costos
-                </Link>.
+                <button onClick={() => { onClose(); onIrACalendario() }}
+                  className="font-bold text-gold-700 underline decoration-dotted">
+                  Cargalos en Calendario
+                </button>.
               </p>
             ) : (
               <p className="text-[11px] text-warm-400 mt-1.5">

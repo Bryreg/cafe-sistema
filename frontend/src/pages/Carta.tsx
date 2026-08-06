@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import api from '../api/client'
 import { Coffee, SlidersHorizontal } from 'lucide-react'
 import MenuView from '../components/rentabilidad/MenuView'
+import ComoSeCompra from '../components/rentabilidad/ComoSeCompra'
 import SimuladorSheet from '../components/rentabilidad/SimuladorSheet'
 import type { PorProductoData, PulsoData } from '../components/rentabilidad/helpers'
 
@@ -105,7 +106,13 @@ export default function Carta() {
           </p>
         </div>
       ) : (
-        <MenuView prodData={prodData} pulso={pulso} />
+        <>
+          <MenuView prodData={prodData} pulso={pulso} />
+          {/* Cómo se compra acá (hora pico/valle, attach, pares). Vino de
+              Plata·Hoy, donde no llevaba a ninguna decisión: la decisión que
+              habilita —armar un combo, mover un precio— se toma en esta pantalla. */}
+          <ComoSeCompra pulso={pulso} />
+        </>
       )}
 
       <SimuladorSheet prodData={prodData}

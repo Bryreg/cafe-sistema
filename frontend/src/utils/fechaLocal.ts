@@ -17,6 +17,18 @@ export function hoyLocal(): string {
   return isoLocal(new Date())
 }
 
+/**
+ * "Hoy" segun el reloj de COLOMBIA (el negocio), no el del dispositivo.
+ *
+ * El modulo Plata lo necesita en varios lugares y cada uno tenia su propia copia:
+ * con un admin viajando (o un navegador mal configurado) esas copias se separan y
+ * "vencido" empieza a significar cosas distintas en dos tarjetas de la misma
+ * pantalla. Igual que en el backend, la fecha del negocio es una sola.
+ */
+export function hoyBogota(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+}
+
 /** Fecha de hace `n` dias en hora local. */
 export function haceDiasLocal(n: number): string {
   const d = new Date()

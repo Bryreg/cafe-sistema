@@ -83,7 +83,12 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     tiendas = {t.id: t.nombre for t in db.query(Tienda).all()}
 
     # ── Ventas (tickets no anulados) ──────────────────────────────────────────
-    q_ventas = db.query(Ticket.fecha, Ticket.total, Ticket.tienda_id).filter(
+    # `descuento` viaja ADITIVO: Ticket.total ya viene NETO de descuento, así que
+    # exponerlo cuenta lo que se regaló en mostrador sin volver a restarlo. Hasta
+    # ahora el POS lo escribía en cada venta y ningún reporte lo sumaba: un
+    # descuento y una venta que no ocurrió se veían exactamente igual.
+    q_ventas = db.query(Ticket.fecha, Ticket.total, Ticket.tienda_id,
+                        Ticket.descuento).filter(
         Ticket.estado.notin_(ESTADOS_ANULADOS),
         Ticket.fecha >= d_utc,
         Ticket.fecha <= h_utc,
@@ -145,9 +150,12 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # también acá contaría la misma plata dos veces y hundiría el margen neto con
     # un gasto que no existe. El servicio ya no deja cargar nada ahí; este filtro
     # es por las filas que la versión anterior alcanzó a guardar.
+    # `clave` va al final (índice 5) a propósito: el chequeo de costos fijos de más
+    # abajo indexa por posición (r[4] == grupo) y agregarla en el medio lo rompería.
     q_oblig = (
         db.query(Obligacion.fecha_devengo, Obligacion.monto,
-                 Obligacion.tienda_id, CostoCategoria.nombre, CostoCategoria.grupo)
+                 Obligacion.tienda_id, CostoCategoria.nombre, CostoCategoria.grupo,
+                 CostoCategoria.clave)
         .join(CostoCategoria, CostoCategoria.id == Obligacion.categoria_id)
         .filter(
             Obligacion.anulada.is_(False),
@@ -226,29 +234,48 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     por_mes: dict[str, dict] = defaultdict(lambda: {"ventas": 0.0, "compras": 0.0, "gastos": 0.0})
     # Clave int o None: None = gasto CORPORATIVO (sin sede), no un dato faltante.
     por_sede: dict = defaultdict(lambda: {"ventas": 0.0, "compras": 0.0, "gastos": 0.0})
-    for fecha, total, tid in ventas_rows:
+    for fecha, total, tid, _desc in ventas_rows:
         por_mes[_mes(fecha)]["ventas"] += float(total or 0)
         por_sede[tid]["ventas"] += float(total or 0)
     for fecha, total, tid in compras_rows:
         por_mes[_mes(fecha)]["compras"] += float(total or 0)
         por_sede[tid]["compras"] += float(total or 0)
     gastos_por_concepto: dict[str, dict] = defaultdict(lambda: {"total": 0.0, "n": 0})
+    # PARTICIÓN de `gastos` por categoría de costo. `gastos_detalle` mezcla en una
+    # sola lista el nombre de la categoría con el texto libre del egreso de caja, o
+    # sea que leerlo obliga a adivinar cuál es cuál; acá la categoría es la clave
+    # ESTABLE del catálogo y los egresos sueltos van a una bolsa declarada aparte.
+    # Es ADITIVO: Σ de este desglose tiene que dar exactamente `resumen.gastos`.
+    por_categoria: dict[str, dict] = {}
+
+    def _acum_categoria(clave: str, nombre: str, grupo, monto: float) -> None:
+        g = por_categoria.setdefault(
+            clave, {"clave": clave, "nombre": nombre, "grupo": grupo, "total": 0.0, "n": 0})
+        g["total"] += monto
+        g["n"] += 1
+
     for fecha, valor, concepto, tid in gastos_rows:
         por_mes[_mes(fecha)]["gastos"] += float(valor or 0)
         por_sede[tid]["gastos"] += float(valor or 0)
         g = gastos_por_concepto[(concepto or "(sin concepto)").strip()]
         g["total"] += float(valor or 0)
         g["n"] += 1
+        # Bolsa propia, nunca disfrazada de categoría: es exactamente la plata que
+        # se vacía adoptando el egreso en Costos, y decir cuánta hay es lo que
+        # convierte "el desglose no cuadra" en "falta categorizar esto".
+        _acum_categoria("sin_categorizar", "Sin categorizar", None, float(valor or 0))
     # Las obligaciones agrupan por NOMBRE DE CATEGORÍA (no por texto libre): a medida
     # que se adoptan egresos, el bloque de conceptos sueltos se vacía solo.
     # `fecha_devengo` ya es fecha Colombia: se formatea directo, sin pasar por _mes
     # (que convierte de UTC y espera un datetime).
-    for devengo, monto, tid, categoria, _grupo in oblig_rows:
+    for devengo, monto, tid, categoria, grupo, clave in oblig_rows:
         por_mes[devengo.strftime("%Y-%m")]["gastos"] += float(monto or 0)
         por_sede[tid]["gastos"] += float(monto or 0)
         g = gastos_por_concepto[(categoria or "(sin categoría)").strip()]
         g["total"] += float(monto or 0)
         g["n"] += 1
+        _acum_categoria(clave or "otros", (categoria or "Sin categoría").strip(),
+                        grupo, float(monto or 0))
 
     # ── Cobertura de costos FIJOS (arriendo, nómina, servicios, impuestos) ────
     # Campo ADITIVO: no entra en ninguna fórmula, solo declara si el margen neto
@@ -257,6 +284,13 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # un semáforo en verde sobre el segundo caso es una mentira tranquilizadora.
     fijos_rows = [r for r in oblig_rows if (r[4] or "") == "fijo"]
     costos_fijos_devengados = round(sum(float(r[1] or 0) for r in fijos_rows), 2)
+
+    # ── Descuentos: la plata REGALADA en mostrador ────────────────────────────
+    # ADITIVO y fuera de toda fórmula: Ticket.total ya viene neto. El % se mide
+    # contra la venta BRUTA (lo que se habría facturado sin regalar nada); contra
+    # la neta daría un número inflado que sobreestima el descuento.
+    descuentos = round(sum(float(r[3] or 0) for r in ventas_rows), 2)
+    n_con_descuento = sum(1 for r in ventas_rows if float(r[3] or 0) > 0)
 
     def _cerrar(d: dict) -> dict:
         v, c, g = round(d["ventas"], 2), round(d["compras"], 2), round(d["gastos"], 2)
@@ -293,6 +327,13 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             "costos_fijos_devengados": costos_fijos_devengados,
             "n_costos_fijos": len(fijos_rows),
             "tiene_costos_fijos": bool(fijos_rows),
+            # Plata regalada en mostrador (ADITIVA: NO se resta de nada, `ventas`
+            # ya es neto). Sin este número un descuento y una venta que no ocurrió
+            # son indistinguibles.
+            "descuentos": descuentos,
+            "n_tickets_con_descuento": n_con_descuento,
+            "pct_descuento": (round(descuentos / (tot_ventas + descuentos) * 100, 1)
+                              if tot_ventas + descuentos > 0 else None),
         },
         "por_mes": [
             {"mes": mes, **_cerrar(vals)}
@@ -308,6 +349,12 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             for tid, vals in sorted(por_sede.items(),
                                     key=lambda kv: (kv[0] is not None, kv[0] or 0))
         ],
+        # PARTICIÓN de `resumen.gastos` por categoría — el desglose que el módulo
+        # Costos ya sabía hacer y que el P&L tiraba. Σ total == resumen.gastos.
+        "gastos_por_categoria": sorted(
+            [{**g, "total": round(g["total"], 2)} for g in por_categoria.values()],
+            key=lambda g: (-g["total"], g["clave"]),
+        ),
         "gastos_detalle": sorted(
             [{"concepto": c, "total": round(v["total"], 2), "n": v["n"]}
              for c, v in gastos_por_concepto.items()],

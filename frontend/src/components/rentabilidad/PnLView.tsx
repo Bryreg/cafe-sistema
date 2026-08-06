@@ -1,6 +1,5 @@
 import { ReactNode, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { Wallet, ShoppingCart, Receipt, TrendingUp, TrendingDown, HelpCircle, ArrowRight } from 'lucide-react'
+import { Wallet, ShoppingCart, Receipt, TrendingUp, TrendingDown, HelpCircle, ArrowRight, Inbox, Scissors } from 'lucide-react'
 import api from '../../api/client'
 import { RentabilidadData, fmt } from './helpers'
 
@@ -53,7 +52,19 @@ function Kpi({ label, value, sub, Icon, tint }: {
   )
 }
 
-export default function PnLView({ onVerMetodologia }: { onVerMetodologia: () => void }) {
+/**
+ * `refreshKey` cierra el loop CTA→acción→resultado del cajón «Egresos sin
+ * categorizar». Esta vista tiene su PROPIO `data` (necesita el selector de período
+ * y de sede, que el resto de Plata no usa), así que el refresco que hace Plata al
+ * cerrar un cajón —`plMes`, agenda y flujo— no la tocaba: el dueño adoptaba un
+ * egreso, cerraba, y la fila que acababa de arreglar seguía bajo «Sin categorizar».
+ * Un contador que sube al cerrar el cajón es lo que vuelve a pedir estos datos.
+ */
+export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refreshKey = 0 }: {
+  onVerMetodologia: () => void
+  onAbrirSinCategorizar: () => void
+  refreshKey?: number
+}) {
   const [periodo, setPeriodo] = useState<Periodo>('mes')
   const [tiendas, setTiendas] = useState<Tienda[]>([])
   const [tiendaId, setTiendaId] = useState<number | null>(null)
@@ -76,7 +87,7 @@ export default function PnLView({ onVerMetodologia }: { onVerMetodologia: () => 
       .catch(() => { if (vigente) setData(null) })
       .finally(() => { if (vigente) setLoading(false) })
     return () => { vigente = false }
-  }, [periodo, tiendaId])
+  }, [periodo, tiendaId, refreshKey])
 
   const r = data?.resumen
   const margenPositivo = (r?.margen_neto ?? 0) >= 0
@@ -116,11 +127,9 @@ export default function PnLView({ onVerMetodologia }: { onVerMetodologia: () => 
               sub={`${r.n_facturas} facturas recibidas`} />
             {/* El valor ya son las DOS mitades: egresos de caja sin adoptar +
                 obligaciones devengadas (services/rentabilidad.py). El detalle por
-                categoría vive en Costos, no acá. */}
+                categoría ahora está ACÁ ABAJO, no en otra pantalla. */}
             <Kpi label="Costos operativos" value={fmt(r.gastos)} Icon={Receipt} tint="text-danger-500"
-              sub={<Link to="/costos" className="font-semibold text-forest underline decoration-dotted">
-                Ver el detalle en Costos
-              </Link>} />
+              sub={`${data.gastos_por_categoria?.length ?? 0} categorías`} />
             <div className={`rounded-2xl border p-4 border-l-[3px] ${margenPositivo ? 'bg-success-50 border-success-200 border-l-success-500' : 'bg-danger-50 border-danger-200 border-l-danger-500'}`}>
               <div className="flex items-center gap-2 mb-1.5">
                 {margenPositivo ? <TrendingUp size={14} className="text-success-600" /> : <TrendingDown size={14} className="text-danger-500" />}
@@ -238,20 +247,78 @@ export default function PnLView({ onVerMetodologia }: { onVerMetodologia: () => 
             </div>
           )}
 
-          {/* El detalle del gasto se AMPUTÓ de acá: eran conceptos de texto libre
-              agrupados por string crudo. En Costos el mismo dinero está agrupado por
-              categoría, que es la única forma de leerlo sin adivinar. */}
-          <Link to="/costos"
-            className="flex items-center gap-3 bg-white rounded-2xl border border-warm-200 px-4 py-3">
-            <Receipt size={16} className="text-danger-500 shrink-0" />
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-bold text-warm-700">En qué se fueron los {fmt(r.gastos)}</span>
-              <span className="block text-xs text-warm-400">
-                El detalle vive en Costos, agrupado por categoría
+          {/* EN QUÉ SE FUE. Antes acá había conceptos de texto libre agrupados por
+              string crudo; después, un link a Costos. Las dos versiones eran el
+              mismo bug: el backend YA agrupaba este gasto por categoría y el P&L
+              tiraba el dato. Ahora se muestra donde se pregunta.
+              Σ de las categorías == "Costos operativos": es una partición, no otro
+              número (backend: services/rentabilidad.py). */}
+          {(data.gastos_por_categoria?.length ?? 0) > 0 && (
+            <div className="bg-white rounded-2xl border border-warm-200 overflow-hidden">
+              <div className="px-4 py-3 border-b border-warm-100">
+                <p className="text-sm font-bold text-warm-700">En qué se fueron los {fmt(r.gastos)}</p>
+                <p className="text-[11px] text-warm-500">
+                  Nómina, arriendo, servicios: la categoría, no el texto que alguien tecleó en caja
+                </p>
+              </div>
+              {data.gastos_por_categoria!.map(g => {
+                const pct = r.gastos > 0 ? (g.total / r.gastos) * 100 : 0
+                const suelto = g.clave === 'sin_categorizar'
+                return (
+                  <div key={g.clave} className="px-4 py-2.5 border-b border-warm-100 last:border-0">
+                    <div className="flex items-baseline justify-between gap-2 text-sm">
+                      <span className="min-w-0 truncate">
+                        <span className={`font-semibold ${suelto ? 'text-gold-700' : 'text-warm-700'}`}>{g.nombre}</span>
+                        {g.grupo && (
+                          <span className="text-[10px] uppercase font-bold text-warm-400 ml-1.5">{g.grupo}</span>
+                        )}
+                      </span>
+                      <span className="font-mono text-warm-700 tabular-nums shrink-0">
+                        {fmt(g.total)} <span className="text-warm-400">({Math.round(pct)}%)</span>
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-warm-100 overflow-hidden mt-1">
+                      <div className={`h-full rounded-full ${suelto ? 'bg-gold-400' : 'bg-danger-400'}`}
+                        style={{ width: `${Math.max(2, pct)}%` }} />
+                    </div>
+                  </div>
+                )
+              })}
+              {/* La bolsa sin categorizar es la única fila accionable: adoptarla no
+                  mueve un peso del total, mueve la plata de "no sé" a "nómina". */}
+              {data.gastos_por_categoria!.some(g => g.clave === 'sin_categorizar') && (
+                <button onClick={onAbrirSinCategorizar}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 bg-gold-50 border-t border-gold-200 text-left">
+                  <Inbox size={15} className="text-gold-700 shrink-0" />
+                  <span className="min-w-0 flex-1 text-[11px] text-gold-700 leading-relaxed">
+                    <b>Categorizá lo que quedó suelto.</b> El total de costos no cambia — el gasto
+                    solo deja de ser un texto libre de caja.
+                  </span>
+                  <ArrowRight size={14} className="text-gold-700 shrink-0" />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* DESCUENTOS: la plata que se regaló en mostrador. El POS la escribe en
+              cada ticket y ningún reporte la sumaba, así que un descuento y una
+              venta que no ocurrió se veían igual. NO se resta de nada: `ventas` ya
+              viene neto — esto dice cuánto se resignó, no cuánto falta. */}
+          {(r.descuentos ?? 0) > 0 && (
+            <div className="flex items-center gap-3 bg-white rounded-2xl border border-warm-200 px-4 py-3">
+              <Scissors size={16} className="text-gold-600 shrink-0" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold text-warm-700">
+                  Se regalaron {fmt(r.descuentos ?? 0)} en descuentos
+                </span>
+                <span className="block text-xs text-warm-400">
+                  {r.n_tickets_con_descuento ?? 0} tickets
+                  {r.pct_descuento != null && ` · ${r.pct_descuento}% de lo que se habría facturado`}
+                  {' '}— ya está descontado de las ventas de arriba
+                </span>
               </span>
-            </span>
-            <ArrowRight size={15} className="text-warm-400 shrink-0" />
-          </Link>
+            </div>
+          )}
 
           <button onClick={onVerMetodologia}
             className="flex items-center gap-1.5 text-xs text-warm-500 font-semibold min-h-[44px] px-1">

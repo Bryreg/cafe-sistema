@@ -15,10 +15,13 @@ export interface NavGroup { label: string; items: NavItem[] }
  * lista plana de 15 items, bottom-nav mobile).
  */
 export const NAV_GROUPS: NavGroup[] = [
+  // «Plata» reemplaza a Rentabilidad y a Costos, que nunca fueron dos temas: el
+  // costo operativo del P&L ES el módulo de Costos leído por otra puerta. Tenerlos
+  // separados producía las dos quejas del dueño a la vez —«rentabilidad es pobre»
+  // y «no veo nómina ni arriendo»—, que eran el mismo bug visto de dos lados.
   { label: 'Resumen', items: [
     { to: '/dashboard',           label: 'Dashboard',    icon: LayoutDashboard },
-    { to: '/rentabilidad',        label: 'Rentabilidad', icon: TrendingUp },
-    { to: '/costos',              label: 'Costos',       icon: Wallet },
+    { to: '/plata',               label: 'Plata',        icon: TrendingUp },
   ]},
   { label: 'Ventas', items: [
     { to: '/informe-contador',   label: 'Informe Contador', icon: Calculator      },

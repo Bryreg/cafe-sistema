@@ -87,17 +87,31 @@ class AplicarMensualTest(unittest.TestCase):
         with self.assertRaises(HTTPException):
             svc.aplicar(self.db, inv["id"], self.admin.id)
 
-    def test_aplicar_clampa_en_cero(self):
-        # dif −8; stock actual ya bajó a 3 → 3 + (−8) = −5 → clamp a 0.
-        inv_id, _ = self._contar_y_cerrar(2)
+    def test_aplicar_se_bloquea_en_vez_de_recortar_en_cero(self):
+        # dif −8; stock actual ya bajó a 3 → 3 + (−8) = −5.
+        #
+        # Antes esto se recortaba a 0 en silencio. Como aplicar es IRREVERSIBLE
+        # (fecha_aplicado), el stock quedaba mal sin vuelta atrás — y un negativo
+        # no es un caso raro a redondear: es la prueba de que la diferencia
+        # congelada en el cierre ya no calza con el stock de hoy. Ahora frena
+        # antes de tocar nada y el admin corrige el renglón del mes cerrado.
+        inv_id, item_id = self._contar_y_cerrar(2)
         self.inv_row.stock_actual = 3
         self.db.commit()
 
-        res = svc.aplicar(self.db, inv_id, self.admin.id)
+        with self.assertRaises(HTTPException):
+            svc.aplicar(self.db, inv_id, self.admin.id)
 
         self.db.refresh(self.inv_row)
-        self.assertEqual(self.inv_row.stock_actual, 0)
-        self.assertEqual(res["clampeados"], 1)
+        self.assertEqual(self.inv_row.stock_actual, 3)   # intacto
+        self.assertIsNone(svc.get_actual(self.db, self.t1.id, 2026, 7)["fecha_aplicado"])
+
+        # El camino de salida: corregir el conteo del mes y recién ahí aplicar.
+        svc.corregir_item(self.db, item_id, 8, self.admin.id)   # dif −2
+        res = svc.aplicar(self.db, inv_id, self.admin.id)
+        self.db.refresh(self.inv_row)
+        self.assertEqual(self.inv_row.stock_actual, 1)
+        self.assertEqual(res["ajustados"], 1)
 
     def test_corregir_item_en_cerrado_recalcula(self):
         # El caso LIMPIAPISOS: cerraron con un dedazo (3800) y hay que corregirlo

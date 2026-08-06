@@ -1455,6 +1455,12 @@ class InventarioMensual(Base):
     barista_nombre = Column(String(100), nullable=True)
     fecha_inicio = Column(DateTime, default=datetime.utcnow)
     fecha_cierre = Column(DateTime, nullable=True)
+    # Cuándo se cerró la PRIMERA vez. `fecha_cierre` la borra cada reabertura, así
+    # que preguntarle a ella "¿este mes ya pasó por un cierre?" solo funcionaba una
+    # vez: la segunda reabertura veía un mes virgen y volvía a fotografiar el stock
+    # de HOY sobre la foto del período. Esta columna NO se limpia nunca — es la
+    # marca de que existe una medición que proteger.
+    fecha_primer_cierre = Column(DateTime, nullable=True)
     # Cuándo se APLICÓ al inventario (stock += diferencia por producto). Null = no
     # aplicado. Un mes aplicado es histórico: no se reabre, corrige ni re-aplica.
     fecha_aplicado = Column(DateTime, nullable=True)
@@ -1475,6 +1481,12 @@ class InventarioMensualItem(Base):
     unidad_medida = Column(String(30), nullable=True)
     cantidad_sistema = Column(Float, default=0)
     cantidad_real = Column(Float, nullable=True)       # null = aún no contado
+    # Si alguien puso ese número o lo rellenó el cierre. `cerrar()` iguala
+    # cantidad_real al sistema para todo lo no contado (así la diferencia da 0 y
+    # no ensucia el total), y sin esta bandera un producto "contado y dio exacto"
+    # queda IDÉNTICO a uno que nadie tocó: la fuga se esconde por definición y un
+    # mes con 12 de 180 productos contados se ve igual que uno completo.
+    fue_contado = Column(Boolean, default=False)
     diferencia = Column(Float, default=0)
     valor_unitario = Column(Numeric(12, 2, asdecimal=False), default=0)
     valor_diferencia = Column(Numeric(12, 2, asdecimal=False), default=0)

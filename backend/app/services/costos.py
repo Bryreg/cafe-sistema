@@ -30,7 +30,11 @@ from app.services import audit
 # La lista de conceptos reservados que services/facturas.py escribe para los pagos
 # a proveedor vive en rentabilidad.py y se REUSA, no se copia: si allá cambia, acá
 # tiene que cambiar en el mismo commit o el anti-doble-conteo se abre un agujero.
-from app.services.rentabilidad import _CONCEPTOS_COMPRA
+# Misma razón para la clave de categoría prohibida: el P&L la excluye del término
+# de obligaciones y este servicio la rechaza en la entrada — las dos mitades tienen
+# que hablar de la MISMA constante.
+from app.services.rentabilidad import (CLAVE_CATEGORIA_PROVEEDORES,
+                                       _CONCEPTOS_COMPRA)
 
 METODOS_PAGO = {"efectivo", "transferencia", "tarjeta", "cheque", "otro"}
 RECURRENCIAS = {"mensual", "quincenal", "semanal"}
@@ -43,6 +47,12 @@ def listar_categorias(db: Session, incluir_inactivas: bool = False) -> list:
     q = db.query(CostoCategoria)
     if not incluir_inactivas:
         q = q.filter(CostoCategoria.activa == True)  # noqa: E712
+    # 'proveedores' NO se ofrece nunca, ni siquiera con incluir_inactivas: una
+    # categoría que `_validar_categoria` rechaza no puede estar en el desplegable
+    # del formulario. La FILA se conserva (hay obligaciones históricas apuntándole
+    # y borrarla las dejaría huérfanas); lo que se corta es la posibilidad de
+    # elegirla otra vez.
+    q = q.filter(CostoCategoria.clave != CLAVE_CATEGORIA_PROVEEDORES)
     cats = q.order_by(CostoCategoria.orden, CostoCategoria.nombre).all()
     return [{"id": c.id, "clave": c.clave, "nombre": c.nombre,
              "grupo": c.grupo, "orden": c.orden} for c in cats]
@@ -100,6 +110,8 @@ def _serializar(obligacion: Obligacion, pagos: list) -> dict:
         "fecha_devengo": obligacion.fecha_devengo,
         "fecha_vencimiento": obligacion.fecha_vencimiento,
         "recurrencia": obligacion.recurrencia,
+        # Llave de la SERIE mensual (ver `repetir_obligacion`). None = costo suelto.
+        "plantilla_id": obligacion.plantilla_id,
         "nota": obligacion.nota,
         "imagen_url": obligacion.imagen_url,
         "anulada": bool(obligacion.anulada),
@@ -130,11 +142,24 @@ def _serializar_pago(p: Pago) -> dict:
 # ── Validaciones compartidas ────────────────────────────────────────────────
 
 def _validar_categoria(db: Session, categoria_id: int) -> CostoCategoria:
+    """Puerta ÚNICA de la categoría: la usan crear, editar y adoptar, así que la
+    prohibición de 'proveedores' se aplica sola en los tres caminos."""
     cat = db.query(CostoCategoria).filter(CostoCategoria.id == categoria_id).first()
     if not cat:
         raise HTTPException(400, "Categoría de costo inexistente")
     if not cat.activa:
         raise HTTPException(400, f"La categoría «{cat.nombre}» está desactivada — elegí otra")
+    # DECISIÓN (opción a de la revisión): la categoría se BLOQUEA en la entrada en
+    # vez de marcarse "no computa en el P&L". El doble conteo no era solo del P&L:
+    # una obligación de proveedor también aparece en la Agenda y en el Flujo al
+    # lado de la factura que representa la MISMA deuda. Excluirla solo del P&L
+    # (opción b) dejaba esas dos pantallas mintiendo, y además cuesta una columna
+    # nueva. Bloquearla cierra las tres de una y no necesita migración.
+    if cat.clave == CLAVE_CATEGORIA_PROVEEDORES:
+        raise HTTPException(
+            400, "Lo que le debés a un proveedor se carga como FACTURA en Compras, "
+                 "no como costo fijo: acá se contaría dos veces (la factura ya entra "
+                 "al P&L y a la agenda). Para pagarla, andá a «Pagos proveedores».")
     return cat
 
 
@@ -271,6 +296,118 @@ def anular_obligacion(db: Session, obligacion_id: int, usuario_id: int,
     return _serializar(obligacion, [])
 
 
+def _mes_siguiente(d: date) -> date:
+    """Mismo día del mes que viene, recortado al último día real de ese mes.
+
+    Sin el recorte, el arriendo del 31 de enero pediría un 31 de febrero y
+    reventaría; y usar +30 días correría la fecha un poco cada mes hasta que el
+    "arriendo de agosto" quedara devengado en septiembre.
+    """
+    anio, mes = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+    # Último día del mes destino: el día 1 del siguiente, menos uno.
+    sig_anio, sig_mes = (anio + 1, 1) if mes == 12 else (anio, mes + 1)
+    ultimo = (date(sig_anio, sig_mes, 1) - timedelta(days=1)).day
+    return date(anio, mes, min(d.day, ultimo))
+
+
+def repetir_obligacion(db: Session, obligacion_id: int, usuario_id: int,
+                       barista_id: int | None = None,
+                       barista_nombre: str | None = None) -> dict:
+    """Crea la copia del MES SIGUIENTE de un costo, en un tap.
+
+    `recurrencia` y `plantilla_id` existían como columnas muertas: nadie generaba
+    nunca la obligación del mes que viene. Con dos sedes eso son 12-18 cargas
+    manuales por mes retecleando lo mismo, que es el camino más corto a que el
+    módulo se abandone.
+
+    Deliberadamente NO es un scheduler: no hay job que cree costos solo. El dueño
+    aprieta el botón cuando quiere, ve la copia y puede ajustarle el monto (la
+    energía no vale igual todos los meses). Un generador automático llenaría el
+    P&L de costos que nadie confirmó.
+
+    IDEMPOTENTE por (serie, mes de devengo): un doble tap no cobra el arriendo dos
+    veces. La respuesta trae `ya_existia` para que la pantalla lo diga en vez de
+    fingir que acaba de crear algo.
+    """
+    origen = db.query(Obligacion).filter(Obligacion.id == obligacion_id).first()
+    if not origen:
+        raise HTTPException(404, "Obligación no encontrada")
+    if origen.anulada:
+        raise HTTPException(400, "La obligación está anulada — no se puede repetir")
+
+    # Repetir CREA una obligación nueva, así que pasa por la misma puerta que
+    # crear y editar. Copiar `categoria_id` del origen sin validarlo esquivaba la
+    # única guarda que bloquea 'proveedores' (y las categorías desactivadas): una
+    # obligación legacy de proveedor se replicaba mes a mes hacia la Agenda y el
+    # Flujo, reinstalando por botón el doble conteo que la validación cerró en el
+    # formulario. El mensaje base ya dice qué hacer en su lugar (cargarla como
+    # factura en Compras); acá solo se le antepone POR QUÉ apareció ahora.
+    try:
+        _validar_categoria(db, origen.categoria_id)
+    except HTTPException as e:
+        raise HTTPException(
+            e.status_code,
+            f"No se puede repetir «{origen.concepto}» — {e.detail}") from e
+
+    # La llave de la serie es SIEMPRE el primer eslabón, no el padre inmediato:
+    # encadenando agosto→septiembre→octubre los tres comparten una sola llave y
+    # la búsqueda de duplicados es una igualdad, no un recorrido.
+    serie_id = origen.plantilla_id or origen.id
+    devengo = _mes_siguiente(origen.fecha_devengo)
+    vencimiento = (_mes_siguiente(origen.fecha_vencimiento)
+                   if origen.fecha_vencimiento else None)
+
+    # ¿Ya hay una copia viva de esta serie devengada en ese mes? Se compara por MES
+    # y no por fecha exacta: si alguien le corrigió el día a la copia, sigue siendo
+    # la del mes y repetir otra vez no puede duplicarla.
+    inicio_mes = devengo.replace(day=1)
+    fin_mes = _mes_siguiente(inicio_mes) - timedelta(days=1)
+    ya = db.query(Obligacion).filter(
+        or_(Obligacion.plantilla_id == serie_id, Obligacion.id == serie_id),
+        Obligacion.anulada == False,  # noqa: E712
+        Obligacion.fecha_devengo >= inicio_mes,
+        Obligacion.fecha_devengo <= fin_mes,
+    ).order_by(Obligacion.id).first()
+    if ya is not None:
+        return {**_serializar(ya, _pagos_vivos(db, [ya.id]).get(ya.id, [])),
+                "ya_existia": True}
+
+    copia = Obligacion(
+        tienda_id=origen.tienda_id,
+        categoria_id=origen.categoria_id,
+        concepto=origen.concepto,
+        beneficiario=origen.beneficiario,
+        monto=origen.monto,
+        fecha_devengo=devengo,
+        # Si el original no tenía fecha de pago, la copia tampoco: inventarle una
+        # sería exactamente el error que la sección "sin fecha" de la agenda evita.
+        fecha_vencimiento=vencimiento,
+        recurrencia=origen.recurrencia,
+        plantilla_id=serie_id,
+        nota=origen.nota,
+        # La imagen del soporte NO se copia: es el recibo del mes pasado, y
+        # arrastrarlo haría pasar un comprobante viejo por el del mes nuevo.
+        imagen_url=None,
+        usuario_id=usuario_id,
+        barista_id=barista_id,
+        barista_nombre=barista_nombre,
+    )
+    db.add(copia)
+    db.flush()
+    audit.registrar(
+        db, accion="repetir_obligacion", tabla="obligaciones",
+        registro_id=copia.id, usuario_id=usuario_id, tienda_id=copia.tienda_id,
+        datos_antes={"origen_id": origen.id, "fecha_devengo": origen.fecha_devengo},
+        datos_despues={"serie_id": serie_id, "concepto": copia.concepto,
+                       "monto": float(copia.monto), "fecha_devengo": devengo,
+                       "fecha_vencimiento": vencimiento},
+    )
+    db.commit()
+    db.refresh(copia)
+    # Nace sin pagos: el estado derivado le da 'pendiente' solo.
+    return {**_serializar(copia, []), "ya_existia": False}
+
+
 def listar_obligaciones(db: Session, *, tienda_id: int | None = None,
                         solo_corporativas: bool = False,
                         categoria: str | None = None,
@@ -363,6 +500,9 @@ def _fecha_proyectada(f: FacturaCompra) -> tuple:
     return None, ""
 
 
+CLAVE_GRUPO_FACTURAS = "facturas"
+
+
 def get_agenda(db: Session, desde: date | None = None, hasta: date | None = None,
                tienda_id: int | None = None) -> dict:
     """Facturas con saldo + obligaciones con saldo, ordenadas por fecha de pago.
@@ -374,6 +514,20 @@ def get_agenda(db: Session, desde: date | None = None, hasta: date | None = None
     entra TODO —las obligaciones corporativas (tienda_id NULL) incluidas, una sola
     vez—; con `tienda_id` entra SOLO esa sede. Repartir las corporativas entre las
     sedes las duplicaría y el total de la agenda dejaría de cuadrar.
+
+    Devuelve TRES cosas y no una:
+
+    - `items`: lo agendado, con fecha. Es lo único que la proyección consume.
+    - `sin_fecha`: las obligaciones con saldo y SIN fecha de vencimiento. "Vence"
+      es opcional en el formulario, así que el caso normal —cargar lo obligatorio
+      y nada más— producía una pantalla vacía y la conclusión de que el módulo no
+      guarda nada. No se les inventa un vencimiento (no hay de dónde sacarlo) ni
+      entran al total ni a la proyección: se muestran aparte, para que se les
+      pueda poner fecha. El rango desde/hasta NO se les aplica: no tienen fecha
+      contra la cual filtrar, y esconderlas por un rango sería volver al mismo bug.
+    - `por_categoria`: cuánta plata hay de nómina, de arriendo, de servicios. La
+      agenda rotula cada fila por TIPO ('Proveedor' / 'Costo fijo'), así que sin
+      esto las palabras que el dueño busca no aparecen en ninguna pantalla.
     """
     hoy = hoy_col()
     items: list = []
@@ -404,29 +558,25 @@ def get_agenda(db: Session, desde: date | None = None, hasta: date | None = None
             "origen_fecha": origen,
             "vencida": fecha < hoy,
             "categoria": None,   # las facturas no pasan por el catálogo de costos
+            "categoria_nombre": None,
         })
 
-    # 2) Obligaciones (arriendo, nómina, servicios). Sin fecha_vencimiento no se
-    #    agendan: no hay para cuándo pagarlas.
-    qo = db.query(Obligacion).filter(
-        Obligacion.anulada == False,  # noqa: E712
-        Obligacion.fecha_vencimiento.isnot(None),
-    )
+    # 2) Obligaciones (arriendo, nómina, servicios). Se piden TODAS las vivas de la
+    #    sede en UNA query y se parten en Python entre agendadas y sin fecha: dos
+    #    queries casi iguales se desincronizarían en el primer filtro que cambie.
+    qo = db.query(Obligacion).filter(Obligacion.anulada == False)  # noqa: E712
     if tienda_id is not None:
         qo = qo.filter(Obligacion.tienda_id == tienda_id)
-    if desde is not None:
-        qo = qo.filter(Obligacion.fecha_vencimiento >= desde)
-    if hasta is not None:
-        qo = qo.filter(Obligacion.fecha_vencimiento <= hasta)
     filas = qo.all()
     pagos_por_obligacion = _pagos_vivos(db, [o.id for o in filas])
+    sin_fecha: list = []
     for o in filas:
         pagado = sum(float(p.monto or 0) for p in pagos_por_obligacion.get(o.id, []))
         saldo = round(float(o.monto or 0) - pagado, 2)
         if saldo <= 0:   # ya pagada: no es algo que pagar
             continue
         fecha = o.fecha_vencimiento
-        items.append({
+        comun = {
             "tipo": "obligacion",
             "id": o.id,
             "concepto": o.concepto,
@@ -435,21 +585,64 @@ def get_agenda(db: Session, desde: date | None = None, hasta: date | None = None
             "tienda_id": o.tienda_id,
             "tienda_nombre": o.tienda.nombre if o.tienda else None,
             "monto": saldo,
-            "fecha": fecha,
-            "origen_fecha": "vencimiento",
-            "vencida": fecha < hoy,
             "categoria": o.categoria.clave if o.categoria else None,
-        })
+            "categoria_nombre": o.categoria.nombre if o.categoria else None,
+        }
+        if fecha is None:
+            # Sin fecha de pago no se puede AGENDAR, pero tampoco puede desaparecer:
+            # el devengo es lo único que ubica el costo en el tiempo y se manda para
+            # que la pantalla ofrezca ponerle la fecha que falta.
+            sin_fecha.append({**comun, "fecha": None, "origen_fecha": "",
+                              "vencida": False,
+                              "fecha_devengo": o.fecha_devengo})
+            continue
+        if (desde is not None and fecha < desde) or (hasta is not None and fecha > hasta):
+            continue
+        items.append({**comun, "fecha": fecha, "origen_fecha": "vencimiento",
+                      "vencida": fecha < hoy})
 
     # tipo+id como desempate: dos cosas que vencen el mismo día tienen que salir
     # siempre en el mismo orden (si no, la lista "salta" entre cargas).
     items.sort(key=lambda i: (i["fecha"], i["tipo"], i["id"]))
+    # Lo más viejo primero: es lo que lleva más tiempo sin que nadie lo feche.
+    sin_fecha.sort(key=lambda i: (i["fecha_devengo"], i["id"]))
     total = round(sum(i["monto"] for i in items), 2)
     vencido = round(sum(i["monto"] for i in items if i["vencida"]), 2)
+    total_sin_fecha = round(sum(i["monto"] for i in sin_fecha), 2)
     return {
         "items": items,
-        "totales": {"monto": total, "vencido": vencido, "n": len(items)},
+        # Fuera de `items` a propósito: `_salidas_por_dia` (la proyección) consume
+        # `items` y nada más, así que lo sin fechar no puede inventar ni esconder
+        # un punto de quiebre.
+        "sin_fecha": sin_fecha,
+        "por_categoria": _agenda_por_categoria(items),
+        "totales": {
+            "monto": total, "vencido": vencido, "n": len(items),
+            # Aparte del total, nunca sumado: si entrara, el dueño leería como
+            # "agendado para este período" plata que no tiene día de pago.
+            "sin_fecha": total_sin_fecha, "n_sin_fecha": len(sin_fecha),
+        },
     }
+
+
+def _agenda_por_categoria(items: list) -> list:
+    """Cuánta plata hay por categoría en lo AGENDADO. Las facturas no pasan por el
+    catálogo de costos, así que van a su propio grupo en vez de caer en un
+    "(sin categoría)" que se leería como un costo fijo mal cargado."""
+    acc: dict = {}
+    for i in items:
+        if i["tipo"] == "factura":
+            clave, nombre = CLAVE_GRUPO_FACTURAS, "Facturas de proveedor"
+        else:
+            clave = i.get("categoria") or "otros"
+            nombre = i.get("categoria_nombre") or "Sin categoría"
+        g = acc.setdefault(clave, {"clave": clave, "nombre": nombre, "monto": 0.0, "n": 0})
+        g["monto"] += i["monto"]
+        g["n"] += 1
+    for g in acc.values():
+        g["monto"] = round(g["monto"], 2)
+    # Por plata, que es como se lee: "qué me está costando más este mes".
+    return sorted(acc.values(), key=lambda g: (-g["monto"], g["clave"]))
 
 
 # ── Pagos ───────────────────────────────────────────────────────────────────

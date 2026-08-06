@@ -129,6 +129,23 @@ def editar_obligacion(
     return svc.editar_obligacion(db, obligacion_id, data, admin.id)
 
 
+@router.post("/obligaciones/{obligacion_id}/repetir")
+def repetir_obligacion(
+    obligacion_id: int,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+    barista: tuple = Depends(get_barista_actor),
+):
+    """Crea la copia del MES SIGUIENTE de este costo (devengo y vencimiento +1 mes,
+    con el día recortado al último real del mes). No es un scheduler: lo dispara
+    el dueño y la copia queda editable.
+
+    Idempotente por serie y mes: repetir dos veces devuelve la misma obligación
+    con `ya_existia: true` en vez de cobrar el arriendo dos veces."""
+    return svc.repetir_obligacion(db, obligacion_id, admin.id,
+                                  barista_id=barista[0], barista_nombre=barista[1])
+
+
 @router.delete("/obligaciones/{obligacion_id}")
 def anular_obligacion(
     obligacion_id: int,

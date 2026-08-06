@@ -10,11 +10,16 @@ interface Item {
   categoria: string; unidad_medida: string
   fraccionable?: boolean; envase?: 'bolsa' | 'botella' | null
   cantidad_sistema: number; cantidad_real: number | null
+  // false = el número lo puso el cierre, no una persona (ver services/inventario_mensual)
+  fue_contado?: boolean
   diferencia: number; valor_unitario: number; valor_diferencia: number
 }
 interface Inv {
   id: number; anio: number; mes: number; estado: string
   valor_diferencia_total: number; items: Item[]
+  // Cobertura real del conteo, calculada en el servidor. Después de cerrar no se
+  // puede derivar del físico: el cierre rellena todo lo no contado con el sistema.
+  contados: number; total_items: number
 }
 
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
@@ -42,9 +47,22 @@ export default function InventarioMensual() {
   // ── Borrador persistente: sobrevive si salen a revisar otra pantalla ────────
   const draftKey = `invmensual_borrador_${user?.tienda_id ?? 0}_${now.getFullYear()}_${now.getMonth() + 1}`
 
+  // Se precarga SOLO lo que contó una persona (`fue_contado`), nunca todo lo que
+  // tenga `cantidad_real`. Sobre un mes reabierto la distinción es crítica: el
+  // cierre anterior rellenó cantidad_real en TODOS los renglones con el valor del
+  // sistema, así que precargar por cantidad_real mostraba el conteo como
+  // completo Y —peor— `guardar()` reenviaba esos 180 valores al servidor, que los
+  // marca como contados. El conteo parcial se convertía en "180 de 180" con solo
+  // abrir la pantalla y tocar guardar.
+  //
+  // Costo asumido: en un conteo anterior a la bandera los renglones ya cargados
+  // aparecen vacíos y hay que recontarlos. Es la dirección correcta del error —
+  // pedir un conteo de más nunca miente; darlo por hecho sí.
   const valoresDesde = (items: Item[]) => {
     const v: Record<number, string> = {}
-    items.forEach(it => { if (it.cantidad_real != null) v[it.id] = String(it.cantidad_real) })
+    items.forEach(it => {
+      if (it.fue_contado && it.cantidad_real != null) v[it.id] = String(it.cantidad_real)
+    })
     return v
   }
 
@@ -141,7 +159,17 @@ export default function InventarioMensual() {
   }
 
   const cerrar = async () => {
-    if (!inv || !window.confirm('¿Cerrar el conteo del mes? No se podrá editar después.')) return
+    if (!inv) return
+    // Se dice cuántos quedan sin contar ANTES de cerrar: al cerrar, esos productos
+    // se igualan al sistema y su diferencia queda en 0 para siempre.
+    const faltan = inv.items.length - contados
+    const aviso = faltan > 0
+      ? `¿Cerrar el conteo del mes con ${faltan} de ${inv.items.length} productos SIN contar?\n\n`
+        + 'A los que falten se les va a poner el valor del sistema, o sea que van a quedar '
+        + 'sin diferencia — no porque hayan cuadrado, sino porque nadie los contó.\n\n'
+        + 'No se podrá editar después.'
+      : '¿Cerrar el conteo del mes? No se podrá editar después.'
+    if (!window.confirm(aviso)) return
     setCerrando(true); setMsg('')
     try {
       await guardar()
@@ -171,9 +199,24 @@ export default function InventarioMensual() {
             <div className={`rounded-xl px-4 py-3 flex items-center gap-2 text-sm ${cerrado ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-amber-50 border border-amber-200 text-amber-700'}`}>
               {cerrado ? <Lock size={15} /> : <AlertTriangle size={15} />}
               {cerrado
-                ? <span>Conteo <b>cerrado</b>. Diferencia neta: <b>${Math.round(inv.valor_diferencia_total).toLocaleString('es-CO')}</b></span>
+                // La cobertura se sigue mostrando DESPUÉS de cerrar: la diferencia
+                // neta de un mes contado a medias no significa lo mismo que la de
+                // uno completo, y el cierre deja los dos casos con el mismo aspecto.
+                ? <span>Conteo <b>cerrado</b> con <b>{inv.contados}</b> de {inv.total_items} productos
+                    contados. Diferencia neta: <b>${Math.round(inv.valor_diferencia_total).toLocaleString('es-CO')}</b></span>
                 : <span><b>{contados}</b> de {inv.items.length} productos contados</span>}
             </div>
+
+            {/* Un cierre parcial no es un error, pero tiene que verse: lo no contado
+                quedó igualado al sistema, o sea con diferencia 0 por construcción. */}
+            {cerrado && inv.contados < inv.total_items && (
+              <div className="rounded-xl px-4 py-2.5 flex items-start gap-2 text-sm bg-amber-50 border border-amber-200 text-amber-700">
+                <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+                <span>Quedaron <b>{inv.total_items - inv.contados}</b> productos sin contar. El cierre
+                  les puso el valor del sistema, así que aparecen sin diferencia — pero nadie los
+                  verificó: la diferencia neta de arriba solo habla de lo que sí se contó.</span>
+              </div>
+            )}
 
             {/* Borrador restaurado */}
             {!cerrado && borradorInfo && (
@@ -203,7 +246,15 @@ export default function InventarioMensual() {
                         </div>
                         {cerrado ? (
                           <div className="text-right">
-                            <p className="text-sm font-bold text-gray-800 font-mono">{Math.round((it.cantidad_real ?? 0) * 100) / 100}</p>
+                            {/* Lo que nadie contó NO se muestra como un físico: ese
+                                número lo puso el cierre copiando el sistema, y
+                                pintarlo igual que un conteo real es justo lo que
+                                escondía la fuga. */}
+                            {it.fue_contado ? (
+                              <p className="text-sm font-bold text-gray-800 font-mono">{Math.round((it.cantidad_real ?? 0) * 100) / 100}</p>
+                            ) : (
+                              <p className="text-xs font-bold text-amber-600">sin contar</p>
+                            )}
                           </div>
                         ) : it.fraccionable ? (
                           <NivelEnvase

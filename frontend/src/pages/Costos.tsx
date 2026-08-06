@@ -23,6 +23,8 @@ interface Obligacion {
   monto: number; pagado: number; saldo: number
   estado: 'pendiente' | 'parcial' | 'pagada' | 'anulada'
   fecha_devengo: string; fecha_vencimiento: string | null
+  // Llave de la serie mensual: la escribe «Repetir» y une agosto→septiembre→…
+  plantilla_id: number | null
   nota: string | null
   pagos: Pago[]
 }
@@ -41,11 +43,23 @@ interface AgendaItem {
   fecha: string                    // YYYY-MM-DD ya proyectada por el backend
   origen_fecha: string             // programada | vencimiento | plazo
   vencida: boolean
-  categoria: string | null
+  categoria: string | null         // clave estable ('nomina', 'arriendo'…)
+  categoria_nombre: string | null   // lo que se pinta: «Nómina», «Arriendo»
 }
+// Obligación con saldo y SIN fecha de vencimiento. No se agenda (no hay para
+// cuándo) pero tampoco puede ser invisible: «Vence» es opcional en el formulario,
+// así que el caso normal terminaba en una pantalla vacía y en la conclusión de
+// que el módulo no guarda nada.
+interface AgendaSinFecha extends Omit<AgendaItem, 'fecha'> {
+  fecha: null
+  fecha_devengo: string
+}
+interface GrupoCategoria { clave: string; nombre: string; monto: number; n: number }
 interface Agenda {
   items: AgendaItem[]
-  totales: { monto: number; vencido: number; n: number }
+  sin_fecha: AgendaSinFecha[]
+  por_categoria: GrupoCategoria[]
+  totales: { monto: number; vencido: number; n: number; sin_fecha: number; n_sin_fecha: number }
 }
 // Egresos de caja que el P&L todavía muestra como texto libre. Adoptarlos NO cambia
 // ningún total: el movimiento de caja queda intacto y el gasto pasa de "concepto
@@ -168,6 +182,10 @@ export default function Costos() {
   // filtros
   const [sede, setSede] = useState<string>('')          // '' = todas · 'corp' · id de tienda
   const [fCategoria, setFCategoria] = useState('')
+  // Filtro por categoría DE LA AGENDA. Es aparte de `fCategoria` (que es el de la
+  // lista de obligaciones y viaja al backend): acá se filtra en el cliente porque
+  // la agenda mezcla facturas —que no tienen categoría— con costos fijos.
+  const [catAgenda, setCatAgenda] = useState('')
   const [fEstado, setFEstado] = useState('')
   const [desde, setDesde] = useState('')
   const [hasta, setHasta] = useState('')
@@ -191,6 +209,11 @@ export default function Costos() {
   const [pMetodo, setPMetodo] = useState('transferencia')
   const [pNota, setPNota] = useState('')
   const [pError, setPError] = useState('')
+
+  // ponerle fecha de pago a una obligación cargada sin «Vence»
+  const [fechando, setFechando] = useState<AgendaSinFecha | null>(null)
+  const [fVence, setFVence] = useState('')
+  const [fError, setFError] = useState('')
 
   // adoptar un egreso suelto
   const [adoptando, setAdoptando] = useState<EgresoSuelto | null>(null)
@@ -261,15 +284,32 @@ export default function Costos() {
       .finally(() => setLoading(false))
   }
 
+  // Recarga la vista ACTIVA, sea cual sea. Es lo que va después de cada mutación.
+  //
+  // El bug que arregla: cada pestaña vive en su propio estado (`data`, `agenda`,
+  // `flujo`, `bandeja`) y todos los mutadores llamaban a `cargar()`, que solo
+  // llena `data` (Obligaciones). Pero la pestaña por defecto es la AGENDA: el
+  // dueño tecleaba «Arriendo agosto», guardaba, y la pantalla seguía igual —
+  // para él, el módulo no guardaba nada. Lo mismo pasaba al registrar un pago o
+  // anular desde cualquier pestaña que no fuera Obligaciones.
+  //
+  // Las pestañas inactivas no se refrescan acá porque no hace falta: cambiar de
+  // pestaña dispara el efecto de abajo (`vista` es dependencia) y la que se abre
+  // se vuelve a pedir siempre.
+  const refrescar = () => {
+    if (vista === 'proveedores') return   // trae su propio fetch
+    if (vista === 'agenda') cargarAgenda()
+    else if (vista === 'sinCategorizar') cargarBandeja()
+    else if (vista === 'flujo') cargarFlujo()
+    else cargar()
+  }
+
   useEffect(() => {
     // 'proveedores' se carga sola (trae su propio fetch y sus propios filtros): si
     // cayera en el `else`, pediría obligaciones que nadie va a mostrar y dejaría el
     // spinner de Costos tapando la vista.
     if (vista === 'proveedores') { setLoading(false); setError(''); return }
-    if (vista === 'agenda') cargarAgenda()
-    else if (vista === 'sinCategorizar') cargarBandeja()
-    else if (vista === 'flujo') cargarFlujo()
-    else cargar()
+    refrescar()
   }, [vista, sede, fCategoria, fEstado, desde, hasta])
 
   const obligaciones = data?.obligaciones ?? []
@@ -285,7 +325,11 @@ export default function Costos() {
 
   const gruposAgenda = useMemo(() => {
     const acc: Record<string, { clave: string; items: AgendaItem[]; total: number }> = {}
-    ;(agenda?.items ?? []).forEach(i => {
+    ;(agenda?.items ?? [])
+      // Las facturas comparten un grupo propio: no pasan por el catálogo de costos.
+      .filter(i => !catAgenda
+        || (i.tipo === 'factura' ? catAgenda === 'facturas' : i.categoria === catAgenda))
+      .forEach(i => {
       const clave = i.vencida ? VENCIDO : lunesDe(i.fecha)
       const g = acc[clave] ?? { clave, items: [], total: 0 }
       g.items.push(i); g.total += i.monto
@@ -294,7 +338,7 @@ export default function Costos() {
     // Lo vencido primero (hay que resolverlo hoy), después las semanas en orden.
     return Object.values(acc).sort((a, b) =>
       a.clave === VENCIDO ? -1 : b.clave === VENCIDO ? 1 : a.clave.localeCompare(b.clave))
-  }, [agenda])
+  }, [agenda, catAgenda])
 
   const semanaActual = lunesDe(hoyISO())
 
@@ -368,9 +412,43 @@ export default function Costos() {
         tienda_id: nSede === CORPORATIVO ? null : Number(nSede),
         nota: nNota.trim() || null,
       })
-      setNuevaAbierta(false); limpiarNueva(); cargar()
+      setNuevaAbierta(false); limpiarNueva(); refrescar()
     } catch (e: any) {
       setNError(e.response?.data?.detail || 'No se pudo guardar. Reintentá.')
+    } finally { setGuardando(false) }
+  }
+
+  // Ponerle fecha de pago a una obligación que se cargó sin ella. Es la salida del
+  // bloque «Sin fecha de pago»: un tap y el costo entra a la agenda y a la
+  // proyección, sin tener que rehacer la carga.
+  const fecharObligacion = async () => {
+    if (!fechando) return
+    if (!fVence) { setFError('Elegí para cuándo hay que pagarlo'); return }
+    setGuardando(true); setFError('')
+    try {
+      await api.patch(`/costos/obligaciones/${fechando.id}`, { fecha_vencimiento: fVence })
+      setFechando(null); refrescar()
+    } catch (e: any) {
+      setFError(e.response?.data?.detail || 'No se pudo guardar la fecha. Reintentá.')
+    } finally { setGuardando(false) }
+  }
+
+  // A5: la copia del mes que viene en un tap, en vez de retipear 12-18 costos por
+  // mes entre las dos sedes. El backend es idempotente por serie y mes, así que
+  // un doble clic no cobra el arriendo dos veces — lo dice con `ya_existia`.
+  const repetirObligacion = async (o: Obligacion) => {
+    if (!window.confirm(
+      `¿Crear «${o.concepto}» para el mes que viene por ${fmt(o.monto)}?\n\n`
+      + 'Se copia con el devengo y el vencimiento un mes más adelante. Después la '
+      + 'podés editar si el monto cambió.')) return
+    setGuardando(true)
+    try {
+      const { data: copia } = await api.post<Obligacion & { ya_existia: boolean }>(
+        `/costos/obligaciones/${o.id}/repetir`)
+      if (copia.ya_existia) alert(`Ya existía: «${copia.concepto}» del ${fecha(copia.fecha_devengo)}. No se duplicó.`)
+      refrescar()
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'No se pudo repetir')
     } finally { setGuardando(false) }
   }
 
@@ -387,7 +465,7 @@ export default function Costos() {
         metodo: pMetodo,
         nota: pNota.trim() || null,
       })
-      setPagoDe(null); setPMonto(''); setPNota(''); cargar()
+      setPagoDe(null); setPMonto(''); setPNota(''); refrescar()
     } catch (e: any) {
       setPError(e.response?.data?.detail || 'No se pudo registrar el pago. Reintentá.')
     } finally { setGuardando(false) }
@@ -395,13 +473,13 @@ export default function Costos() {
 
   const anularObligacion = async (o: Obligacion) => {
     if (!window.confirm(`¿Anular «${o.concepto}» por ${fmt(o.monto)}?\n\nSale de la lista y de los totales. Los pagos ya registrados quedan como traza.`)) return
-    try { await api.delete(`/costos/obligaciones/${o.id}`); cargar() }
+    try { await api.delete(`/costos/obligaciones/${o.id}`); refrescar() }
     catch (e: any) { alert(e.response?.data?.detail || 'No se pudo anular') }
   }
 
   const anularPago = async (p: Pago) => {
     if (!window.confirm(`¿Anular el pago de ${fmt(p.monto)} del ${fecha(p.fecha_pago)}?`)) return
-    try { await api.delete(`/costos/pagos/${p.id}`); cargar() }
+    try { await api.delete(`/costos/pagos/${p.id}`); refrescar() }
     catch (e: any) { alert(e.response?.data?.detail || 'No se pudo anular el pago') }
   }
 
@@ -422,6 +500,14 @@ export default function Costos() {
     } catch (e: any) {
       setBError(e.response?.data?.detail || 'No se pudo guardar. Reintentá.')
     } finally { setGuardando(false) }
+  }
+
+  const abrirFecha = (o: AgendaSinFecha) => {
+    setFechando(o)
+    // Arranca en el devengo: casi siempre el costo se paga en su propio mes, y
+    // así el dueño corrige un día en vez de tipear una fecha entera.
+    setFVence(o.fecha_devengo || hoyISO())
+    setFError('')
   }
 
   const abrirPago = (o: Obligacion) => {
@@ -448,7 +534,9 @@ export default function Costos() {
         categoria_id: Number(aCategoria),
         fecha_devengo: aDevengo,
       })
-      setAdoptando(null); cargarBandeja()
+      // Adoptar CREA una obligación devengada + su pago espejo: no alcanza con
+      // vaciar la bandeja, la agenda y el P&L también cambiaron.
+      setAdoptando(null); refrescar()
     } catch (e: any) {
       setAError(e.response?.data?.detail || 'No se pudo adoptar. Reintentá.')
     } finally { setGuardando(false) }
@@ -538,15 +626,76 @@ export default function Costos() {
               <p className="text-xl font-bold text-red-600 font-mono">{fmt(agenda?.totales.vencido ?? 0)}</p>
               <p className="text-xs text-gray-400">Ya se pasó la fecha</p>
             </div>
+            {/* Cuánta plata es de nómina, cuánta de arriendo, cuánta de servicios.
+                Sin esto la agenda solo rotula por TIPO ('Proveedor' / 'Costo fijo')
+                y las palabras que el dueño busca no salían en ninguna pantalla. */}
             <div className="bg-white rounded-2xl border border-gray-200 p-4 col-span-2 lg:col-span-1">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Qué ves acá</p>
-              <p className="text-xs text-gray-500 leading-relaxed">
-                Facturas de proveedor y costos fijos en una sola lista, con el <b>saldo</b> que
-                falta pagar. Una factura sin vencimiento ni plazo no aparece: cargáselos en
-                Pagos a Proveedores.
-              </p>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Por categoría</p>
+              <div className="space-y-0.5 mt-1">
+                {(agenda?.por_categoria ?? []).map(g => (
+                  <button key={g.clave}
+                    onClick={() => setCatAgenda(c => (c === g.clave ? '' : g.clave))}
+                    className={`w-full flex items-center justify-between text-xs rounded-lg px-1.5 py-0.5 transition-colors ${
+                      catAgenda === g.clave ? 'bg-forest/10 text-forest' : 'hover:bg-gray-50'
+                    }`}>
+                    <span className="truncate">{g.nombre}</span>
+                    <span className="font-mono shrink-0 ml-2">{fmt(g.monto)}</span>
+                  </button>
+                ))}
+                {(agenda?.por_categoria.length ?? 0) === 0 && (
+                  <p className="text-xs text-gray-400">Sin datos</p>
+                )}
+              </div>
+              {catAgenda && (
+                <button onClick={() => setCatAgenda('')}
+                  className="text-[11px] font-semibold text-gray-400 hover:text-gray-600 mt-1.5">
+                  Ver todas
+                </button>
+              )}
             </div>
           </div>
+
+          {/* Obligaciones cargadas SIN fecha de pago. «Vence» es opcional en el
+              formulario, así que cargar solo lo obligatorio dejaba el costo fuera
+              de la agenda y de la proyección: invisible, como si no se hubiera
+              guardado. Van acá arriba, con un botón para fecharlas — no se les
+              inventa un vencimiento ni entran al total. */}
+          {(agenda?.sin_fecha.length ?? 0) > 0 && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50">
+              <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-amber-100">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-amber-800">Sin fecha de pago</p>
+                  <p className="text-[11px] text-amber-700/90 leading-snug">
+                    Están cargadas y cuentan en el P&amp;L, pero no se pueden agendar ni proyectar
+                    hasta que tengan una fecha. Ponésela y entran solas.
+                  </p>
+                </div>
+                <span className="font-mono font-bold text-sm text-amber-800 shrink-0">
+                  {fmt(agenda?.totales.sin_fecha ?? 0)}
+                </span>
+              </div>
+              <div className="divide-y divide-amber-100/70">
+                {(agenda?.sin_fecha ?? []).map(i => (
+                  <div key={`sf-${i.id}`} className="flex items-center gap-3 px-4 py-2.5">
+                    <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-white text-amber-700 border border-amber-200">
+                      <Tag size={11} /> {i.categoria_nombre || 'Sin categoría'}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-gray-800 truncate">{i.concepto}</p>
+                      <p className="text-[11px] text-gray-500 truncate">
+                        {i.tienda_nombre || 'Corporativo'} · devengo {fecha(i.fecha_devengo)}
+                      </p>
+                    </div>
+                    <span className="font-mono font-bold text-sm text-gray-800 shrink-0">{fmt(i.monto)}</span>
+                    <button onClick={() => abrirFecha(i)}
+                      className="shrink-0 flex items-center gap-1.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 px-3 py-1.5 rounded-lg">
+                      <CalendarClock size={13} /> Poner fecha
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="space-y-3">
             {gruposAgenda.map(g => (
@@ -566,11 +715,15 @@ export default function Costos() {
                 <div className="divide-y divide-gray-50">
                   {g.items.map(i => (
                     <div key={`${i.tipo}-${i.id}`} className="flex items-center gap-3 px-4 py-2.5">
+                      {/* La etiqueta dice la CATEGORÍA («Nómina», «Arriendo»), no
+                          el tipo genérico: el dueño busca sus palabras, y
+                          «Costo fijo» no es ninguna de ellas. El ícono sigue
+                          distinguiendo factura de costo fijo. */}
                       <span className={`shrink-0 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg ${
                         i.tipo === 'factura' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'
                       }`}>
                         {i.tipo === 'factura' ? <Truck size={11} /> : <Building2 size={11} />}
-                        {i.tipo === 'factura' ? 'Proveedor' : 'Costo fijo'}
+                        {i.tipo === 'factura' ? 'Proveedor' : (i.categoria_nombre || 'Costo fijo')}
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold text-gray-800 truncate">{i.concepto}</p>
@@ -867,8 +1020,10 @@ export default function Costos() {
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 p-4">
           <p className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Por categoría</p>
-          <div className="space-y-0.5 mt-1">
-            {porCategoria.slice(0, 3).map(c => (
+          {/* Todas, no las 3 primeras: si el arriendo queda cuarto, la pantalla que
+              tenía que responder «cuánto de arriendo» lo esconde. */}
+          <div className="space-y-0.5 mt-1 max-h-28 overflow-y-auto">
+            {porCategoria.map(c => (
               <div key={c.nombre} className="flex items-center justify-between text-xs">
                 <span className="text-gray-600 truncate">{c.nombre}</span>
                 <span className="font-mono text-gray-700 shrink-0 ml-2">{fmt(c.monto)}</span>
@@ -960,6 +1115,18 @@ export default function Costos() {
                         <Wallet size={13} /> Registrar pago
                       </button>
                     )}
+                    {/* A5: la copia del mes que viene en un tap. Sin esto, con dos
+                        sedes son 12-18 cargas manuales por mes retecleando lo mismo. */}
+                    <button onClick={() => repetirObligacion(o)} disabled={guardando}
+                      title="Crear la copia del mes siguiente (idempotente: no duplica)"
+                      className="flex items-center gap-1.5 text-xs font-bold text-forest bg-forest/10 hover:bg-forest/20 disabled:opacity-40 px-3 py-1.5 rounded-lg">
+                      <CalendarDays size={13} /> Repetir mes que viene
+                    </button>
+                    {!o.fecha_vencimiento && (
+                      <span className="flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg">
+                        <AlertCircle size={11} /> Sin fecha de pago
+                      </span>
+                    )}
                     <button onClick={() => anularObligacion(o)}
                       title="Anular (baja lógica: no borra los pagos)"
                       className="ml-auto flex items-center gap-1 text-xs font-semibold text-red-500 hover:text-red-700 px-2 py-1 rounded-lg border border-red-100 hover:border-red-300">
@@ -1020,6 +1187,17 @@ export default function Costos() {
                 <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Vence (opcional)</label>
                 <input type="date" value={nVencimiento} onChange={ev => setNVencimiento(ev.target.value)}
                   className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-forest" />
+                {/* Se avisa EN EL MOMENTO, no después: sin fecha el costo se guarda
+                    igual y cuenta en el P&L, pero queda fuera de la agenda y de la
+                    proyección. Enterarse recién al ver la agenda vacía es lo que
+                    hace pensar que el módulo no guardó nada. */}
+                {!nVencimiento && (
+                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mt-1 flex items-start gap-1.5">
+                    <AlertCircle size={12} className="mt-0.5 shrink-0" />
+                    <span>Sin fecha se guarda igual, pero no va a aparecer en la agenda ni en la
+                      proyección: queda en «Sin fecha de pago» hasta que le pongas una.</span>
+                  </p>
+                )}
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Beneficiario (opcional)</label>
@@ -1052,6 +1230,37 @@ export default function Costos() {
             <button onClick={crearObligacion} disabled={guardando}
               className="w-full bg-forest hover:bg-forest-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl">
               {guardando ? 'Guardando…' : 'Guardar obligación'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: ponerle fecha de pago a una obligación que se cargó sin ella */}
+      {fechando && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setFechando(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-4" onClick={ev => ev.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-gray-800">¿Para cuándo hay que pagarlo?</h2>
+              <button onClick={() => setFechando(null)} className="text-gray-400"><X size={18} /></button>
+            </div>
+            <div className="text-sm text-gray-500">
+              <p className="font-semibold text-gray-700">{fechando.concepto}</p>
+              <p>{fechando.categoria_nombre || 'Sin categoría'} · {fechando.tienda_nombre || 'Corporativo'}
+                {' · '}<span className="font-mono font-bold text-gray-800">{fmt(fechando.monto)}</span></p>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide block mb-1">Fecha de pago</label>
+              <input type="date" value={fVence} onChange={ev => setFVence(ev.target.value)}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-forest" />
+              <p className="text-[11px] text-gray-400 mt-1">
+                Con esta fecha el costo entra a la agenda de la semana que corresponda y a la
+                proyección de flujo. El mes al que pertenece (el devengo) no cambia.
+              </p>
+            </div>
+            {fError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{fError}</p>}
+            <button onClick={fecharObligacion} disabled={guardando || !fVence}
+              className="w-full bg-forest hover:bg-forest-700 disabled:opacity-40 text-white font-bold py-3 rounded-xl text-sm">
+              {guardando ? 'Guardando...' : 'Guardar fecha'}
             </button>
           </div>
         </div>

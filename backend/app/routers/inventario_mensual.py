@@ -37,14 +37,37 @@ class CorregirItemBody(BaseModel):
     cantidad_real: float
 
 
-@router.post("/{inv_id}/aplicar")
-def aplicar(
+@router.get("/{inv_id}/previsualizar-aplicacion")
+def previsualizar_aplicacion(
     inv_id: int,
     db: Session = Depends(get_db), user: Usuario = Depends(require_admin),
 ):
+    """Admin: qué pasaría al aplicar este conteo, SIN tocar nada. Producto por
+    producto, en qué stock queda; cuántos caen en 0, cuántos se irían a negativo
+    (eso bloquea la aplicación) y el impacto en pesos.
+
+    Aplicar es irreversible y usa una diferencia congelada en el cierre contra el
+    stock de hoy: nadie debería apretar ese botón sin haber visto este número."""
+    return svc.aplicar(db, inv_id, user.id, dry_run=True)
+
+
+@router.post("/{inv_id}/aplicar")
+def aplicar(
+    inv_id: int,
+    omitir_negativos: bool = Query(False),
+    db: Session = Depends(get_db), user: Usuario = Depends(require_admin),
+):
     """Admin: aplica el conteo mensual CERRADO al inventario — stock_actual +=
-    diferencia por producto, con movimiento de ajuste. Una sola vez por mes."""
-    return svc.aplicar(db, inv_id, user.id)
+    diferencia por producto, con movimiento de ajuste. Una sola vez por mes.
+
+    400 si algún producto quedaría en negativo: la foto del cierre ya no calza
+    con el stock actual y aplicarla sería romper el inventario sin vuelta atrás.
+
+    `omitir_negativos=true` aplica los renglones sanos y EXCLUYE los trabados
+    (con constancia en la respuesta y en la auditoría), en vez de frenar el
+    conteo entero por uno solo. Se pide explícitamente: el default sigue siendo
+    no tocar nada."""
+    return svc.aplicar(db, inv_id, user.id, omitir_negativos=omitir_negativos)
 
 
 @router.patch("/items/{item_id}")

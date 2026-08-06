@@ -33,15 +33,45 @@ interface ConciliacionDiaria {
 interface Item {
   id: number; producto_nombre: string; categoria: string; unidad_medida: string
   cantidad_sistema: number; cantidad_real: number | null
+  // Si el número de al lado lo puso una persona o lo rellenó el cierre. El cierre
+  // iguala cantidad_real al sistema para todo lo no contado (así la diferencia da
+  // 0), y sin esta bandera un mes contado a medias se ve idéntico a uno completo.
+  fue_contado: boolean
   diferencia: number; valor_unitario: number; valor_diferencia: number
 }
 interface Cat { categoria: string; valor_diferencia: number; items: number; con_diferencia: number }
 interface Conciliacion {
   id: number; anio: number; mes: number; estado: string
+  // Con valor = el mes YA pasó por un cierre, aunque hoy figure "en proceso" por
+  // una reabertura. Desde ese momento la foto del período no se re-sincroniza
+  // nunca más con el catálogo vivo, y la pantalla no puede prometer lo contrario.
+  fecha_primer_cierre: string | null
   fecha_aplicado: string | null
   valor_diferencia_total: number; items: Item[]
-  resumen: { positivas: number; negativas: number; sin_diferencia: number; valor_positivo: number; valor_negativo: number; valor_neto: number }
+  contados: number; total_items: number
+  resumen: {
+    positivas: number; negativas: number; sin_diferencia: number
+    valor_positivo: number; valor_negativo: number; valor_neto: number
+    contados: number; no_contados: number
+  }
   por_categoria: Cat[]; ranking: Item[]
+}
+// Qué pasaría al aplicar, ANTES de aplicar. Aplicar es irreversible y usa la
+// diferencia congelada en el cierre contra el stock de HOY: sin esta vista, un
+// clic podía dejar decenas de productos en 0 sin que nadie viera venir el número.
+interface ItemPrevio {
+  item_id: number; producto_id: number; producto_nombre: string; unidad_medida: string
+  stock_actual: number; diferencia: number
+  stock_nuevo: number          // crudo, SIN recortar en 0
+  negativo: boolean; fue_contado: boolean; valor_diferencia: number
+}
+interface PrevioAplicacion {
+  inventario_id: number; items: ItemPrevio[]
+  ajustados: number; en_cero: number; negativos: number; valor_total: number
+  contados: number; total_items: number
+  // true = hay negativos. El backend rechaza aplicar TODO; se puede aplicar el
+  // resto pidiendo explícitamente excluirlos (omitir_negativos).
+  bloqueado: boolean
 }
 interface Tienda { id: number; nombre: string }
 
@@ -189,14 +219,50 @@ export default function ConciliacionInventario() {
   }
 
   const [aplicando, setAplicando] = useState(false)
-  const aplicarMes = async () => {
+  const [previo, setPrevio] = useState<PrevioAplicacion | null>(null)
+  // Renglones que se pueden ajustar sin romper el inventario: el plan completo
+  // menos los que quedarían en negativo. Es el número que manda cuando hay
+  // trabados, porque es lo que realmente se va a escribir.
+  const sanos = previo ? previo.ajustados - previo.negativos : 0
+
+  // Paso 1 de 2: pedir el PLAN. No se puede apretar "aplicar" a ciegas — la
+  // operación es irreversible y opera con una diferencia congelada en el cierre
+  // contra un stock que pudo moverse desde entonces.
+  const previsualizarAplicacion = async () => {
     if (!data) return
-    if (!window.confirm(`¿Aplicar el conteo de ${MESES[mes - 1]} al inventario? El stock de cada producto se ajusta SUMANDO la diferencia que descubrió el conteo (equivale a haber corregido el stock al momento del cierre — las ventas posteriores no se pisan). Queda un movimiento de ajuste por producto. No se puede repetir ni deshacer.`)) return
     setAplicando(true)
     try {
-      const r = await api.post(`/inventario-mensual/${data.id}/aplicar`)
+      const r = await api.get<PrevioAplicacion>(`/inventario-mensual/${data.id}/previsualizar-aplicacion`)
+      setPrevio(r.data)
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'No se pudo calcular la previsualización')
+    } finally { setAplicando(false) }
+  }
+
+  // Paso 2 de 2: aplicar de verdad, ya con el resumen a la vista.
+  //
+  // `omitirNegativos` es la salida al bloqueo, y es EXPLÍCITA. Sin ella, un solo
+  // renglón trabado frenaba el conteo entero y la única forma de avanzar era
+  // corregir ese físico a mano — o sea, escribir un número que nadie contó y que
+  // el sistema marca como CONTADO. El admin tiene que poder seguir sin mentir:
+  // se aplican los sanos, los trabados quedan afuera y con constancia.
+  const aplicarMes = async (omitirNegativos = false) => {
+    if (!data || !previo) return
+    if (previo.bloqueado && !omitirNegativos) return
+    setAplicando(true)
+    try {
+      const r = await api.post(`/inventario-mensual/${data.id}/aplicar`, null,
+        omitirNegativos ? { params: { omitir_negativos: true } } : undefined)
+      setPrevio(null)
       await recargarMes()
-      alert(`Aplicado: ${r.data.ajustados} productos ajustados${r.data.clampeados > 0 ? ` (${r.data.clampeados} topados en 0)` : ''}.`)
+      alert(`Aplicado: ${r.data.ajustados} productos ajustados`
+        + `${r.data.en_cero > 0 ? ` (${r.data.en_cero} quedaron en 0)` : ''}.`
+        + `${r.data.excluidos > 0
+          ? `\n\nSe EXCLUYERON ${r.data.excluidos} producto(s) que habrían quedado en stock negativo: `
+            + `${r.data.items_excluidos.map((i: ItemPrevio) => i.producto_nombre).join(', ')}. `
+            + 'Su diferencia no se aplicó (quedó registrada en la auditoría): la foto del cierre ya '
+            + 'no calzaba con el stock de hoy.'
+          : ''}`)
     } catch (e: any) {
       alert(e.response?.data?.detail || 'No se pudo aplicar')
     } finally { setAplicando(false) }
@@ -217,21 +283,44 @@ export default function ConciliacionInventario() {
   }
 
   const [reabriendo, setReabriendo] = useState(false)
-  // Reabrir (mes cerrado) y Sincronizar (mes en proceso) usan el mismo endpoint:
-  // agrega productos nuevos y refresca unidad/categoría/sistema desde el catálogo
-  // vivo; si la unidad de un producto cambió, su conteo viejo se borra (recontar).
+  // Un mismo endpoint, DOS operaciones muy distintas — y la confirmación dice
+  // exactamente cuál va a correr, porque tienen consecuencias opuestas:
+  //
+  //  · mes que YA SE CERRÓ alguna vez → solo se destraba el estado. La foto del
+  //    período (existencia teórica, físico contado y diferencias) queda intacta.
+  //    Antes esto re-fotografiaba el stock de HOY y ponía las diferencias en 0:
+  //    reabrir julio en agosto borraba la fuga de julio para siempre.
+  //  · mes que NUNCA se cerró → se sincroniza con el catálogo vivo (productos
+  //    nuevos, unidades, sistema). No hay foto que proteger todavía.
+  //
+  // La distinción es `fecha_primer_cierre` y NO el estado actual: un mes ya
+  // reabierto figura "en proceso" pero conserva su medición, así que prometerle
+  // al admin una sincronización con el catálogo sería mentirle — el backend no
+  // la va a hacer.
+  const yaSeCerroAlgunaVez = !!data && (data.estado === 'cerrado' || !!data.fecha_primer_cierre)
   const reabrirMes = async () => {
     if (!tiendaId) return
-    const msg = data?.estado === 'cerrado'
-      ? `¿Reabrir el conteo de ${MESES[mes - 1]}? Vuelve a "en proceso" para seguir contando — lo ya registrado se conserva — y el conteo se sincroniza con el catálogo vivo (productos nuevos, unidades y sistema actuales; lo contado en unidades viejas queda para recontar).`
-      : `¿Sincronizar el conteo de ${MESES[mes - 1]} con el catálogo vivo? Agrega los productos que falten y refresca unidades y sistema. Lo contado se conserva, salvo los productos cuya unidad cambió (quedan para recontar).`
+    const msg = yaSeCerroAlgunaVez
+      ? `¿Reabrir el conteo de ${MESES[mes - 1]} para seguir contando?\n\n`
+        + 'QUÉ CAMBIA: solo el estado, que vuelve a "en proceso".\n\n'
+        + 'QUÉ NO SE TOCA: la existencia teórica del mes, lo que ya se contó y las '
+        + 'diferencias que encontró el cierre quedan exactamente como están. La foto '
+        + 'del período no se pisa con el stock de hoy.\n\n'
+        + 'Al volver a cerrar, las diferencias se recalculan con lo que haya contado.'
+      : `¿Sincronizar el conteo de ${MESES[mes - 1]} con el catálogo vivo?\n\n`
+        + 'Agrega los productos que falten y refresca unidades, costos y existencia '
+        + 'teórica desde el sistema ACTUAL.\n\n'
+        + 'OJO: lo contado se conserva, salvo los productos cuya unidad cambió — esos '
+        + 'pierden su conteo y hay que recontarlos.'
     if (!window.confirm(msg)) return
     setReabriendo(true)
     try {
       await api.post('/inventario-mensual/reabrir', null, { params: { tienda_id: tiendaId, anio, mes } })
       const r = await api.get<Conciliacion | null>('/inventario-mensual/conciliacion', { params: { tienda_id: tiendaId, anio, mes } })
       setData(r.data)
-      alert('Listo — el conteo quedó sincronizado con el catálogo vivo.')
+      alert(yaSeCerroAlgunaVez
+        ? 'Listo — el mes quedó en proceso y la medición del período se conservó.'
+        : 'Listo — el conteo quedó sincronizado con el catálogo vivo.')
     } catch (e: any) {
       alert(e.response?.data?.detail || 'No se pudo completar')
     } finally { setReabriendo(false) }
@@ -246,7 +335,12 @@ export default function ConciliacionInventario() {
   const mensual = useMemo(() => {
     if (!data) return null
     const items = data.items.map(i => {
-      const contado = i.cantidad_real !== null && i.cantidad_real !== undefined
+      // «Contado» = lo puso una PERSONA, y eso lo dice `fue_contado` y NADA MÁS.
+      // Aceptar `cantidad_real` como respaldo era inventar cobertura: el cierre la
+      // rellena en TODOS los renglones con el valor del sistema, así que al reabrir
+      // un mes cerrado el badge saltaba de «12 de 180» (rojo) a «180 de 180»
+      // (verde) sin que nadie hubiera contado un solo producto más.
+      const contado = i.fue_contado
       const dif = contado ? (i.cantidad_real as number) - i.cantidad_sistema : 0
       return { ...i, contado, dif, valorDif: dif * (i.valor_unitario || 0) }
     })
@@ -254,6 +348,11 @@ export default function ConciliacionInventario() {
     return {
       items,
       nContados: contados.length,
+      // Conteos anteriores a la bandera: tienen físico cargado y ni un renglón
+      // marcado. No se puede saber qué se contó de verdad, así que se dice que no
+      // se sabe — nunca un verde inventado ni un rojo que acusa de no haber contado.
+      legacySinBandera: contados.length === 0
+        && items.some(i => i.cantidad_real !== null && i.cantidad_real !== undefined),
       positivas: contados.filter(i => i.dif > 0).length,
       negativas: contados.filter(i => i.dif < 0).length,
       exactas: contados.filter(i => i.dif === 0).length,
@@ -297,16 +396,20 @@ export default function ConciliacionInventario() {
           </select>
           {data && !data.fecha_aplicado && (
             <button onClick={reabrirMes} disabled={reabriendo || !tiendaId}
-              title={data.estado === 'cerrado'
-                ? "Vuelve el conteo del mes a 'en proceso' conservando lo contado y lo sincroniza con el catálogo vivo"
+              title={yaSeCerroAlgunaVez
+                ? "Vuelve el conteo del mes a 'en proceso' conservando intacta la medición del período (no se re-sincroniza con el catálogo)"
                 : 'Agrega los productos que falten y refresca unidades y sistema del conteo en proceso'}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-forest hover:bg-forest-700 disabled:opacity-40 text-white">
-              {data.estado === 'cerrado'
+              {yaSeCerroAlgunaVez
                 ? <><Unlock size={14} /> {reabriendo ? 'Reabriendo…' : 'Reabrir mes'}</>
                 : <><RotateCcw size={14} /> {reabriendo ? 'Sincronizando…' : 'Sincronizar catálogo'}</>}
             </button>
           )}
-          <button onClick={reiniciarMes} disabled={reiniciando || !tiendaId || data?.estado === 'cerrado'}
+          {/* Reiniciar borra el conteo y lo re-siembra con el stock de HOY: contra
+              un mes que ya se cerró eso es destruir la medición del período por
+              otra puerta (reabrir + reiniciar). El backend lo rechaza; el botón
+              no puede invitar a intentarlo. */}
+          <button onClick={reiniciarMes} disabled={reiniciando || !tiendaId || yaSeCerroAlgunaVez}
             title="Borra el avance del mes en proceso y re-siembra con el conteo del sistema actual"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white">
             <RotateCcw size={14} /> {reiniciando ? 'Reiniciando…' : 'Reiniciar mes'}
@@ -366,15 +469,35 @@ export default function ConciliacionInventario() {
             <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${data.estado === 'cerrado' ? 'bg-green-600 text-white' : 'bg-amber-500 text-white'}`}>
               {data.estado === 'cerrado' ? 'Cerrado' : 'En proceso'}
             </span>
+            {/* Cobertura del conteo, en grande y al lado del estado: un mes con 12
+                de 180 productos contados no puede leerse como uno completo, y su
+                diferencia total no significa lo mismo. */}
+            {mensual.legacySinBandera ? (
+              // Conteo anterior a la bandera: decir "0 de 180" sería acusar de no
+              // haber contado, y decir "180 de 180" sería inventar un verde. No
+              // hay dato, y eso es lo que se muestra.
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500"
+                title="Este conteo es anterior a que el sistema registrara quién contó qué: no hay forma de saber cuántos productos se contaron de verdad.">
+                sin dato de cobertura
+              </span>
+            ) : (
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                mensual.items.length === 0 ? 'bg-gray-100 text-gray-500'
+                  : mensual.nContados === mensual.items.length ? 'bg-green-100 text-green-700'
+                  : mensual.nContados * 2 >= mensual.items.length ? 'bg-amber-100 text-amber-700'
+                  : 'bg-red-100 text-red-700'
+              }`} title="Productos que contó una persona. El resto lo rellenó el cierre con el valor del sistema (diferencia 0), así que no aporta información.">
+                {mensual.nContados} de {mensual.items.length} productos contados
+              </span>
+            )}
             <span className="text-xs text-gray-500">
-              {mensual.nContados} de {mensual.items.length} contados
-              · {mensual.positivas} sobran · {mensual.negativas} faltan · {mensual.exactas} exactos
+              {mensual.positivas} sobran · {mensual.negativas} faltan · {mensual.exactas} exactos
             </span>
             {data.estado === 'cerrado' && !data.fecha_aplicado && (
-              <button onClick={aplicarMes} disabled={aplicando}
-                title="Ajusta el stock del sistema sumando la diferencia que descubrió el conteo — el físico contado pasa a ser la verdad"
+              <button onClick={previsualizarAplicacion} disabled={aplicando}
+                title="Muestra primero en qué stock queda cada producto; recién después se aplica"
                 className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white">
-                <DatabaseZap size={13} /> {aplicando ? 'Aplicando…' : 'Aplicar al inventario'}
+                <DatabaseZap size={13} /> {aplicando ? 'Calculando…' : 'Aplicar al inventario'}
               </button>
             )}
             {data.fecha_aplicado && (
@@ -439,9 +562,140 @@ export default function ConciliacionInventario() {
               </tbody>
             </table>
           </div>
+          {mensual.legacySinBandera && (
+            <p className="px-3 py-2 text-[11px] text-amber-700 bg-amber-50 border-t border-amber-100 flex items-start gap-1.5">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              <span>Este conteo es anterior a que el sistema registrara <b>quién contó qué</b>. Tiene
+                físico cargado, pero no hay forma de saber cuáles renglones se contaron de verdad y
+                cuáles los rellenó el cierre: por eso la cobertura figura sin dato en vez de mostrar
+                un número que sería inventado. Los meses nuevos sí lo distinguen.</span>
+            </p>
+          )}
           <p className="px-3 py-2 text-[11px] text-gray-400 border-t border-gray-50">
-            La diferencia se calcula en vivo (físico − sistema actual del conteo). "Sin contar" = aún no registrado en el kiosko. El Excel exporta esta misma foto.
+            La diferencia se calcula en vivo (físico − sistema actual del conteo). "Sin contar" = nadie
+            registró ese producto; en un mes cerrado el cierre le puso el valor del sistema, así que su
+            diferencia es 0 por construcción y no significa que haya cuadrado. El Excel exporta esta misma foto.
           </p>
+        </div>
+      )}
+
+      {/* ── Previsualización de "Aplicar al inventario" ─────────────────────── */}
+      {previo && data && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPrevio(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-100">
+              <h2 className="font-bold text-gray-800 flex items-center gap-2">
+                <DatabaseZap size={17} className="text-indigo-600" />
+                Esto le va a pasar al inventario
+              </h2>
+              <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                El stock de cada producto se ajusta <b>sumando la diferencia</b> que descubrió el
+                conteo de {MESES[mes - 1]} (no se pisa con el físico absoluto, así las ventas
+                posteriores al cierre no se pierden). Queda un movimiento de ajuste por producto.
+                <b> No se puede repetir ni deshacer.</b>
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 px-5 py-3 bg-gray-50">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Productos</p>
+                <p className="text-lg font-bold font-mono text-gray-800">{previo.ajustados}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Quedan en 0</p>
+                <p className={`text-lg font-bold font-mono ${previo.en_cero > 0 ? 'text-amber-600' : 'text-gray-800'}`}>{previo.en_cero}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Negativos</p>
+                <p className={`text-lg font-bold font-mono ${previo.negativos > 0 ? 'text-red-600' : 'text-gray-800'}`}>{previo.negativos}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Impacto</p>
+                <p className={`text-lg font-bold font-mono ${previo.valor_total < 0 ? 'text-red-600' : 'text-blue-600'}`}>{fmt(previo.valor_total)}</p>
+              </div>
+            </div>
+
+            {/* De cuánto del inventario habla este ajuste: si el conteo fue parcial,
+                el stock se mueve igual y conviene saberlo antes de confirmar. */}
+            {previo.contados < previo.total_items && (
+              <p className="mx-5 mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
+                <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                <span>Este conteo cubrió <b>{previo.contados} de {previo.total_items} productos</b>. El
+                  resto no se contó y no se va a mover — pero tampoco quedó verificado.</span>
+              </p>
+            )}
+
+            {previo.bloqueado && (
+              <p className="mx-5 mt-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <span><b>{previo.negativos} producto(s) quedarían en stock NEGATIVO</b> (marcados en
+                  rojo abajo): la diferencia del conteo es más grande que lo que queda hoy, o sea que
+                  la foto del cierre ya no calza con el inventario actual. Podés{' '}
+                  <b>aplicar el resto y excluirlos</b> —queda registrado cuáles y por qué— o corregir
+                  esos renglones en la tabla de arriba (clic sobre el físico) y volver a intentar.
+                  {sanos === 0 && ' Acá no queda ningún renglón sano, así que solo sirve corregirlos.'}</span>
+              </p>
+            )}
+
+            <div className="overflow-y-auto flex-1 px-5 py-3">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-white">
+                  <tr className="text-[11px] uppercase tracking-wide text-gray-400">
+                    <th className="text-left py-1.5 font-bold">Producto</th>
+                    <th className="text-right py-1.5 font-bold">Hoy</th>
+                    <th className="text-right py-1.5 font-bold">Ajuste</th>
+                    <th className="text-right py-1.5 font-bold">Queda en</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {previo.items.map(i => (
+                    <tr key={i.item_id} className={i.negativo ? 'bg-red-50' : ''}>
+                      <td className="py-1.5 font-medium text-gray-700">
+                        {i.producto_nombre} <span className="text-xs text-gray-400">{i.unidad_medida}</span>
+                        {!i.fue_contado && <span className="text-[10px] font-bold text-amber-600 ml-1.5">sin contar</span>}
+                      </td>
+                      <td className="py-1.5 text-right font-mono text-gray-500">{num(i.stock_actual)}</td>
+                      <td className={`py-1.5 text-right font-mono ${i.diferencia < 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                        {i.diferencia > 0 ? '+' : ''}{num(i.diferencia)}
+                      </td>
+                      <td className={`py-1.5 text-right font-mono font-bold ${
+                        i.negativo ? 'text-red-700' : i.stock_nuevo === 0 ? 'text-amber-600' : 'text-gray-800'
+                      }`}>
+                        {num(i.stock_nuevo)}
+                      </td>
+                    </tr>
+                  ))}
+                  {previo.items.length === 0 && (
+                    <tr><td colSpan={4} className="py-6 text-center text-sm text-gray-400">
+                      Ningún producto tiene diferencia: aplicar no cambiaría nada.
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center gap-2 px-5 py-4 border-t border-gray-100">
+              <button onClick={() => setPrevio(null)}
+                className="px-4 py-2.5 rounded-xl text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200">
+                Cancelar
+              </button>
+              {/* Con renglones trabados el botón NO es un muro: aplica los sanos y
+                  excluye los otros. Lo dice en el propio botón, con los dos números,
+                  para que nadie confunda "se aplicó" con "se aplicó todo". */}
+              <button onClick={() => aplicarMes(previo.bloqueado)}
+                disabled={aplicando || sanos === 0}
+                className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-40 ${
+                  previo.bloqueado ? 'bg-amber-600 hover:bg-amber-700' : 'bg-indigo-600 hover:bg-indigo-700'
+                }`}>
+                {aplicando ? 'Aplicando…'
+                  : previo.ajustados === 0 ? 'No hay diferencias que aplicar'
+                  : sanos === 0 ? 'Todos quedarían en negativo: hay que corregirlos'
+                  : previo.bloqueado
+                    ? `Aplicar a ${sanos} producto${sanos === 1 ? '' : 's'} y excluir ${previo.negativos} — no se puede deshacer`
+                    : `Aplicar a ${previo.ajustados} producto${previo.ajustados === 1 ? '' : 's'} — no se puede deshacer`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

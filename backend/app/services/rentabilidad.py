@@ -31,6 +31,15 @@ from app.models.models import (
 # Si esos strings cambian allá, hay que actualizarlos acá (no hay FK).
 _CONCEPTOS_COMPRA = ("Pago proveedor:%", "Reverso Pago proveedor:%", "Ajuste factura%")
 
+# Categoría de costo PROHIBIDA: la deuda con proveedores ya entra al P&L por
+# FacturaCompra (fecha de recibido), así que una obligación cargada acá contaría
+# la misma mercadería DOS VECES dentro de `gastos`. services/costos.py rechaza
+# esta clave al crear/editar/adoptar; la exclusión de abajo cubre las filas
+# LEGACY que la versión anterior sí dejó guardar. Vive en este módulo —y no en
+# costos.py— porque costos.py ya importa de acá las constantes anti-doble-conteo
+# y la dependencia inversa sería circular.
+CLAVE_CATEGORIA_PROVEEDORES = "proveedores"
+
 ESTADOS_ANULADOS = ("anulado", "reversado")
 
 
@@ -130,6 +139,12 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # la BORRARÍA. Además `fecha_devengo` es Date, o sea fecha de NEGOCIO ya
     # resuelta: se compara contra desde/hasta y NUNCA contra d_utc/h_utc, que son
     # instantes UTC para columnas de instante.
+    #
+    # Y se EXCLUYE la categoría 'proveedores': esa mercadería ya está contada
+    # arriba, en `compras`, por FacturaCompra según fecha de recibido. Sumarla
+    # también acá contaría la misma plata dos veces y hundiría el margen neto con
+    # un gasto que no existe. El servicio ya no deja cargar nada ahí; este filtro
+    # es por las filas que la versión anterior alcanzó a guardar.
     q_oblig = (
         db.query(Obligacion.fecha_devengo, Obligacion.monto,
                  Obligacion.tienda_id, CostoCategoria.nombre, CostoCategoria.grupo)
@@ -138,6 +153,7 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             Obligacion.anulada.is_(False),
             Obligacion.fecha_devengo >= desde,
             Obligacion.fecha_devengo <= hasta,
+            CostoCategoria.clave != CLAVE_CATEGORIA_PROVEEDORES,
         )
     )
     if tienda_id is not None:

@@ -172,6 +172,8 @@ class ObligacionOut(BaseModel):
     fecha_devengo: date
     fecha_vencimiento: Optional[date]
     recurrencia: Optional[str]
+    # Llave de la serie mensual (el id del PRIMER eslabón). La escribe `repetir`.
+    plantilla_id: Optional[int] = None
     nota: Optional[str]
     imagen_url: Optional[str]
     anulada: bool

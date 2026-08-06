@@ -37,6 +37,10 @@ interface Mensual {
   estado: string // en_proceso | cerrado
   barista_nombre: string | null
   valor_diferencia_total: number
+  // Cobertura del conteo, del servidor. No se puede derivar del físico después de
+  // cerrar: el cierre rellena lo no contado con el valor del sistema.
+  contados: number
+  total_items: number
   items: { cantidad_real: number | null }[]
 }
 
@@ -249,9 +253,16 @@ export default function ConteosAdmin() {
                 </span>
               </p>
               <p className="text-xs text-gray-500 m-0 flex items-center gap-2">
+                {/* La cobertura acompaña SIEMPRE al número, cerrado o no: una
+                    diferencia neta de un conteo del 7% del inventario no dice lo
+                    mismo que la de uno completo. */}
+                {/* Los dos casos leen `contados` del servidor, que cuenta solo lo
+                    que marcó una persona. Derivarlo de `cantidad_real != null` en
+                    el mes en proceso mentía igual apenas se reabría un cierre: el
+                    cierre anterior dejó ese campo lleno en todos los renglones. */}
                 {mensual.estado === 'cerrado'
-                  ? `Diferencia neta $${Math.round(mensual.valor_diferencia_total).toLocaleString('es-CO')}`
-                  : `${mensual.items.filter(i => i.cantidad_real != null).length} de ${mensual.items.length} productos contados`}
+                  ? `Diferencia neta $${Math.round(mensual.valor_diferencia_total).toLocaleString('es-CO')} · ${mensual.contados} de ${mensual.total_items} contados`
+                  : `${mensual.contados} de ${mensual.total_items} productos contados`}
                 {mensual.barista_nombre && <span className="inline-flex items-center gap-1"><User size={10} />{mensual.barista_nombre}</span>}
               </p>
             </div>

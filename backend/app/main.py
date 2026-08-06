@@ -238,6 +238,24 @@ with engine.connect() as _conn:
         # Perf: movimientos_caja no tenía NINGÚN índice y la query de gastos del P&L
         # filtra por rango de fecha en CADA carga de Rentabilidad (scan completo).
         "CREATE INDEX IF NOT EXISTS ix_movcaja_fecha ON movimientos_caja (fecha)",
+        # Cierre de mes: distinguir "contado y dio exacto" de "nadie lo contó".
+        # cerrar() iguala cantidad_real al sistema para lo no contado, así que sin
+        # esta bandera los dos casos quedan idénticos y la fuga se esconde sola.
+        # Los conteos VIEJOS quedan en FALSE: es honesto — de ellos no se sabe qué
+        # se contó, y marcarlos como contados sería inventar una cobertura.
+        "ALTER TABLE inventarios_mensuales_items ADD COLUMN fue_contado BOOLEAN DEFAULT FALSE",
+        # "¿este mes ya pasó por un cierre alguna vez?". fecha_cierre no sirve
+        # para responderlo: cada reabertura la borra, así que la SEGUNDA reabertura
+        # veía un mes virgen y re-fotografiaba el stock de hoy sobre la medición
+        # del período. Esta no se limpia nunca.
+        # Los meses viejos quedan en NULL: si alguno ya venía reabierto, su
+        # evidencia se perdió antes de esta columna y no hay nada que recuperar.
+        "ALTER TABLE inventarios_mensuales ADD COLUMN fecha_primer_cierre TIMESTAMP",
+        # Backfill de una sola vez: un mes CERRADO hoy pasó por un cierre por
+        # definición. Sin esto, el primer reabrir posterior al deploy lo trataría
+        # como si nunca se hubiera cerrado.
+        "UPDATE inventarios_mensuales SET fecha_primer_cierre = fecha_cierre "
+        "WHERE fecha_primer_cierre IS NULL AND fecha_cierre IS NOT NULL",
     ]:
         try:
             _conn.execute(_text(_sql))
@@ -430,13 +448,21 @@ def _seed_categorias_costo():
     entrada en el loop de ALTERs de arriba — ese loop corre ANTES de create_all y
     un ALTER sobre una tabla que todavía no existe falla. Las tres tablas las crea
     create_all() desde el modelo; esta función solo las puebla, después.
+
+    'proveedores' YA NO se siembra: era una trampa de doble conteo. Lo que se le
+    debe al proveedor entra al P&L por FacturaCompra (fecha de recibido) y a la
+    agenda como factura; cargarlo además como obligación contaba la misma
+    mercadería dos veces. services/costos.py rechaza esa clave y no la ofrece en
+    el catálogo, y services/rentabilidad.py la excluye del término de obligaciones
+    para las filas que la versión anterior alcanzó a guardar. La FILA sembrada en
+    las bases viejas se deja donde está: borrarla dejaría esas obligaciones sin
+    categoría.
     """
     from app.models.models import CostoCategoria
     DEFAULTS = [
         {"clave": "arriendo",      "nombre": "Arriendo",      "grupo": "fijo"},
         {"clave": "nomina",        "nombre": "Nómina",        "grupo": "fijo"},
         {"clave": "servicios",     "nombre": "Servicios",     "grupo": "fijo"},
-        {"clave": "proveedores",   "nombre": "Proveedores",   "grupo": "variable"},
         {"clave": "mantenimiento", "nombre": "Mantenimiento", "grupo": "variable"},
         {"clave": "impuestos",     "nombre": "Impuestos",     "grupo": "fijo"},
         {"clave": "otros",         "nombre": "Otros",         "grupo": "variable"},

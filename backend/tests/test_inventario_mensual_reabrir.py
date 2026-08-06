@@ -1,7 +1,11 @@
-"""Reabrir un conteo mensual cerrado por error: vuelve a en_proceso conservando
-lo contado, limpia las diferencias del cierre prematuro y agrega al conteo los
-productos con controla_stock creados después de iniciarlo (el conteo se congela
-con el catálogo del momento de apertura)."""
+"""Reabrir un conteo mensual: vuelve a en_proceso conservando lo contado y agrega
+al conteo los productos con controla_stock creados después de iniciarlo (el
+conteo se congela con el catálogo del momento de apertura).
+
+La re-sincronización con el catálogo vivo (unidad, categoría, costo, existencia
+teórica) solo corre sobre un conteo EN PROCESO. Sobre un mes ya CERRADO la foto
+del período es intocable — ver tests/test_inventario_mensual_guardas.py, que
+cubre por qué re-fotografiar un cierre borraba la fuga del mes."""
 import os
 import tempfile
 import unittest
@@ -69,10 +73,12 @@ class ReabrirMensualTest(unittest.TestCase):
 
         self.assertEqual(out["estado"], "en_proceso")
         self.assertIsNone(out["fecha_cierre"])
-        self.assertEqual(out["valor_diferencia_total"], 0)
         por_pid = {i["producto_id"]: i for i in out["items"]}
         self.assertEqual(por_pid[self.prod.id]["cantidad_real"], 8)   # lo contado se conserva
-        self.assertEqual(por_pid[self.prod.id]["diferencia"], 0)      # dif del cierre prematuro limpiada
+        # La diferencia medida en el cierre NO se borra: es la fuga del período y
+        # cerrar() la recalcula igual al volver a cerrar de verdad. Ponerla en 0
+        # solo lograba que, si nadie volvía a cerrar, quedara perdida para siempre.
+        self.assertEqual(por_pid[self.prod.id]["diferencia"], -2)
         self.assertIn(nuevo.id, por_pid)                              # el producto nuevo entró
         self.assertEqual(por_pid[nuevo.id]["cantidad_sistema"], 200)  # sembrado con stock actual
         self.assertIsNone(por_pid[nuevo.id]["cantidad_real"])         # aún sin contar
@@ -92,6 +98,10 @@ class ReabrirMensualTest(unittest.TestCase):
         # El caso real del 31-jul: el conteo se abrió ANTES de la conversión a
         # gramos — quedó con unidad "botella", sistema en envases y conteos en
         # fracciones de envase (0.45). Al reabrir debe quedar en la unidad viva.
+        #
+        # El conteo está EN PROCESO: nadie cerró, así que no hay foto del período
+        # que proteger y ponerlo al día es lo correcto. (Sobre un mes cerrado esta
+        # misma sincronización destruiría la medición — ver test_..._guardas.py.)
         salsa = Producto(nombre="Salsa Chocolate", categoria=CategoriaProductoEnum.insumo,
                          unidad_medida="botella", controla_stock=True)
         self.db.add(salsa)
@@ -106,7 +116,6 @@ class ReabrirMensualTest(unittest.TestCase):
             {"id": por_pid[salsa.id]["id"], "cantidad_real": 0.45},   # fracción de botella
             {"id": por_pid[self.prod.id]["id"], "cantidad_real": 8},  # unidad sin cambio
         ])
-        svc.cerrar(self.db, inv["id"], self.admin.id)
 
         # Conversión a gramos posterior a la apertura del conteo
         salsa.unidad_medida = "gr"

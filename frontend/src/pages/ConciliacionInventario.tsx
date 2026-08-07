@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import api from '../api/client'
-import { Scale, Download, TrendingUp, TrendingDown, Minus, AlertTriangle, RotateCcw, Cpu, Users, ListChecks, Unlock, DatabaseZap } from 'lucide-react'
+import { Scale, Download, TrendingUp, TrendingDown, Minus, AlertTriangle, RotateCcw, Cpu, Users, ListChecks, Unlock, DatabaseZap, Route, X } from 'lucide-react'
 import { hoyLocal } from '../utils/fechaLocal'
 
 // ── Doble inventario del día (tabla Detalle) ─────────────────────────────────
@@ -31,15 +31,89 @@ interface ConciliacionDiaria {
 }
 
 interface Item {
-  id: number; producto_nombre: string; categoria: string; unidad_medida: string
+  id: number; producto_id: number; producto_nombre: string; categoria: string; unidad_medida: string
   cantidad_sistema: number; cantidad_real: number | null
   // Si el número de al lado lo puso una persona o lo rellenó el cierre. El cierre
   // iguala cantidad_real al sistema para todo lo no contado (así la diferencia da
   // 0), y sin esta bandera un mes contado a medias se ve idéntico a uno completo.
   fue_contado: boolean
   diferencia: number; valor_unitario: number; valor_diferencia: number
+  // De dónde sale el costo con el que se valorizó: un faltante valuado con el
+  // precio de VENTA y otro con el costo confirmado a mano no valen lo mismo, y
+  // uno sin ningún costo cargado aparece en $0 —o sea, como si no hubiera fuga—.
+  //
+  // OJO: el origen es el de HOY y `valor_unitario` es el del CIERRE. Se congela
+  // al iniciar el conteo y sobre un mes ya cerrado no se re-sincroniza nunca
+  // más, así que cargarle el costo a un producto saca el aviso pero NO mueve el
+  // neto. `costo_congelado` es lo que deja decirlo en vez de prometer lo otro.
+  valor_origen: string; valor_origen_label: string
+  valor_unitario_vivo: number; costo_congelado: boolean
 }
 interface Cat { categoria: string; valor_diferencia: number; items: number; con_diferencia: number }
+
+// ── Escalera de conciliación: POR QUÉ falta, no solo cuánto ──────────────────
+// El número del cierre (físico − sistema) mezcla consumo normal, merma no
+// registrada, error de conteo, receta mal cargada y robo: todos se ven igual.
+// La escalera reconstruye el stock esperado desde el LIBRO DE MOVIMIENTOS y
+// descuenta renglón por renglón cada causa YA registrada. Lo que sobra al final
+// —la diferencia inexplicada— es lo único que merece que alguien investigue.
+interface RenglonDef { clave: string; etiqueta: string; signo: number }
+interface EscaleraProd {
+  producto_id: number; producto_nombre: string; unidad_medida: string; categoria: string
+  stock_inicial: number
+  // El arranque se estimó asumiendo que el libro empieza en cero (hay un ajuste
+  // viejo cuyo saldo previo nadie registró). Se avisa, no se disimula.
+  stock_inicial_estimado: boolean
+  entradas: number; traslados_recibidos: number; reversas: number
+  // Unificar dos fichas duplicadas mueve stock del archivado al que queda: no es
+  // una compra ni una recepción y no puede sumarse a la mercadería que entró.
+  unificaciones: number
+  preparaciones_producidas: number
+  ventas: number; mermas: number; traslados: number; preparaciones: number
+  reversas_salida: number; otras_salidas: number
+  // Un conteo aplicado escribe un `ajuste` con el stock contado: NO es una causa,
+  // es un residuo inexplicado ANTERIOR ya volcado al libro. Va separado de los
+  // ajustes manuales para que no se lea como "esto ya está explicado".
+  ajustes_conteo: number; ajustes: number
+  stock_esperado: number; stock_fisico: number | null
+  diferencia_inexplicada: number | null
+  valor_unitario: number; valor_origen: string; valor_origen_label: string
+  valor_inexplicado: number | null
+  // El residuo contra lo que REALMENTE se movió. Ordenar por plata absoluta pone
+  // arriba siempre a los productos de más rotación (los que más varianza normal
+  // acumulan); el porcentaje distingue una varianza crónica de proceso —3%, la
+  // dosificación a ojo— de un salto puntual. No es una atribución de causa.
+  consumo_periodo: number
+  pct_inexplicado: number | null
+  patron: 'proceso' | 'revisar' | 'evento' | null
+  // Contraste, NO parte de la escalera: lo que la receta de HOY dice que debió
+  // salir. Si no coincide con lo que el libro descontó, la causa es la receta
+  // (o la cascada a sustituto) y no el robo.
+  consumo_teorico: number | null; sin_receta: boolean; descuadre_receta: number | null
+  // El puente con el número que el dueño ya conoce:
+  // bruta = explicado por el movimiento + inexplicado.
+  diferencia_bruta: number | null; explicado_por_movimiento: number | null
+  movimientos: number
+}
+interface Escalera {
+  desde: string; hasta: string; corte: string; corte_por?: string
+  productos: EscaleraProd[]; ranking: EscaleraProd[]; renglones: RenglonDef[]
+  // Los residuos que NO se pueden poner en pesos van aparte: con $0 se hunden al
+  // fondo de cualquier orden por plata y con el corte del ranking pueden no
+  // aparecer nunca, por más kilos que hayan desaparecido. Ordenados por cantidad.
+  ranking_sin_costo: EscaleraProd[]
+  resumen: {
+    productos: number; contados: number; con_residuo: number
+    faltantes: number; sobrantes: number
+    sin_costo: number; estimados: number; arranques_estimados: number
+    valor_inexplicado: number; valor_faltante: number; valor_sobrante: number
+    eventos: number
+    // Fuga que YA se escribió al libro como ajuste de un conteo aplicado dentro
+    // del período. Sin esto, una sede que aplica conteos parciales ve residuo ~0
+    // y lee "nada queda sin explicar" con la fuga escondida en "ajustes".
+    ajustes_conteo_productos: number; valor_ajustes_conteo: number
+  }
+}
 interface Conciliacion {
   id: number; anio: number; mes: number; estado: string
   // Con valor = el mes YA pasó por un cierre, aunque hoy figure "en proceso" por
@@ -53,6 +127,15 @@ interface Conciliacion {
     positivas: number; negativas: number; sin_diferencia: number
     valor_positivo: number; valor_negativo: number; valor_neto: number
     contados: number; no_contados: number
+    // Calidad de la valorización: renglones CON diferencia que no se pudieron
+    // poner en pesos, o que se valuaron con una estimación gruesa.
+    dif_sin_costo: number; dif_estimadas: number
+    // Renglones CON diferencia valuados con un costo que ya no es el del
+    // catálogo. Sobre un mes cerrado eso no se arregla cargando el costo.
+    dif_costo_congelado: number
+    // true = la foto ya es histórica: `valor_unitario` no se re-sincroniza nunca
+    // más, así que la pantalla NO puede prometer que el neto se vuelva real.
+    foto_congelada: boolean
   }
   por_categoria: Cat[]; ranking: Item[]
 }
@@ -75,10 +158,22 @@ interface PrevioAplicacion {
 }
 interface Tienda { id: number; nombre: string }
 
+// Lo inexplicado es, POR CONSTRUCCIÓN, la suma de todo lo que nadie registró:
+// desde acá no hay forma de separar una causa de otra, y la pantalla no puede
+// fingir que sí. Nombrar las causas legítimas cuesta una línea y es la diferencia
+// entre un diagnóstico y una acusación. Va en una constante para que el mismo
+// texto aparezca en la tarjeta y en el cajón, sin que se desincronicen.
+const CAUSAS_NO_REGISTRADAS = 'servida de más o dosificación a ojo, consumo del personal, degustaciones, reprocesos, derrames, error de conteo y contar en una unidad distinta a la del libro'
+
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 const CAT_LABEL: Record<string, string> = { pasteleria: 'Pastelería', bebida: 'Bebidas', insumo: 'Insumos' }
 const fmt = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO')
 const num = (v: number) => Math.round(v || 0).toLocaleString('es-CO')
+// Costo POR UNIDAD, que en gramos o mililitros vive abajo del peso. `fmt` redondea
+// a peso entero: el chip «costo del cierre» se enciende con una diferencia de
+// $0,006 y con `fmt` imprimía dos veces el mismo número, o sea un aviso que se
+// contradice a sí mismo. Acá los decimales son el dato.
+const fmtUnit = (v: number) => '$' + (v || 0).toLocaleString('es-CO', { maximumFractionDigits: 3 })
 
 export default function ConciliacionInventario() {
   const now = new Date()
@@ -101,6 +196,27 @@ export default function ConciliacionInventario() {
       .catch(() => setData(null))
       .finally(() => setLoading(false))
   }, [tiendaId, anio, mes])
+
+  // ── Escalera de conciliación ──────────────────────────────────────────────
+  // Va en su propia llamada y NO dentro de /conciliacion: reconstruye el libro
+  // de movimientos de todo el mes, así que es cara y no tiene por qué demorar la
+  // tabla del conteo, que es lo primero que el dueño quiere ver.
+  const [escalera, setEscalera] = useState<Escalera | null>(null)
+  const [detalle, setDetalle] = useState<EscaleraProd | null>(null)
+
+  useEffect(() => {
+    if (!tiendaId) { setEscalera(null); return }
+    setEscalera(null)
+    api.get<Escalera>('/inventario-mensual/escalera', { params: { tienda_id: tiendaId, anio, mes } })
+      .then(r => setEscalera(r.data))
+      .catch(() => setEscalera(null))
+  }, [tiendaId, anio, mes])
+
+  const escaleraPorProducto = useMemo(() => {
+    const m = new Map<number, EscaleraProd>()
+    for (const p of escalera?.productos ?? []) m.set(p.producto_id, p)
+    return m
+  }, [escalera])
 
   // ── Doble inventario del día ──────────────────────────────────────────────
   const [dia, setDia] = useState(hoyLocal())
@@ -369,9 +485,15 @@ export default function ConciliacionInventario() {
   }, [mensual, soloDifMes, buscarMes])
 
   const exportarCSV = () => {
-    if (!data) return
+    if (!mensual) return
+    // El Excel exporta la MISMA foto que la tabla: la diferencia viva. Antes salía
+    // de `i.diferencia`/`i.valor_diferencia`, que solo escribe el cierre — así que
+    // en un mes en proceso la pantalla mostraba −30 y el Excel exportaba 0 en todas
+    // las filas. Un archivo que se lleva a otro lado no puede contradecir lo que se
+    // vio para pedirlo. «Sin contar» va vacío, no 0: nadie contó cero.
     const head = ['Producto', 'Categoria', 'Unidad', 'Sistema', 'Fisico', 'Diferencia', 'Valor unit', 'Valor diferencia']
-    const filas = data.items.map(i => [i.producto_nombre, i.categoria, i.unidad_medida, i.cantidad_sistema, i.cantidad_real ?? 0, i.diferencia, i.valor_unitario, i.valor_diferencia])
+    const filas = mensual.items.map(i => [i.producto_nombre, i.categoria, i.unidad_medida, i.cantidad_sistema,
+      i.contado ? i.cantidad_real : '', i.contado ? i.dif : '', i.valor_unitario, i.contado ? i.valorDif : ''])
     const csv = [head, ...filas].map(r => r.join(';')).join('\n')
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
     const a = document.createElement('a')
@@ -534,8 +656,34 @@ export default function ConciliacionInventario() {
                 {filasMes.map(i => (
                   <tr key={i.id} className={`hover:bg-gray-50 ${!i.contado ? 'bg-gray-50/60' : ''}`}>
                     <td className="px-3 py-1.5 font-medium text-gray-700">
-                      {i.producto_nombre} <span className="text-xs text-gray-400">{i.unidad_medida}</span>
+                      {/* Clic en el nombre = abrir SU escalera. La diferencia de la
+                          fila dice cuánto; la escalera dice qué parte de eso ya
+                          tiene causa y qué parte no la explica nada. */}
+                      {escaleraPorProducto.has(i.producto_id) ? (
+                        <button onClick={() => setDetalle(escaleraPorProducto.get(i.producto_id)!)}
+                          title="Ver la escalera: qué explica esta diferencia y qué no"
+                          className="text-left underline decoration-dotted decoration-gray-300 underline-offset-2 hover:text-forest">
+                          {i.producto_nombre}
+                        </button>
+                      ) : i.producto_nombre}
+                      {' '}<span className="text-xs text-gray-400">{i.unidad_medida}</span>
                       {!i.contado && <span className="text-[10px] font-bold text-amber-600 ml-1.5">sin contar</span>}
+                      {/* El chip mira el costo CONGELADO (el que formó la plata de
+                          esta fila), no el del catálogo vivo: si no, cargar el costo
+                          de un mes cerrado hacía desaparecer el aviso dejando el $0
+                          adentro del número. */}
+                      {i.contado && i.dif !== 0 && (i.valor_unitario || 0) === 0 && (
+                        <span className="text-[10px] font-bold text-amber-600 ml-1.5"
+                          title="Falta producto, pero este renglón se valorizó sin costo: el valor en pesos es $0 por falta de dato, no porque no haya fuga.">
+                          sin costo
+                        </span>
+                      )}
+                      {i.contado && i.dif !== 0 && i.costo_congelado && (i.valor_unitario || 0) !== 0 && (
+                        <span className="text-[10px] font-bold text-gray-400 ml-1.5"
+                          title={`Valuado a ${fmtUnit(i.valor_unitario)} por ${i.unidad_medida}, que es el costo con el que se cerró el mes. El catálogo hoy dice ${fmtUnit(i.valor_unitario_vivo)} — la foto del período no se recalcula.`}>
+                          costo del cierre
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-1.5 text-right font-mono text-gray-500">{num(i.cantidad_sistema)}</td>
                     <td className="px-3 py-1.5 text-right font-mono font-bold text-gray-800">
@@ -574,8 +722,350 @@ export default function ConciliacionInventario() {
           <p className="px-3 py-2 text-[11px] text-gray-400 border-t border-gray-50">
             La diferencia se calcula en vivo (físico − sistema actual del conteo). "Sin contar" = nadie
             registró ese producto; en un mes cerrado el cierre le puso el valor del sistema, así que su
-            diferencia es 0 por construcción y no significa que haya cuadrado. El Excel exporta esta misma foto.
+            diferencia es 0 por construcción y no significa que haya cuadrado. El Excel exporta esta misma
+            foto, con los renglones sin contar en blanco.
           </p>
+          {/* Calidad de la valorización del neto de arriba. Un total en $0 no puede
+              leerse igual si detrás hay productos cuyo costo nadie cargó.
+
+              Y el aviso NO puede prometer que cargar el costo arregle el número:
+              `valor_unitario` se congela al iniciar el conteo y sobre un mes que ya
+              pasó por un cierre no se re-sincroniza nunca más. Cargar el costo hoy
+              hace desaparecer este aviso —que mira el catálogo VIVO— y deja el $0
+              intacto adentro del neto. Se dice cuál de los dos casos es. */}
+          {(data.resumen.dif_sin_costo > 0 || data.resumen.dif_estimadas > 0
+            || data.resumen.dif_costo_congelado > 0) && (
+            <p className="px-3 py-2 text-[11px] text-amber-700 bg-amber-50 border-t border-amber-100 flex items-start gap-1.5">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              <span>
+                {data.resumen.dif_sin_costo > 0 && (
+                  <><b>{data.resumen.dif_sin_costo} producto{data.resumen.dif_sin_costo === 1 ? '' : 's'} con
+                    diferencia no tiene{data.resumen.dif_sin_costo === 1 ? '' : 'n'} costo cargado</b>: falta
+                    producto, pero en pesos figura $0. </>
+                )}
+                {data.resumen.dif_estimadas > 0 && (
+                  <>Otr{data.resumen.dif_estimadas === 1 ? 'o' : 'os'} <b>{data.resumen.dif_estimadas}</b> se
+                    valorizó con el precio de VENTA porque no hay factura ni costo oficial: ese pedazo del
+                    total está sobrestimado. </>
+                )}
+                {data.resumen.foto_congelada ? (
+                  <>El neto de arriba está valuado con el <b>costo congelado en el cierre</b>, no con el de
+                    hoy: esta foto es la medición del período y no se re-sincroniza. Cargarles el costo ahora
+                    saca este aviso pero <b>no cambia el número</b> — sirve para los meses que vengan.
+                    {data.resumen.dif_costo_congelado > 0 && (
+                      <> Hoy hay <b>{data.resumen.dif_costo_congelado} renglón
+                        {data.resumen.dif_costo_congelado === 1 ? '' : 'es'}</b> valuado
+                        {data.resumen.dif_costo_congelado === 1 ? '' : 's'} con un costo que ya no es el del
+                        catálogo.</>
+                    )}</>
+                ) : (
+                  <>Cargales el costo y después apretá <b>Sincronizar catálogo</b> arriba: el conteo congela
+                    el costo al abrirse, así que sin ese paso el neto sigue calculado con el viejo.</>
+                )}
+              </span>
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ── Lo que nada explica: el ranking del RESIDUO ─────────────────────── */}
+      {/* El ranking de la diferencia BRUTA manda a investigar productos que se
+          movieron mucho pero con todo registrado. Éste ordena por lo que ninguna
+          causa explica, que es lo único donde investigar sirve de algo. */}
+      {data && escalera && (
+        <div className="bg-white rounded-2xl border border-gray-200">
+          <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-gray-100">
+            <Route size={17} className="text-forest" />
+            <p className="text-sm font-bold text-gray-800 m-0">Lo que nada explica</p>
+            <span className="text-xs text-gray-500">
+              después de descontar entradas, ventas, mermas, traslados y ajustes del período
+            </span>
+            <span className={`ml-auto text-sm font-bold font-mono ${
+              escalera.resumen.valor_inexplicado < 0 ? 'text-red-600'
+                : escalera.resumen.valor_inexplicado > 0 ? 'text-blue-600' : 'text-green-700'}`}>
+              {fmt(escalera.resumen.valor_inexplicado)}
+            </span>
+          </div>
+          {escalera.ranking.length === 0 ? (
+            <p className="px-4 py-5 text-sm text-gray-500">
+              {escalera.resumen.contados === 0
+                ? 'Todavía nadie contó nada en este mes: sin físico no hay contra qué comparar el libro.'
+                : '✓ Todo lo que se contó queda explicado por movimientos registrados. No hay nada que investigar acá.'}
+            </p>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {escalera.ranking.slice(0, 8).map(p => (
+                <button key={p.producto_id} onClick={() => setDetalle(p)}
+                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-left hover:bg-gray-50">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${(p.diferencia_inexplicada ?? 0) < 0 ? 'bg-red-500' : 'bg-blue-400'}`} />
+                  <span className="flex-1 font-medium text-gray-700 truncate">{p.producto_nombre}</span>
+                  {/* El PATRÓN, que es lo que ahora ordena la lista: un evento se
+                      investiga, un proceso crónico se corrige entrenando la
+                      dosificación. Son dos acciones distintas y por eso no se
+                      mezclan en un único orden por plata. */}
+                  {p.patron && (
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
+                      p.patron === 'evento' ? 'bg-amber-100 text-amber-700'
+                        : p.patron === 'revisar' ? 'bg-gray-100 text-gray-500'
+                        : 'bg-gray-50 text-gray-400'}`}
+                      title={p.patron === 'evento'
+                        ? 'Se sale del patrón normal del propio producto: conviene mirar qué pasó ese mes.'
+                        : p.patron === 'revisar'
+                          ? 'Ni crónico ni excepcional: vale una mirada, sin apuro.'
+                          : 'Desviación chica y pareja contra lo que se movió: suele ser dosificación, se corrige entrenando.'}>
+                      {p.patron === 'evento' ? 'evento' : p.patron === 'revisar' ? 'revisar' : 'proceso'}
+                    </span>
+                  )}
+                  {/* El residuo contra lo que se movió. Un 3% crónico es la
+                      dosificación; un 40% es otra cosa. */}
+                  {p.pct_inexplicado != null && (
+                    <span className={`text-[10px] font-bold tabular-nums ${p.patron === 'evento' ? 'text-amber-600' : 'text-gray-400'}`}
+                      title={`Es el ${Math.abs(p.pct_inexplicado)}% de lo que se movió de este producto en el período (${num(p.consumo_periodo)} ${p.unidad_medida}).`}>
+                      {Math.abs(p.pct_inexplicado)}%
+                    </span>
+                  )}
+                  <span className={`font-mono w-28 text-right ${(p.diferencia_inexplicada ?? 0) < 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                    {(p.diferencia_inexplicada ?? 0) > 0 ? '+' : ''}{num(p.diferencia_inexplicada ?? 0)} {p.unidad_medida}
+                  </span>
+                  <span className={`font-mono font-bold w-24 text-right ${(p.valor_inexplicado ?? 0) < 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                    {fmt(p.valor_inexplicado ?? 0)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Los que faltan pero NO se pueden poner en pesos. En el orden por plata
+              valen $0, se hunden al fondo y con el corte del ranking pueden no
+              aparecer nunca — justo los que más falta pueden estar haciendo. Van en
+              su propia lista, ordenados por cantidad, que es lo único que se sabe. */}
+          {(escalera.ranking_sin_costo?.length ?? 0) > 0 && (
+            <div className="border-t border-gray-100">
+              <p className="px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-amber-700 bg-amber-50">
+                Falta producto pero no se puede valorizar — ordenado por cantidad
+              </p>
+              <div className="divide-y divide-gray-50">
+                {escalera.ranking_sin_costo.slice(0, 6).map(p => (
+                  <button key={p.producto_id} onClick={() => setDetalle(p)}
+                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-left hover:bg-gray-50">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${(p.diferencia_inexplicada ?? 0) < 0 ? 'bg-red-500' : 'bg-blue-400'}`} />
+                    <span className="flex-1 font-medium text-gray-700 truncate">{p.producto_nombre}</span>
+                    {p.pct_inexplicado != null && (
+                      <span className={`text-[10px] font-bold tabular-nums ${p.patron === 'evento' ? 'text-amber-600' : 'text-gray-400'}`}
+                        title={`Es el ${Math.abs(p.pct_inexplicado)}% de lo que se movió de este producto en el período (${num(p.consumo_periodo)} ${p.unidad_medida}).`}>
+                        {Math.abs(p.pct_inexplicado)}%
+                      </span>
+                    )}
+                    <span className={`font-mono w-28 text-right ${(p.diferencia_inexplicada ?? 0) < 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                      {(p.diferencia_inexplicada ?? 0) > 0 ? '+' : ''}{num(p.diferencia_inexplicada ?? 0)} {p.unidad_medida}
+                    </span>
+                    <span className="font-mono w-24 text-right text-gray-300">sin costo</span>
+                  </button>
+                ))}
+              </div>
+              <p className="px-4 py-2 text-[11px] text-amber-700 bg-amber-50">
+                Nadie cargó el costo de estos productos, así que su fuga no suma al total de arriba y en
+                una lista ordenada por plata quedarían invisibles. Cargales el costo y entran al ranking.
+              </p>
+            </div>
+          )}
+          {/* Lo que la escalera NO puede ver. El residuo es la suma de todo lo que
+              nadie registró y no se puede separar desde acá: decirlo es lo que
+              convierte el número en un diagnóstico en vez de una acusación. */}
+          <p className="px-4 py-2 text-[11px] text-gray-500 bg-gray-50 border-t border-gray-100">
+            Que no lo explique nada <b>no quiere decir que se lo hayan robado</b>: acá cae todo lo que
+            no quedó registrado — {CAUSAS_NO_REGISTRADAS}. La escalera mide, no reparte culpas.
+          </p>
+          {/* La fuga que ya se escribió al libro por un conteo aplicado dentro del
+              período: sin este aviso, un residuo de 0 se lee como "todo cuadra". */}
+          {escalera.resumen.ajustes_conteo_productos > 0 && (
+            <p className="px-4 py-2 text-[11px] text-amber-700 bg-amber-50 border-t border-amber-100 flex items-start gap-1.5">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              <span>Dentro del período se aplicó un conteo sobre <b>{escalera.resumen.ajustes_conteo_productos} producto
+                {escalera.resumen.ajustes_conteo_productos === 1 ? '' : 's'}</b> ({fmt(escalera.resumen.valor_ajustes_conteo)}).
+                Ese ajuste ya pisó el stock, así que sale del residuo de arriba — pero era fuga igual:
+                nadie la explicó, solo se la escribió al libro.</span>
+            </p>
+          )}
+          <p className="px-4 py-2 text-[11px] text-gray-400 border-t border-gray-50">
+            Tocá un producto para ver su escalera renglón por renglón. El esperado sale del libro de
+            movimientos del período, no de la foto que el conteo congela al abrirse. El ranking en pesos
+            va ordenado por PATRÓN primero y por plata adentro de cada grupo: por plata a secas el tope
+            se lo lleva siempre el producto de más rotación, que es el que más varianza normal acumula
+            {/* El pie estaba DEBAJO de las dos listas y describía el orden de una sola.
+                La de sin costo ordena por cantidad a secas, y a propósito: agruparla
+                por patrón volvía a esconder al faltante más grande, que es justo lo
+                que esa lista existe para mostrar. Cada afirmación se acota a su lista. */}
+            {(escalera.ranking_sin_costo?.length ?? 0) > 0 && (
+              <> (la lista de abajo, la de los que no se pueden valorizar, va por cantidad a secas)</>
+            )}. El % es la tajada del movimiento del producto que quedó sin explicar
+            {escalera.resumen.sin_costo > 0 && (
+              <> · <b className="text-amber-600">{escalera.resumen.sin_costo} sin costo cargado</b>, así que
+                su fuga no suma al total en pesos</>
+            )}
+            {escalera.resumen.estimados > 0 && (
+              <> · <b className="text-amber-600">{escalera.resumen.estimados} valorizado
+                {escalera.resumen.estimados === 1 ? '' : 's'} con el precio de venta</b>, o sea sobrestimado
+                {escalera.resumen.estimados === 1 ? '' : 's'}</>
+            )}.
+          </p>
+        </div>
+      )}
+
+      {/* ── Escalera de UN producto ─────────────────────────────────────────── */}
+      {detalle && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setDetalle(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100">
+              <div className="flex-1">
+                <h2 className="font-bold text-gray-800">{detalle.producto_nombre}</h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {escalera?.desde} al {escalera?.hasta} · {detalle.movimientos} movimiento{detalle.movimientos === 1 ? '' : 's'} en el período
+                </p>
+              </div>
+              <button onClick={() => setDetalle(null)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 px-5 py-3">
+              <table className="w-full text-sm">
+                <tbody>
+                  <tr className="border-b border-gray-100">
+                    <td className="py-1.5 text-gray-500">Había al arrancar</td>
+                    <td className="py-1.5 text-right font-mono text-gray-700">
+                      {num(detalle.stock_inicial)}
+                      {detalle.stock_inicial_estimado && (
+                        <span className="text-[10px] font-bold text-amber-600 ml-1.5"
+                          title="Hay un ajuste viejo cuyo saldo previo nadie registró: el arranque se estimó asumiendo que el libro empieza en cero.">
+                          estimado
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                  {/* Solo los renglones que tienen algo. Mostrar diez ceros por
+                      producto sería exactamente la pantalla cargada que el dueño
+                      ya pidió dos veces que no le hagamos. */}
+                  {(escalera?.renglones ?? []).map(r => {
+                    const v = (detalle as unknown as Record<string, number>)[r.clave] ?? 0
+                    if (Math.abs(v) < 0.001) return null
+                    const delta = r.signo * v
+                    return (
+                      <tr key={r.clave} className="border-b border-gray-50">
+                        <td className="py-1.5 text-gray-500">{r.etiqueta}</td>
+                        <td className={`py-1.5 text-right font-mono ${delta < 0 ? 'text-gray-700' : 'text-blue-600'}`}>
+                          {delta > 0 ? '+' : ''}{num(delta)}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  <tr className="border-b-2 border-gray-200">
+                    <td className="py-2 font-bold text-gray-700">Debería haber</td>
+                    <td className="py-2 text-right font-mono font-bold text-gray-800">{num(detalle.stock_esperado)}</td>
+                  </tr>
+                  <tr className="border-b border-gray-100">
+                    <td className="py-1.5 text-gray-500">Se contó</td>
+                    <td className="py-1.5 text-right font-mono text-gray-700">
+                      {detalle.stock_fisico === null ? '— sin contar' : num(detalle.stock_fisico)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* El residuo, destacado: es la única línea que pide una decisión. */}
+              {detalle.diferencia_inexplicada === null ? (
+                <p className="mt-3 text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+                  Nadie contó este producto, así que no hay con qué comparar el libro. Contalo y la
+                  escalera te dice si lo que falta tiene causa o no.
+                </p>
+              ) : (
+                <div className={`mt-3 rounded-xl px-4 py-3 border ${
+                  Math.abs(detalle.diferencia_inexplicada) < 0.001 ? 'bg-green-50 border-green-200'
+                    : detalle.diferencia_inexplicada < 0 ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'}`}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-gray-700 flex-1">
+                      {/* "Sin registrar" y no "sin explicación": es exactamente lo
+                          que la escalera puede afirmar, y no insinúa un culpable. */}
+                      {Math.abs(detalle.diferencia_inexplicada) < 0.001 ? 'Todo el movimiento está registrado'
+                        : detalle.diferencia_inexplicada < 0 ? 'Falta sin registrar' : 'Sobra sin registrar'}
+                    </span>
+                    <span className={`font-mono font-bold ${
+                      Math.abs(detalle.diferencia_inexplicada) < 0.001 ? 'text-green-700'
+                        : detalle.diferencia_inexplicada < 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                      {num(Math.abs(detalle.diferencia_inexplicada))} {detalle.unidad_medida}
+                      {detalle.valor_origen !== 'sin_costo' && Math.abs(detalle.diferencia_inexplicada) >= 0.001 && (
+                        <> · {fmt(Math.abs(detalle.valor_inexplicado ?? 0))}</>
+                      )}
+                    </span>
+                  </div>
+                  {/* El puente con el número que ya venía viendo: bruta = explicado + residuo. */}
+                  {detalle.diferencia_bruta !== null && detalle.explicado_por_movimiento !== null
+                    && Math.abs(detalle.explicado_por_movimiento) >= 0.001 && (
+                    <p className="text-xs text-gray-600 mt-1.5">
+                      La tabla de arriba marca <b>{num(detalle.diferencia_bruta)}</b> contra el sistema del
+                      conteo: <b>{num(detalle.explicado_por_movimiento)}</b> los explica el movimiento
+                      registrado del período y <b>{num(detalle.diferencia_inexplicada)}</b> no los explica nada.
+                    </p>
+                  )}
+                  {/* SIEMPRE que haya residuo, no solo cuando la receta descuadra:
+                      la nota que dice "esto no es necesariamente robo" tiene que
+                      aparecer justo cuando el descuadre de receta vale 0, que es el
+                      caso más frecuente (el POS descuenta con la misma receta). */}
+                  {Math.abs(detalle.diferencia_inexplicada) >= 0.001 && (
+                    <p className="text-xs text-gray-600 mt-1.5">
+                      Esto es todo lo que <b>no quedó anotado</b>, junto y sin poder separarse:
+                      {' '}{CAUSAS_NO_REGISTRADAS}. La escalera no distingue entre esas causas y no
+                      pretende hacerlo.
+                      {detalle.pct_inexplicado != null && (
+                        <> Es el <b>{Math.abs(detalle.pct_inexplicado)}%</b> de
+                          los {num(detalle.consumo_periodo)} {detalle.unidad_medida} que se movieron
+                          en el período{detalle.patron === 'proceso'
+                            ? ' — una desviación chica y pareja suele ser dosificación, no un evento.'
+                            : detalle.patron === 'evento'
+                              ? ' — una desviación así de grande no se explica con la dosificación normal.'
+                              : '.'}</>
+                      )}
+                    </p>
+                  )}
+                </div>
+              )}
+              {/* El ajuste de un conteo aplicado NO es una causa: es un residuo
+                  anterior ya volcado al libro. Sin decirlo, el renglón se lee como
+                  "esto ya está explicado" y esconde la fuga que lo generó. */}
+              {Math.abs(detalle.ajustes_conteo) >= 0.001 && (
+                <p className="mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  El renglón <b>Ajustes de conteos aplicados</b> ({num(detalle.ajustes_conteo)}) no es una
+                  causa: es un conteo anterior que pisó el stock. Esa diferencia también estaba sin
+                  explicar cuando se aplicó — quedó escrita al libro, no resuelta.
+                </p>
+              )}
+
+              {/* La receta como CAUSA APARTE: si el libro descontó algo distinto de
+                  lo que la receta manda, eso no es robo y no puede leerse como tal. */}
+              {detalle.sin_receta ? (
+                <p className="mt-3 text-[11px] text-gray-500">
+                  Este producto no tiene receta cargada ni se vende directo, así que no se puede calcular
+                  cuánto <i>debió</i> consumirse. Lo de arriba sale del libro, no de una receta inventada.
+                </p>
+              ) : Math.abs(detalle.descuadre_receta ?? 0) >= 0.001 ? (
+                <p className="mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  Por lo vendido, la receta de hoy dice que debieron salir <b>{num(detalle.consumo_teorico ?? 0)}</b> y
+                  el sistema descontó <b>{num(detalle.ventas)}</b>. Esa diferencia
+                  de <b>{num(detalle.descuadre_receta ?? 0)}</b> es de la receta o de un reemplazo por
+                  sustituto, no del faltante de arriba: empezá por revisar la receta.
+                </p>
+              ) : null}
+
+              {/* EL COSTO DE ACÁ ES EL VIVO Y EL DE LA TABLA MENSUAL ES EL CONGELADO.
+                  La escalera valoriza con el catálogo de HOY (costo_unitario) y la
+                  tabla de arriba con el que se congeló al abrir el conteo. El mismo
+                  producto puede mostrar dos pesos distintos en la misma pantalla: la
+                  fila lo declara con el chip "costo del cierre", el modal no decía
+                  nada y se leía como una contradicción del sistema. */}
+              <p className="mt-3 text-[11px] text-gray-400">
+                Valorizado a {fmt(detalle.valor_unitario)} por {detalle.unidad_medida} — {detalle.valor_origen_label}.
+                Es el costo del catálogo de <b>hoy</b>: la tabla mensual de arriba usa el que se congeló
+                al abrir el conteo, así que los dos pesos pueden no coincidir.
+              </p>
+            </div>
+          </div>
         </div>
       )}
 

@@ -91,7 +91,15 @@ def registrar(db: Session, tienda_id: int, producto_id: int, cantidad: float,
         Inventario.producto_id == producto_id,
         Inventario.tienda_id == tienda_id,
     ).first()
-    if inv and inv.stock_actual >= cantidad:
+    # Se registra SIEMPRE que el producto exista en inventario, alcance el stock o
+    # no. Saltear el movimiento cuando el stock no llega dejaba la pastelería
+    # registrada como producida y su consumo real FUERA del libro: esa diferencia
+    # reaparecía después en el cierre como faltante puro, o sea como una fuga
+    # fantasma imposible de explicar —la escalera la mostraría como "nada lo
+    # explica" cuando la causa era esta línea—. Un stock negativo es una señal
+    # visible y corregible; un movimiento que nunca se escribió, no. Mismo criterio
+    # que la venta POS, que descuenta con allow_negative (pos.py:464).
+    if inv:
         inv.stock_actual -= cantidad
         consumir_fifo(db, producto_id, tienda_id, cantidad)
         mov = MovimientoInventario(

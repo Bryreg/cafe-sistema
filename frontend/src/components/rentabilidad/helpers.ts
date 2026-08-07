@@ -28,6 +28,53 @@ export interface RentabilidadData {
     descuentos?: number
     n_tickets_con_descuento?: number
     pct_descuento?: number | null   // medido sobre la venta BRUTA (venta + descuento)
+    // Fuga de inventario MEDIDA por los cierres de mes del período: lo que el
+    // conteo físico encontró de menos y que NINGUNA causa registrada explica,
+    // valorizado.
+    //
+    // NO se resta de `margen_neto`: ese margen sale de `compras`, que es base de
+    // RECEPCIÓN (la mercadería se gasta entera al recibirla), así que lo que se
+    // compró y se fugó YA está descontado ahí adentro y volver a restarlo contaría
+    // la misma plata dos veces. El término va contra `margen_bruto_real`
+    // (ventas − cogs_teorico), que es base de CONSUMO y solo tiene el costo de lo
+    // efectivamente VENDIDO.
+    // `null` ≠ 0: cero significa "se contó y no falta nada"; null significa
+    // "nadie cerró un conteo completo dentro de este rango, así que no se midió".
+    fuga_inventario?: number | null
+    tiene_fuga_medida?: boolean
+    margen_bruto_real_con_fuga?: number | null
+    pct_margen_bruto_real_con_fuga?: number | null
+    periodos_con_fuga_medida?: { tienda_id: number; anio: number; mes: number
+      valor_inexplicado: number; con_residuo: number; contados: number; productos: number }[]
+    // De cuánto del inventario habla la fuga, cuánta de ella no se pudo poner en
+    // pesos y cuánta se valorizó con el precio de VENTA: un total chico puede ser
+    // un conteo chico, y uno grande puede ser precio de venta disfrazado de costo.
+    //
+    // La cobertura es PRODUCTO-MES, no productos: son las coberturas de cada
+    // cierre sumadas a lo largo del rango, así que 3 cierres de 97 productos dan
+    // 291 y ese local no tiene 291 productos. El ratio es correcto; el absoluto
+    // solo se lee dividido por `fuga_cierres`, y por eso la pantalla dice
+    // "producto-mes" y muestra la cantidad de cierres.
+    fuga_cobertura_contados?: number
+    fuga_cobertura_productos?: number
+    fuga_cierres?: number
+    // Estos DOS sí son productos DISTINTOS: son una instrucción de trabajo
+    // ("cargá el costo de estos"), no una medida del período.
+    fuga_sin_costo?: number
+    fuga_estimados?: number
+    // Los dos términos de `margen_bruto_real_con_fuga` NO miden el mismo tramo:
+    // el margen es de TODO el rango y la fuga solo de los meses calendario
+    // COMPLETOS ya cerrados que caen adentro. El sesgo es optimista (subdeclara
+    // la fuga) y este par es lo que deja decirlo en pantalla.
+    fuga_meses?: number
+    fuga_meses_rango?: number
+    // Y el tramo tiene DOS ejes. `fuga_sedes` son las sedes que cerraron al menos
+    // un conteo adentro del rango; `fuga_sedes_rango`, las que vendieron. Con
+    // "Todas las sedes" el margen suma las ventas y el COGS de todas y la fuga
+    // solo de las que contaron: la sede que nunca cierra se cae de la resta sin
+    // ninguna señal, con el mismo sesgo optimista que el eje de los meses.
+    fuga_sedes?: number
+    fuga_sedes_rango?: number
   }
   por_mes: ({ mes: string } & Bucket)[]
   // tienda_id null = gasto CORPORATIVO (arriendo, nómina): fila propia "Corporativo",

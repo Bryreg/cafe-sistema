@@ -14,6 +14,7 @@ Cruza las tres fuentes de dinero del sistema, cada una en su base:
 
 margen_bruto = ventas - compras;  margen_neto = margen_bruto - gastos.
 """
+import logging
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
@@ -41,6 +42,8 @@ _CONCEPTOS_COMPRA = ("Pago proveedor:%", "Reverso Pago proveedor:%", "Ajuste fac
 CLAVE_CATEGORIA_PROVEEDORES = "proveedores"
 
 ESTADOS_ANULADOS = ("anulado", "reversado")
+
+logger = logging.getLogger(__name__)
 
 
 def _mes(dt) -> str:
@@ -302,6 +305,69 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     margen_bruto = round(tot_ventas - tot_compras, 2)
     margen_neto = round(margen_bruto - tot_gastos, 2)
 
+    # ── Fuga de inventario MEDIDA por los cierres del período ─────────────────
+    # Hasta acá el P&L no sabía que existía: `InventarioMensual` no se importaba
+    # en ningún otro servicio, así que la merma real que el conteo físico mide
+    # nunca llegaba al estado de resultados y el margen que el dueño mira no
+    # incluía la fuga que su propio sistema había medido.
+    #
+    # LA FUGA NO SE PUEDE RESTAR DE `margen_neto`: YA ESTÁ ADENTRO
+    # `compras` es base de RECEPCIÓN (línea 101-107: Σ FacturaCompra.valor_total
+    # por fecha_recibido) y `margen_neto = ventas − compras − gastos`. O sea que
+    # la mercadería se gasta ENTERA al recibirla, sin capitalizar nada: lo que se
+    # compró y después se fugó ya está descontado ahí adentro. Restarle la fuga
+    # otra vez subestimaría la utilidad exactamente en el valor de la fuga, todos
+    # los meses, en un KPI destacado.
+    #
+    # El término correcto se calcula contra `margen_bruto_real` (ventas −
+    # cogs_teorico), que SÍ es base de CONSUMO: `cogs_teorico` (línea 196-224) es
+    # el costo de lo VENDIDO según receta y no contiene la fuga, porque lo que se
+    # fugó justamente no se vendió. Ahí el término suma información en vez de
+    # descontar dos veces la misma plata.
+    #
+    # `margen_neto` no cambia de valor ni de nombre: sigue siendo el número que el
+    # dueño ya conoce.
+    #
+    # `None` ≠ 0: cero significa "se contó y no falta nada"; None significa
+    # "nadie cerró un conteo completo dentro de este rango, así que no se midió".
+    #
+    # ADITIVO también en el sentido de la falla: el P&L nunca dependió de
+    # `movimientos_inventario` y no puede empezar a caerse por eso. Si la
+    # conciliación explota, el estado de resultados se sigue mostrando entero y la
+    # fuga viaja como "no medida" — que es la verdad: no se pudo medir.
+    from app.services import conciliacion
+    try:
+        fuga = conciliacion.fuga_medida(db, desde, hasta, tienda_id)
+    except Exception:  # noqa: BLE001 — un dato aditivo jamás tumba el P&L entero
+        logger.exception("No se pudo medir la fuga de inventario; el P&L sigue sin ella")
+        fuga = {"valor": None, "periodos": [], "sin_costo": 0, "estimados": 0,
+                "contados": 0, "productos": 0, "cierres": 0, "meses": 0,
+                "sedes": 0, "sedes_ids": []}
+
+    # Cuántos meses CALENDARIO toca el rango pedido (el parcial también cuenta).
+    # Es el denominador que deja ver que el margen y la fuga NO miden el mismo
+    # tramo: ver `fuga_meses` abajo.
+    meses_rango = (hasta.year - desde.year) * 12 + (hasta.month - desde.month) + 1
+    # El OTRO eje del mismo tramo: las SEDES. Con "Todas las sedes" el margen suma
+    # ventas y COGS de todas las que vendieron, y la fuga solo de las que cerraron
+    # un conteo. Una sede que nunca cierra se cae del término de fuga sin ninguna
+    # señal, y el sesgo va para el mismo lado que el de los meses: subdeclara.
+    #
+    # El denominador son las sedes que VENDIERON en el rango, no todas las del
+    # catálogo: una sede sin operación no aporta margen, así que no falta en la
+    # comparación y contarla sería un aviso que nunca se puede apagar.
+    #
+    # Y se INTERSECAN los conjuntos, no se restan los conteos. Comparar cardinalidades
+    # deja pasar el caso cruzado: la sede A cerró su conteo pero no vendió, la sede B
+    # vendió y nunca cerró. «1 de 1» y el aviso callado, cuando la realidad es que el
+    # margen tiene a B adentro y la fuga no. El numerador es la cobertura REAL: sedes
+    # que vendieron Y midieron.
+    sedes_vendieron = ({tienda_id} if tienda_id is not None else
+                       {tid for tid, v in por_sede.items()
+                        if tid is not None and v["ventas"] > 0})
+    sedes_rango = len(sedes_vendieron)
+    sedes_medidas = len(sedes_vendieron & set(fuga.get("sedes_ids") or []))
+
     return {
         "desde": desde.isoformat(),
         "hasta": hasta.isoformat(),
@@ -334,6 +400,71 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             "n_tickets_con_descuento": n_con_descuento,
             "pct_descuento": (round(descuentos / (tot_ventas + descuentos) * 100, 1)
                               if tot_ventas + descuentos > 0 else None),
+            # Fuga de inventario medida por el conteo físico. Negativa = plata
+            # que se fue sin que ninguna causa registrada la explique.
+            #
+            # NO se resta de `margen_neto`: `compras` es base de RECEPCIÓN, así
+            # que la mercadería fugada ya está gastada ahí adentro y descontarla
+            # de nuevo contaría la misma plata dos veces. El término va contra
+            # `margen_bruto_real` (ventas − cogs_teorico), que es base de CONSUMO
+            # y solo tiene el costo de lo VENDIDO.
+            #
+            # LOS DOS TÉRMINOS NO SE VALORIZAN CON LA MISMA REGLA, Y SE DICE
+            # `cogs_teorico` usa `_costo_unitario_productos` (línea 53), que NO
+            # cae al precio de venta: un producto de reventa sin costo cargado
+            # aporta $0 al costo de lo vendido. La fuga usa
+            # `conciliacion.costo_unitario`, que SÍ cae al precio de venta
+            # marcándolo `estimado`. En `ventas − cogs_teorico + fuga` el MISMO
+            # producto puede pesar $0 de un lado y 3,3× de costo del otro.
+            #
+            # No se unifican a propósito. Bajar la fuga al criterio del COGS
+            # pondría en $0 la fuga de todos los productos sin costo —justo los
+            # que nadie va a investigar— y cambiaría el valor de meses YA
+            # cerrados sin avisar; subir el COGS al criterio de la fuga metería
+            # precio de venta adentro de un costo. Se deja la asimetría y se
+            # DECLARA en la pantalla, con `pct_venta_costeada` de un lado y
+            # `fuga_sin_costo` / `fuga_estimados` del otro.
+            "fuga_inventario": fuga["valor"],
+            "tiene_fuga_medida": fuga["valor"] is not None,
+            "margen_bruto_real_con_fuga": (
+                round(tot_ventas - cogs_teorico + fuga["valor"], 2)
+                if fuga["valor"] is not None else None),
+            "pct_margen_bruto_real_con_fuga": (
+                round((tot_ventas - cogs_teorico + fuga["valor"]) / tot_ventas * 100, 1)
+                if fuga["valor"] is not None and tot_ventas > 0 else None),
+            "periodos_con_fuga_medida": fuga["periodos"],
+            # De cuánto del inventario habla esa fuga y cuánto de ella no se pudo
+            # poner en pesos —o se puso con una estimación gruesa—: un total chico
+            # puede ser un conteo chico, y uno grande puede ser precio de venta
+            # disfrazado de costo.
+            #
+            # La cobertura es PRODUCTO-MES, no productos: son las coberturas de
+            # cada cierre sumadas a lo largo del rango, así que con 3 cierres de
+            # 97 productos el denominador da 291 y ese local no tiene 291
+            # productos. El ratio es correcto; el absoluto solo se puede leer
+            # dividido por `fuga_cierres`, y por eso viaja al lado.
+            "fuga_cobertura_contados": fuga["contados"],
+            "fuga_cobertura_productos": fuga["productos"],
+            "fuga_cierres": fuga["cierres"],
+            # Estos DOS sí son productos distintos: son una instrucción de
+            # trabajo ("cargá el costo de estos"), no una medida del período.
+            "fuga_sin_costo": fuga["sin_costo"],
+            "fuga_estimados": fuga["estimados"],
+            # LOS DOS TÉRMINOS DE `margen_bruto_real_con_fuga` NO MIDEN EL MISMO
+            # TRAMO. `margen_bruto_real` es de TODO el rango; la fuga solo de los
+            # meses calendario COMPLETOS que ya pasaron por un cierre adentro de
+            # ese rango. En "Este año" eso son 8 meses de margen contra 6 o 7 de
+            # fuga, y el sesgo es optimista: subdeclara la fuga. Se expone el par
+            # para que la pantalla pueda decirlo en vez de dejarlo implícito.
+            "fuga_meses": fuga["meses"],
+            "fuga_meses_rango": meses_rango,
+            # Y NO SOLO EL TRAMO DE MESES: TAMBIÉN EL DE SEDES.
+            # `fuga_sedes` son las que vendieron Y midieron; `fuga_sedes_rango` las
+            # que vendieron. Declarar solo los meses dejaba pasar el caso de la sede
+            # que nunca cierra el conteo: su venta y su COGS entran al margen y su
+            # fuga no entra a la resta.
+            "fuga_sedes": sedes_medidas,
+            "fuga_sedes_rango": sedes_rango,
         },
         "por_mes": [
             {"mes": mes, **_cerrar(vals)}

@@ -1,10 +1,12 @@
+from datetime import date
 from typing import Optional
-from fastapi import APIRouter, Depends, Body, Query
+from fastapi import APIRouter, Depends, Body, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.deps import get_current_user, require_admin, get_barista_actor, ensure_tienda_access
 from app.models.models import Usuario
+from app.services import conciliacion as esc
 from app.services import inventario_mensual as svc
 
 router = APIRouter(prefix="/inventario-mensual", tags=["inventario-mensual"])
@@ -106,6 +108,36 @@ def conciliacion(
 ):
     """Conciliación valorizada (admin): teórico vs físico vs diferencia + rankings."""
     return svc.get_conciliacion(db, tienda_id, anio, mes)
+
+
+@router.get("/escalera")
+def escalera(
+    tienda_id: int = Query(...),
+    anio: Optional[int] = Query(None), mes: Optional[int] = Query(None),
+    desde: Optional[date] = Query(None), hasta: Optional[date] = Query(None),
+    db: Session = Depends(get_db), user: Usuario = Depends(require_admin),
+):
+    """Escalera de conciliación (admin): por qué falta, no solo cuánto.
+
+    Descompone la diferencia de cada producto en sus causas registradas —
+    entradas, ventas, mermas, traslados, preparaciones, ajustes— y deja al final
+    la DIFERENCIA INEXPLICADA, que es lo único que merece investigarse.
+
+    Con `anio`/`mes` usa como físico lo que el conteo de ese mes contó de verdad
+    (`fue_contado`) y corta en el instante del cierre. Con `desde`/`hasta`
+    reconstruye cualquier rango —una semana, los días entre dos conteos— sin
+    físico contra qué compararlo, o sea solo la reconstrucción.
+
+    En ningún caso usa `cantidad_sistema`: esa foto se congela cuando alguien
+    abre la pantalla del kiosko y por eso mete el consumo legítimo del mes
+    adentro del faltante. Acá el esperado sale del libro de movimientos."""
+    if anio is not None and mes is not None:
+        return esc.get_escalera_mensual(db, tienda_id, anio, mes)
+    if desde is None or hasta is None:
+        raise HTTPException(400, "Pedí un mes (anio + mes) o un rango (desde + hasta)")
+    if hasta < desde:
+        raise HTTPException(400, "El rango termina antes de empezar")
+    return esc.escalera_rango(db, tienda_id, desde, hasta)
 
 
 @router.get("/historial")

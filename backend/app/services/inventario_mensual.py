@@ -2,27 +2,41 @@
 
 Relacional con el resto del sistema: cada conteo pertenece a una sede y un usuario;
 cada ítem referencia un producto real. La existencia teórica se toma del Inventario
-vigente; la diferencia se valoriza con el costo promedio de compra (FacturaCompraItem)
-y, si el producto nunca se compró por factura, cae al precio de venta.
+vigente y la diferencia se valoriza con el costo unitario de `services/conciliacion`,
+que es la MISMA fuente que usa el P&L.
 """
 from datetime import datetime
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.models import (
-    InventarioMensual, InventarioMensualItem, Inventario, Producto, FacturaCompraItem,
+    InventarioMensual, InventarioMensualItem, Inventario, Producto,
 )
 from app.services import audit
 
 
 def _valor_unitario_map(db: Session) -> dict:
-    """Costo unitario por producto = promedio de precio_unitario en facturas de compra."""
-    rows = (
-        db.query(FacturaCompraItem.producto_id, func.avg(FacturaCompraItem.precio_unitario))
-        .group_by(FacturaCompraItem.producto_id)
-        .all()
-    )
-    return {pid: float(avg or 0) for pid, avg in rows}
+    """Costo unitario por producto, delegado a la ÚNICA fuente de costo del sistema.
+
+    Antes esto era un `AVG(precio_unitario)` de las facturas SIN ponderar por
+    cantidad, que además ignoraba `Producto.precio_costo` —el costo que el dueño
+    fija a mano y que el módulo de rentabilidad ya respetaba— y caía directo al
+    precio de VENTA cuando el producto nunca se compró por factura. Tres
+    consecuencias, todas caras:
+
+      - 10 unidades a $100 y 90 a $200 daban $150 (el promedio de los precios) en
+        vez de $190 (el promedio de la plata); la fuga se valuaba mal siempre;
+      - un costo confirmado a mano no pisaba una lectura de OCR con ruido;
+      - el MISMO producto podía valer distinto en esta pantalla y en el P&L,
+        porque cada módulo tenía su propia versión del costo.
+
+    `conciliacion.costo_unitario` centraliza la prioridad (oficial > promedio
+    ponderado de facturas > receta > precio de venta como estimación > sin costo)
+    y devuelve el ORIGEN junto al número. Acá se guarda el número —la columna
+    `valor_unitario` no cambia de significado ni de fórmula— y el origen se
+    expone en la conciliación, que es donde el dueño decide si investigar.
+    """
+    from app.services.conciliacion import costo_unitario
+    return {pid: costo for pid, (costo, _origen) in costo_unitario(db).items()}
 
 
 def _serializar(inv: InventarioMensual) -> dict:
@@ -558,11 +572,58 @@ def corregir_item(db: Session, item_id: int, cantidad_real: float, usuario_id: i
 def get_conciliacion(db: Session, tienda_id: int, anio: int, mes: int):
     """Pantalla de conciliación (admin): teórico vs físico vs diferencia valorizada,
     clasificación, totales por categoría y ranking de mayores diferencias."""
+    from app.services.conciliacion import ORIGEN_LABEL, costo_unitario
+
     inv = db.query(InventarioMensual).filter_by(tienda_id=tienda_id, anio=anio, mes=mes).first()
     if not inv:
         return None
     base = _serializar(inv)
     items = base["items"]
+    # De dónde sale el costo con el que se valorizó cada renglón. Sin esto, un
+    # faltante valuado con el precio de VENTA (estimación gruesa) y otro valuado
+    # con el costo que el dueño confirmó a mano se leen exactamente igual, y un
+    # insumo sin ningún costo cargado aparece como $0 —o sea, como si no hubiera
+    # fuga— justo en el producto que nadie va a investigar.
+    #
+    # PERO ESTE ORIGEN ES EL DE HOY Y EL DINERO DE AL LADO ES EL DEL CIERRE
+    # `valor_unitario` / `valor_diferencia` se CONGELAN al iniciar el conteo
+    # (iniciar():109) o al sincronizarlo (reabrir():223 y :236), y sobre un mes
+    # que ya pasó por un cierre ese bloque de sincronización no corre nunca más
+    # (reabrir():207). El origen de acá, en cambio, se recalcula con el catálogo
+    # vivo. Son dos relojes distintos en la misma fila: cargarle el costo a un
+    # producto de un mes cerrado hace DESAPARECER el aviso "sin costo" sin mover
+    # un peso del neto, que sigue valuado con el $0 —o con el valor inflado— del
+    # cierre.
+    #
+    # El congelamiento no se toca: es la medición del período. Lo que se arregla
+    # es la promesa. `costo_congelado` marca los renglones donde el costo con el
+    # que se valorizó YA NO es el que el catálogo tiene hoy, para que la pantalla
+    # diga "esto se valuó con el costo del cierre" en vez de invitar a cargar un
+    # costo que no va a cambiar el número.
+    costos = costo_unitario(db)
+    for i in items:
+        vivo, org = costos.get(i["producto_id"], (0.0, "sin_costo"))
+        i["valor_origen"] = org
+        i["valor_origen_label"] = ORIGEN_LABEL[org]
+        i["valor_unitario_vivo"] = round(float(vivo), 4)
+        i["costo_congelado"] = abs(float(vivo) - float(i["valor_unitario"] or 0)) > 0.005
+
+    # LA DIFERENCIA QUE MIRA LA PANTALLA ES LA VIVA, NO LA ALMACENADA
+    # `InventarioMensualItem.diferencia` la escriben únicamente `cerrar()` y
+    # `corregir_item()` (que exige el mes cerrado): en un mes EN PROCESO vale 0 en
+    # todas las filas. La tabla de la conciliación, en cambio, calcula
+    # `cantidad_real − cantidad_sistema` renglón por renglón para poder seguir el
+    # conteo en vivo (ConciliacionInventario.tsx:455).
+    #
+    # Contar los avisos de calidad sobre la almacenada los dejaba en 0 justo
+    # mientras el mes sigue abierto — o sea, el único momento en que cargar el
+    # costo TODAVÍA cambia el número. El consejo aparecía cuando ya no servía.
+    def _dif_viva(i) -> float:
+        if not i["fue_contado"] or i["cantidad_real"] is None:
+            return 0.0
+        return float(i["cantidad_real"]) - float(i["cantidad_sistema"] or 0)
+
+    con_dif_viva = [i for i in items if abs(_dif_viva(i)) > 0.0005]
     positivas = [i for i in items if (i["diferencia"] or 0) > 0]
     negativas = [i for i in items if (i["diferencia"] or 0) < 0]
     sin = [i for i in items if (i["diferencia"] or 0) == 0]
@@ -595,6 +656,26 @@ def get_conciliacion(db: Session, tienda_id: int, anio: int, mes: int):
             # el mismo aire de conclusión que uno completo.
             "contados": base["contados"],
             "no_contados": base["total_items"] - base["contados"],
+            # Calidad de la valorización del neto: cuántos renglones CON diferencia
+            # están valuados con una estimación y cuántos no se pudieron valuar.
+            # Sobre la diferencia VIVA (ver `_dif_viva`): con la almacenada, un mes
+            # en proceso daba 0 en los tres y el aviso no salía nunca mientras
+            # cargar el costo todavía podía cambiar el número.
+            "dif_sin_costo": sum(1 for i in con_dif_viva
+                                 if i["valor_origen"] == "sin_costo"),
+            "dif_estimadas": sum(1 for i in con_dif_viva
+                                 if i["valor_origen"] == "estimado"),
+            # Renglones CON diferencia cuyo `valor_diferencia` se calculó con un
+            # costo que ya no es el del catálogo. Sobre un mes cerrado eso no se
+            # puede arreglar cargando el costo: la foto no se re-sincroniza. Es
+            # el dato que le impide a la pantalla prometer que el neto se
+            # actualiza solo.
+            "dif_costo_congelado": sum(1 for i in con_dif_viva if i["costo_congelado"]),
+            # True = la foto ya es histórica y `valor_unitario` no se vuelve a
+            # tocar nunca (reabrir() saltea la sincronización sobre un mes que ya
+            # pasó por un cierre). False = todavía se puede poner al día con
+            # "Sincronizar catálogo".
+            "foto_congelada": inv.fecha_primer_cierre is not None,
         },
         "por_categoria": sorted(por_cat.values(), key=lambda x: x["valor_diferencia"]),
         "ranking": ranking,

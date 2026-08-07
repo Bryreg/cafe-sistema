@@ -91,6 +91,10 @@ export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refre
 
   const r = data?.resumen
   const margenPositivo = (r?.margen_neto ?? 0) >= 0
+  // Los dos ejes de la cobertura de la fuga: MESES y SEDES. Cada uno se declara
+  // solo cuando falta algo, y los dos sesgan para el mismo lado (subdeclaran).
+  const mesesParcial = (r?.fuga_meses ?? 0) > 0 && (r?.fuga_meses ?? 0) < (r?.fuga_meses_rango ?? 0)
+  const sedesParcial = (r?.fuga_sedes ?? 0) > 0 && (r?.fuga_sedes ?? 0) < (r?.fuga_sedes_rango ?? 0)
 
   return (
     <div className="space-y-3">
@@ -151,6 +155,117 @@ export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refre
               </p>
             </div>
           </div>
+
+          {/* ── Fuga de inventario medida por el conteo físico ──────────────── */}
+          {/* El conteo mensual medía la merma real y ese número no llegaba nunca
+              al estado de resultados. Entra acá, contra el margen bruto REAL:
+              `margen_neto` sale de `compras`, que es base de RECEPCIÓN, así que la
+              mercadería fugada YA está gastada ahí adentro y restársela otra vez
+              descontaría dos veces la misma plata. `margen_bruto_real` es base de
+              CONSUMO (ventas − costo de lo vendido) y ahí la fuga todavía no está. */}
+          {r.tiene_fuga_medida && r.fuga_inventario != null && (
+            <div className="bg-white rounded-2xl border border-warm-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-warm-500 mb-2">
+                Fuga de inventario — lo que el conteo midió y nada explica
+              </p>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-warm-400">Margen sobre lo vendido</p>
+                  <p className="text-sm font-mono font-bold text-warm-700 mt-0.5 tabular-nums">{fmt(r.margen_bruto_real ?? 0)}</p>
+                </div>
+                <div>
+                  {/* RESIDUO NETO, no "fuga": los sobrantes de un producto netean
+                      contra los faltantes de otro, así que un solo número puede
+                      esconder las dos puntas. Neto es lo que la resta de al lado
+                      necesita —sumar solo los faltantes descontaría dos veces el
+                      producto que apareció de más—, pero el rótulo tiene que decir
+                      qué es en vez de dejarlo creer que es todo lo que falta. */}
+                  <p className="text-[10px] uppercase font-bold text-warm-400">Residuo neto</p>
+                  <p className={`text-sm font-mono font-bold mt-0.5 tabular-nums ${r.fuga_inventario < 0 ? 'text-danger-600' : 'text-warm-700'}`}
+                    title="Faltantes MENOS sobrantes: un producto que apareció de más compensa al que faltó. El faltante bruto es mayor que este número.">
+                    {fmt(r.fuga_inventario)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-warm-400">Queda después del residuo</p>
+                  <p className={`text-sm font-mono font-bold mt-0.5 tabular-nums ${(r.margen_bruto_real_con_fuga ?? 0) >= 0 ? 'text-success-600' : 'text-danger-700'}`}>
+                    {fmt(r.margen_bruto_real_con_fuga ?? 0)}
+                    {r.pct_margen_bruto_real_con_fuga != null && (
+                      <span className="text-warm-400 font-normal"> ({r.pct_margen_bruto_real_con_fuga}%)</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              {/* LOS DOS TÉRMINOS NO MIDEN EL MISMO TRAMO, Y EL TRAMO TIENE DOS EJES.
+                  MESES: el margen es de todo el período; la fuga solo de los meses
+                  calendario COMPLETOS ya cerrados. En "Este año" eso puede ser 8
+                  meses de margen contra 6 de fuga.
+                  SEDES: con "Todas las sedes" el margen suma ventas y COGS de todas
+                  las que vendieron, y la fuga solo de las que cerraron un conteo —
+                  la sede que nunca cierra desaparecía del término de fuga sin
+                  ninguna señal.
+                  Los dos sesgos van para el mismo lado, el optimista: subdeclaran la
+                  fuga. Se dicen los dos, donde está el KPI. */}
+              {(mesesParcial || sedesParcial) && (
+                <p className="text-[11px] text-gold-700 bg-gold-50 border border-gold-200 rounded-lg px-2.5 py-1.5 mt-2">
+                  <b>Los dos números no cubren el mismo tramo.</b>
+                  {mesesParcial && (
+                    <> El margen es de todo el período ({r.fuga_meses_rango} meses); la fuga sale solo
+                      de {r.fuga_meses} mes{r.fuga_meses === 1 ? '' : 'es'} ya
+                      cerrado{r.fuga_meses === 1 ? '' : 's'} y completo{r.fuga_meses === 1 ? '' : 's'} adentro
+                      del rango.</>
+                  )}
+                  {sedesParcial && (
+                    <> El margen suma las {r.fuga_sedes_rango} sedes que vendieron; la fuga sale solo
+                      de {r.fuga_sedes} que cerró{r.fuga_sedes === 1 ? '' : 'aron'} el conteo. Lo que se
+                      fuga en {(r.fuga_sedes_rango ?? 0) - (r.fuga_sedes ?? 0) === 1 ? 'la sede' : 'las sedes'} que
+                      no cuenta{(r.fuga_sedes_rango ?? 0) - (r.fuga_sedes ?? 0) === 1 ? '' : 'n'} no aparece acá,
+                      pero su venta sí está arriba.</>
+                  )}
+                  {' '}Lo que no se cerró todavía no midió nada, así
+                  que <b>la fuga real del período es mayor</b> que la de acá.
+                </p>
+              )}
+              <p className="text-[11px] text-warm-400 mt-2">
+                Sale de los cierres de mes que caen completos en este período: lo contado contra lo que
+                el libro de movimientos dice que debería haber, descontando entradas, ventas, mermas,
+                traslados y ajustes. Es un <b>neto</b>: lo que sobró en un producto compensa lo que
+                faltó en otro, así que el faltante bruto es mayor que este número. Se descuenta del
+                margen sobre lo VENDIDO y no del margen neto:
+                ahí la mercadería ya está gastada entera al recibirla, así que restarla de nuevo sería
+                contar la misma plata dos veces.
+                {/* PRODUCTO-MES, no productos: la cobertura de cada cierre sumada a
+                    lo largo del rango. Con 3 cierres de 97 productos el denominador
+                    da 291, y ese local nunca tuvo 291 productos: el ratio es el que
+                    vale, y con los cierres al lado se puede dividir de vuelta. */}
+                {(r.fuga_cobertura_productos ?? 0) > 0 && (
+                  <> Cubre {r.fuga_cobertura_contados} de {r.fuga_cobertura_productos} producto-mes
+                    {(r.fuga_cierres ?? 0) > 0 && <> en {r.fuga_cierres} cierre{r.fuga_cierres === 1 ? '' : 's'} de mes</>}.</>
+                )}
+                {(r.fuga_sin_costo ?? 0) > 0 && (
+                  <> {r.fuga_sin_costo} producto{r.fuga_sin_costo === 1 ? '' : 's'} con
+                    faltante no tiene costo cargado, así que su fuga no suma acá.</>
+                )}
+                {(r.fuga_estimados ?? 0) > 0 && (
+                  <> {r.fuga_estimados} se valorizó con el precio de VENTA porque no hay costo ni
+                    factura: ese pedazo del total está <b>sobrestimado</b>.</>
+                )}
+              </p>
+              {/* ASIMETRÍA DE VALORIZACIÓN DENTRO DE LA MISMA RESTA. El costo de lo
+                  vendido no cae al precio de venta (un producto sin costo cargado
+                  aporta $0); la fuga sí cae, marcándolo como estimado. O sea que el
+                  MISMO producto puede pesar $0 de un lado y 3,3× de costo del otro.
+                  No se unifica —hacerlo pondría en $0 la fuga de justo los productos
+                  que nadie va a investigar, y cambiaría meses ya cerrados— así que
+                  se declara acá, que es donde se hace la resta. */}
+              <p className="text-[11px] text-warm-400 mt-1.5">
+                Los dos términos <b>no se valorizan con la misma regla</b>: el costo de lo vendido deja
+                en $0 lo que no tiene costo cargado (cubre el {r.pct_venta_costeada ?? '—'}% de la venta),
+                y la fuga en cambio cae al precio de venta cuando no hay costo. El mismo producto puede
+                pesar distinto de cada lado de la resta.
+              </p>
+            </div>
+          )}
 
           {/* COGS teórico: base de consumo (complementa a compras = base de recepción) */}
           {r.cogs_teorico != null && (

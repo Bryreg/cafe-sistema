@@ -299,7 +299,29 @@ class CierreAdministrativoSinConteoTests(DiaOperativoVentaTestCase):
 
 
 class TurnoActivoDiaAnteriorTests(DiaOperativoVentaTestCase):
+    """`es_de_dia_anterior` es CONSCIENTE DE LA HORA, así que el reloj se congela.
+
+    `get_turno_activo` marca el turno contra `datetime.utcnow()` con el mismo
+    criterio que el sello de la venta (`es_venta_de_turno_zombie`): entre 00:00 y
+    las 06:00 de Colombia, el turno de ayer que sigue cobrando NO es un colgado
+    sino un cierre en curso. Estos tests hablan del turno colgado en horario de
+    operación, así que sin clavar la hora afirmaban lo contrario del módulo y
+    fallaban en CI cualquier madrugada — una bomba de tiempo que además hacía
+    imposible reportar la suite honestamente. No se toca `caja.py`: el
+    comportamiento de producción es el correcto; lo que dependía del reloj de
+    pared era el test.
+    """
+
+    def _reloj_a_las(self, hora: int = 10):
+        """Clava el `utcnow()` que ve `caja` en esa hora Colombia de HOY."""
+        from unittest.mock import patch
+        p = patch("app.services.caja.datetime")
+        dt = p.start()
+        self.addCleanup(p.stop)
+        dt.utcnow.return_value = inicio_dia_col_utc(self.hoy) + timedelta(hours=hora)
+
     def test_turno_de_hoy_no_se_marca_como_de_dia_anterior(self):
+        self._reloj_a_las(10)
         self.crear_turno(self.crear_dia(self.hoy))
 
         turno = caja_svc.get_turno_activo(self.db, self.tienda.id)
@@ -308,6 +330,9 @@ class TurnoActivoDiaAnteriorTests(DiaOperativoVentaTestCase):
         self.assertFalse(turno.es_de_dia_anterior)
 
     def test_turno_de_ayer_se_marca_como_de_dia_anterior(self):
+        # 10:00 de hoy: ya pasó la ventana del cruce de medianoche, así que el
+        # turno de ayer que sigue abierto es un colgado y hay que avisarlo.
+        self._reloj_a_las(10)
         ayer = self.hoy - timedelta(days=1)
         self.crear_turno(self.crear_dia(ayer))
 
@@ -318,6 +343,7 @@ class TurnoActivoDiaAnteriorTests(DiaOperativoVentaTestCase):
 
     def test_turno_legacy_usa_el_dia_colombia_de_su_apertura(self):
         # Sin día operativo (previo a la Fase 1) el único dato es la apertura.
+        self._reloj_a_las(10)
         ayer = self.hoy - timedelta(days=1)
         self.crear_turno(None, fecha_apertura=inicio_dia_col_utc(ayer) + timedelta(hours=13))
 

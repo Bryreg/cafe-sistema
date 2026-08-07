@@ -4,15 +4,23 @@ import { dark } from '../constants/darkTheme'
 export default function SidePanel({
   children,
   onClose,
+  // Alto que ocupa la barra fija de abajo. En el kiosko el dock mide 60px; en el
+  // Layout de admin no hay dock (OperativeBanner devuelve null para admin), así
+  // que ahí va 0 y el panel llega hasta el piso.
+  bottomOffset = 60,
 }: {
   children: React.ReactNode
   onClose: () => void
+  bottomOffset?: number
 }) {
   return (
+    // z-40 a propósito: por debajo del drawer móvil y del menú de notificaciones
+    // del Layout admin (ambos z-50) y por encima del contenido. El sidebar de
+    // escritorio no compite: es un flex child sin position ni z-index.
     <div
       className="fixed top-0 right-0 z-40 flex flex-col w-full sm:w-[420px]"
       style={{
-        height: 'calc(100% - 60px)',
+        height: `calc(100% - ${bottomOffset}px)`,
         background: dark.bg,
         borderLeft: `1px solid ${dark.border}`,
         boxShadow: '-4px 0 24px rgba(0,0,0,0.08)',

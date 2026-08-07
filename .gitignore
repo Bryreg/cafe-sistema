@@ -36,3 +36,6 @@ desktop.ini
 *.swo
 
 .vercel
+
+# Índice local de CodeGraph (por checkout, no se comparte)
+.codegraph/

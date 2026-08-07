@@ -1,11 +1,13 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
-  AlertTriangle, CheckCircle2, ChevronDown, Layers,
-  Search, RotateCcw, Download, Check, Package,
+  Layers, Search, RotateCcw, Download, Check, Package, AlertTriangle,
 } from 'lucide-react'
+import SidePanel from '../components/SidePanel'
 import NivelEnvase from '../components/NivelEnvase'
+import { dark } from '../constants/darkTheme'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -113,6 +115,17 @@ interface Ficha {
   receta: { insumos: FichaItemReceta[]; usado_en: FichaItemReceta[] }
 }
 
+// Fila cruda de /inventario/lotes-trazabilidad. Solo se usan tres campos: el
+// cruce por producto se hace EN CLIENTE, igual que lo hace la pantalla /lotes.
+interface LoteTraza {
+  producto_id: number
+  fecha_vencimiento: string | null
+  estado: 'activo' | 'por_vencer' | 'vencido' | 'agotado'
+}
+
+type VencInfo = { fecha: string; estado: 'por_vencer' | 'vencido' }
+type MapaVenc = Record<number, VencInfo>
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const ESTADO_CFG = {
@@ -132,10 +145,49 @@ const ROT_CFG: Record<string, { label: string; bg: string; text: string }> = {
 
 const ESTADO_ORDER: Record<string, number> = { agotado: 0, urgente: 1, pronto: 2, bajo: 3, ok: 4 }
 
+// El filtro de la lista. `atencion` es el DEFAULT: la pantalla abre mostrando lo
+// que hay que resolver, no el catálogo entero. Las 4 tarjetas de arriba escriben
+// en este mismo estado — son atajos al filtro, no otra cosa.
+const FILTROS = [
+  { id: 'atencion', label: 'Necesita atención' },
+  { id: 'urgente',  label: 'Solo urgentes' },
+  { id: 'pronto',   label: 'Solo pedir hoy' },
+  { id: 'bajo',     label: 'Solo stock bajo' },
+  { id: 'vence',    label: 'Solo se vence' },
+  { id: 'ok',       label: 'Solo al día (OK)' },
+  { id: 'todos',    label: 'Ver todo' },
+] as const
+type FiltroId = typeof FILTROS[number]['id']
+const ES_FILTRO = (v: string): v is FiltroId => FILTROS.some(f => f.id === v)
+
+function pasaFiltro(p: ProductoInventario, f: FiltroId, venc: MapaVenc) {
+  switch (f) {
+    case 'todos':   return true
+    case 'ok':      return p.estado === 'ok'
+    case 'urgente': return p.estado === 'agotado' || p.estado === 'urgente'
+    case 'pronto':  return p.estado === 'pronto'
+    case 'bajo':    return p.estado === 'bajo'
+    case 'vence':   return !!venc[p.producto_id]
+    // «Necesita atención» tiene que incluir los CUATRO buckets que cuentan las
+    // tarjetas de arriba, y «se vence» es uno de ellos. Sin esto, un insumo con
+    // stock sano y un lote por vencer sumaba en la tarjeta naranja y no aparecía
+    // en la lista con la que abre la pantalla: el número no mentía, el rótulo sí,
+    // por omisión.
+    default:        return p.estado !== 'ok' || !!venc[p.producto_id]   // atencion
+  }
+}
+
 function diasLabel(d: number | null) {
   if (d === null) return '—'
   if (d < 1) return `${Math.round(d * 24)}h`
   return `${d.toFixed(1)}d`
+}
+
+// 'YYYY-MM-DD…' -> 'dd-mm'. Se parte el string a mano: new Date('2026-08-01') es
+// UTC y en Colombia (UTC-5) mostraría el día anterior.
+function ddmm(iso: string) {
+  const [, m, d] = iso.slice(0, 10).split('-')
+  return m && d ? `${d}-${m}` : '—'
 }
 
 // Hora LOCAL: toISOString es UTC y despues de las 19:00 Colombia devuelve manana.
@@ -155,32 +207,129 @@ async function exportarExcel(nombre: string, cabeceras: string[], filas: (string
   XLSX.writeFile(wb, `${nombre}.xlsx`)
 }
 
+// El motivo del movimiento lo escribe services/mermas.py con un prefijo fijo:
+// "Consumo (quien): …", "Daño: …", "Traslado a <sede>: …" (y para las mermas que
+// bajan por receta, el mismo prefijo + " — insumo de X"). Leer ese prefijo agrupa
+// la merma por causa POR INSUMO sin tocar el backend.
+// La VENTA entra como una causa más, y no es un detalle: en un insumo que rota es
+// la salida DOMINANTE (services/pos.py escribe "Venta POS" y "Venta POS — insumo
+// de X"). Sin ella, los chips podían decir "Daño 1,5 kg" sobre veinte movimientos
+// donde quince fueron ventas — o sea el título se adjudicaba movimientos que no
+// contaba. Una causa que no se puede nombrar cae en `null` y se declara aparte.
+function grupoMerma(motivo: string | null): string | null {
+  const m = (motivo || '').trim()
+  if (/^Venta POS\b/i.test(m)) return 'Venta'
+  if (/^Consumo\b/i.test(m)) return 'Consumo'
+  if (/^Daño\b/i.test(m))    return 'Daño'
+  const t = m.match(/^Traslado a ([^:]+):/i)
+  if (t) return `Traslado a ${t[1].trim()}`
+  return null
+}
+
 // ─── ProductRow ───────────────────────────────────────────────────────────────
 
-function ProductRow({ p, tiendaId, onSaved }: {
-  p: ProductoInventario; tiendaId: number; onSaved: () => void
+// Fila TONTA a propósito: sin estado propio, sin fetch, sin acordeón. Todo lo que
+// antes colgaba de acá (13 useState + la ficha) vive ahora en el panel lateral,
+// que se monta UNA sola vez para el producto seleccionado.
+function ProductRow({ p, venc, activo, onSelect }: {
+  p: ProductoInventario
+  venc?: VencInfo
+  activo: boolean
+  onSelect: () => void
 }) {
-  const [open, setOpen] = useState(false)
+  const cfg = ESTADO_CFG[p.estado] ?? ESTADO_CFG.ok
+  const critico = p.dias_restantes !== null && p.dias_restantes <= p.lead_time_dias
 
-  // Se carga al abrir la fila y queda cacheada: reabrir no vuelve a pedir. La ficha
-  // es informativa, así que un fallo se muestra y ya — la fila (ajuste, umbrales)
-  // tiene que seguir funcionando igual.
+  return (
+    <button
+      onClick={onSelect}
+      title={`${p.categoria}${p.proveedor ? ` · ${p.proveedor}` : ''}`}
+      className={`w-full flex items-center gap-2.5 text-left px-3 py-2 rounded-lg border transition-colors ${
+        activo ? 'bg-amber-50 border-amber-300' : 'bg-white border-gray-200 hover:bg-gray-50'
+      }`}
+    >
+      <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
+      <span className="flex-1 min-w-0 truncate text-sm font-medium text-gray-800">
+        {p.barista_alerto && '🔔 '}{p.nombre}
+      </span>
+      {venc && (
+        <span className={`shrink-0 text-[11px] font-bold tabular-nums ${
+          venc.estado === 'vencido' ? 'text-red-600' : 'text-amber-600'
+        }`} title={venc.estado === 'vencido' ? 'Hay lote vencido' : 'Hay lote por vencer'}>
+          ⚠ {ddmm(venc.fecha)}
+        </span>
+      )}
+      <span className={`shrink-0 w-20 text-right text-sm font-bold tabular-nums ${critico ? 'text-red-600' : 'text-gray-800'}`}>
+        {p.stock_actual}
+        <span className="font-normal text-gray-400 text-[11px]"> {p.unidad}</span>
+      </span>
+      <span className="shrink-0 w-9 text-right text-[11px] text-gray-400 tabular-nums hidden sm:inline">
+        {diasLabel(p.dias_restantes)}
+      </span>
+      {p.cantidad_sugerida > 0 && (
+        <span className="shrink-0 text-[11px] font-bold text-amber-700 tabular-nums" title="Cuánto pedir">
+          +{p.cantidad_sugerida}
+        </span>
+      )}
+    </button>
+  )
+}
+
+// ─── Panel lateral del producto ───────────────────────────────────────────────
+
+const TABS = [
+  { id: 'hoy',      label: 'Hoy'         },
+  { id: 'lotes',    label: 'Lotes'       },
+  { id: 'conteos',  label: 'Conteos'     },
+  { id: 'movs',     label: 'Movimientos' },
+  { id: 'receta',   label: 'Receta'      },
+] as const
+type TabId = typeof TABS[number]['id']
+const ES_TAB = (v: string): v is TabId => TABS.some(t => t.id === v)
+
+function PanelProducto({ producto: p, tiendaId, tab, onTab, onClose, sinConsumidor, onSaved }: {
+  producto: ProductoInventario
+  tiendaId: number
+  tab: TabId
+  onTab: (t: TabId) => void
+  onClose: () => void
+  sinConsumidor: boolean
+  onSaved: () => void
+}) {
   const [ficha, setFicha] = useState<Ficha | null>(null)
   const [fichaErr, setFichaErr] = useState(false)
+  // `tick` es lo que revalida la ficha después de guardar. Sin él, registrar un
+  // movimiento refrescaba la lista (y con ella la CABECERA del panel, que lee del
+  // producto) pero no la ficha: las tarjetas Actual/Crítico/Mínimo/Ideal, los
+  // lotes, los conteos y los movimientos seguían mostrando el estado anterior. Con
+  // un ajuste —que FIJA el valor absoluto— la contradicción era garantizada: dos
+  // stocks distintos del mismo insumo a 40 píxeles uno del otro.
+  const [tick, setTick] = useState(0)
+  const revalidar = () => { setTick(t => t + 1); onSaved() }
+
   useEffect(() => {
-    if (!open || ficha || fichaErr) return
     let vivo = true
+    setFicha(null); setFichaErr(false)
     api.get<Ficha>(`/inventario/producto/${p.producto_id}/ficha`, { params: { tienda_id: tiendaId } })
       .then(r => { if (vivo) setFicha(r.data) })
       .catch(() => { if (vivo) setFichaErr(true) })
     return () => { vivo = false }
-  }, [open, ficha, fichaErr, p.producto_id, tiendaId])
+  }, [p.producto_id, tiendaId, tick])
 
+  // Movimiento manual. Los tres tipos vienen de la vista admin de /inventario que
+  // se borró en este mismo push: ahí el admin podía registrar entrada, salida o
+  // ajuste para cualquier sede. Se conserva la capacidad completa — si acá
+  // quedara solo el ajuste, borrar aquella pantalla sería una pérdida.
+  const [adjTipo, setAdjTipo]         = useState<'entrada' | 'salida' | 'ajuste'>('ajuste')
   const [adjCantidad, setAdjCantidad] = useState('')
   const [adjMotivo, setAdjMotivo]     = useState('')
   const [savingAdj, setSavingAdj]     = useState(false)
   const [savedAdj, setSavedAdj]       = useState(false)
 
+  // Umbrales. Se inicializan de props — por eso el panel se monta con
+  // key={producto_id} desde arriba: cambiar de producto REMONTA el componente y
+  // los inputs arrancan con los valores del producto nuevo. El acordeón viejo
+  // nunca re-sincronizaba y mostraba los umbrales del producto anterior.
   const [critico,  setCritico]  = useState(String(p.stock_critico ?? 0))
   const [minimo,   setMinimo]   = useState(String(p.stock_minimo))
   const [ideal,    setIdeal]    = useState(String(p.stock_ideal ?? 0))
@@ -188,22 +337,11 @@ function ProductRow({ p, tiendaId, onSaved }: {
   const [savingThr, setSavingThr] = useState(false)
   const [savedThr,  setSavedThr]  = useState(false)
 
-  const cfg = ESTADO_CFG[p.estado] ?? ESTADO_CFG.ok
-  const barPct = p.stock_ideal > 0
-    ? Math.min(100, Math.round((p.stock_actual / p.stock_ideal) * 100))
-    : 0
-
   const thrDirty =
     Number(critico)  !== (p.stock_critico ?? 0) ||
     Number(minimo)   !== p.stock_minimo          ||
     Number(ideal)    !== (p.stock_ideal ?? 0)    ||
     Number(leadTime) !== p.lead_time_dias
-
-  const borderClass =
-    p.estado === 'agotado' || p.estado === 'urgente' ? 'border-l-4 border-l-red-400 border-red-200'  :
-    p.estado === 'pronto'                             ? 'border-l-4 border-l-amber-400 border-amber-100' :
-    p.estado === 'bajo'                               ? 'border-l-4 border-l-yellow-400 border-yellow-100' :
-    'border-gray-200'
 
   async function submitAdj(e: React.FormEvent) {
     e.preventDefault()
@@ -213,12 +351,12 @@ function ProductRow({ p, tiendaId, onSaved }: {
     try {
       await api.post('/inventario/movimiento', {
         tienda_id: tiendaId, producto_id: p.producto_id,
-        tipo: 'ajuste', cantidad, motivo: adjMotivo.trim() || 'Ajuste manual',
+        tipo: adjTipo, cantidad, motivo: adjMotivo.trim() || `${adjTipo} manual`,
       })
       setSavedAdj(true)
       setAdjCantidad('')
       setAdjMotivo('')
-      setTimeout(() => { setSavedAdj(false); onSaved() }, 1000)
+      setTimeout(() => { setSavedAdj(false); revalidar() }, 1000)
     } catch { alert('Error al guardar ajuste') }
     finally { setSavingAdj(false) }
   }
@@ -237,275 +375,300 @@ function ProductRow({ p, tiendaId, onSaved }: {
         ops.push(api.patch(`/inventario/productos/${p.producto_id}`, { lead_time_dias: Number(leadTime) }))
       await Promise.all(ops)
       setSavedThr(true)
-      setTimeout(() => { setSavedThr(false); onSaved() }, 1200)
+      setTimeout(() => { setSavedThr(false); revalidar() }, 1200)
     } catch { alert('Error al guardar umbrales') }
     finally { setSavingThr(false) }
   }
 
+  // Desglose de merma por causa. Sale del prefijo del motivo (ver grupoMerma) y
+  // por lo tanto solo cubre los movimientos que trae la ficha, no todo el
+  // histórico: el rótulo lo dice para que el número no se lea como un total.
+  // Los que no matchean ningún prefijo van a «Otros» y NO se descartan: un
+  // movimiento que desaparece del desglose hace que los chips no sumen lo que el
+  // título dice, y ahí el número deja de ser confiable sin que se note.
+  const { merma, nSalidas } = useMemo(() => {
+    const acc = new Map<string, number>()
+    let n = 0
+    for (const m of ficha?.movimientos ?? []) {
+      if (m.tipo === 'entrada') continue          // el desglose es de lo que SALE
+      n++
+      const g = grupoMerma(m.motivo) ?? 'Otros'
+      acc.set(g, (acc.get(g) ?? 0) + Math.abs(m.cantidad))
+    }
+    return { merma: [...acc.entries()].sort((a, b) => b[1] - a[1]), nSalidas: n }
+  }, [ficha])
+
+  const H = ({ children }: { children: React.ReactNode }) => (
+    <p className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: dark.inkSubtle }}>{children}</p>
+  )
+  const vacio = (t: string) => <p className="text-xs" style={{ color: dark.inkSubtle }}>{t}</p>
+
   return (
-    <div className={`bg-white border rounded-xl overflow-hidden ${borderClass}`}>
-      {/* Main row */}
-      <button
-        className="w-full text-left px-4 py-3 hover:bg-gray-50/60 transition-colors"
-        onClick={() => setOpen(v => !v)}
-      >
-        <div className="flex items-center gap-3">
-          <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${cfg.dot}`} />
+    <SidePanel onClose={onClose} bottomOffset={0}>
+      <div className="px-4 pb-6">
+        <h2 className="text-base font-bold" style={{ color: dark.ink }}>{p.nombre}</h2>
+        <p className="text-xs mb-3" style={{ color: dark.inkMuted }}>
+          {p.categoria}{p.proveedor ? ` · ${p.proveedor}` : ''} · {p.stock_actual} {p.unidad}
+        </p>
 
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-sm font-semibold text-gray-800">{p.nombre}</span>
-              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${cfg.bg} ${cfg.color}`}>
-                {cfg.label}
-              </span>
-              {p.barista_alerto && (
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">
-                  🔔 barista
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {p.categoria}{p.proveedor ? ` · ${p.proveedor}` : ''}
-            </p>
-          </div>
-
-          {p.fraccionable && (
-            <div className="shrink-0" title={`Nivel de la ${p.envase || 'bolsa'} en uso`}>
-              <NivelEnvase readOnly envase={p.envase === 'botella' ? 'botella' : 'bolsa'}
-                nivel={p.stock_actual <= 0 ? 0 : (p.stock_actual % 1 === 0 ? 1 : p.stock_actual % 1)} />
-            </div>
-          )}
-          <div className="shrink-0 text-right hidden sm:block">
-            <p className="text-sm font-bold text-gray-800">
-              {p.stock_actual} <span className="font-normal text-gray-400 text-xs">{p.unidad}</span>
-            </p>
-            <p className={`text-xs font-semibold ${
-              p.dias_restantes !== null && p.dias_restantes <= p.lead_time_dias
-                ? 'text-red-600' : 'text-gray-400'
-            }`}>
-              {diasLabel(p.dias_restantes)}
-            </p>
-          </div>
-
-          {/* CUÁNTO PEDIR. El backend ya lo calcula (services/pedidos.py: consumo
-              diario × (lead time + colchón) − stock) y esta pantalla lo recibía y lo
-              tiraba: estaba declarado en el tipo y no se pintaba en ningún lado.
-              Sin este número la pantalla dice que algo falta pero no cuánto traer,
-              que es justo la decisión que hay que tomar. */}
-          {p.cantidad_sugerida > 0 && (
-            <div className="shrink-0 text-right px-2 py-1 rounded-lg bg-amber-50 border border-amber-200"
-                 title={`Sugerido para cubrir ${p.lead_time_dias} día(s) de entrega${p.proveedor ? ` · ${p.proveedor}` : ''}`}>
-              <p className="text-[10px] font-bold uppercase tracking-wide text-amber-600 leading-none">Pedir</p>
-              <p className="text-sm font-bold text-amber-800 leading-tight">
-                {p.cantidad_sugerida} <span className="font-normal text-amber-500 text-xs">{p.unidad}</span>
-              </p>
-            </div>
-          )}
-
-          <ChevronDown
-            size={14}
-            className={`text-gray-400 shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-          />
+        <div className="flex gap-1 flex-wrap mb-4">
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => onTab(t.id)}
+              className="px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors"
+              style={tab === t.id
+                ? { background: dark.ink, color: dark.surface }
+                : { background: dark.surfaceAlt, color: dark.inkMuted }}>
+              {t.label}
+            </button>
+          ))}
         </div>
 
-        {p.stock_ideal > 0 && (
-          <div className="mt-2 ml-6">
-            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-              <div className={`h-full rounded-full ${cfg.bar}`} style={{ width: `${barPct}%` }} />
+        {fichaErr && vacio('No se pudo cargar el detalle.')}
+        {!ficha && !fichaErr && <div className="h-16 rounded animate-pulse" style={{ background: dark.surfaceAlt }} />}
+
+        {/* ── Hoy ── */}
+        {tab === 'hoy' && (
+          <div className="space-y-5">
+            {/* Este cartel sale de GET /inventario/cobertura, un endpoint que ya
+                existía y no consumía NADIE. Es la explicación más común de un
+                descuadre de conteo, puesta justo donde el dueño lo está mirando. */}
+            {sinConsumidor && (
+              <div className="flex gap-2 text-xs rounded-xl px-3 py-2.5"
+                style={{ background: dark.dangerTint, color: dark.danger, border: `1px solid ${dark.dangerDim}` }}>
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                <span>
+                  Este insumo se gasta físicamente y el sistema <b>nunca lo descuenta</b>:
+                  ninguna receta lo consume. Cada conteo va a dar diferencia hasta que
+                  entre en la receta de algo o se ajuste a mano.
+                </span>
+              </div>
+            )}
+
+            {/* Los cuatro números salen del PRODUCTO, no de la ficha: el producto
+                se refresca con la lista al guardar y la ficha tarda un tick más.
+                Leyendo de dos fuentes distintas, la cabecera del panel mostraba el
+                stock nuevo y esta tarjeta el viejo, a 40 píxeles de distancia. Los
+                cuatro campos existen en ProductoInventario. */}
+            {ficha && (
+              <div className="grid grid-cols-4 gap-1.5 text-center">
+                {[
+                  { l: 'Actual',  v: p.stock_actual  },
+                  { l: 'Crítico', v: p.stock_critico },
+                  { l: 'Mínimo',  v: p.stock_minimo  },
+                  { l: 'Ideal',   v: p.stock_ideal   },
+                ].map(s => (
+                  <div key={s.l} className="rounded-lg py-1.5" style={{ background: dark.surfaceAlt }}>
+                    <p className="text-sm font-bold tabular-nums" style={{ color: dark.ink }}>{s.v}</p>
+                    <p className="text-[10px]" style={{ color: dark.inkSubtle }}>{s.l}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {p.fraccionable && (
+              <div title={`Nivel de la ${p.envase || 'bolsa'} en uso`}>
+                <H>Envase en uso</H>
+                <NivelEnvase readOnly envase={p.envase === 'botella' ? 'botella' : 'bolsa'}
+                  nivel={p.stock_actual <= 0 ? 0 : (p.stock_actual % 1 === 0 ? 1 : p.stock_actual % 1)} />
+              </div>
+            )}
+
+            <div>
+              <H>Movimiento manual</H>
+              <form onSubmit={submitAdj} className="flex gap-2 flex-wrap items-end">
+                <select value={adjTipo} onChange={e => setAdjTipo(e.target.value as typeof adjTipo)}
+                  className="rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                  style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}>
+                  <option value="ajuste">Ajuste</option>
+                  <option value="entrada">Entrada</option>
+                  <option value="salida">Salida</option>
+                </select>
+                <input
+                  type="number" min={0} step={0.5} value={adjCantidad}
+                  onChange={e => setAdjCantidad(e.target.value)}
+                  // En «ajuste» el número es el stock REAL contado (reemplaza);
+                  // en entrada/salida es cuánto se suma o se resta.
+                  placeholder={adjTipo === 'ajuste' ? `Real (${p.unidad})` : `Cantidad (${p.unidad})`}
+                  className="w-28 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none"
+                  style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}
+                />
+                <input
+                  type="text" value={adjMotivo} onChange={e => setAdjMotivo(e.target.value)}
+                  placeholder="Motivo"
+                  className="flex-1 min-w-[120px] rounded-lg px-2.5 py-1.5 text-sm focus:outline-none"
+                  style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}
+                />
+                <button type="submit" disabled={adjCantidad === '' || savingAdj || savedAdj}
+                  className="px-3 py-1.5 rounded-lg text-sm font-semibold text-white disabled:opacity-40"
+                  style={{ background: dark.amber }}>
+                  {savedAdj ? <Check size={14} /> : savingAdj ? '…' : 'Confirmar'}
+                </button>
+              </form>
             </div>
-            <p className="text-[10px] text-gray-400 mt-0.5">
-              {p.stock_actual} / {p.stock_ideal} {p.unidad}
-              {p.consumo_diario > 0 && <> · consumo {p.consumo_diario} {p.unidad}/día</>}
-            </p>
+
+            <div>
+              <H>Umbrales y tiempo de entrega</H>
+              <div className="flex gap-2 flex-wrap items-end">
+                {[
+                  { label: 'Crítico', val: critico,  set: setCritico  },
+                  { label: 'Mínimo',  val: minimo,   set: setMinimo   },
+                  { label: 'Ideal',   val: ideal,    set: setIdeal    },
+                  { label: 'Entrega', val: leadTime, set: setLeadTime },
+                ].map(({ label, val, set }) => (
+                  <div key={label}>
+                    <label className="text-[10px] block mb-0.5" style={{ color: dark.inkSubtle }}>{label}</label>
+                    <input
+                      type="number" min={0} step={label === 'Entrega' ? 1 : 0.5}
+                      value={val} onChange={e => set(e.target.value)}
+                      className="w-16 text-center rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                      style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }}
+                    />
+                  </div>
+                ))}
+                <button onClick={saveThr} disabled={!thrDirty || savingThr || savedThr}
+                  className="px-3 py-1.5 rounded-lg text-sm font-semibold text-white disabled:opacity-40"
+                  style={{ background: dark.ink }}>
+                  {savedThr ? <Check size={14} /> : savingThr ? '…' : 'Guardar'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
-      </button>
 
-      {open && (
-        <div className="border-t border-gray-100 bg-gray-50/80 px-4 py-4 space-y-5">
-
-          {/* FICHA: lo que antes obligaba a recorrer Lotes, Conteos y Rotación para
-              entender UN producto. Se pide una sola vez por producto y queda cacheada
-              mientras la fila siga abierta. Si falla, la fila sigue funcionando. */}
-          {fichaErr && <p className="text-xs text-gray-400">No se pudo cargar el detalle.</p>}
-          {!ficha && !fichaErr && (
-            <div className="space-y-2">
-              <div className="h-3 w-24 rounded bg-gray-200 animate-pulse" />
-              <div className="h-12 rounded bg-gray-200/70 animate-pulse" />
-            </div>
-          )}
-          {ficha && (
-            <div className="space-y-4">
-              {/* Lotes */}
-              <div>
-                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Lotes</p>
-                {ficha.lotes.length === 0 ? (
-                  <p className="text-xs text-gray-400">Sin lotes registrados.</p>
-                ) : (
-                  <div className="space-y-1">
-                    {ficha.lotes.map(l => (
-                      <div key={l.id} className={`flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg border ${
-                        l.estado === 'vencido' ? 'bg-red-50 border-red-200' :
-                        l.estado === 'por_vencer' ? 'bg-amber-50 border-amber-200' :
-                        l.estado === 'agotado' ? 'bg-gray-100 border-gray-200 opacity-60' :
-                        'bg-white border-gray-200'}`}>
-                        <span className="font-mono font-semibold text-gray-700">{l.numero_lote || 's/lote'}</span>
-                        <span className="text-gray-400">{l.proveedor || '—'}</span>
-                        <span className="ml-auto font-semibold text-gray-700">
-                          {l.cantidad_restante} / {l.cantidad_inicial} {p.unidad}
-                        </span>
-                        <span className={`font-bold ${
-                          l.estado === 'vencido' ? 'text-red-600' :
-                          l.estado === 'por_vencer' ? 'text-amber-700' : 'text-gray-400'}`}>
-                          {l.fecha_vencimiento ? `vence ${l.fecha_vencimiento.slice(0, 10)}` : 'sin vencimiento'}
-                        </span>
-                      </div>
-                    ))}
+        {/* ── Lotes ── */}
+        {tab === 'lotes' && ficha && (
+          ficha.lotes.length === 0 ? vacio('Sin lotes registrados.') : (
+            <div className="space-y-1.5">
+              {ficha.lotes.map(l => (
+                <div key={l.id} className="rounded-lg px-2.5 py-2 text-xs" style={{
+                  background: l.estado === 'vencido' ? dark.dangerTint
+                    : l.estado === 'por_vencer' ? dark.amberTint : dark.surface,
+                  border: `1px solid ${dark.border}`,
+                  opacity: l.estado === 'agotado' ? 0.55 : 1,
+                }}>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-semibold" style={{ color: dark.ink }}>{l.numero_lote || 's/lote'}</span>
+                    <span style={{ color: dark.inkSubtle }}>{l.proveedor || '—'}</span>
+                    <span className="ml-auto font-semibold tabular-nums" style={{ color: dark.ink }}>
+                      {l.cantidad_restante} / {l.cantidad_inicial} {p.unidad}
+                    </span>
                   </div>
-                )}
-              </div>
-
-              {/* Último conteo — el delta contra el sistema es la señal que importa */}
-              <div>
-                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Últimos conteos</p>
-                {ficha.conteos.length === 0 ? (
-                  <p className="text-xs text-gray-400">Todavía nadie contó este producto.</p>
-                ) : (
-                  <div className="space-y-1">
-                    {ficha.conteos.map(c => (
-                      <div key={c.conteo_id} className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-lg bg-white border border-gray-200">
-                        <span className="font-semibold text-gray-600 capitalize">{c.tipo}</span>
-                        <span className="text-gray-400">{(c.fecha || '').slice(0, 10)}</span>
-                        <span className="text-gray-500">{c.barista_nombre || '—'}</span>
-                        <span className="ml-auto text-gray-400">
-                          sistema {c.cantidad_sistema} · contó {c.cantidad_real}
-                        </span>
-                        <span className={`font-bold w-14 text-right ${
-                          c.diferencia === 0 ? 'text-gray-400'
-                            : c.diferencia > 0 ? 'text-blue-600' : 'text-red-600'}`}>
-                          {c.diferencia > 0 ? '+' : ''}{c.diferencia}
-                        </span>
-                      </div>
-                    ))}
+                  {/* consumido_pct y fecha_entrada ya venían en la ficha y no se
+                      pintaban en ningún lado: son el «cuánto va gastado y desde
+                      cuándo» de cada lote. */}
+                  <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: dark.surfaceAlt }}>
+                    <div className="h-full rounded-full" style={{ width: `${Math.min(100, l.consumido_pct)}%`, background: dark.greenDim }} />
                   </div>
-                )}
-              </div>
-
-              {/* Movimientos */}
-              <div>
-                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Movimientos recientes</p>
-                {ficha.movimientos.length === 0 ? (
-                  <p className="text-xs text-gray-400">Sin movimientos.</p>
-                ) : (
-                  <div className="space-y-0.5 max-h-44 overflow-y-auto">
-                    {ficha.movimientos.map(m => (
-                      <div key={m.id} className="flex items-center gap-2 text-xs px-2 py-1">
-                        <span className="text-gray-400 w-20 shrink-0">{(m.fecha || '').slice(0, 10)}</span>
-                        <span className="font-semibold text-gray-600 w-16 shrink-0 capitalize">{m.tipo}</span>
-                        <span className={`font-bold w-16 text-right shrink-0 ${
-                          m.tipo === 'entrada' ? 'text-green-600' : 'text-gray-700'}`}>
-                          {m.cantidad} {p.unidad}
-                        </span>
-                        <span className="text-gray-400 truncate">{m.motivo || ''}{m.barista ? ` · ${m.barista}` : ''}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Receta, en los dos sentidos: qué consume y quién lo consume */}
-              {(ficha.receta.insumos.length > 0 || ficha.receta.usado_en.length > 0) && (
-                <div>
-                  <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Receta</p>
-                  {ficha.receta.insumos.length > 0 && (
-                    <p className="text-xs text-gray-500">
-                      <span className="font-semibold text-gray-600">Consume:</span>{' '}
-                      {ficha.receta.insumos.map(i => `${i.nombre} (${i.cantidad} ${i.unidad_medida})`).join(' · ')}
-                    </p>
-                  )}
-                  {ficha.receta.usado_en.length > 0 && (
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      <span className="font-semibold text-gray-600">Se usa en:</span>{' '}
-                      {ficha.receta.usado_en.map(i => i.nombre).join(' · ')}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Quick adjustment */}
-          <div>
-            <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">
-              Ajuste de stock
-            </p>
-            <form onSubmit={submitAdj} className="flex gap-2 flex-wrap items-end">
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">
-                  Cantidad real en bodega ({p.unidad})
-                </label>
-                <input
-                  type="number" min={0} step={0.5}
-                  value={adjCantidad}
-                  onChange={e => setAdjCantidad(e.target.value)}
-                  placeholder={String(p.stock_actual)}
-                  className="w-28 border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
-                />
-              </div>
-              <div className="flex-1 min-w-[160px]">
-                <label className="text-xs text-gray-500 block mb-1">Motivo</label>
-                <input
-                  type="text"
-                  value={adjMotivo}
-                  onChange={e => setAdjMotivo(e.target.value)}
-                  placeholder="Conteo físico, merma descubierta…"
-                  className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={adjCantidad === '' || savingAdj || savedAdj}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40 transition-colors"
-              >
-                {savedAdj ? <Check size={14} /> : savingAdj ? '…' : 'Confirmar'}
-              </button>
-            </form>
-          </div>
-
-          {/* Threshold calibration */}
-          <div>
-            <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">
-              Umbrales y tiempo de entrega
-            </p>
-            <div className="flex gap-2 flex-wrap items-end">
-              {[
-                { label: `Crítico (${p.unidad})`, val: critico,  set: setCritico,  ring: 'focus:ring-red-200',    border: 'border-red-200'   },
-                { label: `Mínimo (${p.unidad})`,  val: minimo,   set: setMinimo,   ring: 'focus:ring-amber-200',  border: 'border-amber-200' },
-                { label: `Ideal (${p.unidad})`,   val: ideal,    set: setIdeal,    ring: 'focus:ring-green-200',  border: 'border-green-200' },
-                { label: 'Entrega (días)',         val: leadTime, set: setLeadTime, ring: 'focus:ring-gray-200',   border: 'border-gray-300'  },
-              ].map(({ label, val, set, ring, border }) => (
-                <div key={label}>
-                  <label className="text-xs text-gray-500 block mb-1">{label}</label>
-                  <input
-                    type="number" min={0} step={label.includes('días') ? 1 : 0.5}
-                    value={val}
-                    onChange={e => set(e.target.value)}
-                    className={`w-20 text-center border ${border} rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 ${ring}`}
-                  />
+                  <p className="mt-1 flex gap-2 flex-wrap" style={{ color: dark.inkSubtle }}>
+                    <span>{l.consumido_pct}% consumido</span>
+                    {l.fecha_entrada && <span>· entró {ddmm(l.fecha_entrada)}</span>}
+                    <span className="ml-auto font-bold" style={{
+                      color: l.estado === 'vencido' ? dark.danger : l.estado === 'por_vencer' ? dark.amber : dark.inkSubtle,
+                    }}>
+                      {l.fecha_vencimiento ? `vence ${ddmm(l.fecha_vencimiento)}` : 'sin vencimiento'}
+                    </span>
+                  </p>
                 </div>
               ))}
-              <button
-                onClick={saveThr}
-                disabled={!thrDirty || savingThr || savedThr}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-gray-700 text-white hover:bg-gray-800 disabled:opacity-40 transition-colors"
-              >
-                {savedThr ? <Check size={14} /> : savingThr ? '…' : 'Guardar umbrales'}
-              </button>
             </div>
+          )
+        )}
+
+        {/* ── Conteos ── */}
+        {tab === 'conteos' && ficha && (
+          ficha.conteos.length === 0 ? vacio('Todavía nadie contó este producto.') : (
+            <div className="space-y-1.5">
+              {ficha.conteos.map(c => (
+                <div key={c.conteo_id} className="rounded-lg px-2.5 py-2 text-xs"
+                  style={{ background: dark.surface, border: `1px solid ${dark.border}` }}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold capitalize" style={{ color: dark.ink }}>{c.tipo}</span>
+                    <span style={{ color: dark.inkSubtle }}>{(c.fecha || '').slice(0, 10)}</span>
+                    <span style={{ color: dark.inkMuted }}>{c.barista_nombre || '—'}</span>
+                    {/* La bandera es_atajo ya llegaba tipada y NUNCA se renderizaba.
+                        Sin ella una diferencia 0 se lee como un conteo confirmado
+                        cuando en realidad es un eco del stock del sistema. */}
+                    {c.es_atajo && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                        style={{ background: dark.amberTint, color: dark.amber }}
+                        title='Registrado con el botón "Todo coincide con sistema" — no es un conteo físico'>
+                        ⚡ Todo coincide
+                      </span>
+                    )}
+                    <span className="ml-auto font-bold tabular-nums" style={{
+                      color: c.diferencia === 0 ? dark.inkSubtle : c.diferencia > 0 ? dark.green : dark.danger,
+                    }}>
+                      {c.diferencia > 0 ? '+' : ''}{c.diferencia}
+                    </span>
+                  </div>
+                  <p className="mt-0.5" style={{ color: dark.inkSubtle }}>
+                    sistema {c.cantidad_sistema} · contó {c.cantidad_real}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+
+        {/* ── Movimientos ── */}
+        {tab === 'movs' && ficha && (
+          <div className="space-y-3">
+            {merma.length > 0 && (
+              <div>
+                <H>Dónde se va — últimas {nSalidas} salidas</H>
+                <div className="flex gap-1.5 flex-wrap">
+                  {merma.map(([g, v]) => (
+                    <span key={g} className="text-[11px] font-semibold px-2 py-1 rounded-lg"
+                      style={{ background: dark.surfaceAlt, color: dark.ink }}>
+                      {g} <b className="tabular-nums">{Math.round(v * 100) / 100}</b> {p.unidad}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {ficha.movimientos.length === 0 ? vacio('Sin movimientos.') : (
+              <div className="space-y-0.5">
+                {ficha.movimientos.map(m => (
+                  <div key={m.id} className="flex items-center gap-2 text-xs px-1 py-1">
+                    <span className="w-16 shrink-0" style={{ color: dark.inkSubtle }}>{ddmm(m.fecha || '')}</span>
+                    <span className="w-14 shrink-0 font-semibold capitalize" style={{ color: dark.inkMuted }}>{m.tipo}</span>
+                    <span className="w-14 text-right shrink-0 font-bold tabular-nums"
+                      style={{ color: m.tipo === 'entrada' ? dark.green : dark.ink }}>
+                      {m.cantidad}
+                    </span>
+                    <span className="truncate" style={{ color: dark.inkSubtle }}>
+                      {m.motivo || ''}{m.barista ? ` · ${m.barista}` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-      )}
-    </div>
+        )}
+
+        {/* ── Receta ── */}
+        {tab === 'receta' && ficha && (
+          ficha.receta.insumos.length === 0 && ficha.receta.usado_en.length === 0
+            ? vacio('Sin receta en ninguno de los dos sentidos.')
+            : (
+              <div className="space-y-3 text-xs" style={{ color: dark.inkMuted }}>
+                {ficha.receta.insumos.length > 0 && (
+                  <div>
+                    <H>Consume</H>
+                    {ficha.receta.insumos.map(i => `${i.nombre} (${i.cantidad} ${i.unidad_medida})`).join(' · ')}
+                  </div>
+                )}
+                {ficha.receta.usado_en.length > 0 && (
+                  <div>
+                    <H>Se usa en</H>
+                    {ficha.receta.usado_en.map(i => i.nombre).join(' · ')}
+                  </div>
+                )}
+              </div>
+            )
+        )}
+      </div>
+    </SidePanel>
   )
 }
 
@@ -517,6 +680,29 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
   const [busqueda, setBusqueda]     = useState('')
   const [catFiltro, setCatFiltro]   = useState('todas')
 
+  // Filtro y selección viven en la URL: ?estado=urgente&p=42&tab=lotes es un
+  // deep-link compartible.
+  //
+  // ABRIR el panel EMPUJA historia; cambiar de filtro o de pestaña la REEMPLAZA.
+  // En el celular el panel es pantalla completa (SidePanel: `w-full sm:w-[420px]`),
+  // así que «atrás» es el gesto natural para cerrarlo — con replace en todo, ese
+  // gesto te sacaba de Inventario. Y con push en todo, volver del panel te hacía
+  // recorrer cada pestaña que tocaste.
+  const [sp, setSp] = useSearchParams()
+  const rawEstado = sp.get('estado') ?? ''
+  const filtro: FiltroId = ES_FILTRO(rawEstado) ? rawEstado : 'atencion'
+  const selId = Number(sp.get('p')) || null
+  const rawTab = sp.get('tab') ?? ''
+  const tab: TabId = ES_TAB(rawTab) ? rawTab : 'hoy'
+
+  const setSp2 = useCallback((patch: Record<string, string | null>, push = false) => {
+    setSp(prev => {
+      const next = new URLSearchParams(prev)
+      for (const [k, v] of Object.entries(patch)) v === null ? next.delete(k) : next.set(k, v)
+      return next
+    }, { replace: !push })
+  }, [setSp])
+
   const cargar = useCallback(() => {
     setLoading(true)
     api.get('/pedidos/sugerencia', { params: { tienda_id: tiendaId } })
@@ -527,93 +713,176 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
 
   useEffect(() => { cargar() }, [cargar])
 
-  const allItems: ProductoInventario[] = sugerencia
+  // Vencimientos: el dato que hoy obliga a irse a /lotes. Se cruza por producto
+  // EN CLIENTE, igual que hace esa pantalla — cero backend nuevo.
+  const [venc, setVenc] = useState<MapaVenc>({})
+  const [vencTruncado, setVencTruncado] = useState(false)
+  // Si el pedido FALLA, el mapa queda vacío — y un mapa vacío es indistinguible de
+  // "no hay nada por vencer". Sin esta bandera la tarjeta naranja afirmaba
+  // «Se vence: 0» y desaparecían todos los ⚠ de la lista a partir de un error de
+  // red. Ausencia de dato no es buena noticia.
+  const [vencErr, setVencErr] = useState(false)
+  useEffect(() => {
+    let vivo = true
+    setVencErr(false)
+    api.get<LoteTraza[]>('/inventario/lotes-trazabilidad', { params: { tienda_id: tiendaId } })
+      .then(r => {
+        if (!vivo) return
+        const rows = r.data ?? []
+        // OJO: el endpoint corta en 800 lotes (services/inventario.py, .limit(800)
+        // dentro de get_trazabilidad). Si la sede tiene más, los más viejos no
+        // llegan y algún producto puede quedarse SIN su chip de vencimiento. No se
+        // esconde: se avisa arriba de la lista.
+        //
+        // Y el corte se aplica ANTES de descartar los archivados, así que una
+        // respuesta truncada puede llegar con MENOS de 800 filas: el umbral se baja
+        // para que el aviso no se pierda justo cuando hace falta. El orden es
+        // fecha_entrada DESC, o sea lo que se cae son los lotes más VIEJOS —
+        // exactamente los vencidos.
+        setVencTruncado(rows.length >= 760)
+        const m: MapaVenc = {}
+        for (const l of rows) {
+          if (!l.fecha_vencimiento) continue
+          if (l.estado !== 'vencido' && l.estado !== 'por_vencer') continue
+          const f = l.fecha_vencimiento.slice(0, 10)
+          const prev = m[l.producto_id]
+          if (!prev || f < prev.fecha) m[l.producto_id] = { fecha: f, estado: l.estado }
+        }
+        setVenc(m)
+      })
+      .catch(() => { if (vivo) { setVenc({}); setVencErr(true) } })
+    return () => { vivo = false }
+  }, [tiendaId])
+
+  // Insumos que controlan stock y que NINGUNA receta consume. El endpoint existía
+  // y no lo leía nadie; acá alimenta el cartel del panel (no pinta nada en la
+  // lista, así que no suma peso visual).
+  const [sinConsumidor, setSinConsumidor] = useState<Set<number>>(new Set())
+  useEffect(() => {
+    let vivo = true
+    api.get<{ insumos_sin_consumidor: { id: number }[] }>('/inventario/cobertura')
+      .then(r => { if (vivo) setSinConsumidor(new Set((r.data?.insumos_sin_consumidor ?? []).map(i => i.id))) })
+      .catch(() => {})
+    return () => { vivo = false }
+  }, [])
+
+  const allItems: ProductoInventario[] = useMemo(() => sugerencia
     ? [...sugerencia.grupos_fijos.flatMap(g => g.productos), ...sugerencia.insumos_generales]
-    : []
+    : [], [sugerencia])
 
-  const categorias = ['todas', ...Array.from(new Set(allItems.map(i => i.categoria))).sort()]
+  const categorias = useMemo(
+    () => ['todas', ...Array.from(new Set(allItems.map(i => i.categoria))).sort()],
+    [allItems])
 
-  const filtrados = allItems
+  const totalVence = useMemo(() => allItems.filter(i => venc[i.producto_id]).length, [allItems, venc])
+
+  const filtrados = useMemo(() => allItems
+    .filter(i => pasaFiltro(i, filtro, venc))
     .filter(i => catFiltro === 'todas' || i.categoria === catFiltro)
     .filter(i => !busqueda || i.nombre.toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) =>
       (ESTADO_ORDER[a.estado] ?? 5) - (ESTADO_ORDER[b.estado] ?? 5) ||
       a.nombre.localeCompare(b.nombre)
-    )
+    ), [allItems, filtro, venc, catFiltro, busqueda])
+
+  const seleccionado = selId !== null ? allItems.find(i => i.producto_id === selId) ?? null : null
+
+  // Las 4 tarjetas SON el filtro: tocar una filtra la lista, volver a tocarla
+  // vuelve al default. Antes eran <div> decorativos y el banner rojo de urgentes
+  // repetía el mismo número sin llevar a ningún lado.
+  const kpis = sugerencia ? [
+    { id: 'urgente' as const, label: 'Urgente',    val: sugerencia.total_urgentes, color: 'text-red-600',    ring: 'bg-red-50 border-red-200'       },
+    { id: 'pronto'  as const, label: 'Pedir hoy',  val: sugerencia.total_pronto,   color: 'text-amber-600',  ring: 'bg-amber-50 border-amber-200'   },
+    { id: 'bajo'    as const, label: 'Stock bajo', val: sugerencia.total_bajo,     color: 'text-yellow-600', ring: 'bg-yellow-50 border-yellow-200' },
+    // Con el fetch de lotes caído no se sabe cuántos vencen: va «—», no 0. Y la
+    // tarjeta deja de filtrar, porque filtrar por un mapa vacío daría una lista
+    // vacía que se leería como «no hay ninguno».
+    { id: 'vence'   as const, label: 'Se vence',   val: vencErr ? '—' : totalVence, color: 'text-orange-600', ring: 'bg-orange-50 border-orange-200', off: vencErr },
+  ] : []
 
   return (
-    <div className="space-y-4">
-      {sugerencia && (
-        <div className="grid grid-cols-4 gap-2">
-          {[
-            { label: 'Urgente',    val: sugerencia.total_urgentes, num: 'text-red-600',    bg: 'bg-red-50 border-red-200'     },
-            { label: 'Pedir hoy', val: sugerencia.total_pronto,   num: 'text-amber-600',  bg: 'bg-amber-50 border-amber-200' },
-            { label: 'Stock bajo', val: sugerencia.total_bajo,     num: 'text-yellow-600', bg: 'bg-yellow-50 border-yellow-200'},
-            { label: 'OK',         val: sugerencia.total_ok,       num: 'text-green-600',  bg: 'bg-green-50 border-green-200' },
-          ].map(k => (
-            <div key={k.label} className={`border rounded-xl p-3 text-center ${k.bg}`}>
-              <p className={`text-2xl font-bold ${k.num}`}>{k.val}</p>
-              <p className="text-[11px] text-gray-500 font-medium uppercase tracking-wide mt-0.5">{k.label}</p>
-            </div>
-          ))}
-        </div>
-      )}
+    <div className="space-y-3">
+      <div className={seleccionado ? 'lg:mr-[420px] space-y-3 transition-all' : 'space-y-3 transition-all'}>
+        {sugerencia && (
+          <div className="grid grid-cols-4 gap-2">
+            {kpis.map(k => (
+              <button key={k.id} disabled={'off' in k && k.off}
+                title={'off' in k && k.off ? 'No se pudo leer el listado de lotes: no se sabe qué vence.' : undefined}
+                onClick={() => setSp2({ estado: filtro === k.id ? 'atencion' : k.id })}
+                className={`border rounded-xl p-2.5 text-center transition-all ${k.ring} ${
+                  filtro === k.id ? 'ring-2 ring-amber-400' : ''
+                } ${'off' in k && k.off ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                <p className={`text-2xl font-bold tabular-nums ${k.color}`}>{k.val}</p>
+                <p className="text-[10px] text-gray-500 font-medium uppercase tracking-wide">{k.label}</p>
+              </button>
+            ))}
+          </div>
+        )}
 
-      {sugerencia && sugerencia.total_urgentes > 0 && (
-        <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-          <AlertTriangle size={16} />
-          {sugerencia.total_urgentes} producto{sugerencia.total_urgentes !== 1 ? 's' : ''}{' '}
-          se agotará{sugerencia.total_urgentes !== 1 ? 'n' : ''} antes de que llegue el próximo pedido
+        <div className="flex gap-2 flex-wrap items-center">
+          <div className="relative flex-1 min-w-[180px]">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text" placeholder="Buscar producto…" value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-300"
+            />
+          </div>
+          {/* Los N chips de categoría eran N botones siempre visibles. Un select
+              dice lo mismo con un nodo y no crece con el catálogo. */}
+          <select value={filtro} onChange={e => setSp2({ estado: e.target.value })}
+            className="py-2 px-2.5 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-amber-300">
+            {FILTROS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
+          </select>
+          <select value={catFiltro} onChange={e => setCatFiltro(e.target.value)}
+            className="py-2 px-2.5 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-amber-300">
+            {categorias.map(c => <option key={c} value={c}>{c === 'todas' ? 'Todas las categorías' : c}</option>)}
+          </select>
         </div>
-      )}
 
-      {/* Filters */}
-      <div className="flex gap-2 flex-wrap items-center">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Buscar producto…"
-            value={busqueda}
-            onChange={e => setBusqueda(e.target.value)}
-            className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-300"
-          />
-        </div>
-        <div className="flex gap-1 flex-wrap">
-          {categorias.map(cat => (
-            <button
-              key={cat}
-              onClick={() => setCatFiltro(cat)}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                catFiltro === cat
-                  ? 'bg-gray-800 text-white'
-                  : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-400'
-              }`}
-            >
-              {cat === 'todas' ? 'Todas' : cat}
+        {vencTruncado && (
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+            El listado de lotes viene recortado (tope de 800). La columna de
+            vencimiento puede estar incompleta para los productos más antiguos.
+          </p>
+        )}
+
+        {loading && <p className="text-sm text-gray-400 text-center py-8 animate-pulse">Cargando…</p>}
+
+        {!loading && sugerencia && filtrados.length === 0 && (
+          <p className="text-sm text-gray-500 text-center py-6">
+            Nada con este filtro.{' '}
+            <button onClick={() => setSp2({ estado: 'todos' })} className="font-semibold text-amber-700 underline">
+              Ver todo
             </button>
+          </p>
+        )}
+
+        <div className="space-y-1">
+          {filtrados.map(p => (
+            <ProductRow
+              key={p.producto_id}
+              p={p}
+              venc={venc[p.producto_id]}
+              activo={selId === p.producto_id}
+              onSelect={() => setSp2({ p: String(p.producto_id), tab: 'hoy' }, true)}
+            />
           ))}
         </div>
       </div>
 
-      {loading && (
-        <p className="text-sm text-gray-400 text-center py-8 animate-pulse">Cargando…</p>
+      {seleccionado && (
+        <PanelProducto
+          key={seleccionado.producto_id}
+          producto={seleccionado}
+          tiendaId={tiendaId}
+          tab={tab}
+          onTab={t => setSp2({ tab: t })}
+          onClose={() => setSp2({ p: null, tab: null })}
+          sinConsumidor={sinConsumidor.has(seleccionado.producto_id)}
+          onSaved={cargar}
+        />
       )}
-
-      {!loading && sugerencia && filtrados.length === 0 && (
-        <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 border border-green-200 rounded-xl px-4 py-3">
-          <CheckCircle2 size={16} />
-          {busqueda || catFiltro !== 'todas'
-            ? 'Sin productos con ese filtro.'
-            : 'Todo el inventario tiene stock suficiente.'}
-        </div>
-      )}
-
-      <div className="space-y-2">
-        {filtrados.map(p => (
-          <ProductRow key={p.producto_id} p={p} tiendaId={tiendaId} onSaved={cargar} />
-        ))}
-      </div>
     </div>
   )
 }
@@ -772,7 +1041,7 @@ export default function ControlInventario() {
   }, [])
 
   return (
-    <div className="space-y-5 pb-10">
+    <div className="space-y-4 pb-10">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">

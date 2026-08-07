@@ -28,7 +28,6 @@ import SolicitudPedido from './pages/SolicitudPedido'
 import SolicitudSencilla from './pages/SolicitudSencilla'
 import Limpieza from './pages/Limpieza'
 import Ingresos from './pages/Ingresos'
-import ConteoCompras from './pages/ConteoCompras'
 import ConteoDesechables from './pages/ConteoDesechables'
 import CuadreInicial from './pages/CuadreInicial'
 import HistorialVentas from './pages/HistorialVentas'
@@ -146,7 +145,10 @@ function AppRoutes() {
           ? isAdmin ? <Layout><CuadreTurnos /></Layout> : <CuadreTurnos />
           : <KioskSetup />
       } />
-      <Route path="/conteo-compras"  element={hasSession ? <ConteoCompras />    : <KioskSetup />} />
+      {/* /conteo-compras: la pantalla salió del menú el 3-jul (la reemplazó el doble
+          conteo) y desde entonces no la linkeaba nadie. Se borró el componente; la
+          ruta queda como redirect para que un bookmark viejo caiga en el flujo vivo. */}
+      <Route path="/conteo-compras"  element={<Navigate to="/conteo-desechables" replace />} />
       <Route path="/conteo-desechables" element={hasSession ? <ConteoDesechables /> : <KioskSetup />} />
       <Route path="/cuadre-inicial" element={hasSession ? <CuadreInicial />  : <KioskSetup />} />
       <Route path="/ventas-hoy"     element={hasSession ? <VentasHoy />      : <KioskSetup />} />
@@ -156,9 +158,13 @@ function AppRoutes() {
           ? isAdmin ? <Layout><Limpieza /></Layout> : <Limpieza />
           : <KioskSetup />
       } />
+      {/* /inventario es la vista BARISTA (la que usa el kiosko y el panel del POS).
+          La vista admin que vivía acá duplicaba /catalogo y /control-inventario y no
+          la linkeaba nada; se borró. El admin que llegue por un bookmark viejo cae en
+          la pantalla que sí es la buena, no en un 404. */}
       <Route path="/inventario"     element={
         hasSession
-          ? isAdmin ? <Layout><Inventario /></Layout> : <Inventario />
+          ? isAdmin ? <Navigate to="/control-inventario" replace /> : <Inventario />
           : <KioskSetup />
       } />
       <Route path="/consignaciones" element={

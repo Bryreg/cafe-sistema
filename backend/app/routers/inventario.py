@@ -412,6 +412,33 @@ def cobertura_recetas(db: Session = Depends(get_db), admin: Usuario = Depends(re
             "insumos_sin_consumidor": insumos_sin_consumidor}
 
 
+@router.get("/diagnostico")
+def diagnostico_stock(tienda_id: Optional[int] = Query(None),
+                      db: Session = Depends(get_db),
+                      admin: Usuario = Depends(require_admin)):
+    """Admin: por qué el motor de stock no avisa y por qué hay negativos.
+
+    Es la respuesta PERMANENTE a las dos preguntas del dueño —«contá los
+    umbrales» y «por qué tengo inventario negativo»— sin depender de que nadie
+    entre a la consola de la base. Devuelve:
+
+      · `umbrales`  cuántas filas de inventario tienen mínimo / crítico / ideal
+                    configurados, por sede y en total. Con el mínimo en 0 (el
+                    default del esquema) el motor no avisa hasta llegar a cero.
+      · `consumo`   cuántos productos tuvieron salidas medidas. Sin esto, el eje
+                    TIEMPO del motor tampoco opera y todo cae al mínimo.
+      · `negativos` cada producto en negativo con su causa PROBABLE, la última
+                    entrada registrada en esa sede y cuántas recetas lo consumen.
+      · `recetas_sospechosas`  cantidades que huelen a unidad mal cargada.
+
+    Read-only: no escribe, no corrige stock, no crea movimientos.
+    """
+    if tienda_id is not None:
+        ensure_tienda_access(admin, tienda_id)
+    from app.services import diagnostico_stock
+    return diagnostico_stock.diagnostico(db, tienda_id)
+
+
 class UnificarRequest(BaseModel):
     keeper_id: int
     archive_ids: list[int]

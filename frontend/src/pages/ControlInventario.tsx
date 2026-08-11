@@ -126,6 +126,60 @@ interface LoteTraza {
 type VencInfo = { fecha: string; estado: 'por_vencer' | 'vencido' }
 type MapaVenc = Record<number, VencInfo>
 
+// GET /inventario/diagnostico — la respuesta del sistema a las dos preguntas del
+// dueño: por qué el motor no avisa (umbrales sin cargar) y por qué hay
+// negativos. Acá se usan tres pedazos: la fracción de productos con mínimo (una
+// línea arriba de la lista), la causa de cada negativo y las recetas con
+// sospecha de unidad (los dos últimos, DENTRO del panel del producto).
+interface DiagNegativo {
+  producto_id: number
+  producto: string
+  sede: string
+  stock: number
+  unidad: string
+  ultima_entrada: string | null
+  lo_consumen_n_recetas: number
+  causa: string
+  titulo: string
+  sospecha: string
+  que_hacer: string
+  tambien_aplica: string[]
+  por_que_gana: string | null
+  dias_sin_entrada: number | null
+}
+
+interface DiagRecetaSospechosa {
+  producto_vendido: string
+  producto_id: number
+  insumo: string
+  insumo_id: number
+  dice_la_receta: number
+  unidad_del_insumo: string
+  sospecha: string
+}
+
+interface Diagnostico {
+  umbrales: {
+    total: {
+      filas: number
+      con_minimo: number
+      filas_gestionadas: number
+      con_minimo_gestionadas: number
+    }
+  }
+  // El motor de pedidos avisa por DÍAS RESTANTES (stock/consumo vs lead time) y
+  // solo cae al mínimo cuando no tiene consumo medido. Sin este dato, el aviso
+  // de umbrales afirmaba que un producto sin mínimo «no avisa nada», que es
+  // falso para todo el que sí rota. El backend ya lo calculaba y la pantalla no
+  // lo leía.
+  consumo: {
+    productos_con_salidas_14d: number
+    motor_sin_datos: boolean
+  }
+  negativos: DiagNegativo[]
+  recetas_sospechosas: DiagRecetaSospechosa[]
+}
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const ESTADO_CFG = {
@@ -154,6 +208,8 @@ const FILTROS = [
   { id: 'pronto',   label: 'Solo pedir hoy' },
   { id: 'bajo',     label: 'Solo stock bajo' },
   { id: 'vence',    label: 'Solo se vence' },
+  // Destino del aviso de umbrales: sin este filtro, el aviso sería una queja.
+  { id: 'sinmin',   label: 'Sin mínimo cargado' },
   { id: 'ok',       label: 'Solo al día (OK)' },
   { id: 'todos',    label: 'Ver todo' },
 ] as const
@@ -168,6 +224,9 @@ function pasaFiltro(p: ProductoInventario, f: FiltroId, venc: MapaVenc) {
     case 'pronto':  return p.estado === 'pronto'
     case 'bajo':    return p.estado === 'bajo'
     case 'vence':   return !!venc[p.producto_id]
+    // Un mínimo en 0 es el default del esquema, no una decisión: ese producto no
+    // dispara ninguna alerta hasta llegar a cero.
+    case 'sinmin':  return !(p.stock_minimo > 0)
     // «Necesita atención» tiene que incluir los CUATRO buckets que cuentan las
     // tarjetas de arriba, y «se vence» es uno de ellos. Sin esto, un insumo con
     // stock sano y un lote por vencer sumaba en la tarjeta naranja y no aparecía
@@ -287,13 +346,19 @@ const TABS = [
 type TabId = typeof TABS[number]['id']
 const ES_TAB = (v: string): v is TabId => TABS.some(t => t.id === v)
 
-function PanelProducto({ producto: p, tiendaId, tab, onTab, onClose, sinConsumidor, onSaved }: {
+function PanelProducto({ producto: p, tiendaId, tab, onTab, onClose, sinConsumidor,
+                         negativo, recetasSospechosas, onSaved }: {
   producto: ProductoInventario
   tiendaId: number
   tab: TabId
   onTab: (t: TabId) => void
   onClose: () => void
   sinConsumidor: boolean
+  // Por qué este producto está en negativo, y si alguna receta lo descuenta en
+  // una unidad que no cierra. Los dos avisos viven ACÁ y no en la lista: el
+  // dueño ya abrió el producto, es el único momento en que sirven.
+  negativo?: DiagNegativo
+  recetasSospechosas: DiagRecetaSospechosa[]
   onSaved: () => void
 }) {
   const [ficha, setFicha] = useState<Ficha | null>(null)
@@ -429,6 +494,52 @@ function PanelProducto({ producto: p, tiendaId, tab, onTab, onClose, sinConsumid
         {/* ── Hoy ── */}
         {tab === 'hoy' && (
           <div className="space-y-5">
+            {/* POR QUÉ está en negativo. La lista ya lo muestra en rojo y dice
+                «agotado»; lo que falta es la causa, y sin ella el dueño lee
+                «el sistema se rompió» cuando lo que pasó es que falta registrar
+                una entrada. Eso cambia lo que hace al leerlo.
+                La causa es una SOSPECHA, no un veredicto: el backend la escribe
+                así y acá NO se reescribe en tono afirmativo. */}
+            {negativo && (
+              <div className="rounded-xl px-3 py-2.5 text-xs space-y-1.5"
+                style={{ background: dark.dangerTint, color: dark.danger, border: `1px solid ${dark.dangerDim}` }}>
+                <p className="font-bold flex items-center gap-1.5">
+                  <AlertTriangle size={13} className="shrink-0" />
+                  {negativo.titulo}
+                </p>
+                <p>{negativo.sospecha}</p>
+                <p style={{ color: dark.ink }}>
+                  Un negativo no es que el sistema se rompió: es que falta registrar
+                  una entrada. {negativo.que_hacer}
+                </p>
+                {/* Si dos causas aplicaban, se dice cuál gana Y que la otra
+                    existía. Esconder la segunda sería inventar una certeza. */}
+                {negativo.por_que_gana && (
+                  <p style={{ color: dark.inkMuted }}>{negativo.por_que_gana}</p>
+                )}
+                <p style={{ color: dark.inkSubtle }}>
+                  Última entrada en esta sede: {negativo.ultima_entrada
+                    ? `${ddmm(negativo.ultima_entrada)}${negativo.dias_sin_entrada !== null ? ` (hace ${negativo.dias_sin_entrada} días)` : ''}`
+                    : 'ninguna'}
+                  {' · '}lo consumen {negativo.lo_consumen_n_recetas} receta{negativo.lo_consumen_n_recetas === 1 ? '' : 's'}
+                </p>
+              </div>
+            )}
+
+            {/* Receta que descuenta este insumo en una unidad que no cierra: 18
+                «kg» donde se quiso decir 18 g descuenta mil veces de más por
+                venta y desploma el stock en horas. El aviso llega acá porque es
+                el único lugar donde llega en el momento en que sirve. */}
+            {recetasSospechosas.length > 0 && (
+              <div className="rounded-xl px-3 py-2.5 text-xs space-y-1.5"
+                style={{ background: dark.amberTint, color: dark.amber, border: `1px solid ${dark.amberDim}` }}>
+                <p className="font-bold">Revisá la unidad de la receta</p>
+                {recetasSospechosas.map(r => (
+                  <p key={`${r.producto_id}-${r.insumo_id}`}>{r.sospecha}</p>
+                ))}
+              </div>
+            )}
+
             {/* Este cartel sale de GET /inventario/cobertura, un endpoint que ya
                 existía y no consumía NADIE. Es la explicación más común de un
                 descuadre de conteo, puesta justo donde el dueño lo está mirando. */}
@@ -766,6 +877,54 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
     return () => { vivo = false }
   }, [])
 
+  // Diagnóstico de stock: umbrales cargados, negativos con su causa y recetas
+  // con sospecha de unidad. UNA llamada que alimenta la línea de aviso de acá
+  // arriba y los dos carteles del panel. Si falla, no se muestra nada — nunca
+  // se dibuja un aviso sobre un dato que no llegó.
+  const [diag, setDiag] = useState<Diagnostico | null>(null)
+  // `diagTick` lo revalida después de guardar. Sin él, registrabas la entrada que
+  // el propio cartel te pidió y el bloque rojo seguía diciendo «sin ingreso
+  // registrado» al lado de una cabecera con el stock ya en positivo. Mismo
+  // criterio que el `tick` de la ficha en el panel: dos fuentes que se refrescan
+  // a destiempo terminan contradiciéndose en la misma pantalla.
+  const [diagTick, setDiagTick] = useState(0)
+  useEffect(() => {
+    let vivo = true
+    if (diagTick === 0) setDiag(null)   // al cambiar de sede sí se limpia; al revalidar, no parpadea
+    api.get<Diagnostico>('/inventario/diagnostico', { params: { tienda_id: tiendaId } })
+      .then(r => { if (vivo) setDiag(r.data) })
+      .catch(() => {})
+    return () => { vivo = false }
+  }, [tiendaId, diagTick])
+  useEffect(() => { setDiagTick(0); setDiag(null) }, [tiendaId])
+
+  const negativosPorProducto = useMemo(() => {
+    const m = new Map<number, DiagNegativo>()
+    for (const n of diag?.negativos ?? []) m.set(n.producto_id, n)
+    return m
+  }, [diag])
+
+  // Indexadas por INSUMO: el aviso le sirve al producto que se está desangrando,
+  // no al que se vende.
+  const sospechaPorInsumo = useMemo(() => {
+    const m = new Map<number, DiagRecetaSospechosa[]>()
+    for (const r of diag?.recetas_sospechosas ?? []) {
+      const prev = m.get(r.insumo_id)
+      if (prev) prev.push(r); else m.set(r.insumo_id, [r])
+    }
+    return m
+  }, [diag])
+
+  // El aviso de umbrales sale sobre el inventario GESTIONADO (lo que el motor
+  // mira de verdad), no sobre todas las filas: contar los archivados infla el
+  // faltante y el número deja de ser el que importa. Se muestra solo cuando
+  // menos de la mitad tiene mínimo — con casi todos cargados sería ruido.
+  const umb = diag?.umbrales.total
+  const avisoUmbrales = umb && umb.filas_gestionadas > 0 &&
+    umb.con_minimo_gestionadas * 2 < umb.filas_gestionadas
+    ? { sin: umb.filas_gestionadas - umb.con_minimo_gestionadas, de: umb.filas_gestionadas }
+    : null
+
   const allItems: ProductoInventario[] = useMemo(() => sugerencia
     ? [...sugerencia.grupos_fijos.flatMap(g => g.productos), ...sugerencia.insumos_generales]
     : [], [sugerencia])
@@ -840,6 +999,26 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
           </select>
         </div>
 
+        {/* UNA línea. Dice la CONSECUENCIA, no el número suelto, y lleva al
+            filtro que muestra exactamente esos productos — donde el panel de
+            cada uno ya tiene el campo Mínimo.
+
+            La consecuencia depende de si el motor tiene consumo medido: avisa
+            por DÍAS RESTANTES (pedidos.py:39-52) y solo cae al mínimo cuando no
+            puede calcularlos. Afirmar «no avisa nada» sin esa condición era
+            falso para todo producto que rota — y quedaba contradicho por las
+            tarjetas de URGENTE/PEDIR a 40 píxeles de distancia. */}
+        {avisoUmbrales && filtro !== 'sinmin' && (
+          <button onClick={() => setSp2({ estado: 'sinmin' })}
+            className="w-full text-left text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 hover:bg-amber-100 transition-colors">
+            <b>{avisoUmbrales.sin} de {avisoUmbrales.de}</b> productos no tienen mínimo
+            cargado: {diag?.consumo?.motor_sin_datos
+              ? 'el sistema no te avisa nada hasta que llegan a cero.'
+              : 'de esos, el sistema solo avisa por los que tiene medido cuánto se gastan; del resto no te avisa nada hasta que llegan a cero.'}{' '}
+            <span className="font-semibold underline">Cargarles el mínimo →</span>
+          </button>
+        )}
+
         {vencTruncado && (
           <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
             El listado de lotes viene recortado (tope de 800). La columna de
@@ -880,7 +1059,9 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
           onTab={t => setSp2({ tab: t })}
           onClose={() => setSp2({ p: null, tab: null })}
           sinConsumidor={sinConsumidor.has(seleccionado.producto_id)}
-          onSaved={cargar}
+          negativo={negativosPorProducto.get(seleccionado.producto_id)}
+          recetasSospechosas={sospechaPorInsumo.get(seleccionado.producto_id) ?? []}
+          onSaved={() => { cargar(); setDiagTick(t => t + 1) }}
         />
       )}
     </div>

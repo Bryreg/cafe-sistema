@@ -22,7 +22,11 @@ const MONEDAS = [
 const TODAS = [...BILLETES, ...MONEDAS]
 
 interface DetalleItem { label: string; tipo: string; valor: number; monto: number; cantidad: number }
-interface PedidoItem { producto_id: number; cantidad_solicitada: number; nombre: string; unidad_medida: string }
+// `accion` viene del backend (services/solicitudes._marcar_accion): un preparable
+// —la mezcla de granizado— no se le compra a nadie, se arma en la barra. Sin la
+// marca, esta bandeja lo mostraba bajo «Pedidos de insumos» con un carrito, como
+// una compra más.
+interface PedidoItem { producto_id: number; cantidad_solicitada: number; nombre: string; unidad_medida: string; accion?: 'comprar' | 'preparar' }
 interface Pedido { id: number; fecha_solicitud: string; estado: string; nota: string | null; items: PedidoItem[]; tienda_nombre?: string }
 interface Sencilla { id: number; fecha_solicitud: string; estado: string; monto_solicitado: number; motivo: string; detalle: string | null; tienda_nombre?: string }
 
@@ -257,7 +261,14 @@ export default function Bandeja() {
                       <div className="mt-1 space-y-0.5">
                         {p.items.map(item => (
                           <div key={item.producto_id} className="flex items-center justify-between text-xs">
-                            <span className="text-gray-700 font-medium">{item.nombre}</span>
+                            <span className="text-gray-700 font-medium">
+                              {item.nombre}
+                              {item.accion === 'preparar' && (
+                                <span className="ml-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-full">
+                                  se prepara
+                                </span>
+                              )}
+                            </span>
                             <span className="text-gray-500 ml-2">{item.cantidad_solicitada} {item.unidad_medida}</span>
                           </div>
                         ))}

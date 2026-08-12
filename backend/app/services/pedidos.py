@@ -7,6 +7,7 @@ from app.models.models import (
     SolicitudPedido, SolicitudPedidoItem, EstadoSolicitudEnum,
     FacturaCompra, FacturaCompraItem,
 )
+from app.services import preparables as preparables_svc
 
 
 def _proveedores_por_compras(db: Session) -> dict[int, str]:
@@ -92,6 +93,13 @@ def sugerencia_pedido(db: Session, tienda_id: int) -> dict:
     # Proveedor por historial de compras: fallback cuando no hay asignación manual
     prov_compras = _proveedores_por_compras(db)
 
+    # Lo que se PREPARA en la barra (mezcla de granizado, almíbar) no se compra:
+    # su necesidad es igual de real y la cuenta de consumo sirve igual, pero el
+    # verbo es otro. Ver `services/preparables.py`. La tabla de rendimientos tiene
+    # una entrada por preparable (0.0 si no está cargado), así que sus claves SON
+    # el conjunto de preparables: una sola consulta, no dos.
+    rendimientos = preparables_svc.rendimiento_por_tanda(db)
+
     items = []
     for inv in inventarios:
         p = inv.producto
@@ -119,6 +127,17 @@ def sugerencia_pedido(db: Session, tienda_id: int) -> dict:
             # Fallback: reponer hasta el doble del mínimo
             cantidad_sugerida = max(0, math.ceil(inv.stock_minimo * 2 - stock))
 
+        # La CANTIDAD no cambia por ser preparable: la misma matemática de consumo
+        # dice cuánto falta reponer. Lo que cambia es la acción y la unidad en que
+        # se lee — «reponer 51.000 gr» y, si el rendimiento está cargado, cuántas
+        # TANDAS son. Sin rendimiento no hay factor de conversión y no se inventa:
+        # los gramos por sí solos ya son honestos.
+        es_preparable = p.id in rendimientos
+        rinde = rendimientos.get(p.id, 0.0)
+        tandas_sugeridas = None
+        if es_preparable and rinde > 0 and cantidad_sugerida > 0:
+            tandas_sugeridas = math.ceil(cantidad_sugerida / rinde)
+
         items.append({
             "producto_id": p.id,
             "nombre": p.nombre,
@@ -135,6 +154,11 @@ def sugerencia_pedido(db: Session, tienda_id: int) -> dict:
             "dias_restantes": dias_restantes,
             "estado": estado,
             "cantidad_sugerida": cantidad_sugerida,
+            # Qué hacer con esa cantidad. "comprar" es lo de siempre; "preparar"
+            # es el producto que se arma con receta y que ningún proveedor vende.
+            "accion": "preparar" if es_preparable else "comprar",
+            "tandas_sugeridas": tandas_sugeridas,
+            "rendimiento_tanda": rinde if (es_preparable and rinde > 0) else None,
             "barista_alerto": p.id in barista_alerto,
             "fraccionable": bool(p.fraccionable),
             "envase": p.envase,
@@ -149,7 +173,12 @@ def sugerencia_pedido(db: Session, tienda_id: int) -> dict:
     generales: list[dict] = []
 
     for item in items:
-        prov = item["proveedor"]
+        # Un grupo de proveedor ES una lista de compra: se abre por teléfono y se
+        # copia a WhatsApp. Un preparable no entra ahí ni con proveedor cargado.
+        # Puede tener uno por dos caminos —el campo `Producto.proveedor` escrito a
+        # mano y el fallback `_proveedores_por_compras`, que lo toma de la última
+        # factura que lo incluyó— y ninguno de los dos lo vuelve comprable.
+        prov = item["proveedor"] if item["accion"] == "comprar" else None
         if prov:
             if prov not in grupos:
                 grupos[prov] = {

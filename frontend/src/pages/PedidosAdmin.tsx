@@ -4,6 +4,7 @@ import api from '../api/client'
 import {
   ShoppingCart, AlertTriangle, Clock, CheckCircle2, CheckCircle,
   Copy, ChevronDown, ChevronUp, Phone, ClipboardList, Settings2, Check, Search,
+  ChefHat,
 } from 'lucide-react'
 
 // Timestamps en UTC naive → parsear como UTC para mostrar hora local Colombia
@@ -30,6 +31,12 @@ interface ProductoSugerido {
   dias_restantes: number | null
   estado: 'agotado' | 'urgente' | 'pronto' | 'bajo' | 'ok'
   cantidad_sugerida: number
+  // 'preparar' = se arma con receta en la barra (mezcla de granizado, almíbar).
+  // El backend nunca lo mete en `grupos_fijos`, así que acá solo aparece dentro
+  // de insumos generales — y sin input editable: no hay lista que mandar.
+  accion?: 'comprar' | 'preparar'
+  tandas_sugeridas?: number | null
+  rendimiento_tanda?: number | null
   barista_alerto: boolean
 }
 
@@ -153,14 +160,25 @@ function FilaProducto({
         </span>
       </td>
       <td className="py-2 pl-2">
-        <div className="flex items-center gap-1">
-          <input
-            type="number" min={0} step={1} value={cantidad}
-            onChange={e => onCantidad(p.producto_id, Math.max(0, Number(e.target.value)))}
-            className="w-16 text-center border border-gray-300 rounded-lg py-1 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-amber-400"
-          />
-          <span className="text-xs text-gray-400">{p.unidad}</span>
-        </div>
+        {/* Un preparable no lleva input: el número no va a ninguna lista de
+            compra, se convierte en una tanda que alguien arma en la barra. */}
+        {p.accion === 'preparar' ? (
+          <span className="text-xs font-semibold text-emerald-700 whitespace-nowrap">
+            preparar {p.cantidad_sugerida} {p.unidad}
+            {p.tandas_sugeridas
+              ? ` ≈ ${p.tandas_sugeridas} tanda${p.tandas_sugeridas === 1 ? '' : 's'}`
+              : ''}
+          </span>
+        ) : (
+          <div className="flex items-center gap-1">
+            <input
+              type="number" min={0} step={1} value={cantidad}
+              onChange={e => onCantidad(p.producto_id, Math.max(0, Number(e.target.value)))}
+              className="w-16 text-center border border-gray-300 rounded-lg py-1 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+            <span className="text-xs text-gray-400">{p.unidad}</span>
+          </div>
+        )}
       </td>
     </tr>
   )
@@ -401,7 +419,15 @@ function TabPedidos({ tiendaId }: { tiendaId: number | null }) {
 interface SolItem {
   id: number; producto_id: number; cantidad_solicitada: number
   nombre: string; unidad_medida: string; proveedor: string | null
+  accion?: 'comprar' | 'preparar'
 }
+
+// La solicitud de la barista se agrupa por proveedor y de ahí sale el texto de
+// WhatsApp. Lo que se prepara en la barra no tiene proveedor a quien mandárselo:
+// va en su propio grupo, con un rótulo que no es un teléfono.
+const GRUPO_PREPARAR = 'Preparar en barra'
+const grupoDe = (it: SolItem) =>
+  it.accion === 'preparar' ? GRUPO_PREPARAR : (it.proveedor || 'Sin proveedor')
 interface Solicitud {
   id: number; tienda_id: number; tienda_nombre: string | null
   fecha_solicitud: string; estado: string; nota: string | null
@@ -441,9 +467,15 @@ function TabSolicitudes({ onCount }: { onCount: (n: number) => void }) {
     const fecha = parseUTC(s.fecha_solicitud).toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })
     const porProv: Record<string, SolItem[]> = {}
     for (const it of s.items) {
-      const k = it.proveedor || 'Sin proveedor'
+      // Lo que se prepara NO entra en el texto: es un pedido a un proveedor.
+      if (it.accion === 'preparar') continue
+      const k = grupoDe(it)
       if (!porProv[k]) porProv[k] = []
       porProv[k].push(it)
+    }
+    if (!Object.keys(porProv).length) {
+      alert('Esta solicitud es solo de cosas que se preparan en la barra: no hay nada que pedirle a un proveedor.')
+      return
     }
     const bloques = Object.entries(porProv).map(([prov, items]) =>
       `*${prov}*\n${items.map(i => `- ${i.nombre}: ${i.cantidad_solicitada} ${i.unidad_medida}`).join('\n')}`)
@@ -485,7 +517,7 @@ function TabSolicitudes({ onCount }: { onCount: (n: number) => void }) {
         // Items agrupados por proveedor (el de las compras de las baristas)
         const porProv: Record<string, SolItem[]> = {}
         for (const it of s.items) {
-          const k = it.proveedor || 'Sin proveedor'
+          const k = grupoDe(it)
           if (!porProv[k]) porProv[k] = []
           porProv[k].push(it)
         }
@@ -514,8 +546,9 @@ function TabSolicitudes({ onCount }: { onCount: (n: number) => void }) {
             <div className="px-4 py-2 space-y-2">
               {Object.entries(porProv).map(([prov, items]) => (
                 <div key={prov}>
-                  <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide flex items-center gap-1">
-                    <Phone size={10} /> {prov}
+                  <p className={`text-[11px] font-bold uppercase tracking-wide flex items-center gap-1 ${
+                    prov === GRUPO_PREPARAR ? 'text-emerald-600' : 'text-gray-400'}`}>
+                    {prov === GRUPO_PREPARAR ? <ChefHat size={10} /> : <Phone size={10} />} {prov}
                   </p>
                   {items.map(it => (
                     <div key={it.id} className="flex items-center justify-between text-sm py-0.5 pl-4">

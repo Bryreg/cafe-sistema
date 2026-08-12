@@ -14,6 +14,10 @@ const UNIDADES = ['unidad', 'gr', 'kg', 'lt', 'ml', 'paquete', 'caja', 'bolsa', 
 interface Alerta {
   producto_id: number; producto: string; unidad: string
   stock_actual: number; stock_minimo: number; cantidad_sugerida: number
+  // 'preparar' = se arma acá con receta (mezcla de granizado). Que falte es real
+  // y la barista tiene que poder avisarlo; lo que no puede es que el botón le
+  // diga «pedir» algo que nadie vende hecho.
+  accion?: 'comprar' | 'preparar'
 }
 
 export default function SolicitudPedido() {
@@ -237,16 +241,21 @@ export default function SolicitudPedido() {
                     <span className="text-xs text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full font-semibold">
                       sugerido: {Math.round(a.cantidad_sugerida)}
                     </span>
+                    {/* La mezcla se prepara acá: avisarlo sigue estando bien —el
+                        admin tiene que saber que falta— pero el botón no puede
+                        decir «pedir» algo que ningún proveedor manda hecho. */}
                     <button
                       onClick={() => agregar(a.producto_id, a.producto, a.unidad, a.cantidad_sugerida)}
                       disabled={yaAgregado}
                       className={`text-xs px-2.5 py-1 rounded-lg font-semibold transition-colors ${
                         yaAgregado
                           ? 'bg-green-100 text-green-700 cursor-default'
-                          : 'bg-red-600 hover:bg-red-700 text-white'
+                          : a.accion === 'preparar'
+                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                            : 'bg-red-600 hover:bg-red-700 text-white'
                       }`}
                     >
-                      {yaAgregado ? '✓' : '+ pedir'}
+                      {yaAgregado ? '✓' : a.accion === 'preparar' ? '+ preparar' : '+ pedir'}
                     </button>
                   </div>
                 </div>

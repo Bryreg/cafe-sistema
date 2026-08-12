@@ -380,7 +380,10 @@ def get_trazabilidad(db: Session, tienda_id: int | None = None, producto_id: int
 def get_alertas(db: Session, tienda_id: int):
     """Alertas de stock con 4 estados. Filtra todo lo que no es NORMAL.
     Compat: mantiene 'nivel' (agotado|bajo) para AdminHub; agrega 'estado' de 4 estados
-    y 'cantidad_sugerida' calculada hacia stock_ideal (o el doble del mínimo si no hay ideal)."""
+    y 'cantidad_sugerida' calculada hacia stock_ideal (o el doble del mínimo si no hay ideal).
+    Agrega 'accion' (comprar|preparar): la barista pide reposición desde acá y la
+    mezcla de granizado no se le pide a nadie, se prepara."""
+    from app.services import preparables as preparables_svc
     items = db.query(Inventario).options(joinedload(Inventario.producto)).filter(
         Inventario.tienda_id == tienda_id,
         Inventario.stock_actual <= Inventario.stock_minimo,
@@ -389,6 +392,7 @@ def get_alertas(db: Session, tienda_id: int):
     # archivados y lo no-contado inflaban la alarma con "agotados" falsos.
     items = [i for i in items if i.producto and i.producto.controla_stock
              and i.producto.incluir_en_conteo is not False]
+    prep_ids = preparables_svc.ids_preparables(db)
     out = []
     for i in items:
         estado = clasificar_estado(
@@ -407,6 +411,7 @@ def get_alertas(db: Session, tienda_id: int):
             "estado": estado,                                        # nuevo: agotado|critico|bajo
             "nivel": "agotado" if estado == "agotado" else "bajo",  # COMPAT AdminHub actual
             "cantidad_sugerida": max(1, round(objetivo - i.stock_actual)),
+            "accion": "preparar" if i.producto_id in prep_ids else "comprar",
         })
     return out
 
@@ -440,6 +445,8 @@ def get_alertas_consolidadas(db: Session, tienda_id: int | None = None):
              and i.producto.incluir_en_conteo is not False]
     # Orden estable: primero por estado (agotado < critico < bajo), luego stock asc.
     orden_estado = {"agotado": 0, "critico": 1, "bajo": 2, "normal": 3}
+    from app.services import preparables as preparables_svc
+    prep_ids = preparables_svc.ids_preparables(db)
     out = []
     for i in items:
         estado = clasificar_estado(
@@ -458,6 +465,7 @@ def get_alertas_consolidadas(db: Session, tienda_id: int | None = None):
             "estado": estado,
             "nivel": "agotado" if estado == "agotado" else "bajo",
             "cantidad_sugerida": max(1, round(objetivo - i.stock_actual)),
+            "accion": "preparar" if i.producto_id in prep_ids else "comprar",
             "tienda_id": i.tienda_id,
             "tienda_nombre": nombres.get(i.tienda_id, ""),
         })
@@ -474,17 +482,13 @@ def _tick_checklist_inventario(db: Session, tienda_id: int):
 # Un producto es "preparable" si controla stock, tiene receta (producto_insumos)
 # y NO se vende en el POS (precio_venta 0) — ej. la mezcla de granizado. Su
 # contenido_por_unidad es el RENDIMIENTO de una preparación (gr que produce).
+# La regla vive en `services/preparables.py`; acá se importa, no se repite.
 
 def get_preparables(db: Session, tienda_id: int) -> list:
     from app.models.models import ProductoInsumo
-    rows = (
-        db.query(Producto)
-        .filter(Producto.controla_stock.is_(True))
-        .filter((Producto.precio_venta.is_(None)) | (Producto.precio_venta <= 0))
-        .join(ProductoInsumo, ProductoInsumo.producto_id == Producto.id)
-        .distinct()
-        .all()
-    )
+    from app.services import preparables as preparables_svc
+    ids = preparables_svc.ids_preparables(db)
+    rows = db.query(Producto).filter(Producto.id.in_(ids)).all() if ids else []
     stocks = {
         i.producto_id: i.stock_actual
         for i in db.query(Inventario).filter(

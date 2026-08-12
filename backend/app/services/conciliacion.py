@@ -70,6 +70,7 @@ from app.core.tz import inicio_dia_col_utc, fin_dia_col_utc
 from app.models.models import (Inventario, InventarioMensual,
                                MovimientoInventario, Producto, ProductoInsumo,
                                Ticket, TicketItem, TicketItemComboSeleccion)
+from app.services import preparables as preparables_svc
 
 # Tolerancia de redondeo: el stock es Float y la escalera suma decenas de
 # movimientos. Por debajo de esto no hay diferencia, hay ruido de punto flotante.
@@ -102,15 +103,12 @@ def _rendimiento_preparables(db) -> dict[int, float]:
     la bolsa sellada del conteo (models.py:276)—, así que dividir por él a ciegas
     rompería el costo de cualquier producto de reventa que venga en bolsa. Acá se
     devuelve SOLO donde significa rendimiento.
+
+    La definición de preparable y esta tabla viven en `services/preparables.py`:
+    acá quedó el nombre que ya usa `costo_unitario` más abajo, no una segunda
+    copia de las reglas.
     """
-    con_receta = {pid for pid, in db.query(ProductoInsumo.producto_id).distinct().all()}
-    out: dict[int, float] = {}
-    for pid, controla, venta, contenido in db.query(
-            Producto.id, Producto.controla_stock,
-            Producto.precio_venta, Producto.contenido_por_unidad).all():
-        if pid in con_receta and controla and float(venta or 0) <= 0:
-            out[pid] = float(contenido or 0)
-    return out
+    return preparables_svc.rendimiento_por_tanda(db)
 
 
 def costo_unitario(db) -> dict[int, tuple[float, str]]:

@@ -48,7 +48,10 @@ def crear_pedido(db: Session, tienda_id: int, nota: str | None,
     db.commit()
     db.refresh(solicitud)
     logger.info(f"Solicitud pedido {solicitud.id} creada en tienda {tienda_id}")
-    return solicitud
+    # La respuesta viaja con `accion` igual que los listados: hoy ninguna pantalla
+    # la lee (el front recarga), pero una API que dice "comprar" sobre un
+    # preparable es una mentira esperando a su próximo consumidor.
+    return _marcar_accion(db, [solicitud])[0]
 
 
 def aprobar_pedido(db: Session, solicitud_id: int, usuario_id: int):
@@ -62,7 +65,7 @@ def aprobar_pedido(db: Session, solicitud_id: int, usuario_id: int):
     s.fecha_aprobacion = datetime.utcnow()
     db.commit()
     db.refresh(s)
-    return s
+    return _marcar_accion(db, [s])[0]
 
 
 def rechazar_pedido(db: Session, solicitud_id: int, usuario_id: int):
@@ -76,13 +79,33 @@ def rechazar_pedido(db: Session, solicitud_id: int, usuario_id: int):
     s.fecha_aprobacion = datetime.utcnow()
     db.commit()
     db.refresh(s)
-    return s
+    return _marcar_accion(db, [s])[0]
+
+
+def _marcar_accion(db: Session, solicitudes: list) -> list:
+    """Le pega a cada ítem si se COMPRA o se PREPARA (`services/preparables.py`).
+
+    La barista puede —y debe— avisar que falta mezcla de granizado. El problema
+    era del otro lado: el admin agrupa la solicitud POR PROVEEDOR y de ahí sale
+    un texto de pedido para WhatsApp, así que sin esta marca la mezcla viajaba
+    dentro de una compra a alguien que no la vende.
+
+    Se resuelve una sola vez para todas las solicitudes: es una propiedad del
+    catálogo, no del ítem, y como `@property` del modelo sería una consulta por
+    fila.
+    """
+    from app.services import preparables as preparables_svc
+    prep_ids = preparables_svc.ids_preparables(db)
+    for s in solicitudes:
+        for item in s.items:
+            item.accion = "preparar" if item.producto_id in prep_ids else "comprar"
+    return solicitudes
 
 
 def get_pedidos_tienda(db: Session, tienda_id: int):
-    return db.query(SolicitudPedido).filter(
+    return _marcar_accion(db, db.query(SolicitudPedido).filter(
         SolicitudPedido.tienda_id == tienda_id
-    ).order_by(SolicitudPedido.fecha_solicitud.desc()).all()
+    ).order_by(SolicitudPedido.fecha_solicitud.desc()).all())
 
 
 def crear_sencilla(db: Session, tienda_id: int, monto_solicitado: float,
@@ -154,7 +177,7 @@ def get_pedidos_todas(db: Session):
     rows = db.query(SolicitudPedido).order_by(SolicitudPedido.fecha_solicitud.desc()).limit(100).all()
     for r in rows:
         r.tienda_nombre = r.tienda.nombre if r.tienda else None
-    return rows
+    return _marcar_accion(db, rows)
 
 
 def get_sencillas_todas(db: Session):
@@ -173,5 +196,6 @@ def get_bandeja_pendientes(db: Session, tienda_id: int):
         SolicitudSencilla.tienda_id == tienda_id,
         SolicitudSencilla.estado == EstadoSolicitudEnum.pendiente
     ).all()
+    _marcar_accion(db, pedidos)
     return {"pedidos": pedidos, "sencillas": sencillas,
             "total": len(pedidos) + len(sencillas)}

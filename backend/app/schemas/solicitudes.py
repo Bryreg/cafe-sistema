@@ -22,6 +22,9 @@ class SolicitudPedidoItemOut(BaseModel):
     nombre: str = ""
     unidad_medida: str = ""
     proveedor: Optional[str] = None
+    # comprar | preparar — lo pega `solicitudes._marcar_accion`. Default "comprar"
+    # para que un camino que no pase por ahí no invente un preparable.
+    accion: str = "comprar"
     class Config: from_attributes = True
 
 

@@ -26,6 +26,13 @@ interface ProductoInventario {
   dias_restantes: number | null
   estado: 'agotado' | 'urgente' | 'pronto' | 'bajo' | 'ok'
   cantidad_sugerida: number
+  // Qué hacer con `cantidad_sugerida`. 'preparar' es el producto que se arma con
+  // receta en la barra (la mezcla de granizado): nadie lo vende hecho, así que su
+  // número bajo la columna «Pedir» sería una orden de compra imposible.
+  // `tandas_sugeridas` solo viaja cuando el rendimiento por tanda está cargado.
+  accion?: 'comprar' | 'preparar'
+  tandas_sugeridas?: number | null
+  rendimiento_tanda?: number | null
   barista_alerto: boolean
   fraccionable?: boolean
   envase?: 'bolsa' | 'botella' | null
@@ -335,6 +342,11 @@ function ProductRow({ p, venc, activo, onSelect }: {
   // sin salidas registradas mostraba su cero en gris.
   const critico = p.stock_actual <= 0 ||
     (p.dias_restantes !== null && p.dias_restantes <= p.lead_time_dias)
+  // Lo que se arma con receta en la barra: la columna «Pedir» le cambia el verbo,
+  // no el estado. `hayQueReponer` evita el otro extremo: un preparable con stock
+  // de sobra no tiene por qué gritar «preparar» en la lista.
+  const esPreparable = p.accion === 'preparar'
+  const hayQueReponer = p.cantidad_sugerida > 0 || p.stock_actual <= 0
 
   return (
     <button
@@ -383,10 +395,18 @@ function ProductRow({ p, venc, activo, onSelect }: {
           sugerencia. «Azúcar 0 g | (vacío)» bajo el título «Pedir» se lee como
           «no compres azúcar», y la verdad es que el sistema no tiene ni mínimo
           ni consumo medido para calcular cuánto. «a ojo» es eso, honesto y en
-          castellano: comprá, pero la cantidad la ponés vos. */}
+          castellano: comprá, pero la cantidad la ponés vos.
+
+          El preparable (la mezcla de granizado) tampoco puede mostrar un número
+          a secas: bajo el título «Pedir» se lee como una orden de compra a un
+          proveedor que no existe. La falta ES real, así que esconderlo sería
+          peor. Va el VERBO en el mismo nodo —la fila tiene presupuesto de uno— y
+          la cantidad completa espera en el panel, que es donde se decide. */}
       <span className={`shrink-0 w-14 text-right text-[11px] tabular-nums ${
-        p.cantidad_sugerida > 0 ? 'font-bold text-amber-700' : 'text-gray-400'}`}>
-        {p.cantidad_sugerida > 0 ? num(p.cantidad_sugerida)
+        hayQueReponer && esPreparable ? 'font-bold text-emerald-700'
+          : p.cantidad_sugerida > 0 ? 'font-bold text-amber-700' : 'text-gray-400'}`}>
+        {esPreparable ? (hayQueReponer ? 'preparar' : '')
+          : p.cantidad_sugerida > 0 ? num(p.cantidad_sugerida)
           : p.stock_actual <= 0 ? 'a ojo' : ''}
       </span>
     </button>
@@ -553,6 +573,38 @@ function PanelProducto({ producto: p, tiendaId, tab, onTab, onClose, sinConsumid
         {/* ── Hoy ── */}
         {tab === 'hoy' && (
           <div className="space-y-5">
+            {/* El preparable: acá SÍ cabe la cantidad completa, porque el dueño ya
+                abrió el producto y está decidiendo. La lista solo pudo decir el
+                verbo. Las tandas se dicen únicamente si el rendimiento está
+                cargado — sin ese número no hay forma de convertir gramos en
+                tandas y una tanda inventada sería peor que ninguna. */}
+            {p.accion === 'preparar' && (
+              <div className="rounded-xl px-3 py-2.5 text-xs space-y-1"
+                style={{ background: dark.surfaceAlt, color: dark.ink,
+                         border: `1px solid ${dark.border}` }}>
+                <p className="font-bold">Esto se prepara, no se compra</p>
+                {p.cantidad_sugerida > 0 ? (
+                  <p>
+                    Reponé ~{num(p.cantidad_sugerida)} {p.unidad}
+                    {p.tandas_sugeridas
+                      ? ` ≈ ${p.tandas_sugeridas} tanda${p.tandas_sugeridas === 1 ? '' : 's'}`
+                      : ''}.
+                    {p.tandas_sugeridas && p.rendimiento_tanda
+                      ? ` Una tanda rinde ${num(p.rendimiento_tanda)} ${p.unidad}.`
+                      : ''}
+                  </p>
+                ) : p.stock_actual <= 0 ? (
+                  <p>Se acabó. La cantidad la ponés vos: no hay consumo medido ni mínimo cargado.</p>
+                ) : (
+                  <p style={{ color: dark.inkMuted }}>Alcanza por ahora.</p>
+                )}
+                {p.cantidad_sugerida > 0 && !p.tandas_sugeridas && (
+                  <p style={{ color: dark.inkSubtle }}>
+                    Sin rendimiento por tanda cargado no se puede decir cuántas tandas son.
+                  </p>
+                )}
+              </div>
+            )}
             {/* POR QUÉ está en negativo. La lista ya lo muestra en rojo y dice
                 «agotado»; lo que falta es la causa, y sin ella el dueño lee
                 «el sistema se rompió» cuando lo que pasó es que falta registrar

@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timedelta, date
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,7 +11,9 @@ from app.models.models import Usuario, Producto, ProductoInsumo, ProductoDesecha
 from app.schemas.inventario import (
     MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate, UmbralesStockUpdate,
     InsumosProductoUpdate, DesechablesProductoUpdate, PreparacionRequest,
+    UmbralesMinimosAplicar,
 )
+from app.services import audit
 from app.services import inventario as svc
 
 router = APIRouter(prefix="/inventario", tags=["inventario"])
@@ -305,6 +308,118 @@ def actualizar_umbrales(tienda_id: int, producto_id: int, data: UmbralesStockUpd
         "stock_ideal": inv.stock_ideal,
         "stock_critico": inv.stock_critico,
     }
+
+# Tope de cordura para un mínimo escrito a mano. No es una regla de negocio —un
+# mínimo de 12.000 gr de mezcla es legítimo— sino una barrera contra el dedo que
+# pega 15 ceros: un umbral absurdo deja el producto en alerta para siempre y el
+# dueño no tiene forma de entender por qué.
+MINIMO_MAX = 1e9
+
+
+@router.get("/umbrales/propuestas")
+def umbrales_propuestas(tienda_id: int = Query(...),
+                        db: Session = Depends(get_db),
+                        admin: Usuario = Depends(require_admin)):
+    """Admin: mínimos que el sistema PROPONE para los productos de esta sede que
+    todavía no tienen uno, según lo que se gastó de verdad.
+
+    READ-ONLY ABSOLUTO. No escribe una fila, un umbral ni un movimiento: es una
+    propuesta para mirar. Aceptarla es otro pedido (PATCH /umbrales/aplicar) y
+    lleva explícitamente qué productos se aceptan.
+
+    Devuelve `propuestas` (con el consumo que las sostiene y en qué estado
+    quedaría cada producto HOY si se aceptaran), `sin_dato` (los que no tienen
+    consumo medido: esos los pone el dueño, el sistema no inventa un número) e
+    `impacto` (cuántos pasan a necesitar atención hoy mismo).
+    """
+    ensure_tienda_access(admin, tienda_id)
+    from app.services import umbrales as umbrales_svc
+    return umbrales_svc.proponer(db, tienda_id)
+
+
+@router.patch("/umbrales/aplicar")
+def umbrales_aplicar(data: UmbralesMinimosAplicar,
+                     db: Session = Depends(get_db),
+                     admin: Usuario = Depends(require_admin)):
+    """Admin: escribe los mínimos que el dueño aceptó. SOLO `stock_minimo`, SOLO
+    de los productos que vienen en el cuerpo, SOLO en la sede que viene en el
+    cuerpo (la fila de inventario es (producto, tienda): el consumo de Vida no
+    es el de Palmetto). No toca `stock_critico`, `stock_ideal` ni `lead_time`.
+
+    Valida ACÁ y no en el schema: con `Field(ge=…, allow_inf_nan=False)` el 422
+    de pydantic incrusta el valor ofensor en el cuerpo y un `inf` no es
+    serializable a JSON — la respuesta de error revienta antes de llegar.
+
+    Todo o nada: un item inválido aborta el lote entero sin escribir. Una
+    escritura parcial silenciosa deja al dueño sin saber qué quedó aplicado.
+    """
+    ensure_tienda_access(admin, data.tienda_id)
+    if not data.items:
+        raise HTTPException(400, "No llegó ningún mínimo para aplicar")
+
+    nuevos: dict[int, float] = {}
+    for it in data.items:
+        valor = float(it.stock_minimo)
+        if not math.isfinite(valor):
+            raise HTTPException(400, "El mínimo tiene que ser un número válido")
+        if valor < 0:
+            raise HTTPException(400, "El mínimo no puede ser negativo")
+        if valor > MINIMO_MAX:
+            raise HTTPException(400, "El mínimo es demasiado grande")
+        if it.producto_id in nuevos:
+            raise HTTPException(400, f"El producto {it.producto_id} viene repetido")
+        nuevos[it.producto_id] = valor
+
+    filas = (
+        db.query(Inventario)
+        .filter(Inventario.tienda_id == data.tienda_id,
+                Inventario.producto_id.in_(list(nuevos.keys())))
+        .all()
+    )
+    por_producto = {f.producto_id: f for f in filas}
+    faltan = [pid for pid in nuevos if pid not in por_producto]
+    if faltan:
+        raise HTTPException(404, f"Sin registro de inventario en esta sede: {faltan}")
+
+    # Coherencia con los umbrales que NO se tocan, y solo si están CONFIGURADOS:
+    # un `stock_critico`/`stock_ideal` en 0 significa «nadie lo cargó» (es el
+    # mismo default que el mínimo que estamos arreglando), no «el techo es 0».
+    # Compararse contra un umbral inexistente rechazaría todo el lote.
+    # El 400 nombra el PRODUCTO, no su id: este texto le llega al dueño tal cual
+    # (el front lo muestra en el alert) y «el producto 42» no le dice nada.
+    nombres = dict(db.query(Producto.id, Producto.nombre)
+                   .filter(Producto.id.in_(list(nuevos))).all())
+    for pid, valor in nuevos.items():
+        inv = por_producto[pid]
+        critico = float(inv.stock_critico or 0)
+        ideal = float(inv.stock_ideal or 0)
+        nombre = nombres.get(pid, f"producto {pid}")
+        if critico > 0 and critico > valor:
+            raise HTTPException(
+                400, f"{nombre} ya tiene un crítico de {critico}, mayor que el "
+                     f"mínimo {valor}. No se guardó ninguno: destildalo o ajustá "
+                     f"su número y volvé a aceptar.")
+        if ideal > 0 and ideal < valor:
+            raise HTTPException(
+                400, f"{nombre} ya tiene un ideal de {ideal}, menor que el "
+                     f"mínimo {valor}. No se guardó ninguno: destildalo o ajustá "
+                     f"su número y volvé a aceptar.")
+
+    for pid, valor in nuevos.items():
+        inv = por_producto[pid]
+        anterior = float(inv.stock_minimo or 0)
+        if anterior == valor:
+            continue
+        inv.stock_minimo = valor
+        audit.registrar(
+            db, accion="umbral_minimo_aplicado", tabla="inventario",
+            registro_id=inv.id, usuario_id=admin.id, tienda_id=data.tienda_id,
+            datos_antes={"producto_id": pid, "stock_minimo": anterior},
+            datos_despues={"producto_id": pid, "stock_minimo": valor},
+        )
+    db.commit()
+    return {"ok": True, "tienda_id": data.tienda_id, "aplicados": len(nuevos)}
+
 
 @router.get("/admin/resumen")
 def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):

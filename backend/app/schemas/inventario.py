@@ -56,3 +56,21 @@ class UmbralesStockUpdate(BaseModel):
     stock_minimo: Optional[float] = None
     stock_ideal: Optional[float] = None
     stock_critico: Optional[float] = None
+
+
+class UmbralMinimoItem(BaseModel):
+    producto_id: int
+    stock_minimo: float
+
+
+class UmbralesMinimosAplicar(BaseModel):
+    """Los mínimos que el dueño ACEPTÓ, uno por producto, para UNA sede.
+
+    SIN restricciones de pydantic a propósito (nada de Field(ge=0) ni
+    allow_inf_nan=False), mismo patrón que SaldoBancoRequest y que la meta de
+    ventas: un valor rechazado por el schema vuelve DENTRO del cuerpo del 422 y
+    un `inf` no es serializable a JSON — la propia respuesta de error revienta.
+    La validación vive en el handler y responde 400 con un texto.
+    """
+    tienda_id: int
+    items: list[UmbralMinimoItem]

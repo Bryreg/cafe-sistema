@@ -187,6 +187,57 @@ interface Diagnostico {
   recetas_sospechosas: DiagRecetaSospechosa[]
 }
 
+// GET /inventario/umbrales/propuestas — lo que el sistema PROPONE como mínimo
+// para los productos que no tienen uno, según lo que se gastó de verdad.
+// Read-only: aceptar es otro pedido (PATCH /inventario/umbrales/aplicar) y viaja
+// con la lista explícita de lo que el dueño marcó.
+interface PropuestaMinimo {
+  producto_id: number
+  nombre: string
+  categoria: string
+  unidad: string
+  stock_actual: number
+  lead_time_dias: number
+  accion: 'comprar' | 'preparar'
+  consumo_diario: number
+  // Días DISTINTOS con salida dentro de la ventana. Es lo que sostiene el
+  // número: 6 días de datos y 14 de ventana no es lo mismo que 14 de 14.
+  dias_de_datos: number
+  ventana_dias: number
+  minimo_propuesto: number
+  cubre_dias: number
+  motor_repone_hasta: number
+  estado_hoy: string
+  quedaria_en: string
+  cambia_a_alerta: boolean
+  // Por qué NO confiar en este número (receta con la unidad sospechosa). Cuando
+  // viene, la fila queda FUERA del aceptar-todo.
+  advertencia: string | null
+  en_aceptar_todo: boolean
+}
+
+interface SinDatoMinimo {
+  producto_id: number
+  nombre: string
+  unidad: string
+  stock_actual: number
+  razon: string
+}
+
+interface PropuestasUmbrales {
+  ventana_dias: number
+  propuestas: PropuestaMinimo[]
+  sin_dato: SinDatoMinimo[]
+  impacto: {
+    propuestas: number
+    sin_dato: number
+    nuevos_en_alerta: number
+    ya_en_alerta: number
+    con_advertencia: number
+    aceptar_todo: { propuestas: number; nuevos_en_alerta: number }
+  }
+}
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const ESTADO_CFG = {
@@ -894,6 +945,306 @@ function PanelProducto({ producto: p, tiendaId, tab, onTab, onClose, sinConsumid
   )
 }
 
+// ─── Panel de mínimos propuestos ──────────────────────────────────────────────
+
+// Cómo se lee «en qué quedaría». Sale de `clasificar_estado` del backend
+// (services/inventario.py): agotado | critico | bajo | normal. La palabra que se
+// muestra es la del dueño, no la del enum.
+const QUEDARIA_CFG: Record<string, { label: string; color: string; bg: string }> = {
+  agotado: { label: 'sin stock', color: 'oklch(38% 0.16 25)',  bg: 'oklch(95% 0.04 25)'  },
+  critico: { label: 'crítico',   color: 'oklch(38% 0.16 25)',  bg: 'oklch(95% 0.04 25)'  },
+  bajo:    { label: 'bajo',      color: 'oklch(38% 0.12 70)',  bg: 'oklch(95% 0.045 70)' },
+  normal:  { label: 'al día',    color: 'oklch(32% 0.10 155)', bg: 'oklch(94% 0.04 155)' },
+}
+
+function PanelMinimos({ tiendaId, onClose, onAplicado }: {
+  tiendaId: number
+  onClose: () => void
+  // Se aplicó algo: la lista y el diagnóstico de la pantalla de atrás quedaron
+  // viejos. Mismo patrón que `onSaved` del panel de producto.
+  onAplicado: () => void
+}) {
+  const [data, setData]       = useState<PropuestasUmbrales | null>(null)
+  const [err, setErr]         = useState(false)
+  const [tick, setTick]       = useState(0)
+  // producto_id → marcado, y producto_id → el número que va a escribirse (que el
+  // dueño puede haber editado). Se inicializan cuando llegan las propuestas.
+  const [marcados, setMarcados] = useState<Record<number, boolean>>({})
+  const [valores, setValores]   = useState<Record<number, string>>({})
+  const [guardando, setGuardando] = useState(false)
+
+  useEffect(() => {
+    let vivo = true
+    setErr(false)
+    api.get<PropuestasUmbrales>('/inventario/umbrales/propuestas', { params: { tienda_id: tiendaId } })
+      .then(r => {
+        if (!vivo) return
+        setData(r.data)
+        // Nada arranca marcado: el principio es que el dueño ACEPTA, no que
+        // desmarca lo que no quiere. Un checkbox premarcado convierte «revisar»
+        // en «confirmar sin leer».
+        setMarcados({})
+        setValores(Object.fromEntries(
+          r.data.propuestas.map(p => [p.producto_id, String(p.minimo_propuesto)])))
+      })
+      .catch(() => { if (vivo) setErr(true) })
+    return () => { vivo = false }
+  }, [tiendaId, tick])
+
+  const props = data?.propuestas ?? []
+  const seguras = props.filter(p => p.en_aceptar_todo)
+  const advertidas = props.filter(p => !p.en_aceptar_todo)
+  const nMarcados = props.filter(p => marcados[p.producto_id]).length
+  const todasSegurasMarcadas = seguras.length > 0 && seguras.every(p => marcados[p.producto_id])
+
+  // La MISMA regla que usa la fila para pintar su chip. Extraída para que el
+  // encabezado y la fila no puedan volver a contar distinto.
+  const cambiaConValor = (p: PropuestaMinimo, v: string) => {
+    if (p.estado_hoy !== 'normal') return false          // ya estaba en alerta
+    const n = Number(v)
+    return Number.isFinite(n) && n > 0 && p.stock_actual <= n
+  }
+
+  // El impacto de arriba es el de LO QUE ESTÁ MARCADO, con el valor EDITADO —
+  // no con `cambia_a_alerta`, que el backend congeló sobre el mínimo PROPUESTO.
+  // Con el flag congelado, editar un número dejaba el encabezado contradiciendo
+  // al chip de la propia fila: el número que anuncia lo que va a hacer el botón
+  // tiene que salir de lo que el botón va a mandar.
+  const impactoMarcado = props.filter(p =>
+    marcados[p.producto_id] && cambiaConValor(p, valores[p.producto_id])).length
+
+  // Marcadas cuyo valor editado no es un número válido (> 0). No se descartan en
+  // silencio: bloquean el botón y la fila lo dice. «Aceptar 5» que escribe 4 y
+  // responde éxito es la clase exacta de mentira que este panel vino a evitar.
+  const invalidas = props.filter(p => {
+    if (!marcados[p.producto_id]) return false
+    const n = Number(valores[p.producto_id])
+    return !(Number.isFinite(n) && n > 0)
+  })
+
+  const toggleTodas = () => {
+    if (todasSegurasMarcadas) { setMarcados({}); return }
+    setMarcados(Object.fromEntries(seguras.map(p => [p.producto_id, true])))
+  }
+
+  async function aplicar() {
+    if (invalidas.length > 0) return    // el botón ya está deshabilitado; cinturón y tirantes
+    const items = props
+      .filter(p => marcados[p.producto_id])
+      .map(p => ({ producto_id: p.producto_id, stock_minimo: Number(valores[p.producto_id]) }))
+    if (items.length === 0) { alert('Marcá al menos un producto.'); return }
+    setGuardando(true)
+    try {
+      await api.patch('/inventario/umbrales/aplicar', { tienda_id: tiendaId, items })
+      onAplicado()
+      setTick(t => t + 1)     // los aplicados ya no aparecen: tienen mínimo cargado
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      alert(detail || 'No se pudieron guardar los mínimos.')
+    }
+    finally { setGuardando(false) }
+  }
+
+  const H = ({ children }: { children: React.ReactNode }) => (
+    <p className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: dark.inkSubtle }}>{children}</p>
+  )
+
+  return (
+    <SidePanel onClose={onClose} bottomOffset={0}>
+      <div className="px-4 pb-24">
+        <h2 className="text-base font-bold" style={{ color: dark.ink }}>Mínimos que te propone el sistema</h2>
+        {/* La palabra «mínimo» se explica UNA vez, en castellano, y no se repite
+            en cada fila. Es literal lo que hace el código: el kiosko marca
+            alerta con `stock <= minimo` (services/inventario.py) y el motor lo
+            usa igual. */}
+        <p className="text-xs mb-4" style={{ color: dark.inkMuted }}>
+          El mínimo es el punto de aviso: si te queda menos que eso, el sistema te avisa.
+          Estos números salen de lo que se gastó de verdad en esta sede. Vos decidís
+          cuáles aceptar y podés cambiarlos antes.
+        </p>
+
+        {err && <p className="text-xs" style={{ color: dark.danger }}>No se pudo cargar la propuesta.</p>}
+        {!data && !err && <div className="h-16 rounded animate-pulse" style={{ background: dark.surfaceAlt }} />}
+
+        {data && props.length === 0 && data.sin_dato.length === 0 && (
+          <p className="text-xs" style={{ color: dark.inkMuted }}>
+            No hay nada para proponer: todos los productos de esta sede ya tienen mínimo cargado.
+          </p>
+        )}
+
+        {data && props.length > 0 && (
+          <>
+            {/* EL ANTES/DESPUÉS. Va arriba de todo y antes de cualquier checkbox:
+                un producto que amanece en alerta sin que nadie sepa por qué es
+                lo que rompe la confianza en el sistema entero. */}
+            <div className="rounded-xl px-3 py-2.5 text-xs mb-4"
+              style={{ background: dark.amberTint, color: dark.ink, border: `1px solid ${dark.amberDim}` }}>
+              {nMarcados === 0 ? (
+                <p>
+                  Si aceptás los {seguras.length} de la lista de abajo,{' '}
+                  <b>{data.impacto.aceptar_todo.nuevos_en_alerta}</b>{' '}
+                  {data.impacto.aceptar_todo.nuevos_en_alerta === 1
+                    ? 'producto pasa a necesitar atención hoy mismo'
+                    : 'productos pasan a necesitar atención hoy mismo'}.
+                </p>
+              ) : (
+                <p>
+                  Marcaste <b>{nMarcados}</b>. Al guardarlos, <b>{impactoMarcado}</b>{' '}
+                  {impactoMarcado === 1 ? 'pasa' : 'pasan'} a necesitar atención hoy mismo.
+                </p>
+              )}
+              {data.impacto.ya_en_alerta > 0 && (
+                <p className="mt-1" style={{ color: dark.inkMuted }}>
+                  Otros {data.impacto.ya_en_alerta} ya están en alerta hoy por su stock:
+                  el mínimo no los cambia.
+                </p>
+              )}
+            </div>
+
+            {seguras.length > 0 && (
+              <div className="flex items-center justify-between mb-2">
+                <H>{seguras.length} con consumo medido</H>
+                <button onClick={toggleTodas}
+                  className="text-[11px] font-semibold underline"
+                  style={{ color: dark.amber }}>
+                  {todasSegurasMarcadas ? 'Desmarcar todos' : 'Marcar todos'}
+                </button>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              {seguras.map(p => (
+                <FilaMinimo key={p.producto_id} p={p}
+                  marcado={!!marcados[p.producto_id]}
+                  valor={valores[p.producto_id] ?? ''}
+                  onMarcar={v => setMarcados(m => ({ ...m, [p.producto_id]: v }))}
+                  onValor={v => setValores(x => ({ ...x, [p.producto_id]: v }))} />
+              ))}
+            </div>
+
+            {/* Las advertidas van APARTE y NUNCA entran en «marcar todos»: su
+                consumo medido puede estar inflado 1000× por una receta con la
+                unidad mal cargada, y el mínimo heredaría el error. Se muestran
+                igual —esconderlas sería peor— pero se aceptan de a una. */}
+            {advertidas.length > 0 && (
+              <div className="mt-5">
+                <H>{advertidas.length} para mirar con cuidado</H>
+                <p className="text-[11px] mb-2" style={{ color: dark.inkMuted }}>
+                  Estos quedan fuera de «marcar todos»: hay una receta que puede
+                  estar descontando en la unidad equivocada, así que lo que el
+                  sistema midió que se gasta puede no ser real.
+                </p>
+                <div className="space-y-1.5">
+                  {advertidas.map(p => (
+                    <FilaMinimo key={p.producto_id} p={p}
+                      marcado={!!marcados[p.producto_id]}
+                      valor={valores[p.producto_id] ?? ''}
+                      onMarcar={v => setMarcados(m => ({ ...m, [p.producto_id]: v }))}
+                      onValor={v => setValores(x => ({ ...x, [p.producto_id]: v }))} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* SIN DATO: sin número, y se dice por qué. Inventar un mínimo acá sería
+            exactamente el 0 del default con otra cara. */}
+        {data && data.sin_dato.length > 0 && (
+          <div className="mt-5">
+            <H>{data.sin_dato.length} que el sistema no puede calcular</H>
+            <div className="space-y-1.5">
+              {data.sin_dato.map(s => (
+                <div key={s.producto_id} className="rounded-lg px-3 py-2"
+                  style={{ background: dark.surfaceAlt, border: `1px solid ${dark.border}` }}>
+                  <p className="text-xs font-semibold" style={{ color: dark.ink }}>{s.nombre}</p>
+                  <p className="text-[11px] mt-0.5" style={{ color: dark.inkMuted }}>{s.razon}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* La acción vive pegada abajo: con 40 filas, un botón al final de la
+          lista queda a tres pantallas de scroll del impacto que lo justifica. */}
+      {data && props.length > 0 && (
+        <div className="sticky bottom-0 px-4 py-3"
+          style={{ background: dark.surface, borderTop: `1px solid ${dark.border}` }}>
+          <button onClick={aplicar} disabled={guardando || nMarcados === 0 || invalidas.length > 0}
+            className="w-full py-2.5 rounded-xl text-sm font-bold disabled:opacity-40"
+            style={{ background: dark.ink, color: dark.surface }}>
+            {guardando ? 'Guardando…'
+              : nMarcados === 0 ? 'Marcá los que quieras aceptar'
+              : invalidas.length > 0
+                ? `Falta un número válido en: ${invalidas.slice(0, 2).map(p => p.nombre).join(', ')}${invalidas.length > 2 ? '…' : ''}`
+              : `Aceptar ${nMarcados} mínimo${nMarcados === 1 ? '' : 's'}`}
+          </button>
+        </div>
+      )}
+    </SidePanel>
+  )
+}
+
+function FilaMinimo({ p, marcado, valor, onMarcar, onValor }: {
+  p: PropuestaMinimo
+  marcado: boolean
+  valor: string
+  onMarcar: (v: boolean) => void
+  onValor: (v: string) => void
+}) {
+  // El estado en que quedaría se recalcula con el valor EDITADO, no con el
+  // propuesto: si el dueño baja el número para que no se le prenda hoy, la
+  // etiqueta tiene que seguirlo. Se replica solo el tramo que depende del
+  // mínimo; el resto (agotado / crítico) lo decide el stock y no se mueve.
+  const n = Number(valor)
+  const quedaria = p.estado_hoy !== 'normal' ? p.estado_hoy
+    : (Number.isFinite(n) && n > 0 && p.stock_actual <= n ? 'bajo' : 'normal')
+  const cfg = QUEDARIA_CFG[quedaria] ?? QUEDARIA_CFG.normal
+
+  return (
+    <label className="flex items-start gap-2.5 rounded-lg px-3 py-2 cursor-pointer"
+      style={{ background: marcado ? dark.amberTint : dark.surfaceAlt,
+               border: `1px solid ${marcado ? dark.amberDim : dark.border}` }}>
+      <input type="checkbox" checked={marcado} onChange={e => onMarcar(e.target.checked)}
+        className="mt-0.5 w-4 h-4 shrink-0 accent-amber-600" />
+      <span className="flex-1 min-w-0">
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-xs font-semibold truncate" style={{ color: dark.ink }}>{p.nombre}</span>
+          {p.accion === 'preparar' && (
+            <span className="text-[10px] font-bold shrink-0" style={{ color: dark.green }}>se prepara</span>
+          )}
+        </span>
+        {/* El dato que sostiene el número. Sin él, el mínimo es un número caído
+            del cielo — y este panel existe para que no lo sea. */}
+        <span className="block text-[11px] mt-0.5" style={{ color: dark.inkMuted }}>
+          Se gastan {num(p.consumo_diario)} {p.unidad} por día
+          {p.dias_de_datos > 0 && ` (medido en ${p.dias_de_datos} ${p.dias_de_datos === 1 ? 'día' : 'días'} de los últimos ${p.ventana_dias})`}.
+          {' '}Hoy tenés {num(p.stock_actual)} {p.unidad}.
+        </span>
+        <span className="flex items-center gap-2 mt-1.5">
+          <input type="number" min={0} step="any" value={valor}
+            onChange={e => onValor(e.target.value)}
+            onClick={e => e.preventDefault()}
+            className="w-24 px-2 py-1 rounded-lg text-xs text-right tabular-nums"
+            style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }} />
+          <span className="text-[11px]" style={{ color: dark.inkSubtle }}>{p.unidad}</span>
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+            style={{ background: cfg.bg, color: cfg.color }}>
+            {quedaria === 'normal' ? 'no te avisa hoy' : `te avisa ya: ${cfg.label}`}
+          </span>
+        </span>
+        {p.advertencia && (
+          <span className="block text-[11px] mt-1.5 rounded-lg px-2 py-1"
+            style={{ background: dark.dangerTint, color: dark.danger, border: `1px solid ${dark.dangerDim}` }}>
+            {p.advertencia}
+          </span>
+        )}
+      </span>
+    </label>
+  )
+}
+
 // ─── Stock mode ───────────────────────────────────────────────────────────────
 
 function ModoStock({ tiendaId }: { tiendaId: number }) {
@@ -901,6 +1252,10 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
   const [loading, setLoading]       = useState(false)
   const [busqueda, setBusqueda]     = useState('')
   const [catFiltro, setCatFiltro]   = useState('todas')
+  // El panel de mínimos propuestos. Vive en estado local y NO en la URL: no es
+  // un deep-link (la propuesta depende del consumo de HOY) y compartir un link
+  // que abre una pantalla de escritura no es lo que nadie quiere compartir.
+  const [verMinimos, setVerMinimos] = useState(false)
 
   // Filtro y selección viven en la URL: ?estado=urgente&p=42&tab=lotes es un
   // deep-link compartible.
@@ -1028,11 +1383,17 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
 
   // El aviso de umbrales sale sobre el inventario GESTIONADO (lo que el motor
   // mira de verdad), no sobre todas las filas: contar los archivados infla el
-  // faltante y el número deja de ser el que importa. Se muestra solo cuando
-  // menos de la mitad tiene mínimo — con casi todos cargados sería ruido.
+  // faltante y el número deja de ser el que importa.
+  //
+  // Se muestra mientras FALTE ALGUNO. El gate anterior («menos de la mitad»)
+  // cerraba la única puerta al panel de propuestas a mitad del trabajo: el dueño
+  // aceptaba 28 de 55, el aviso desaparecía, y los 27 restantes quedaban sin
+  // forma de revisarse en lote. Una línea que ofrece terminar lo empezado no es
+  // ruido — ruido era repetir el número cuando ya no había nada que hacer, y eso
+  // sigue cubierto: con todos cargados, el aviso no sale.
   const umb = diag?.umbrales.total
   const avisoUmbrales = umb && umb.filas_gestionadas > 0 &&
-    umb.con_minimo_gestionadas * 2 < umb.filas_gestionadas
+    umb.con_minimo_gestionadas < umb.filas_gestionadas
     ? { sin: umb.filas_gestionadas - umb.con_minimo_gestionadas, de: umb.filas_gestionadas }
     : null
 
@@ -1079,7 +1440,7 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
 
   return (
     <div className="space-y-3">
-      <div className={seleccionado ? 'lg:mr-[420px] space-y-3 transition-all' : 'space-y-3 transition-all'}>
+      <div className={seleccionado || verMinimos ? 'lg:mr-[420px] space-y-3 transition-all' : 'space-y-3 transition-all'}>
         {sugerencia && (
           <div className="grid grid-cols-4 gap-2">
             {kpis.map(k => (
@@ -1159,15 +1520,33 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
             puede calcularlos. Afirmar «no avisa nada» sin esa condición era
             falso para todo producto que rota — y quedaba contradicho por las
             tarjetas de URGENTE/PEDIR a 40 píxeles de distancia. */}
-        {avisoUmbrales && filtro !== 'sinmin' && (
-          <button onClick={() => setSp2({ estado: 'sinmin' })}
-            className="w-full text-left text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 hover:bg-amber-100 transition-colors">
+        {/* El aviso ya no es un callejón sin salida. «Verlos» lleva al filtro
+            —donde el panel de cada producto tiene el campo Mínimo, uno por uno—
+            y «Que el sistema los proponga» abre la revisión en lote, que es lo
+            único que hace viable cargar 55 números.
+            Ya NO se esconde dentro del filtro `sinmin`: ahí es donde el dueño
+            está mirando exactamente esos productos, o sea el mejor momento para
+            ofrecerle la propuesta. Lo que cambia adentro es el texto: el link a
+            «verlos» sobraría estando ya ahí. */}
+        {avisoUmbrales && (
+          <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
             <b>{avisoUmbrales.sin} de {avisoUmbrales.de}</b> productos no tienen mínimo
             cargado: {diag?.consumo?.motor_sin_datos
               ? 'el sistema no te avisa nada hasta que llegan a cero.'
               : 'de esos, el sistema solo avisa por los que tiene medido cuánto se gastan; del resto no te avisa nada hasta que llegan a cero.'}{' '}
-            <span className="font-semibold underline">Cargarles el mínimo →</span>
-          </button>
+            <button onClick={() => { setSp2({ p: null, tab: null }); setVerMinimos(true) }}
+              className="font-semibold underline">
+              El sistema puede proponértelos según lo que se gastó. Revisar →
+            </button>
+            {filtro !== 'sinmin' && (
+              <>
+                {' · '}
+                <button onClick={() => setSp2({ estado: 'sinmin' })} className="font-semibold underline">
+                  Verlos uno por uno
+                </button>
+              </>
+            )}
+          </div>
         )}
 
         {vencTruncado && (
@@ -1247,6 +1626,18 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
           negativo={negativosPorProducto.get(seleccionado.producto_id)}
           recetasSospechosas={sospechaPorInsumo.get(seleccionado.producto_id) ?? []}
           onSaved={() => { cargar(); setDiagTick(t => t + 1) }}
+        />
+      )}
+
+      {verMinimos && (
+        <PanelMinimos
+          tiendaId={tiendaId}
+          onClose={() => setVerMinimos(false)}
+          // Mismo par que el panel de producto: la lista trae el `stock_minimo`
+          // que acaba de cambiar y el diagnóstico trae la cuenta de «cuántos sin
+          // mínimo». Refrescar uno solo dejaría el aviso de arriba contradiciendo
+          // a las filas de abajo.
+          onAplicado={() => { cargar(); setDiagTick(t => t + 1) }}
         />
       )}
     </div>

@@ -740,7 +740,15 @@ export default function PedidosAdmin() {
   const { user } = useAuth()
   const [sedes, setSedes]         = useState<Sede[]>([])
   const [tiendaId, setTiendaId]   = useState<number | null>(user?.tienda_id ?? null)
-  const [tab, setTab]             = useState<'pedidos' | 'solicitudes' | 'proveedores'>('solicitudes')
+  // El default sigue siendo «solicitudes» (lo que las baristas pidieron y
+  // espera decisión). `?tab=pedidos` existe para que el botón «Armar pedido» de
+  // Control de inventario aterrice en la sugerencia por proveedor y no en otra
+  // pestaña: un link que deja al dueño a un click de lo que pidió es medio link.
+  // Solo decide el estado INICIAL; después manda el usuario.
+  const [tab, setTab]             = useState<'pedidos' | 'solicitudes' | 'proveedores'>(() => {
+    const t = new URLSearchParams(window.location.search).get('tab')
+    return t === 'pedidos' || t === 'proveedores' ? t : 'solicitudes'
+  })
   const [nPendientes, setNPendientes] = useState(0)
 
   useEffect(() => {

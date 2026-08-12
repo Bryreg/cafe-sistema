@@ -204,6 +204,15 @@ const ESTADO_ORDER: Record<string, number> = { agotado: 0, urgente: 1, pronto: 2
 // en este mismo estado — son atajos al filtro, no otra cosa.
 const FILTROS = [
   { id: 'atencion', label: 'Necesita atención' },
+  // Stock NEGATIVO. No es un estado del backend —`pedidos._estado` devuelve
+  // «agotado» tanto para 0 como para -13— y por eso no puede salir de `estado`:
+  // se lee del stock de la MISMA lista que se filtra. Deliberadamente NO se lee
+  // de `diag.negativos`, que es otro payload: esa consulta no filtra el
+  // inventario gestionado (diagnostico_stock._negativos no aplica _gestionado())
+  // y corta en 200 filas, así que contar de ahí daría un número que la lista no
+  // puede mostrar. Y si el diagnóstico no cargó, este contador sigue siendo
+  // exacto.
+  { id: 'negativo', label: 'Solo en negativo' },
   { id: 'urgente',  label: 'Solo urgentes' },
   { id: 'pronto',   label: 'Solo pedir hoy' },
   { id: 'bajo',     label: 'Solo stock bajo' },
@@ -227,6 +236,10 @@ function pasaFiltro(p: ProductoInventario, f: FiltroId, venc: MapaVenc) {
     // Un mínimo en 0 es el default del esquema, no una decisión: ese producto no
     // dispara ninguna alerta hasta llegar a cero.
     case 'sinmin':  return !(p.stock_minimo > 0)
+    // 0 y negativo NO son el mismo problema: 0 es «se acabó, hay que comprar»;
+    // negativo es «falta registrar algo que ya pasó». El backend los mete a los
+    // dos en `agotado`, así que la separación se hace acá.
+    case 'negativo': return p.stock_actual < 0
     // «Necesita atención» tiene que incluir los CUATRO buckets que cuentan las
     // tarjetas de arriba, y «se vence» es uno de ellos. Sin esto, un insumo con
     // stock sano y un lote por vencer sumaba en la tarjeta naranja y no aparecía
@@ -236,11 +249,30 @@ function pasaFiltro(p: ProductoInventario, f: FiltroId, venc: MapaVenc) {
   }
 }
 
-function diasLabel(d: number | null) {
-  if (d === null) return '—'
-  if (d < 1) return `${Math.round(d * 24)}h`
-  return `${d.toFixed(1)}d`
+// Lo que dice la columna «Alcanza»: cuánto tiempo dura el stock que hay.
+//
+// `dias_restantes` es stock/consumo_diario (pedidos.py:108-110) y trae dos casos
+// que el número crudo no sabía contar, y que la versión anterior de esta función
+// imprimía igual:
+//   · con el stock en NEGATIVO los días son negativos → salía «-2h», que no
+//     significa nada. Con cero o menos no quedan días: se acabó, y se dice así.
+//   · viene NULL cuando el motor no midió consumo en 14 días. Ahí va un guion:
+//     cualquier palabra afirmaría algo que el payload no dice.
+// El resto se redondea a días enteros — la décima de «9.3d» no cambia ninguna
+// decisión y el sufijo «d» había que traducirlo.
+function alcanzaLabel(p: ProductoInventario) {
+  if (p.stock_actual <= 0) return 'se acabó'
+  if (p.dias_restantes === null) return '—'
+  if (p.dias_restantes < 1) return 'hoy'
+  const d = Math.round(p.dias_restantes)
+  return `${d} ${d === 1 ? 'día' : 'días'}`
 }
+
+// 24062 → «24.062»; -0,2 → «-0,2». Un número de cinco cifras sin separador, en
+// una lista que se escanea con el pulgar, se lee mal. `n === 0` normaliza el -0
+// que llega de redondear un negativo minúsculo en el backend.
+const NUM_FMT = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 2 })
+function num(n: number) { return NUM_FMT.format(n === 0 ? 0 : n) }
 
 // 'YYYY-MM-DD…' -> 'dd-mm'. Se parte el string a mano: new Date('2026-08-01') es
 // UTC y en Colombia (UTC-5) mostraría el día anterior.
@@ -297,7 +329,12 @@ function ProductRow({ p, venc, activo, onSelect }: {
   onSelect: () => void
 }) {
   const cfg = ESTADO_CFG[p.estado] ?? ESTADO_CFG.ok
-  const critico = p.dias_restantes !== null && p.dias_restantes <= p.lead_time_dias
+  const enNegativo = p.stock_actual < 0
+  // El stock se pinta en rojo también cuando está en cero o menos. Antes dependía
+  // solo de los días restantes, que son NULL sin consumo medido: un producto en 0
+  // sin salidas registradas mostraba su cero en gris.
+  const critico = p.stock_actual <= 0 ||
+    (p.dias_restantes !== null && p.dias_restantes <= p.lead_time_dias)
 
   return (
     <button
@@ -311,25 +348,47 @@ function ProductRow({ p, venc, activo, onSelect }: {
       <span className="flex-1 min-w-0 truncate text-sm font-medium text-gray-800">
         {p.barista_alerto && '🔔 '}{p.nombre}
       </span>
+      {/* Un cero y un -0,2 se pintaban los dos en rojo con el mismo punto rojo, y
+          son dos problemas distintos con dos acciones distintas. El signo menos
+          solo no alcanza: es un píxel. El chip usa la MISMA palabra que el
+          contador de arriba y que el filtro, que es donde se explica qué
+          significa — repetir la explicación en cada fila haría de la lista un
+          párrafo. */}
+      {enNegativo && (
+        <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">
+          en negativo
+        </span>
+      )}
+      {/* «⚠ 15-08» solo se explicaba en un `title`, que en el celular no existe.
+          El verbo cabe en el mismo nodo. */}
       {venc && (
         <span className={`shrink-0 text-[11px] font-bold tabular-nums ${
           venc.estado === 'vencido' ? 'text-red-600' : 'text-amber-600'
-        }`} title={venc.estado === 'vencido' ? 'Hay lote vencido' : 'Hay lote por vencer'}>
-          ⚠ {ddmm(venc.fecha)}
+        }`}>
+          {venc.estado === 'vencido' ? 'venció' : 'vence'} {ddmm(venc.fecha)}
         </span>
       )}
       <span className={`shrink-0 w-20 text-right text-sm font-bold tabular-nums ${critico ? 'text-red-600' : 'text-gray-800'}`}>
-        {p.stock_actual}
+        {num(p.stock_actual)}
         <span className="font-normal text-gray-400 text-[11px]"> {p.unidad}</span>
       </span>
-      <span className="shrink-0 w-9 text-right text-[11px] text-gray-400 tabular-nums hidden sm:inline">
-        {diasLabel(p.dias_restantes)}
+      <span className="shrink-0 w-16 text-right text-[11px] text-gray-500 hidden sm:inline">
+        {alcanzaLabel(p)}
       </span>
-      {p.cantidad_sugerida > 0 && (
-        <span className="shrink-0 text-[11px] font-bold text-amber-700 tabular-nums" title="Cuánto pedir">
-          +{p.cantidad_sugerida}
-        </span>
-      )}
+      {/* La celda va SIEMPRE, aunque quede vacía: es una columna con encabezado y
+          si desapareciera en las filas sin sugerencia, el número de la fila de
+          abajo se correría debajo del título «Pedir».
+
+          El caso que NO puede quedar vacío: el producto que YA SE ACABÓ y sin
+          sugerencia. «Azúcar 0 g | (vacío)» bajo el título «Pedir» se lee como
+          «no compres azúcar», y la verdad es que el sistema no tiene ni mínimo
+          ni consumo medido para calcular cuánto. «a ojo» es eso, honesto y en
+          castellano: comprá, pero la cantidad la ponés vos. */}
+      <span className={`shrink-0 w-14 text-right text-[11px] tabular-nums ${
+        p.cantidad_sugerida > 0 ? 'font-bold text-amber-700' : 'text-gray-400'}`}>
+        {p.cantidad_sugerida > 0 ? num(p.cantidad_sugerida)
+          : p.stock_actual <= 0 ? 'a ojo' : ''}
+      </span>
     </button>
   )
 }
@@ -935,6 +994,13 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
 
   const totalVence = useMemo(() => allItems.filter(i => venc[i.producto_id]).length, [allItems, venc])
 
+  // El contador de negativos sale de la MISMA lista que filtra — no de
+  // diag.negativos, que no aplica la regla de gestionados, corta en 200 y puede
+  // no haber cargado. Para que el número coincida con las filas, el click además
+  // LIMPIA búsqueda y categoría: con «leche» tipeado, el aviso diría 3 y la
+  // lista mostraría 1.
+  const totalNegativos = useMemo(() => allItems.filter(i => i.stock_actual < 0).length, [allItems])
+
   const filtrados = useMemo(() => allItems
     .filter(i => pasaFiltro(i, filtro, venc))
     .filter(i => catFiltro === 'todas' || i.categoria === catFiltro)
@@ -976,6 +1042,39 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
               </button>
             ))}
           </div>
+        )}
+
+        {/* EL CONTADOR DE NEGATIVOS. Va acá arriba, pegado a las tarjetas, y no
+            como quinta tarjeta: un negativo NO es un bucket paralelo a
+            Urgente/Pedir/Bajo sino un subconjunto de Urgente (pedidos._estado
+            devuelve «agotado» para todo stock <= 0), y ponerlo de par haría que
+            los cuatro números parecieran sumar. Es un botón que escribe `estado`
+            en la URL, igual que las tarjetas.
+            La frase es aritmética, no diagnóstico: stock < 0 significa que las
+            salidas superaron a las entradas registradas, y nada más. La causa
+            —factura sin cargar, tanda sin registrar, receta con la unidad
+            cambiada— la da el panel de cada producto, que es el único que la
+            tiene. */}
+        {/* La franja NO se oculta al entrar al filtro: es la única explicación
+            de qué significa «en negativo», y ocultarla al tocar «Verlos» dejaba
+            el chip rojo sin significado justo cuando el dueño mira esas filas.
+            Adentro del filtro pierde el link y gana la acción concreta. */}
+        {totalNegativos > 0 && (
+          filtro !== 'negativo' ? (
+            <button onClick={() => { setBusqueda(''); setCatFiltro('todas'); setSp2({ estado: 'negativo' }) }}
+              className="w-full text-left text-[11px] text-red-800 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 hover:bg-red-100 transition-colors">
+              <b>{totalNegativos} producto{totalNegativos === 1 ? '' : 's'} en negativo</b>: el
+              sistema descontó más de lo que se registró que entró. Mientras el stock
+              esté mal, lo que dice «Pedir» también.{' '}
+              <span className="font-semibold underline">Verlos →</span>
+            </button>
+          ) : (
+            <p className="text-[11px] text-red-800 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
+              <b>En negativo</b> = el sistema descontó más de lo que se registró que entró.
+              No es que se venda de más: falta registrar una entrada. Tocá cada producto
+              y el panel te dice qué falta cargar.
+            </p>
+          )
         )}
 
         <div className="flex gap-2 flex-wrap items-center">
@@ -1037,7 +1136,41 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
           </p>
         )}
 
+        {/* La lista era una tabla SIN títulos de columna: el stock, los días y la
+            cantidad a pedir eran tres números pelados, y los dos últimos solo se
+            explicaban en un `title` de HTML —que en el celular no existe—. La
+            leyenda y los encabezados van UNA vez acá arriba en lugar de repetir
+            la palabra en las 56 filas: con 56 filas, una palabra por fila son 56
+            palabras y la lista deja de escanearse.
+            Los anchos (w-20 / w-16 / w-14, gap-2.5, px-3) son los MISMOS que los
+            de ProductRow; si cambian allá, cambian acá o el título deja de estar
+            sobre su columna. */}
         <div className="space-y-1">
+          {!loading && filtrados.length > 0 && (
+            <>
+              {/* La leyenda DERIVA de ESTADO_CFG: mismo dot que pinta la fila,
+                  jamás un tono tipeado a mano. La versión anterior usaba
+                  text-red-500/amber-500/yellow-600/green-600 — cuatro tonos que
+                  ninguna fila usaba, con 4 renglones para 5 colores. Una leyenda
+                  que no coincide con lo que explica es peor que no tenerla. */}
+              <p className="flex gap-x-3 gap-y-0.5 flex-wrap text-[10px] text-gray-500 px-3">
+                {([['agotado', 'se acabó'], ['urgente', 'urgente'], ['pronto', 'pedir hoy'],
+                   ['bajo', 'bajo'], ['ok', 'al día']] as const).map(([k, label]) => (
+                  <span key={k} className="inline-flex items-center gap-1">
+                    <span className={`w-2 h-2 rounded-full ${ESTADO_CFG[k].dot}`} />{label}
+                  </span>
+                ))}
+                <span>🔔 la pidió una barista</span>
+              </p>
+              <div className="flex items-center gap-2.5 px-3 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                <span className="w-2 shrink-0" />
+                <span className="flex-1 min-w-0">Producto</span>
+                <span className="shrink-0 w-20 text-right">Stock</span>
+                <span className="shrink-0 w-16 text-right hidden sm:inline">Alcanza</span>
+                <span className="shrink-0 w-14 text-right">Pedir</span>
+              </div>
+            </>
+          )}
           {filtrados.map(p => (
             <ProductRow
               key={p.producto_id}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
@@ -288,10 +288,12 @@ const ROT_CFG: Record<string, { label: string; bg: string; text: string }> = {
 
 const ESTADO_ORDER: Record<string, number> = { agotado: 0, urgente: 1, pronto: 2, bajo: 3, ok: 4 }
 
-// El filtro de la lista. `atencion` es el DEFAULT: la pantalla abre mostrando lo
-// que hay que resolver, no el catálogo entero. Las 4 tarjetas de arriba escriben
-// en este mismo estado — son atajos al filtro, no otra cosa.
+// El filtro de la lista. `todos` es el DEFAULT: el inventario es el libro de LO
+// QUE HAY, así que la pantalla abre con las 56 filas y su cantidad a la vista.
+// Los otros ocho son recortes que el dueño pide tocando una pastilla — y todos
+// siguen siendo deep links `?estado=` válidos.
 const FILTROS = [
+  { id: 'todos',    label: 'Ver todo' },
   { id: 'atencion', label: 'Necesita atención' },
   // Stock NEGATIVO. No es un estado del backend —`pedidos._estado` devuelve
   // «agotado» tanto para 0 como para -13— y por eso no puede salir de `estado`:
@@ -309,7 +311,6 @@ const FILTROS = [
   // Destino del aviso de umbrales: sin este filtro, el aviso sería una queja.
   { id: 'sinmin',   label: 'Sin mínimo cargado' },
   { id: 'ok',       label: 'Solo al día (OK)' },
-  { id: 'todos',    label: 'Ver todo' },
 ] as const
 type FiltroId = typeof FILTROS[number]['id']
 const ES_FILTRO = (v: string): v is FiltroId => FILTROS.some(f => f.id === v)
@@ -338,82 +339,40 @@ function pasaFiltro(p: ProductoInventario, f: FiltroId, venc: MapaVenc) {
   }
 }
 
-// ─── La cola de decisiones: agrupar por VERBO ─────────────────────────────────
+// ─── Las pastillas: filtros con su cuenta ─────────────────────────────────────
 //
-// PRIORIDAD DE ASIGNACIÓN (no es el orden de lectura: es el orden de las
-// preguntas). Cada producto cae en el PRIMER grupo cuya condición cumple, así
-// que vive en EXACTAMENTE UNO y los contadores de los encabezados suman el
-// total. Lo transversal —un lote por vencer, la campana de una barista— NO
-// abre grupo propio: viaja como chip dentro de la fila del grupo que le tocó.
+// NO son buckets: se pisan entre sí a propósito (un negativo también es
+// «se acabó»; un lote por vencer le puede pasar a cualquiera). Lo que sí tiene
+// que cerrar es cada pastilla POR SEPARADO: su número se calcula con el MISMO
+// `pasaFiltro` que recorta la lista al tocarla, sobre la misma base. Tocar
+// «Se acabó o urgente · 13» tiene que dar 13 filas, siempre.
 //
-//   1 investiga  stock < 0                          → falta registrar una entrada
-//   2 prepara    accion==='preparar' && estado!=='ok'→ se hace en la barra
-//   3 compra     (agotado|urgente) && sugerida > 0  → comprar, y sabemos cuánto
-//   4 ojo        agotado (sin cantidad)             → comprar, la cantidad la ponés vos
-//   5 pronto     estado !== 'ok'                    → pronto/bajo: todavía hay
-//   6 vence      hay lote por vencer (estado 'ok')  → no se pide: se vende o se saca
-//   7 aldia      resto
-//
-// POR QUÉ CIERRA, y contra qué:
-//  · 1 se lleva todo stock<0. Después de 1, «agotado» ⇒ stock === 0.
-//  · 3 y 4 se reparten TODO lo agotado que quede (4 no tiene condición extra).
-//  · Un `urgente` siempre trae cantidad > 0 (services/pedidos.py: la cantidad es
-//    ceil(consumo*(lead+colchón) − stock) y urgente exige stock ≤ consumo*lead,
-//    con colchón ≥ 4), así que 3 se lo lleva y 5 no hereda huérfanos.
-//  · 5 se lleva el resto de `estado !== 'ok'`. ⇒ grupos 1..5 = {estado !== 'ok'}.
-//  · 6 y 7 parten lo `ok` según tenga o no lote por vencer.
-//  ⇒ 1..6 = {estado !== 'ok' || venc} = EXACTAMENTE `pasaFiltro(·, 'atencion')`,
-//    y 1..7 = la lista entera. Los mismos conjuntos que cuentan las tarjetas de
-//    siempre: total_urgentes = |agotado|+|urgente| = |1|+|2 agotados|+|3|+|4|,
-//    total_pronto+total_bajo = el resto de 5, totalVence = |6| + los que llevan
-//    el chip dentro de 1..5.
-type GrupoId = 'investiga' | 'prepara' | 'compra' | 'pronto' | 'vence' | 'ojo' | 'aldia'
-
-function grupoDe(p: ProductoInventario, venc: MapaVenc): GrupoId {
-  if (p.stock_actual < 0) return 'investiga'
-  if (p.accion === 'preparar' && p.estado !== 'ok') return 'prepara'
-  if ((p.estado === 'agotado' || p.estado === 'urgente') && p.cantidad_sugerida > 0) return 'compra'
-  if (p.estado === 'agotado') return 'ojo'
-  if (p.estado !== 'ok') return 'pronto'
-  if (venc[p.producto_id]) return 'vence'
-  return 'aldia'
-}
-
-// Orden de LECTURA de los grupos, que no es el de asignación: primero lo que
-// cambia de verbo (investigar, preparar), después lo que se compra.
-const GRUPOS: { id: GrupoId; h: string; sub: string; c: string; corto: string }[] = [
-  { id: 'investiga', corto: 'Investigá',  h: 'Investigá',
-    // La MISMA frase que ya usaba la franja roja: es aritmética (salidas >
-    // entradas registradas), no un diagnóstico. La causa de cada uno la da el
-    // panel del producto, que es el único que la tiene.
-    // Sobrevive entera la franja roja que había arriba de la lista: la frase
-    // aritmética, la consecuencia sobre «Pedir» y el destino (el panel del
-    // producto, que es el único que tiene la causa de cada uno).
-    sub: 'El sistema descontó más de lo que se registró que entró: mientras el stock esté mal, lo que dice «Pedir» también. Acá no se compra primero. Tocá cada producto y el panel te dice qué falta cargar.',
-    c: MC.negativo },
-  { id: 'prepara',   corto: 'Prepará',    h: 'Prepará en barra',
-    sub: 'Esto no se compra: se hace acá con la receta.', c: MC.oliva },
-  { id: 'compra',    corto: 'Compra hoy', h: 'Compra hoy',
-    sub: 'Se acabó o no llega a la próxima entrega, y el sistema sabe cuánto pedir.', c: ESTADO_CFG.agotado.mc },
-  // El sub cubre los DOS poblamientos del grupo: «pronto» (no llega a la próxima
-  // entrega) y «bajo» (quedó debajo del mínimo — que por definición del motor
-  // aparece justo cuando NO hay consumo medido o hay cobertura de sobra, o sea
-  // cuando «se acaba antes del próximo pedido» sería falso).
-  { id: 'pronto',    corto: 'Pedir pronto', h: 'Pedir pronto',
-    sub: 'Todavía hay, pero el sistema lo marcó: o no llega a la próxima entrega, o quedó por debajo del mínimo.', c: ESTADO_CFG.pronto.mc },
-  { id: 'vence',     corto: 'Se vence',   h: 'Se vence',
-    sub: 'Hay stock, pero tiene fecha: vendelo o bajale el precio. No se pide.', c: MC.vence },
-  { id: 'ojo',       corto: 'A ojo',      h: 'A ojo',
-    sub: 'Se acabó y el sistema no tiene mínimo ni consumo medido: la cantidad la ponés vos.', c: ESTADO_CFG.bajo.mc },
-  { id: 'aldia',     corto: 'Al día',     h: 'Al día',
-    sub: 'Sin novedades. Nada que decidir hoy.', c: ESTADO_CFG.ok.mc },
+// El color es el de la regla izquierda de las filas que van a quedar, salvo los
+// dos ejes que no son stock: `negativo` (falta un registro) y `vence` (tiempo).
+const PASTILLAS: { id: FiltroId; corto: string; c: string; ayuda: string }[] = [
+  { id: 'todos',    corto: 'Todo',               c: MC.negro,
+    ayuda: 'Todos los productos de la sede, con su cantidad.' },
+  { id: 'atencion', corto: 'Necesita atención',  c: MC.terracota,
+    ayuda: 'Todo lo que no está al día, más lo que tiene un lote por vencer.' },
+  { id: 'negativo', corto: 'En negativo',        c: MC.negativo,
+    ayuda: 'El sistema descontó más de lo que se registró que entró: falta cargar una entrada.' },
+  { id: 'urgente',  corto: 'Se acabó o urgente', c: ESTADO_CFG.agotado.mc,
+    ayuda: 'Se acabó, o no llega a la próxima entrega.' },
+  { id: 'pronto',   corto: 'Pedir hoy',          c: ESTADO_CFG.pronto.mc,
+    ayuda: 'Todavía hay, pero no alcanza para el próximo ciclo de pedido.' },
+  { id: 'bajo',     corto: 'Bajo',               c: ESTADO_CFG.bajo.mc,
+    ayuda: 'Quedó por debajo del mínimo cargado.' },
+  { id: 'vence',    corto: 'Se vence',           c: MC.vence,
+    ayuda: 'Tiene un lote vencido o por vencer. No se pide: se vende o se saca.' },
+  // «ok» filtra por estado de STOCK a secas: un producto con stock sano y lote
+  // por vencer entra acá Y en «Se vence» (las pastillas se pisan a propósito).
+  // Por eso la ayuda no puede decir «sin novedades» — el Croissant con lote del
+  // 15-08 es la primera fila de este filtro y tiene una novedad gritando.
+  { id: 'ok',       corto: 'Al día',             c: ESTADO_CFG.ok.mc,
+    ayuda: 'Con stock sano. Los lotes con fecha se ven en su chip y en «Se vence».' },
+  { id: 'sinmin',   corto: 'Sin mínimo',         c: MC.tinta45,
+    ayuda: 'No tiene mínimo cargado: el sistema no puede avisar por umbral.' },
 ]
-
-// Los grupos cuyos productos van al pedido del proveedor. `investiga` queda
-// FUERA a propósito (su acción es registrar, no comprar) y `prepara` también
-// (nadie lo vende). `ojo` sí entra: hay que comprarlo, lo que falta es el
-// número — y eso lo dice su grupo, no lo esconde.
-const GRUPOS_PEDIDO: GrupoId[] = ['compra', 'ojo', 'pronto']
 
 // Lo que dice la columna «Alcanza»: cuánto tiempo dura el stock que hay.
 //
@@ -466,44 +425,11 @@ function esCaps(n: string) {
   return n.length > 3 && n === n.toUpperCase() && n !== n.toLowerCase()
 }
 
-// El «tachar» de cada fila: un checklist VISUAL de la jornada, no un dato del
-// negocio. Vive en localStorage por sede y por día —mañana la lista es otra— y
-// no toca el backend. Si localStorage no está disponible (modo privado, cuota),
-// se degrada a estado en memoria: perder los tachados es molesto, romper la
-// pantalla no.
-const TACHE_PREFIJO = 'inv:tachados:'
-function useTachados(tiendaId: number) {
-  const clave = `${TACHE_PREFIJO}${tiendaId}:${isoHoy()}`
-  const [ids, setIds] = useState<Set<number>>(new Set())
-
-  useEffect(() => {
-    let leidos: number[] = []
-    try {
-      leidos = JSON.parse(localStorage.getItem(clave) || '[]')
-      // Barrido de DÍAS viejos solamente. La versión anterior borraba toda clave
-      // distinta de la actual — incluida la de LA OTRA SEDE de hoy: cambiabas de
-      // Vida a Palmetto en el header y el checklist ya marcado de Vida
-      // desaparecía en silencio. El sufijo de fecha decide, no la clave entera.
-      const hoy = isoHoy()
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const k = localStorage.key(i)
-        if (k && k.startsWith(TACHE_PREFIJO) && !k.endsWith(`:${hoy}`)) localStorage.removeItem(k)
-      }
-    } catch { /* sin localStorage: solo memoria */ }
-    setIds(new Set(Array.isArray(leidos) ? leidos : []))
-  }, [clave])
-
-  const alternar = useCallback((id: number) => {
-    setIds(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      try { localStorage.setItem(clave, JSON.stringify([...next])) } catch { /* idem */ }
-      return next
-    })
-  }, [clave])
-
-  return { tachados: ids, alternar }
-}
+// El «tachar» de cada fila (checklist de la jornada en localStorage) se fue con
+// la cola de decisiones: era el «ya lo pedí» de una cola que ahora vive en
+// /pedidos-admin. En el libro de lo que hay, tachar una fila la bajaba al 45% de
+// opacidad — o sea escondía justo la cantidad que esta pantalla existe para
+// mostrar. Si el dueño lo quiere de vuelta, vuelve allá, no acá.
 
 async function exportarExcel(nombre: string, cabeceras: string[], filas: (string | number | null)[][]) {
   const XLSX = await import('xlsx')
@@ -534,27 +460,32 @@ function grupoMerma(motivo: string | null): string | null {
 
 // ─── ProductRow ───────────────────────────────────────────────────────────────
 
-// Fila TONTA a propósito: sin estado propio, sin fetch, sin acordeón. Todo lo que
-// antes colgaba de acá (13 useState + la ficha) vive ahora en el panel lateral,
-// que se monta UNA sola vez para el producto seleccionado.
+// La fila del LIBRO: nombre, cuánto hay, cuánto alcanza. Nada más, y nada
+// plegado. Es UN solo <button> —el tache que la partía en dos controles se fue
+// con la cola de decisiones— así que la fila entera es el área de toque que abre
+// el panel del producto.
 //
-// La fila es un <div> con DOS botones —tachar y abrir— y no un botón con un
-// control adentro: un elemento interactivo dentro de otro es HTML inválido y
-// deja el tache fuera del teclado. Cuesta un nodo por fila y los dos controles
-// quedan accesibles.
+// La columna «Pedir» también se fue: cuánto pedir es una capa DERIVADA del
+// stock, no el stock, y vive en /pedidos-admin. Lo que sí queda de ella son los
+// dos rótulos que hablan del producto y no del pedido: «preparar» (no se compra,
+// se arma en la barra) y «a ojo» (se acabó y el sistema no tiene con qué
+// calcular cuánto) — ahora como chips, al lado del nombre.
 //
-// El color de estado ya no es un punto sino la REGLA izquierda de la fila, y
-// sale del mismo ESTADO_CFG que la leyenda: si divergieran, la leyenda dejaría
-// de explicar lo que se ve. Una fila sana la baja al 45% y queda casi
-// monocroma; el color se gasta solo donde hay señal.
-function ProductRow({ p, venc, activo, tachado, pedirDespues, onSelect, onTachar }: {
+// El color de estado es la REGLA izquierda y sale del mismo ESTADO_CFG que la
+// leyenda: si divergieran, la leyenda dejaría de explicar lo que se ve. Una fila
+// sana queda casi monocroma; el color se gasta solo donde hay señal.
+function ProductRow({ p, venc, activo, empaque, corte, onSelect }: {
   p: ProductoInventario
   venc?: VencInfo
   activo: boolean
-  tachado: boolean
-  pedirDespues?: boolean
+  // La fila anterior era de OTRO estado: acá el alfabeto se reinicia y el
+  // hairline se refuerza para que el bloque nuevo se lea como bloque.
+  corte?: boolean
+  // Cuántas unidades de inventario trae UN empaque de compra
+  // (`productos.contenido_por_empaque`). Undefined = sin factor cargado: no se
+  // dice nada, porque un factor inventado es peor que ninguno.
+  empaque?: number
   onSelect: () => void
-  onTachar: () => void
 }) {
   const cfg = ESTADO_CFG[p.estado] ?? ESTADO_CFG.ok
   const enNegativo = p.stock_actual < 0
@@ -563,116 +494,106 @@ function ProductRow({ p, venc, activo, tachado, pedirDespues, onSelect, onTachar
   // sin salidas registradas mostraba su cero en gris.
   const critico = p.stock_actual <= 0 ||
     (p.dias_restantes !== null && p.dias_restantes <= p.lead_time_dias)
-  // Lo que se arma con receta en la barra: la columna «Pedir» le cambia el verbo,
-  // no el estado. `hayQueReponer` evita el otro extremo: un preparable con stock
-  // de sobra no tiene por qué gritar «preparar» en la lista.
+  // Lo que se arma con receta en la barra. `hayQueReponer` evita el otro extremo:
+  // un preparable con stock de sobra no tiene por qué gritar «preparar».
   const esPreparable = p.accion === 'preparar'
   const hayQueReponer = p.cantidad_sugerida > 0 || p.stock_actual <= 0
+  // «a ojo»: se acabó Y el sistema no tiene ni mínimo ni consumo medido para
+  // decir cuánto. Un preparable nunca lo lleva: su verbo ya es otro.
+  const aOjo = !esPreparable && p.stock_actual <= 0 && p.cantidad_sugerida <= 0
   const sano = p.estado === 'ok'
   const caps = esCaps(p.nombre)
+  // «24 und ≈ 2 empaques de 12». Con factor 1 el empaque y la unidad son lo
+  // mismo y la frase no diría nada. Y por debajo de UN empaque tampoco se dice:
+  // «≈ 0,2 empaques de 10» no es un refuerzo de «2 und», es ruido — la cantidad
+  // en unidades ya es la lectura más clara ahí.
+  const enEmpaques = empaque && empaque > 1 && p.stock_actual >= empaque
+    ? Math.round((p.stock_actual / empaque) * 10) / 10
+    : null
+
+  const chip = 'shrink-0 text-[10px] font-bold uppercase tracking-[.06em] px-1.5 py-px rounded'
 
   return (
-    <div
-      className="flex items-stretch border-t transition-colors"
+    <button
+      onClick={onSelect}
+      title={`${p.categoria}${p.proveedor ? ` · ${p.proveedor}` : ''}`}
+      // En el celular la fila son DOS renglones: el nombre entero arriba y la
+      // evidencia abajo. En una sola línea, con los chips y las dos columnas
+      // peleando por 390px, el nombre —lo único que el dueño está buscando— se
+      // comía en «MEZCLA GRAN…». Desde `sm` vuelve a ser una sola línea.
+      className="w-full flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 text-left border-t py-[5px] pr-3 pl-3 hover:bg-[#F4EDDB] transition-colors"
       style={{
-        borderTopColor: MC.linea,
+        borderTopColor: corte ? MC.lineaFte : MC.linea,
+        borderTopWidth: corte ? 2 : 1,
         borderLeft: `3px solid ${cfg.mc}`,
         background: activo ? '#F4EDDB' : MC.papel,
-        opacity: tachado ? 0.45 : 1,
       }}
     >
-      {/* El tache: checklist de la jornada, local y del día. El disco relleno
-          más el tachado del texto dicen «ya lo resolví» sin gastar un ícono. */}
-      <button
-        onClick={onTachar}
-        aria-pressed={tachado}
-        title={tachado ? 'Ya lo resolviste — tocá para desmarcar' : 'Marcar como resuelto (solo para vos, solo hoy)'}
-        className={`shrink-0 w-9 flex items-center justify-center before:content-[''] before:w-[17px] before:h-[17px] before:rounded-full before:border-[1.5px] ${
-          tachado ? 'before:bg-[#0D0C0B] before:border-[#0D0C0B]' : 'before:border-[#D2C7AE] hover:before:border-[#0D0C0B]'
-        }`}
-      />
-      <button
-        onClick={onSelect}
-        title={`${p.categoria}${p.proveedor ? ` · ${p.proveedor}` : ''}`}
-        // En el celular la fila son DOS renglones: el nombre entero arriba y la
-        // evidencia abajo. En una sola línea, con los chips y las tres columnas
-        // peleando por 390px, el nombre —lo único que el dueño está buscando—
-        // se comía en «MEZCLA GRAN…». Desde `sm` vuelve a ser una sola línea.
-        className={`flex-1 min-w-0 flex flex-wrap sm:flex-nowrap items-center gap-x-2.5 gap-y-1 text-left py-2 pr-3 hover:bg-[#F4EDDB] ${tachado ? 'line-through decoration-[1.5px]' : ''}`}
+      <span
+        className={`w-full sm:w-auto sm:flex-1 min-w-0 truncate ${caps ? 'text-[13px] tracking-[0.012em]' : 'text-sm'} ${sano ? 'font-medium' : 'font-semibold'}`}
+        style={{ color: MC.negro }}
       >
-        <span
-          className={`w-full sm:w-auto sm:flex-1 min-w-0 truncate ${caps ? 'text-[13px] tracking-[0.012em]' : 'text-sm'} ${sano ? 'font-medium' : 'font-semibold'}`}
-          style={{ color: MC.negro }}
-        >
-          {p.barista_alerto && '🔔 '}{p.nombre}
+        {p.barista_alerto && '🔔 '}{p.nombre}
+      </span>
+      {/* Un cero y un -0,2 se pintaban los dos en rojo, y son dos problemas
+          distintos con dos acciones distintas. El signo menos solo no alcanza:
+          es un píxel. El chip usa la MISMA palabra que la pastilla, que es donde
+          se explica qué significa. */}
+      {enNegativo && (
+        <span className={chip} title="El sistema descontó más de lo que se registró que entró: falta cargar una entrada."
+          style={{ color: MC.negativo, boxShadow: `inset 0 0 0 1.4px ${MC.negativo}` }}>
+          en negativo
         </span>
-        {/* Un cero y un -0,2 se pintaban los dos en rojo con el mismo punto rojo, y
-            son dos problemas distintos con dos acciones distintas. El signo menos
-            solo no alcanza: es un píxel. El chip usa la MISMA palabra que el
-            encabezado de su grupo y que el filtro, que es donde se explica qué
-            significa — repetir la explicación en cada fila haría de la lista un
-            párrafo. */}
-        {enNegativo && (
-          <span className="shrink-0 text-[10px] font-bold uppercase tracking-[.07em] px-1.5 py-0.5 rounded"
-            style={{ color: MC.negativo, boxShadow: `inset 0 0 0 1.4px ${MC.negativo}` }}>
-            en negativo
-          </span>
-        )}
-        {/* «⚠ 15-08» solo se explicaba en un `title`, que en el celular no existe.
-            El verbo cabe en el mismo nodo. Vive acá dentro y no como grupo
-            aparte: un lote por vencer le puede pasar a un producto de cualquier
-            grupo, y duplicarlo rompería la cuenta de los encabezados. */}
-        {venc && (
-          <span className="shrink-0 text-[10px] font-bold uppercase tracking-[.07em] px-1.5 py-0.5 rounded tabular-nums"
-            style={{
-              color: venc.estado === 'vencido' ? ESTADO_CFG.agotado.mc : MC.vence,
-              background: '#F6E7C9',
-            }}>
-            {venc.estado === 'vencido' ? 'venció' : 'vence'} {ddmm(venc.fecha)}
-          </span>
-        )}
-        <span className="shrink-0 w-auto sm:w-[74px] text-right text-sm font-semibold tabular-nums"
-          style={{ color: critico ? ESTADO_CFG.agotado.mc : (sano ? MC.tinta70 : MC.negro) }}>
-          {num(p.stock_actual)}
-          <span className="font-normal text-[11px]" style={{ color: MC.tinta45 }}> {p.unidad}</span>
+      )}
+      {/* No se compra: se arma en la barra con la receta. Sin este rótulo, un
+          faltante de mezcla de granizado se lee como una orden de compra a un
+          proveedor que no existe. Cuánto preparar lo dice el panel. */}
+      {esPreparable && hayQueReponer && (
+        <span className={chip} title="Esto no se compra: se prepara en la barra. Cuánto, en el panel del producto."
+          style={{ color: MC.oliva, boxShadow: `inset 0 0 0 1.4px ${MC.oliva}` }}>
+          preparar
         </span>
-        {/* «se acabó» ya no se esconde en el celular: era justo el rótulo que
-            distingue el cero del negativo, y en el renglón de evidencia cabe. */}
-        <span className="shrink-0 w-auto sm:w-16 text-right text-[11px] tabular-nums"
-          style={{ color: sano ? MC.tinta45 : MC.tinta70 }}>
-          {alcanzaLabel(p)}
+      )}
+      {aOjo && (
+        <span className={chip} title="Se acabó y el sistema no tiene mínimo ni consumo medido: la cantidad a pedir la ponés vos."
+          style={{ color: ESTADO_CFG.bajo.mc, boxShadow: `inset 0 0 0 1.4px ${ESTADO_CFG.bajo.mc}` }}>
+          a ojo
         </span>
-        {/* La celda va SIEMPRE, aunque quede vacía: es una columna con encabezado y
-            si desapareciera en las filas sin sugerencia, el número de la fila de
-            abajo se correría debajo del título «Pedir». El hairline de la
-            izquierda la aísla: es la columna de la que sale el pedido.
-
-            El caso que NO puede quedar vacío: el producto que YA SE ACABÓ y sin
-            sugerencia. «Azúcar 0 g | (vacío)» bajo el título «Pedir» se lee como
-            «no compres azúcar», y la verdad es que el sistema no tiene ni mínimo
-            ni consumo medido para calcular cuánto. «a ojo» es eso, honesto y en
-            castellano: comprá, pero la cantidad la ponés vos.
-
-            El preparable (la mezcla de granizado) tampoco puede mostrar un número
-            a secas: bajo el título «Pedir» se lee como una orden de compra a un
-            proveedor que no existe. La falta ES real, así que esconderlo sería
-            peor. Va el VERBO en el mismo nodo —la fila tiene presupuesto de uno— y
-            la cantidad completa espera en el panel, que es donde se decide. */}
-        <span className={`shrink-0 ml-auto sm:ml-0 w-auto sm:w-[62px] pl-2.5 text-right tabular-nums border-l leading-tight ${
-          pedirDespues ? 'text-[10px]' : 'text-[11px]'}`}
+      )}
+      {/* «⚠ 15-08» solo se explicaba en un `title`, que en el celular no existe.
+          El verbo cabe en el mismo nodo. */}
+      {venc && (
+        <span className={`${chip} tabular-nums`}
           style={{
-            borderLeftColor: MC.linea,
-            color: pedirDespues ? MC.tinta45
-              : hayQueReponer && esPreparable ? MC.oliva
-              : p.cantidad_sugerida > 0 ? MC.terracota : MC.tinta28,
-            fontWeight: !pedirDespues && ((hayQueReponer && esPreparable) || p.cantidad_sugerida > 0) ? 700 : 400,
+            color: venc.estado === 'vencido' ? ESTADO_CFG.agotado.mc : MC.vence,
+            background: '#F6E7C9',
           }}>
-          {esPreparable ? (hayQueReponer ? 'preparar' : '')
-            : p.cantidad_sugerida > 0 ? (pedirDespues ? `después ${num(p.cantidad_sugerida)}` : num(p.cantidad_sugerida))
-            : p.stock_actual <= 0 ? 'a ojo' : ''}
+          {venc.estado === 'vencido' ? 'venció' : 'vence'} {ddmm(venc.fecha)}
         </span>
-      </button>
-    </div>
+      )}
+      {/* El stock dicho en la unidad en que se COMPRA, que es como el dueño
+          piensa el pedido («las tortas vienen de 12 porciones, la pulpa de 10»).
+          Va pegado al número de stock porque es el mismo número en otra unidad,
+          no un dato nuevo. Sale de `contenido_por_empaque` y solo aparece cuando
+          ese factor está cargado. */}
+      {enEmpaques !== null && (
+        <span className="shrink-0 text-[10px] tabular-nums" style={{ color: MC.tinta28 }}
+          title={`Un empaque de compra trae ${num(empaque!)} ${p.unidad}.`}>
+          ≈ {num(enEmpaques)} {enEmpaques === 1 ? 'empaque' : 'empaques'} de {num(empaque!)}
+        </span>
+      )}
+      <span className="shrink-0 ml-auto sm:ml-0 w-auto sm:w-[74px] text-right text-sm font-semibold tabular-nums"
+        style={{ color: critico ? ESTADO_CFG.agotado.mc : (sano ? MC.tinta70 : MC.negro) }}>
+        {num(p.stock_actual)}
+        <span className="font-normal text-[11px]" style={{ color: MC.tinta45 }}> {p.unidad}</span>
+      </span>
+      {/* «se acabó» no se esconde en el celular: es justo el rótulo que distingue
+          el cero del negativo, y en el renglón de evidencia cabe. */}
+      <span className="shrink-0 w-auto sm:w-16 text-right text-[11px] tabular-nums"
+        style={{ color: sano ? MC.tinta45 : MC.tinta70 }}>
+        {alcanzaLabel(p)}
+      </span>
+    </button>
   )
 }
 
@@ -1459,6 +1380,16 @@ function FilaMinimo({ p, marcado, valor, onMarcar, onValor }: {
 
 // ─── Stock mode ───────────────────────────────────────────────────────────────
 
+// EL LIBRO DE LO QUE HAY. Una lista, todos los productos, cada uno con su
+// cantidad, sin nada plegado ni escondido detrás de un filtro por defecto. Lo
+// urgente va arriba (el orden por estado no cambió), pero lo sano se ve igual,
+// con su número, sin un solo click.
+//
+// La cola de decisiones por verbo (Investigá / Prepará / Compra hoy) se fue a
+// /pedidos-admin: cuánto pedir y cada cuánto rota son capas DERIVADAS del stock,
+// no el stock. Lo único que queda de ese flujo acá es la puerta —el link
+// «Armar pedido →»— y los dos rótulos que describen al producto y no al pedido
+// («preparar», «a ojo»), que viajan como chips en su fila.
 function ModoStock({ tiendaId }: { tiendaId: number }) {
   const [sugerencia, setSugerencia] = useState<Sugerencia | null>(null)
   const [loading, setLoading]       = useState(false)
@@ -1468,9 +1399,6 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
   // un deep-link (la propuesta depende del consumo de HOY) y compartir un link
   // que abre una pantalla de escritura no es lo que nadie quiere compartir.
   const [verMinimos, setVerMinimos] = useState(false)
-  // «Al día» arranca plegado. Es estado de la vista, no del negocio: no va a la
-  // URL ni a localStorage.
-  const [verAlDia, setVerAlDia] = useState(false)
   const navigate = useNavigate()
 
   // Filtro y selección viven en la URL: ?estado=urgente&p=42&tab=lotes es un
@@ -1483,7 +1411,9 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
   // recorrer cada pestaña que tocaste.
   const [sp, setSp] = useSearchParams()
   const rawEstado = sp.get('estado') ?? ''
-  const filtro: FiltroId = ES_FILTRO(rawEstado) ? rawEstado : 'atencion'
+  // El DEFAULT es ver TODO. Los `?estado=` viejos siguen valiendo uno por uno,
+  // incluido `atencion`, que era el default anterior.
+  const filtro: FiltroId = ES_FILTRO(rawEstado) ? rawEstado : 'todos'
   const selId = Number(sp.get('p')) || null
   const rawTab = sp.get('tab') ?? ''
   const tab: TabId = ES_TAB(rawTab) ? rawTab : 'hoy'
@@ -1511,9 +1441,9 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
   const [venc, setVenc] = useState<MapaVenc>({})
   const [vencTruncado, setVencTruncado] = useState(false)
   // Si el pedido FALLA, el mapa queda vacío — y un mapa vacío es indistinguible de
-  // "no hay nada por vencer". Sin esta bandera la tarjeta naranja afirmaba
-  // «Se vence: 0» y desaparecían todos los ⚠ de la lista a partir de un error de
-  // red. Ausencia de dato no es buena noticia.
+  // "no hay nada por vencer". Sin esta bandera la pastilla afirmaba «Se vence 0»
+  // y desaparecían todos los avisos de la lista a partir de un error de red.
+  // Ausencia de dato no es buena noticia.
   const [vencErr, setVencErr] = useState(false)
   useEffect(() => {
     let vivo = true
@@ -1546,6 +1476,31 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
       .catch(() => { if (vivo) { setVenc({}); setVencErr(true) } })
     return () => { vivo = false }
   }, [tiendaId])
+
+  // EL FACTOR DE EMPAQUE, para poder decir el stock en la unidad en que se
+  // compra. `productos.contenido_por_empaque` = cuántas unidades de inventario
+  // trae UN empaque comercial (torta = 12 porciones, pulpa = bolsa de 10). Es el
+  // MISMO campo que usa Recibir para convertir «N empaques» → cantidad
+  // (services/facturas.py) y el que lee el escáner de facturas.
+  //
+  // NO se usa `contenido_por_unidad`, que tiene dos significados según el
+  // producto (rendimiento de una tanda de preparable / gramos de la bolsa
+  // sellada del conteo) y por lo tanto no se puede leer sin saber cuál de los
+  // dos es. Este endpoint ya existía y lo consumen Catálogo e Ingresos: cero
+  // backend nuevo. Si falla, el mapa queda vacío y no se dice nada.
+  const [empaques, setEmpaques] = useState<Map<number, number>>(new Map())
+  useEffect(() => {
+    let vivo = true
+    api.get<{ id: number; contenido_por_empaque?: number | null }[]>('/inventario/productos')
+      .then(r => {
+        if (!vivo) return
+        const m = new Map<number, number>()
+        for (const p of r.data ?? []) if (p.contenido_por_empaque) m.set(p.id, p.contenido_por_empaque)
+        setEmpaques(m)
+      })
+      .catch(() => {})
+    return () => { vivo = false }
+  }, [])
 
   // Insumos que controlan stock y que NINGUNA receta consume. El endpoint existía
   // y no lo leía nadie; acá alimenta el cartel del panel (no pinta nada en la
@@ -1604,9 +1559,7 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
   // Se muestra mientras FALTE ALGUNO. El gate anterior («menos de la mitad»)
   // cerraba la única puerta al panel de propuestas a mitad del trabajo: el dueño
   // aceptaba 28 de 55, el aviso desaparecía, y los 27 restantes quedaban sin
-  // forma de revisarse en lote. Una línea que ofrece terminar lo empezado no es
-  // ruido — ruido era repetir el número cuando ya no había nada que hacer, y eso
-  // sigue cubierto: con todos cargados, el aviso no sale.
+  // forma de revisarse en lote.
   const umb = diag?.umbrales.total
   const avisoUmbrales = umb && umb.filas_gestionadas > 0 &&
     umb.con_minimo_gestionadas < umb.filas_gestionadas
@@ -1621,293 +1574,180 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
     () => ['todas', ...Array.from(new Set(allItems.map(i => i.categoria))).sort()],
     [allItems])
 
-  // Ya no hay contadores sueltos de «negativos» ni de «se vence»: los cuenta la
-  // agrupación de más abajo, sobre la MISMA lista que se renderiza. El negativo
-  // en particular NO sale de `diag.negativos` —ese payload no aplica la regla de
-  // gestionados, corta en 200 filas y puede no haber cargado—, sino de
-  // `stock_actual < 0` de la propia lista, así que el número y las filas no
-  // pueden discrepar ni siquiera con el diagnóstico caído.
-  const filtrados = useMemo(() => allItems
-    // El filtro por DEFECTO ya no recorta: con la lista agrupada, «Al día» es un
-    // grupo plegado al final, así que los productos sanos siguen contados, siguen
-    // sumando al total de la sede y están a un toque — en vez de desaparecer y
-    // dejar al dueño sin forma de saber cuántos eran. Los otros ocho filtros
-    // (los deep links `?estado=`) siguen recortando exactamente igual que antes.
-    .filter(i => filtro === 'atencion' || pasaFiltro(i, filtro, venc))
+  // LA BASE de las cuentas: todo lo de la sede, ya recortado por categoría y por
+  // búsqueda pero NO por estado. Las pastillas cuentan sobre esto y la lista se
+  // recorta sobre esto, así que el número de una pastilla es exactamente la
+  // cantidad de filas que se ven al tocarla — con o sin categoría puesta.
+  const base = useMemo(() => allItems
     .filter(i => catFiltro === 'todas' || i.categoria === catFiltro)
-    .filter(i => !busqueda || i.nombre.toLowerCase().includes(busqueda.toLowerCase()))
+    .filter(i => !busqueda || i.nombre.toLowerCase().includes(busqueda.toLowerCase())),
+    [allItems, catFiltro, busqueda])
+
+  // El orden no cambió: primero lo que no hay, después lo urgente, y así hasta
+  // lo sano; dentro de cada escalón, alfabético. Lo urgente va PRIMERO y lo sano
+  // se VE, que es lo que se pidió.
+  const filtrados = useMemo(() => base
+    .filter(i => pasaFiltro(i, filtro, venc))
     .sort((a, b) =>
       (ESTADO_ORDER[a.estado] ?? 5) - (ESTADO_ORDER[b.estado] ?? 5) ||
       a.nombre.localeCompare(b.nombre)
-    ), [allItems, filtro, venc, catFiltro, busqueda])
+    ), [base, filtro, venc])
+
+  // Una pasada por pastilla sobre la MISMA base y con el MISMO `pasaFiltro` que
+  // recorta la lista. No hay una segunda cuenta que pueda desincronizarse.
+  const cuentas = useMemo(() => {
+    const m = {} as Record<FiltroId, number>
+    for (const t of PASTILLAS) m[t.id] = base.filter(i => pasaFiltro(i, t.id, venc)).length
+    return m
+  }, [base, venc])
 
   const seleccionado = selId !== null ? allItems.find(i => i.producto_id === selId) ?? null : null
 
-  // El checklist de la jornada. Local, por sede y por día.
-  const { tachados, alternar } = useTachados(tiendaId)
-
-  // Buscar IGNORA los grupos: cuando el dueño tipea un nombre ya sabe qué
-  // quiere, y partir cuatro resultados en cuatro encabezados es ruido. La
-  // pantalla cae a lista plana y lo dice.
-  const buscando = busqueda.trim().length > 0
-
-  // UNA sola pasada de agrupación sobre lo que se está mostrando. El titular,
-  // las pastillas de salto, los encabezados y el botón de pedido leen TODOS de
-  // acá: no hay un segundo cálculo que pueda desincronizarse.
-  const grupos = useMemo(() => {
-    const m = new Map<GrupoId, ProductoInventario[]>(GRUPOS.map(g => [g.id, []]))
-    for (const p of filtrados) m.get(grupoDe(p, venc))!.push(p)
-    return m
-  }, [filtrados, venc])
-  const nG = (id: GrupoId) => grupos.get(id)!.length
-
-  // Los que van al pedido del proveedor, menos los que ya tachaste. Es EL número
-  // del botón: uno solo, y el mismo en el celular y en el escritorio.
-  const paraPedir = useMemo(
-    () => GRUPOS_PEDIDO.flatMap(id => grupos.get(id)!).filter(p => !tachados.has(p.producto_id)),
-    [grupos, tachados])
-
-  // El titular: la jornada en una línea. Los números salen de los grupos de
-  // arriba, nunca de una cuenta paralela. «comprar» junta `compra` y `ojo`
-  // porque los dos se compran hoy — lo que los separa es si el sistema sabe
-  // cuánto, y eso lo dice cada grupo abajo.
-  const verbos = [
-    { n: nG('investiga'), t: 'para investigar', c: MC.negativo,   id: 'investiga' as GrupoId },
-    { n: nG('prepara'),   t: 'para preparar',   c: MC.oliva,      id: 'prepara'   as GrupoId },
-    { n: nG('compra') + nG('ojo'), t: 'para comprar', c: MC.terracota, id: 'compra' as GrupoId },
-  ].filter(v => v.n > 0)
-  // Vencimientos: el TOTAL de productos con lote por vencer, no solo los del
-  // grupo «Se vence». Cuando todos los que vencen viven en otros grupos (porque
-  // además hay que comprarlos o investigarlos), el grupo queda en 0, no se
-  // dibuja, y sin esta suma la pantalla omitía los vencimientos por completo
-  // mientras las filas mostraban sus chips «vence dd-mm».
-  const totalConLote = filtrados.filter(i => venc[i.producto_id]).length
-  const resto = [
-    nG('pronto') > 0 ? `${nG('pronto')} para pedir pronto` : null,
-    vencErr ? 'no se sabe qué vence' : totalConLote > 0 ? `${totalConLote} con lote por vencer` : null,
-    nG('aldia') > 0 ? `${nG('aldia')} al día` : null,
-  ].filter(Boolean).join(' · ')
-
-  // Con un filtro puesto, la pantalla NO está contando el día: está contando un
-  // recorte. Decir «Hoy: 2 para investigar» cuando hay 3 y uno está filtrado es
-  // exactamente la clase de número que miente por omisión.
-  // Lo que decide el titular no es «hay un filtro puesto» sino «se está viendo
-  // menos que la sede entera»: con «Ver todo» hay filtro y sin embargo los
-  // números SÍ son los del día, así que ahí el titular vuelve a decir «Hoy».
-  const filtroActivo = filtrados.length < allItems.length
+  // Se está viendo menos que la sede entera (por estado, por categoría o por
+  // búsqueda). Es lo que decide si la línea de conteo ofrece volver a todo.
+  const recortado = filtrados.length < allItems.length
   // La etiqueta nombra la causa REAL del recorte. Con solo una categoría elegida
-  // el filtro de estado sigue en «atención» —que no recorta nada— y nombrarlo a
-  // él era señalar al inocente: el dueño leía «Necesita atención: 4 de 56» sin
-  // forma de saber que el recorte era la categoría (o la búsqueda).
+  // el filtro de estado sigue en «Ver todo» —que no recorta nada— y nombrarlo a
+  // él era señalar al inocente.
   const etiquetaFiltro = [
-    filtro !== 'atencion' ? FILTROS.find(f => f.id === filtro)?.label : null,
+    filtro !== 'todos' ? FILTROS.find(f => f.id === filtro)?.label : null,
     catFiltro !== 'todas' ? `categoría ${catFiltro}` : null,
     busqueda.trim() ? `búsqueda «${busqueda.trim()}»` : null,
-  ].filter(Boolean).join(' + ') || (FILTROS.find(f => f.id === filtro)?.label ?? '')
+  ].filter(Boolean).join(' + ')
 
-  // Cuántos productos con lote por vencer viven en OTRO grupo (llevan el chip en
-  // la fila). Sin esta línea, «Se vence 1» contradiría al viejo contador de 4.
-  const venceEnOtros = totalConLote - nG('vence')
+  const verTodo = () => { setBusqueda(''); setCatFiltro('todas'); setSp2({ estado: 'todos' }) }
 
-  // El botón del pedido cuelga del PRIMER grupo que aporta productos al pedido.
-  const grupoConBoton = GRUPOS_PEDIDO.find(id => nG(id) > 0)
   // No se inventa un flujo nuevo: /pedidos-admin ya arma la lista por proveedor
   // y el texto para WhatsApp. `?tab=pedidos` la abre en esa pestaña — sin eso el
-  // botón dejaba al dueño en «Solicitudes», que es otra pantalla.
+  // link dejaría al dueño en «Solicitudes», que es otra pantalla.
   const irAPedido = () => navigate('/pedidos-admin?tab=pedidos')
-
-  const fila = (p: ProductoInventario, g?: GrupoId) => (
-    <ProductRow
-      key={p.producto_id}
-      p={p}
-      venc={venc[p.producto_id]}
-      activo={selId === p.producto_id}
-      tachado={tachados.has(p.producto_id)}
-      // En «Investigá» la cantidad sugerida NO es la acción de hoy: primero se
-      // registra la entrada que falta, porque mientras el stock esté mal ese
-      // número también lo está. Se muestra igual —esconderlo sería peor— pero
-      // en letra chica y con el «después» adelante.
-      pedirDespues={g === 'investiga'}
-      onSelect={() => setSp2({ p: String(p.producto_id), tab: 'hoy' }, true)}
-      onTachar={() => alternar(p.producto_id)}
-    />
-  )
-
-  // El aviso de umbrales, extraído para poder colgarlo del grupo «A ojo» o —si
-  // ese grupo hoy está vacío— dejarlo arriba. Un aviso que se puede evaporar
-  // según el filtro no es un aviso.
-  const avisoMinimos = avisoUmbrales && (
-    <p className="text-[11px] rounded-lg px-2.5 py-1.5 border"
-      style={{ background: '#FBF5E3', borderColor: '#E7D8A9', color: '#7A5E10' }}>
-      <b>{avisoUmbrales.sin} de {avisoUmbrales.de}</b> productos no tienen mínimo
-      cargado: {diag?.consumo?.motor_sin_datos
-        ? 'el sistema no te avisa nada hasta que llegan a cero.'
-        : 'de esos, el sistema solo avisa por los que tiene medido cuánto se gastan; del resto no te avisa nada hasta que llegan a cero.'}{' '}
-      <button onClick={() => { setSp2({ p: null, tab: null }); setVerMinimos(true) }}
-        className="font-semibold underline">
-        El sistema puede proponértelos según lo que se gastó. Revisar →
-      </button>
-      {filtro !== 'sinmin' && (
-        <>
-          {' · '}
-          <button onClick={() => setSp2({ estado: 'sinmin' })} className="font-semibold underline">
-            Verlos uno por uno
-          </button>
-        </>
-      )}
-    </p>
-  )
 
   return (
     <div className="space-y-3">
       {/* La hoja de papel crema: el fondo de marca vive acá adentro y no en el
           <body>, para no repintar el resto del admin desde una sola pantalla. */}
       <div
-        className={`space-y-3 transition-all rounded-2xl p-3 sm:p-4 pb-20 sm:pb-4 ${
+        className={`space-y-2 transition-all rounded-2xl p-3 sm:p-4 ${
           seleccionado || verMinimos ? 'lg:mr-[420px]' : ''}`}
         style={{ background: MC.crema }}>
-        {/* EL TITULAR: la jornada en una línea, con los números REALES de los
-            grupos de abajo. Reemplaza la franja de cuatro tarjetas, que eran
-            cuatro sustantivos («Urgente», «Pedir hoy») sin decir qué hacer con
-            ellos y que además no sumaban entre sí. Los tres verbos que quedan
-            SÍ suman con la segunda línea: todo producto de la sede está contado
-            una vez entre las dos. */}
-        {sugerencia && !buscando && (
-          <div>
-            <p className="text-[19px] sm:text-[23px] font-semibold leading-tight tracking-[-.015em]"
-              style={{ color: MC.negro }}>
-              {verbos.length === 0
-                // Sin urgencias pero CON «pedir pronto», el titular no puede
-                // negar la compra: a 500px el botón dice «Armar pedido · N» y
-                // dos afirmaciones contradictorias en la misma pantalla es el
-                // defecto que venimos matando hace nueve rondas.
-                ? (filtroActivo ? 'Nada para investigar, preparar ni comprar con este filtro.'
-                   : nG('pronto') > 0 ? 'Hoy no hay urgencias: solo lo que conviene pedir pronto.'
-                   : 'Hoy no hay nada que comprar ni investigar.')
-                : <>{filtroActivo ? 'Con este filtro:' : 'Hoy:'} {verbos.map((v, i) => (
-                    // Fragment y no <span>: el separador no necesita un nodo propio.
-                    <Fragment key={v.t}>
-                      {i > 0 && ' · '}
-                      <a href={`#g-${v.id}`} className="tabular-nums" style={{ color: v.c }}>{v.n} {v.t}</a>
-                    </Fragment>
-                  ))}.</>}
-            </p>
-            {resto && (
-              <p className="text-[12px] mt-1" style={{ color: MC.tinta45 }}>
-                {resto}{filtroActivo ? '' : ` · ${allItems.length} productos en la sede`}.
-              </p>
-            )}
-            {filtroActivo && (
-              <p className="text-[12px] mt-1" style={{ color: MC.tinta45 }}>
-                Filtro «{etiquetaFiltro}»: <b className="tabular-nums" style={{ color: MC.tinta70 }}>{filtrados.length}</b> de {allItems.length} productos.{' '}
-                {/* «Ver el día completo» deshace TODO recorte — estado, categoría
-                    y búsqueda. Antes solo escribía ?estado=atencion (el valor que
-                    ya estaba activo): un botón muerto justo donde el dueño pedía
-                    volver a ver todo. */}
-                <button onClick={() => { setBusqueda(''); setCatFiltro('todas'); setSp2({ estado: 'atencion' }) }}
-                  className="font-semibold underline" style={{ color: MC.terracota }}>
-                  Ver el día completo
-                </button>
-              </p>
-            )}
-          </div>
-        )}
 
-        {/* PASTILLAS DE SALTO — son las viejas tarjetas: mismo rol (ver el
-            tamaño de cada montón de un vistazo), pero ahora llevan al grupo en
-            vez de recortar la lista, así que ninguna esconde a las demás. Un
-            grupo VACÍO no es un link a ningún lado: queda como texto gris
-            punteado, sin color, fuera del barrido visual. */}
-        {sugerencia && !buscando && (
-          <nav aria-label="Ir a un grupo"
+        {/* LAS PASTILLAS: cada montón con su tamaño, y cada una es el filtro que
+            lo muestra. Tocar la que está puesta vuelve a TODO. Una pastilla en
+            cero no lleva a ningún lado: queda punteada y gris, fuera del barrido.
+            Sticky, porque con 56 filas el filtro tiene que seguir al pulgar. */}
+        {sugerencia && (
+          <nav aria-label="Filtrar la lista"
             className="sticky top-0 z-20 -mx-3 px-3 sm:-mx-4 sm:px-4 py-1.5 flex gap-1.5 overflow-x-auto"
             style={{ background: MC.crema }}>
-            {GRUPOS.map(g => nG(g.id) === 0 && filtroActivo ? null : nG(g.id) > 0 ? (
-              // El color del grupo va en el borde izquierdo de la pastilla, no
-              // en un punto: mismo mensaje, un nodo menos por cada una.
-              <a key={g.id} href={`#g-${g.id}`}
-                className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-l-[3px] pl-2 pr-2.5 py-1 text-[11.5px] font-semibold"
-                style={{ borderColor: MC.lineaFte, borderLeftColor: g.c, background: MC.papel, color: MC.negro }}>
-                {g.corto} <b className="tabular-nums" style={{ color: g.c }}>{nG(g.id)}</b>
-              </a>
-            ) : (
-              <span key={g.id}
-                className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-dashed pl-2 pr-2.5 py-1 text-[11.5px]"
-                style={{ borderColor: MC.lineaFte, color: MC.tinta28 }}>
-                {g.corto} <b className="tabular-nums">0</b>
-              </span>
-            ))}
+            {PASTILLAS.map(t => {
+              const n = cuentas[t.id] ?? 0
+              const activa = filtro === t.id
+              if (n === 0 && !activa) return (
+                <span key={t.id} title={t.ayuda}
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-dashed pl-2 pr-2.5 py-1 text-[11.5px]"
+                  style={{ borderColor: MC.lineaFte, color: MC.tinta28 }}>
+                  {t.corto} <b className="tabular-nums">0</b>
+                </span>
+              )
+              return (
+                <button key={t.id} title={t.ayuda} aria-pressed={activa}
+                  onClick={() => setSp2({ estado: activa ? 'todos' : t.id })}
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-l-[3px] pl-2 pr-2.5 py-1 text-[11.5px] font-semibold"
+                  style={activa
+                    ? { borderColor: MC.negro, borderLeftColor: t.c, background: MC.negro, color: MC.crema }
+                    : { borderColor: MC.lineaFte, borderLeftColor: t.c, background: MC.papel, color: MC.negro }}>
+                  {t.corto} <b className="tabular-nums" style={{ color: activa ? MC.crema : t.c }}>{n}</b>
+                </button>
+              )
+            })}
           </nav>
         )}
 
         <div className="flex gap-2 flex-wrap items-center">
-          {/* Misma piel que las tarjetas: papel sobre crema, línea de la paleta.
-              Eran las últimas tres cajas con gris de admin genérico flotando en
-              el medio de la hoja — la única costura que delataba el disfraz. */}
-          <div className="relative flex-1 min-w-[180px]">
+          {/* Misma piel que la lista: papel sobre crema, línea de la paleta. */}
+          {/* 140 y no 180: a 390px el select de categorías mide ~190 y con 180
+              acá la barra se partía en dos renglones — 38px menos de lista por
+              un mínimo que nadie necesitaba. */}
+          <div className="relative flex-1 min-w-[140px]">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: MC.tinta28 }} />
             <input
               type="text" placeholder="Buscar producto…" value={busqueda}
               onChange={e => setBusqueda(e.target.value)}
-              className="w-full pl-8 pr-3 py-2 text-sm rounded-xl focus:outline-none focus:ring-2"
+              className="w-full pl-8 pr-3 py-1.5 text-sm rounded-xl focus:outline-none focus:ring-2"
               style={{ background: MC.papel, border: `1px solid ${MC.linea}`, color: MC.negro }}
             />
           </div>
           {/* Los N chips de categoría eran N botones siempre visibles. Un select
-              dice lo mismo con un nodo y no crece con el catálogo. */}
-          <select value={filtro} onChange={e => setSp2({ estado: e.target.value })}
-            className="py-2 px-2.5 text-sm rounded-xl focus:outline-none focus:ring-2"
-            style={{ background: MC.papel, border: `1px solid ${MC.linea}`, color: MC.tinta70 }}>
-            {FILTROS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
-          </select>
+              dice lo mismo con un nodo y no crece con el catálogo. El filtro de
+              ESTADO ya no es un select: son las pastillas, que además cuentan. */}
           <select value={catFiltro} onChange={e => setCatFiltro(e.target.value)}
-            className="py-2 px-2.5 text-sm rounded-xl focus:outline-none focus:ring-2"
+            className="py-1.5 px-2.5 text-sm rounded-xl focus:outline-none focus:ring-2"
             style={{ background: MC.papel, border: `1px solid ${MC.linea}`, color: MC.tinta70 }}>
             {categorias.map(c => <option key={c} value={c}>{c === 'todas' ? 'Todas las categorías' : c}</option>)}
           </select>
         </div>
 
-        {/* UNA línea. Dice la CONSECUENCIA, no el número suelto, y lleva al
-            filtro que muestra exactamente esos productos — donde el panel de
-            cada uno ya tiene el campo Mínimo.
+        {/* UNA línea: cuántos se están viendo, de cuántos, y dónde vive lo que ya
+            no vive acá. El link al pedido es la única puerta que queda a la capa
+            derivada (cuánto pedir, por proveedor): sin él, sacarla de esta
+            pantalla sería perderla. */}
+        {sugerencia && (
+          <p className="text-[11.5px] flex flex-wrap items-baseline gap-x-1.5" style={{ color: MC.tinta45 }}>
+            <span>
+              <b className="tabular-nums" style={{ color: MC.tinta70 }}>{filtrados.length}</b>
+              {recortado ? <> de {allItems.length} productos</> : filtrados.length === 1 ? ' producto en esta sede' : ' productos en esta sede'}
+              {recortado && etiquetaFiltro ? ` · ${etiquetaFiltro}` : ''}.
+            </span>
+            {recortado && (
+              <button onClick={verTodo} className="font-semibold underline" style={{ color: MC.terracota }}>
+                Ver todo
+              </button>
+            )}
+            <span className="ml-auto">
+              Cuánto pedir y de qué proveedor:{' '}
+              <button onClick={irAPedido} className="font-semibold underline" style={{ color: MC.terracota }}>
+                Armar pedido →
+              </button>
+            </span>
+          </p>
+        )}
 
-            La consecuencia depende de si el motor tiene consumo medido: avisa
-            por DÍAS RESTANTES (pedidos.py:39-52) y solo cae al mínimo cuando no
-            puede calcularlos. Afirmar «no avisa nada» sin esa condición era
-            falso para todo producto que rota — y quedaba contradicho por las
-            tarjetas de URGENTE/PEDIR a 40 píxeles de distancia. */}
-        {/* El aviso ya no es un callejón sin salida. «Verlos» lleva al filtro
-            —donde el panel de cada producto tiene el campo Mínimo, uno por uno—
-            y «Que el sistema los proponga» abre la revisión en lote, que es lo
-            único que hace viable cargar 55 números.
-            Ya NO se esconde dentro del filtro `sinmin`: ahí es donde el dueño
-            está mirando exactamente esos productos, o sea el mejor momento para
-            ofrecerle la propuesta. Lo que cambia adentro es el texto: el link a
-            «verlos» sobraría estando ya ahí. */}
-        {/* Con el grupo «A ojo» en pantalla el aviso vive DENTRO de él: es la
-            explicación de por qué esas filas dicen «a ojo», y ahí es donde el
-            dueño la está necesitando. Si ese grupo está vacío pero todavía
-            faltan mínimos, el aviso sale igual acá arriba — nunca desaparece. */}
-        {avisoUmbrales && (buscando || nG('ojo') === 0) && avisoMinimos}
+        {avisoUmbrales && (
+          <p className="text-[11px] rounded-lg px-2.5 py-1.5 border"
+            style={{ background: '#FBF5E3', borderColor: '#E7D8A9', color: '#7A5E10' }}>
+            {/* El denominador es el inventario GESTIONADO de la sede entera
+                (`filas_gestionadas` del diagnóstico), la misma regla —controla
+                stock + entra al conteo— con la que /pedidos/sugerencia arma la
+                lista (services/diagnostico_stock.py:233 y services/pedidos.py:109).
+                Por eso este número y el de la pastilla «Sin mínimo» son el mismo
+                mientras no haya categoría ni búsqueda puestas. */}
+            <b>{avisoUmbrales.sin} de {avisoUmbrales.de}</b> sin mínimo cargado: {
+              diag?.consumo?.motor_sin_datos
+              ? 'no te avisa nada hasta que lleguen a cero.'
+              : 'de esos solo avisa por los que tiene medido cuánto se gastan; del resto, nada hasta que lleguen a cero.'}{' '}
+            <button onClick={() => { setSp2({ p: null, tab: null }); setVerMinimos(true) }}
+              className="font-semibold underline">
+              Que el sistema los proponga →
+            </button>
+          </p>
+        )}
 
         {vencTruncado && (
           <p className="text-[11px] rounded-lg px-2.5 py-1.5 border"
             style={{ background: '#F6E7C9', borderColor: '#E7D2A5', color: MC.vence }}>
-            El listado de lotes viene recortado (tope de 800). La columna de
-            vencimiento puede estar incompleta para los productos más antiguos.
+            El listado de lotes viene recortado (tope de 800). El aviso de
+            vencimiento puede faltar en los productos más antiguos.
           </p>
         )}
 
-        {/* Lo que decía la tarjeta «Se vence: —» cuando el fetch de lotes caía.
-            Sin tarjetas, el aviso necesita su propia línea: un mapa vacío es
-            indistinguible de «no hay nada por vencer», y callarlo sería
-            justamente afirmar la buena noticia que no se sabe. */}
+        {/* Un mapa de vencimientos vacío es indistinguible de «no hay nada por
+            vencer»: callarlo sería afirmar la buena noticia que no se sabe. */}
         {vencErr && (
           <p className="text-[11px] rounded-lg px-2.5 py-1.5 border"
             style={{ background: '#F6E7C9', borderColor: '#E7D2A5', color: MC.vence }}>
-            No se pudo leer el listado de lotes: <b>no se sabe qué vence</b>. El
-            grupo «Se vence» y los avisos de vencimiento de las filas están
-            incompletos hasta que vuelva a cargar.
+            No se pudo leer el listado de lotes: <b>no se sabe qué vence</b>. La
+            pastilla «Se vence» y los avisos de las filas están incompletos hasta
+            que vuelva a cargar.
           </p>
         )}
 
@@ -1915,25 +1755,22 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
 
         {!loading && sugerencia && filtrados.length === 0 && (
           <p className="text-sm text-center py-6" style={{ color: MC.tinta45 }}>
-            {buscando ? <>Ningún producto se llama así.</> : <>Nada con este filtro.</>}{' '}
-            <button onClick={() => { setBusqueda(''); setCatFiltro('todas'); setSp2({ estado: 'todos' }) }}
-              className="font-semibold underline" style={{ color: MC.terracota }}>
+            {busqueda.trim() ? <>Ningún producto se llama así.</> : <>Nada con este filtro.</>}{' '}
+            <button onClick={verTodo} className="font-semibold underline" style={{ color: MC.terracota }}>
               Ver todo
             </button>
           </p>
         )}
 
-        {/* La leyenda y los encabezados van UNA vez acá arriba en lugar de
-            repetir la palabra en las 56 filas: con 56 filas, una palabra por
-            fila son 56 palabras y la lista deja de escanearse.
-            La leyenda DERIVA de ESTADO_CFG —el mismo tono que pinta la regla
+        {/* La leyenda va UNA vez acá arriba en lugar de repetir la palabra en las
+            56 filas. DERIVA de ESTADO_CFG —el mismo tono que pinta la regla
             izquierda de cada fila—, jamás un color tipeado a mano: una leyenda
             que no coincide con lo que explica es peor que no tenerla.
-            Los anchos (w-[74px] / w-16 / w-[62px], gap-2.5, pl-[40px]) son los
-            MISMOS que los de ProductRow; si cambian allá, cambian acá o el
-            título deja de estar sobre su columna. */}
+            Los anchos (w-[74px] / w-16, gap-x-2, pl-[15px] = 3px de regla + 12px
+            de padding) son los MISMOS que los de ProductRow; si cambian allá,
+            cambian acá o el título deja de estar sobre su columna. */}
         {!loading && filtrados.length > 0 && (
-          <div>
+          <div className="pt-1">
             <p className="flex gap-x-3 gap-y-0.5 flex-wrap text-[10px] px-1" style={{ color: MC.tinta45 }}>
               {([['agotado', 'se acabó'], ['urgente', 'urgente'], ['pronto', 'pedir hoy'],
                  ['bajo', 'bajo'], ['ok', 'al día']] as const).map(([k, label]) => (
@@ -1942,131 +1779,43 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
                 </span>
               ))}
               <span>🔔 la pidió una barista</span>
-              <span>tachado = ya lo resolviste (solo para vos, solo hoy)</span>
+              <span>«en negativo» = falta registrar una entrada</span>
             </p>
             {/* Solo en escritorio: en el celular la fila son dos renglones y unos
                 títulos de columna sobre un layout que ya no es una tabla serían
                 un rótulo apuntando al lugar equivocado. */}
-            <div className="hidden sm:flex items-center gap-2.5 pl-[41px] pr-3 pt-1.5 text-[10px] font-bold uppercase tracking-[.14em]"
+            <div className="hidden sm:flex items-center gap-x-2 pl-[15px] pr-3 pt-1 text-[10px] font-bold uppercase tracking-[.14em]"
               style={{ color: MC.tinta45 }}>
               <span className="flex-1 min-w-0">Producto</span>
-              <span className="shrink-0 w-[74px] text-right">Stock</span>
+              <span className="shrink-0 w-[74px] text-right" style={{ color: MC.tinta70 }}>Cuánto hay</span>
               <span className="shrink-0 w-16 text-right">Alcanza</span>
-              <span className="shrink-0 w-[62px] pl-2.5 text-right" style={{ color: MC.tinta70 }}>Pedir</span>
             </div>
           </div>
         )}
 
-        {/* BUSCANDO → lista plana. Con un nombre tipeado el dueño ya sabe qué
-            quiere; repartir cuatro resultados en cuatro encabezados es ruido. */}
-        {!loading && buscando && filtrados.length > 0 && (
+        {/* LA LISTA. Plana, entera, sin acordeón.
+
+            El hairline fuerte marca el CAMBIO DE ESTADO: el orden es
+            estado→alfabético, así que el alfabeto se reinicia varias veces
+            adentro y sin esta línea alguien lee «Azúcar · 0» arriba y concluye
+            que no hay, sin llegar al «Azucar a Granel · 3.466» doce filas más
+            abajo. Cuesta un borde condicional, cero nodos. */}
+        {!loading && filtrados.length > 0 && (
           <div className="rounded-xl border overflow-hidden" style={{ borderColor: MC.linea }}>
-            {filtrados.map(p => fila(p))}
+            {filtrados.map((p, i) => (
+              <ProductRow
+                key={p.producto_id}
+                p={p}
+                venc={venc[p.producto_id]}
+                empaque={empaques.get(p.producto_id)}
+                activo={selId === p.producto_id}
+                corte={i > 0 && filtrados[i - 1].estado !== p.estado}
+                onSelect={() => setSp2({ p: String(p.producto_id), tab: 'hoy' }, true)}
+              />
+            ))}
           </div>
         )}
-        {!loading && buscando && filtrados.length > 0 && (
-          <p className="text-[11.5px]" style={{ color: MC.tinta45 }}>
-            <b className="tabular-nums" style={{ color: MC.tinta70 }}>{filtrados.length}</b>
-            {filtrados.length === 1 ? ' resultado' : ' resultados'} para «{busqueda.trim()}»
-            {filtro !== 'atencion' && ` dentro de «${etiquetaFiltro}»`}. Borrá el buscador para volver a la cola de decisiones.
-          </p>
-        )}
-
-        {/* LA COLA DE DECISIONES. Un grupo vacío no se dibuja: su pastilla de
-            arriba ya lo dice en gris, y una tarjeta vacía por grupo serían seis
-            cajas pidiendo atención para no decir nada. */}
-        {!loading && !buscando && GRUPOS.map(g => {
-          const items = grupos.get(g.id)!
-          if (items.length === 0) return null
-
-          // «Al día» arranca plegado a propósito: es el montón que no reclama.
-          // Salvo que el dueño haya pedido justamente ese filtro, en cuyo caso
-          // plegarlo dejaría la pantalla en blanco.
-          // «sinmin» también desactiva el plegado: un producto sin mínimo y con
-          // stock sano evalúa a «ok» y caía en «Al día» — o sea el destino de
-          // «Verlos uno por uno» escondía sus propios resultados detrás de un
-          // «Sin novedades. Nada que decidir hoy» sobre las filas pedidas.
-          const plegado = g.id === 'aldia' && !verAlDia
-            && filtro !== 'ok' && filtro !== 'todos' && filtro !== 'sinmin'
-          if (plegado) return (
-            <button key={g.id} id={`g-${g.id}`} onClick={() => setVerAlDia(true)}
-              className="w-full flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left scroll-mt-14"
-              style={{ borderColor: MC.linea, background: MC.papel }}>
-              <span className="w-1.5 self-stretch rounded-full shrink-0" style={{ background: g.c, opacity: .5 }} />
-              <span className="flex-1 min-w-0 text-[12px]" style={{ color: MC.tinta45 }}>
-                <b className="uppercase tracking-[.12em] text-[11.5px]" style={{ color: MC.tinta70 }}>{g.h}</b>
-                {' — '}{g.sub}
-              </span>
-              <span className="text-lg font-bold tabular-nums shrink-0" style={{ color: MC.tinta45 }}>{items.length} ▾</span>
-            </button>
-          )
-
-          return (
-            <section key={g.id} id={`g-${g.id}`} className="rounded-xl border overflow-hidden scroll-mt-14"
-              style={{ borderColor: MC.linea, background: MC.papel }}>
-              <div className="grid grid-cols-[1fr_auto] gap-x-3 items-center px-3 py-2.5 border-b"
-                style={{ borderBottomColor: MC.linea, borderLeft: `4px solid ${g.c}` }}>
-                <h2 className="text-[12px] font-bold uppercase tracking-[.12em]" style={{ color: MC.negro }}>
-                  {g.h}
-                </h2>
-                <span className="row-span-2 text-[22px] font-bold tabular-nums leading-none" style={{ color: g.c }}>
-                  {items.length}
-                </span>
-                <p className="col-start-1 text-[11.5px] mt-0.5" style={{ color: MC.tinta45 }}>
-                  {g.sub}
-                  {/* El chip de vencimiento vive en la fila del grupo que le
-                      tocó, así que este encabezado dice cuántos hay afuera: sin
-                      esta frase, «Se vence 1» contradiría al total de siempre. */}
-                  {g.id === 'vence' && venceEnOtros > 0 &&
-                    ` Otros ${venceEnOtros} con lote por vencer están más arriba, con su fecha en la fila.`}
-                  {g.id === 'aldia' && ' Ocupan una sola línea a propósito.'}
-                </p>
-              </div>
-
-              {items.map(p => fila(p, g.id))}
-
-              {/* El aviso de mínimos: dentro del grupo que existe por su causa. */}
-              {g.id === 'ojo' && avisoUmbrales && (
-                <div className="px-3 py-2 border-t" style={{ borderTopColor: MC.linea }}>{avisoMinimos}</div>
-              )}
-
-              {/* El botón del pedido, en el ESCRITORIO. En el celular vive en la
-                  barra fija de abajo (`sm:hidden`) y las dos nunca se ven a la
-                  vez. Un solo botón, un solo número. */}
-              {g.id === grupoConBoton && paraPedir.length > 0 && (
-                <div className="hidden sm:flex items-center gap-3 px-3 py-2.5 border-t"
-                  style={{ borderTopColor: MC.linea, background: MC.fondo }}>
-                  <button onClick={irAPedido}
-                    className="rounded-full px-4 py-2 text-[13px] font-bold"
-                    style={{ background: MC.negro, color: MC.crema }}>
-                    Armar pedido · {paraPedir.length}
-                  </button>
-                  {/* Qué entra en ese número, dicho una vez y no en cada fila. */}
-                  <span className="text-[11.5px]" style={{ color: MC.tinta45 }}>
-                    Compra hoy + a ojo + pedir pronto, sin lo que ya tachaste. Lo que está
-                    en negativo y lo que se prepara no van al pedido. Abre la sugerencia
-                    por proveedor, con el texto listo para WhatsApp.
-                  </span>
-                </div>
-              )}
-            </section>
-          )
-        })}
       </div>
-
-      {/* BARRA FIJA — solo celular. Misma acción y MISMO número que el botón del
-          escritorio: los dos leen `paraPedir`. */}
-      {!loading && !buscando && paraPedir.length > 0 && !seleccionado && !verMinimos && (
-        <div className="sm:hidden fixed left-0 right-0 bottom-0 z-30 px-4 pt-3"
-          style={{ background: `linear-gradient(rgba(247,242,231,0), ${MC.crema} 42%)`,
-                   paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}>
-          <button onClick={irAPedido}
-            className="w-full rounded-full py-3.5 text-[14.5px] font-bold"
-            style={{ background: MC.negro, color: MC.crema }}>
-            Armar pedido · {paraPedir.length}
-          </button>
-        </div>
-      )}
 
       {seleccionado && (
         <PanelProducto

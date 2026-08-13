@@ -260,7 +260,10 @@ const MC = {
   terracota: '#B5622A',
   oliva:     '#4B5A3E',
 
-  papel:     '#FBF8F0',
+  // Fue '#FBF8F0' (papel calido): sobre la hoja blanca, cada fila se leia como
+  // una tira beige detras del texto — el dueno lo marco dos veces. Blanco: la
+  // marca vive en lineas y acentos, no en ningun fondo.
+  papel:     '#FFFFFF',
   fondo:     '#F2ECDD',
   tinta70:   '#46413B',
   tinta45:   '#7A736A',
@@ -526,12 +529,12 @@ function ProductRow({ p, venc, activo, empaque, corte, onSelect }: {
       // evidencia abajo. En una sola línea, con los chips y las dos columnas
       // peleando por 390px, el nombre —lo único que el dueño está buscando— se
       // comía en «MEZCLA GRAN…». Desde `sm` vuelve a ser una sola línea.
-      className="w-full flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 text-left border-t py-[5px] pr-3 pl-3 hover:bg-[#F4EDDB] transition-colors"
+      className="w-full flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 text-left border-t py-[5px] pr-3 pl-3 hover:bg-[#F4F4F5] transition-colors"
       style={{
         borderTopColor: corte ? MC.lineaFte : MC.linea,
         borderTopWidth: corte ? 2 : 1,
         borderLeft: `3px solid ${cfg.mc}`,
-        background: activo ? '#F4EDDB' : MC.papel,
+        background: activo ? '#F4F4F5' : MC.papel,
       }}
     >
       <span

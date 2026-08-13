@@ -36,6 +36,7 @@ CATALOGO_REAL = [
     "Chai Latte", "Agua Normal Botella", "Agua con Gas Botella",
     "Licor Baileys x700ml", "Licor Baileys x1000ml",
     "Licor Whisky Black & White x700ml", "Licor Amaretto x750ml",
+    "Crema Chantilly",
     "SABORIZANTE MACADAMIA", "Saborizante Vainilla", "Saborizante Canela",
     "Saborizante Frutos Amarillos", "Saborizante Kiwi Fresa",
     "PULPA DE MANGO", "Pulpa Lulo", "Pulpa Mora", "Pulpa Limón",
@@ -185,10 +186,11 @@ class MatchingConservadorTest(unittest.TestCase):
                          "un producto no puede quedar en dos posiciones del recorrido")
 
     def test_entradas_sin_producto_se_reportan(self):
-        # "BATI CREMA" no tiene producto en el catalogo (el dueno la lista aparte
-        # de CHANTILLY, y ningun nombre del sistema dice bati crema).
+        # LICOR WHISKY X1000ML no existe en este fixture. (BATI CREMA ya no vive
+        # aca: el dueno confirmo que es la Crema Chantilly — 2026-08-12.)
         vacias = {e["entrada"] for e in self.res["por_entrada"] if not e["productos"]}
-        self.assertIn("BATI CREMA", vacias)
+        self.assertIn("LICOR WHISKY X1000ML", vacias)
+        self.assertNotIn("BATI CREMA", vacias)
 
     def test_catalogo_vacio_no_revienta(self):
         res = svc.emparejar(self.entradas, [])
@@ -317,12 +319,15 @@ class ReporteTest(unittest.TestCase):
         self.assertEqual(["SABORIZANTE MACADAMIA"], [p["nombre"] for p in entrada["productos"]])
 
     def test_lista_las_entradas_sin_producto(self):
-        # BATI CREMA: el dueno la lista aparte de CHANTILLY y ningun nombre del
-        # sistema dice "bati crema" — queda sin producto y el reporte lo dice.
-        # (AZUCAR X 2.5 KG ya NO va aca: la tabla de alias del dueno la resuelve.)
+        # LICOR WHISKY X1000ML no existe en este catalogo de fixture: el reporte
+        # lo dice. Los dos casos que antes vivian aca se resolvieron con el dueno:
+        # AZUCAR X 2.5 KG = Azucar a Granel (su tabla de alias) y BATI CREMA =
+        # Crema Chantilly (decision del 2026-08-12).
         rep = svc.reporte(self.db)
-        self.assertIn("BATI CREMA", [e["entrada"] for e in rep["entradas_sin_producto"]])
-        self.assertNotIn("AZUCAR X 2.5 KG", [e["entrada"] for e in rep["entradas_sin_producto"]])
+        vacias = [e["entrada"] for e in rep["entradas_sin_producto"]]
+        self.assertIn("LICOR WHISKY X1000ML", vacias)
+        self.assertNotIn("AZUCAR X 2.5 KG", vacias)
+        self.assertNotIn("BATI CREMA", vacias)
 
     def test_lista_los_productos_sin_orden(self):
         rep = svc.reporte(self.db)
@@ -401,3 +406,9 @@ class CatalogoRealDeVidaTest(unittest.TestCase):
         """_conteo_diario_lista.txt:45: 'AZUCAR X 2.5 KG = Azúcar a Granel x2500'."""
         nombres = {self.nombre_por_id[pid] for pid in self.res["asignaciones"]}
         self.assertIn("Azucar a Granel", nombres)
+
+    def test_la_chantilly_toma_la_posicion_de_bati_crema(self):
+        """Decision del dueno (2026-08-12): son lo mismo. Va al final de la
+        alacena, donde el dicto BATI CREMA."""
+        nombres = {self.nombre_por_id[pid] for pid in self.res["asignaciones"]}
+        self.assertIn("CREMA CHANTILLY", nombres)

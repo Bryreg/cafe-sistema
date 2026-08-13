@@ -408,11 +408,12 @@
         },
         {
           "entrada": "BATI CREMA",
-          "_nota": "SIN variante de producción: 'Crema Chantilly' es lo que se PREPARA con ella, no necesariamente el mismo renglón de inventario. Ver el reporte.",
+          "_nota": "Decision del dueno (2026-08-12): 'Bati crema y chantilly son lo mismo, ubicala ahi'. La tabla vieja de alias las listaba como dos renglones; esta decision la reemplaza.",
           "variantes": [
             "BATI CREMA",
             "Bati Crema",
-            "Baticrema"
+            "CREMA CHANTILLY",
+            "Crema Chantilly"
           ]
         }
       ]

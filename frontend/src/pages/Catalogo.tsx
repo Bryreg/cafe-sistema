@@ -185,6 +185,13 @@ export default function Catalogo() {
         .sort().join(' ')
     const map = new Map<string, Producto[]>()
     for (const p of productos) {
+      // Un producto ARCHIVADO es una fusión YA RESUELTA, no un duplicado
+      // pendiente: está fuera del inventario, de los pedidos, del POS y de los
+      // conteos, y conserva su historia (conteos y movimientos de junio, antes
+      // de la carga del catálogo real — por eso no se puede borrar). Contarlo
+      // acá dejaba el chip clavado en 24 para siempre, señalando trabajo que ya
+      // se hizo.
+      if (esArchivado(p)) continue
       const key = claveNorm(p.nombre)
       if (!key) continue
       map.set(key, [...(map.get(key) ?? []), p])

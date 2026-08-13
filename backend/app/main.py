@@ -664,6 +664,20 @@ def _migrate_productos_reales():
         # Obtener nombres ya existentes (después de las eliminaciones)
         nombres_existentes = {p.nombre.strip().lower()
                               for p in db.query(Producto).all()}
+
+        # EL SEED SOLO SIEMBRA INSTALACIONES NUEVAS. La comparación de abajo es
+        # por igualdad estricta (case-insensitive pero sensible a tildes y a
+        # palabras): contra un catálogo real cargado con otras grafías —
+        # «PULPA DE MANGO» vs «Pulpa Mango», «Almojabanas» vs «Almojábanas» —
+        # cada deploy re-creaba como fila vacía todo lo que no matcheara. De ahí
+        # los 24 grupos de duplicados con ids 1001+ del catálogo de producción,
+        # y el «Azúcar» que resucitó con id nuevo el mismo día que el dueño lo
+        # borró. Con un catálogo ya poblado no se crea NADA; las eliminaciones y
+        # renombres de arriba sí corren siempre (son las que limpian).
+        if len(nombres_existentes) >= 50:
+            db.commit()
+            return
+
         creados = 0
         for cat, nombre, unidad in PRODUCTOS_REALES:
             if nombre.strip().lower() in nombres_existentes:

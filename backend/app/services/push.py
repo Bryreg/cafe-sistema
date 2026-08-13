@@ -91,9 +91,16 @@ def borrar_subscription(db, endpoint: str, usuario_id=None) -> bool:
     return True
 
 
-def enviar(db, tienda_id, titulo: str, cuerpo: str, url: str = "/dashboard") -> int:
+def enviar(db, tienda_id, titulo: str, cuerpo: str, url: str = "/dashboard",
+           usuario_id=None) -> int:
     """Envía un push a las suscripciones de la tienda (y a las globales con
     tienda_id NULL). Nunca lanza: cuenta y devuelve los envíos exitosos.
+
+    `usuario_id` acota el envío a los dispositivos de UNA persona: un aviso de
+    horario o de novedad laboral es asunto de esa barista, no de toda la sede.
+    La columna ya existía y ya se llenaba (`guardar_subscription`); lo único que
+    faltaba era filtrar por ella. Sin el parámetro, el comportamiento por sede
+    queda exactamente igual que antes.
 
     Usa una SESIÓN PROPIA (aislada), no la del caller: el motor de notificaciones
     a veces corre a mitad de una transacción de venta, y un commit/rollback acá
@@ -108,10 +115,13 @@ def enviar(db, tienda_id, titulo: str, cuerpo: str, url: str = "/dashboard") -> 
     enviados = 0
     s_db = SessionLocal()
     try:
-        subs = s_db.query(PushSubscription).filter(
+        q = s_db.query(PushSubscription).filter(
             (PushSubscription.tienda_id == tienda_id)
             | (PushSubscription.tienda_id.is_(None))
-        ).all()
+        )
+        if usuario_id is not None:
+            q = q.filter(PushSubscription.usuario_id == usuario_id)
+        subs = q.all()
         payload = json.dumps({
             "title": titulo,
             "body": cuerpo,
@@ -150,7 +160,8 @@ def enviar(db, tienda_id, titulo: str, cuerpo: str, url: str = "/dashboard") -> 
     return enviados
 
 
-def enviar_async(tienda_id, titulo: str, cuerpo: str, url: str = "/dashboard") -> None:
+def enviar_async(tienda_id, titulo: str, cuerpo: str, url: str = "/dashboard",
+                 usuario_id=None) -> None:
     """Versión fire-and-forget de `enviar`: dispara el envío en un thread daemon
     y vuelve de inmediato. La usa el motor de notificaciones (disparar) para NO
     bloquear la venta del POS con los HTTP síncronos de webpush — que además
@@ -160,6 +171,7 @@ def enviar_async(tienda_id, titulo: str, cuerpo: str, url: str = "/dashboard") -
     if VAPID_PRIVATE is None or not _PUSH_AVAILABLE:
         return
     t = threading.Thread(
-        target=enviar, args=(None, tienda_id, titulo, cuerpo, url), daemon=True
+        target=enviar, args=(None, tienda_id, titulo, cuerpo, url, usuario_id),
+        daemon=True,
     )
     t.start()

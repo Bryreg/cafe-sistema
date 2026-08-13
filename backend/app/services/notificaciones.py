@@ -64,10 +64,15 @@ def marcar_todas_leidas(db: Session, tienda_id: int) -> int:
 
 def disparar(db: Session, tienda_id: int, tipo: str, mensaje: str, nivel: str,
              referencia_id: int | None = None,
-             push_titulo: str | None = None, push_cuerpo: str | None = None) -> None:
+             push_titulo: str | None = None, push_cuerpo: str | None = None,
+             usuario_id: int | None = None, push_url: str | None = None) -> None:
     """Dispara una notificación respetando la regla del tipo.
 
     - Si no hay regla o está inactiva -> no hace nada.
+    - `usuario_id` acota el PUSH a los dispositivos de esa persona (avisos de
+      horario o de novedad laboral). La fila de campana sigue siendo de la sede:
+      el admin tiene que poder ver que el aviso salió.
+    - `push_url` es la pantalla que abre el push al tocarlo (default /dashboard).
     - SIEMPRE registra la fila (silenciosa con leida=True si la campana está
       apagada): así el dedupe diario es independiente del canal y un push con
       campana off NO se reenvía en cada venta.
@@ -92,7 +97,9 @@ def disparar(db: Session, tienda_id: int, tipo: str, mensaje: str, nivel: str,
         if regla.canal_push:
             # Fire-and-forget: NO bloquear la venta con los HTTP de webpush.
             push.enviar_async(tienda_id, push_titulo or "Sistema Café",
-                              push_cuerpo or mensaje)
+                              push_cuerpo or mensaje,
+                              url=push_url or "/dashboard",
+                              usuario_id=usuario_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("notificaciones.disparar fallo (tipo=%s): %s", tipo, e)
 

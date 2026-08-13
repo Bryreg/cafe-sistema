@@ -34,6 +34,16 @@ def fin_dia_col_utc(d: date) -> datetime:
     return datetime.combine(d, datetime.max.time()) + COL_OFFSET
 
 
+def local_col(dt: datetime) -> datetime:
+    """El mismo instante expresado como RELOJ DE PARED de Colombia (naive).
+
+    Es la conversión que hay que hacer ANTES de partir una jornada en franjas
+    (nocturna, medianoche, domingo): todas esas fronteras son locales. `hora_col`
+    y `dia_col` son casos particulares de esto.
+    """
+    return dt - COL_OFFSET
+
+
 def hora_col(dt: datetime) -> int:
     """Hora del día (0-23) en Colombia de un datetime almacenado en UTC."""
     return (dt - COL_OFFSET).hour

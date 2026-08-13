@@ -16,6 +16,7 @@ from app.routers import config_ticket
 from app.routers import rentabilidad
 from app.routers import combos
 from app.routers import costos
+from app.routers import horarios
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -285,6 +286,27 @@ def _seed_kiosk_pin():
         db.close()
 
 _seed_kiosk_pin()
+
+
+# ─── Tasas laborales: sembrar las vigencias conocidas si faltan ─────────────
+# Idempotente y NO destructivo: solo inserta las `vigente_desde` que todavía no
+# existen, así que nunca pisa un valor que el contador ya corrigió. Los valores
+# sembrados son un PUNTO DE PARTIDA marcado como "confirmar con el contador",
+# no una afirmación legal del sistema.
+def _seed_tasas_laborales():
+    from app.services import tasas_laborales
+    db = SessionLocal()
+    try:
+        creadas = tasas_laborales.sembrar_tasas(db)
+        if creadas:
+            logger.info("Tasas laborales sembradas: %d vigencias", creadas)
+    except Exception as e:
+        db.rollback()
+        logger.warning("No se pudieron sembrar las tasas laborales: %s", e)
+    finally:
+        db.close()
+
+_seed_tasas_laborales()
 
 
 def _backfill_dia_operativo():
@@ -964,6 +986,7 @@ app.include_router(config_ticket.router,     prefix="/api/v1")
 app.include_router(rentabilidad.router,      prefix="/api/v1")
 app.include_router(combos.router,            prefix="/api/v1")
 app.include_router(costos.router,            prefix="/api/v1")
+app.include_router(horarios.router,          prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────
 _frontend_dist = os.path.abspath(

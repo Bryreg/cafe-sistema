@@ -2,7 +2,7 @@ import {
   LayoutDashboard, Layers, Coffee,
   Banknote, Wrench, ClipboardCheck, Activity,
   Bell, Inbox, BarChart2, Users, Tag, RotateCcw, Calculator, Scale, Boxes, Wallet,
-  Receipt, ShieldCheck, ListChecks, BookOpen, TrendingUp, Package,
+  Receipt, ShieldCheck, ListChecks, BookOpen, TrendingUp, Package, CalendarDays,
 } from 'lucide-react'
 
 export interface NavItem { to: string; label: string; icon: typeof Layers }
@@ -45,6 +45,10 @@ export const NAV_GROUPS: NavGroup[] = [
     { to: '/consignaciones',    label: 'Consignaciones', icon: Banknote        },
   ]},
   { label: 'Operación', items: [
+    // Horarios vive en Operación (junto a Comunicados y Cumplimiento) porque su
+    // pregunta es «quién trabaja y cuándo», no «cuánto cuesta». El costo estimado
+    // de esas horas se lee adentro del propio módulo, en la pestaña del mes.
+    { to: '/horarios',            label: 'Horarios',       icon: CalendarDays    },
     { to: '/mantenimientos',      label: 'Mantenimientos', icon: Wrench          },
     { to: '/auditorias',          label: 'Auditorías',     icon: ClipboardCheck  },
     { to: '/cumplimiento',        label: 'Cumplimiento',   icon: ShieldCheck     },

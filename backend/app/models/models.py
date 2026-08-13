@@ -1603,3 +1603,160 @@ class Configuracion(Base):
     id = Column(Integer, primary_key=True)
     clave = Column(String(50), unique=True, nullable=False, index=True)
     valor = Column(String(255), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# Módulo Horarios & Nómina: tasas de ley con vigencia, festivos, turnos
+# programados, novedades laborales y contrato de la barista.
+#
+# TODAS estas tablas son NUEVAS: las crea create_all() y no necesitan ALTER en
+# el loop de main.py (ese loop solo hace falta para columnas sobre tablas viejas).
+# ---------------------------------------------------------------------------
+
+class TasaLaboral(Base):
+    """Parámetros legales de liquidación, CON VIGENCIA.
+
+    Jamás constantes en el código: la ley colombiana está en transición (la
+    jornada máxima baja por etapas y los recargos dominicales suben por etapas),
+    así que un número quemado envejece en silencio y obliga a un deploy por cada
+    cambio de norma.
+
+    Cada fila es un SNAPSHOT COMPLETO vigente desde `vigente_desde`. El cálculo
+    resuelve la tasa por la FECHA DEL TURNO, no por hoy: un turno de junio se
+    liquida con la tasa de junio aunque hoy rija otra. Recalcular un mes viejo da
+    siempre el mismo resultado.
+
+    `nota` dice de qué norma sale el número y `confirmar_contador` marca las que
+    el dueño todavía tiene que validar. Son EDITABLES desde la pantalla: el
+    sistema no reemplaza al contador.
+    """
+    __tablename__ = "tasas_laborales"
+    id = Column(Integer, primary_key=True)
+    vigente_desde = Column(Date, nullable=False, unique=True, index=True)
+    # Jornada máxima ORDINARIA por semana (art. 161 CST + Ley 2101/2021).
+    jornada_max_semanal = Column(Float, nullable=False, default=42.0)
+    # Franja nocturna en HORA COLOMBIA: [inicio, fin) cruzando la medianoche.
+    hora_inicio_nocturna = Column(Integer, nullable=False, default=19)
+    hora_fin_nocturna = Column(Integer, nullable=False, default=6)
+    # Recargos como FRACCIÓN (0.35 = 35% adicional sobre la hora ordinaria).
+    recargo_nocturno = Column(Float, nullable=False, default=0.35)
+    recargo_dominical = Column(Float, nullable=False, default=0.90)
+    # NULL = se DERIVA como recargo_dominical + recargo_nocturno. Se deja
+    # nullable a propósito: si fuera un número fijo y alguien editara solo el
+    # dominical, los dos quedarían en desacuerdo sin que nadie lo note.
+    recargo_dominical_nocturno = Column(Float, nullable=True)
+    extra_diurna = Column(Float, nullable=False, default=0.25)
+    extra_nocturna = Column(Float, nullable=False, default=0.75)
+    # Divisor convencional para pasar de sueldo mensual a valor hora ordinaria.
+    divisor_hora_mensual = Column(Float, nullable=False, default=240.0)
+    nota = Column(Text, nullable=True)
+    confirmar_contador = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Festivo(Base):
+    """OVERRIDE de festivos, no el catálogo.
+
+    La base la calcula `services/festivos.py` (Ley 51/1983 + Pascua). Esta tabla
+    solo AGREGA un día que el código no conoce (un cívico local) o QUITA uno
+    calculado (`es_festivo=False`) cuando en la práctica se trabaja normal.
+    """
+    __tablename__ = "festivos"
+    id = Column(Integer, primary_key=True)
+    fecha = Column(Date, nullable=False, unique=True, index=True)
+    nombre = Column(String(120), nullable=False)
+    es_festivo = Column(Boolean, default=True, nullable=False)
+    nota = Column(String(300), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ContratoBarista(Base):
+    """Datos de nómina de una persona. Tabla APARTE de `usuarios` a propósito:
+    `usuarios` es una tabla vieja y cada columna nueva ahí exige un ALTER en el
+    loop de main.py; además el sueldo no tiene por qué viajar en cada query de
+    login. Una fila por usuario (unique)."""
+    __tablename__ = "contratos_barista"
+    id = Column(Integer, primary_key=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"),
+                        nullable=False, unique=True, index=True)
+    salario_mensual = Column(Numeric(12, 2, asdecimal=False), default=0.0, nullable=False)
+    # Jornada PACTADA (medio tiempo, etc.). NULL = la máxima legal de su fecha.
+    horas_semana_pactadas = Column(Float, nullable=True)
+    fecha_ingreso = Column(Date, nullable=True)
+    activo = Column(Boolean, default=True, nullable=False)
+    nota = Column(String(300), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    usuario = relationship("Usuario")
+
+
+class EstadoProgramadoEnum(str, enum.Enum):
+    borrador = "borrador"      # el admin lo está armando: la barista NO lo ve
+    publicado = "publicado"    # enviado, la barista lo ve y le llegó el aviso
+    cancelado = "cancelado"    # se dio de baja después de publicado
+
+
+class TurnoProgramado(Base):
+    """El horario PLANEADO (≠ TurnoBarista, que es lo que realmente pasó).
+
+    Las horas se guardan como texto "HH:MM" de RELOJ DE PARED COLOMBIA, no como
+    timestamps: un horario es una intención local ("entra a las 7"), no un
+    instante UTC, y guardarlo así lo deja inmune al huso. Si hora_fin <= hora_inicio
+    el turno cruza la medianoche y termina al día siguiente.
+    """
+    __tablename__ = "turnos_programados"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"),
+                        nullable=False, index=True)
+    nombre_snapshot = Column(String(100), nullable=False)
+    fecha = Column(Date, nullable=False, index=True)
+    hora_inicio = Column(String(5), nullable=False)   # "07:00"
+    hora_fin = Column(String(5), nullable=False)      # "15:00"
+    estado = Column(SAEnum(EstadoProgramadoEnum), nullable=False,
+                    default=EstadoProgramadoEnum.borrador, index=True)
+    nota = Column(String(300), nullable=True)
+    publicado_at = Column(DateTime, nullable=True)
+    creado_por_id = Column(Integer, ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (
+        UniqueConstraint("usuario_id", "fecha", "hora_inicio",
+                         name="uq_programado_barista_fecha_hora"),
+    )
+    usuario = relationship("Usuario", foreign_keys=[usuario_id])
+
+
+class TipoNovedadNominaEnum(str, enum.Enum):
+    incapacidad = "incapacidad"
+    vacaciones = "vacaciones"
+    permiso_remunerado = "permiso_remunerado"
+    permiso_no_remunerado = "permiso_no_remunerado"
+    licencia = "licencia"
+    ausencia = "ausencia"
+    cambio_turno = "cambio_turno"
+
+
+class NovedadNomina(Base):
+    """Novedad LABORAL de una persona (incapacidad, vacaciones, ausencia…).
+
+    Se llama NovedadNomina y no Novedad porque `Novedad` ya existe en este repo
+    y es otra cosa: la bitácora operativa del turno (incidentes, handoff).
+    """
+    __tablename__ = "novedades_nomina"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"),
+                        nullable=False, index=True)
+    nombre_snapshot = Column(String(100), nullable=False)
+    tipo = Column(SAEnum(TipoNovedadNominaEnum), nullable=False, index=True)
+    fecha_desde = Column(Date, nullable=False, index=True)
+    fecha_hasta = Column(Date, nullable=False, index=True)
+    # Se copia del mapa de tipos al crear, pero queda EDITABLE: hay permisos
+    # que el dueño decide pagar aunque el default diga que no.
+    remunerada = Column(Boolean, nullable=False, default=False)
+    nota = Column(Text, nullable=True)
+    soporte_url = Column(String(300), nullable=True)
+    creado_por_id = Column(Integer, ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    usuario = relationship("Usuario", foreign_keys=[usuario_id])

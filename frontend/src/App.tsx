@@ -31,6 +31,7 @@ import Ingresos from './pages/Ingresos'
 import ConteoDesechables from './pages/ConteoDesechables'
 import CuadreInicial from './pages/CuadreInicial'
 import HistorialVentas from './pages/HistorialVentas'
+import MiHorario from './pages/MiHorario'
 import POS from './pages/POS'
 
 // Admin pages
@@ -59,6 +60,7 @@ import CuadreTurnos from './pages/CuadreTurnos'
 import ConfigTicketPage from './pages/ConfigTicket'
 import Plata from './pages/Plata'
 import Carta from './pages/Carta'
+import Horarios from './pages/Horarios'
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
 
@@ -140,6 +142,13 @@ function AppRoutes() {
       <Route path="/inventario-mensual" element={hasSession ? <InventarioMensual /> : <KioskSetup />} />
       <Route path="/ingresos"       element={hasSession ? <Ingresos />       : <KioskSetup />} />
       <Route path="/historial-ventas" element={hasSession ? <HistorialVentas /> : <KioskSetup />} />
+      {/* Mi horario: lo ve la barista (kiosko o celular). Un admin que entre acá
+          va al armado, que es su versión de la misma pregunta. */}
+      <Route path="/mi-horario" element={
+        hasSession
+          ? isAdmin ? <Navigate to="/horarios" replace /> : <MiHorario />
+          : <KioskSetup />
+      } />
       <Route path="/cuadre-turnos"   element={
         hasSession
           ? isAdmin ? <Layout><CuadreTurnos /></Layout> : <CuadreTurnos />
@@ -196,6 +205,7 @@ function AppRoutes() {
       <Route path="/conteos-admin"    element={<RequireAdmin><Layout><ConteosAdmin /></Layout></RequireAdmin>} />
       <Route path="/lotes"            element={<RequireAdmin><Layout><LotesTrazabilidad /></Layout></RequireAdmin>} />
       <Route path="/comunicados"      element={<RequireAdmin><Layout><Comunicados /></Layout></RequireAdmin>} />
+      <Route path="/horarios"         element={<RequireAdmin><Layout><Horarios /></Layout></RequireAdmin>} />
       <Route path="/usuarios"         element={<RequireAdmin><Layout><Usuarios /></Layout></RequireAdmin>} />
       <Route path="/control-inventario" element={<RequireAdmin><Layout><ControlInventario /></Layout></RequireAdmin>} />
       <Route path="/catalogo"         element={<RequireAdmin><Layout><Catalogo /></Layout></RequireAdmin>} />

@@ -252,6 +252,11 @@ interface PropuestasUmbrales {
 const MC = {
   negro:     '#0D0C0B',
   crema:     '#F7F2E7',
+  // El fondo de la pantalla. Fue crema (el de las piezas gráficas de la marca) y
+  // el dueño lo pidió blanco, como el resto del admin: la marca queda en los
+  // acentos —terracota, oliva, las líneas cálidas— y no en el papel de fondo.
+  // `crema` se conserva porque las pastillas activas lo usan como texto sobre negro.
+  hoja:      '#FFFFFF',
   terracota: '#B5622A',
   oliva:     '#4B5A3E',
 
@@ -1624,12 +1629,13 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
 
   return (
     <div className="space-y-3">
-      {/* La hoja de papel crema: el fondo de marca vive acá adentro y no en el
-          <body>, para no repintar el resto del admin desde una sola pantalla. */}
+      {/* La hoja: blanca, como el resto del admin (pedido del dueño — la marca
+          vive en los acentos, no en el fondo). El wrapper se queda porque las
+          pastillas sticky necesitan un fondo que las respalde al scrollear. */}
       <div
         className={`space-y-2 transition-all rounded-2xl p-3 sm:p-4 ${
           seleccionado || verMinimos ? 'lg:mr-[420px]' : ''}`}
-        style={{ background: MC.crema }}>
+        style={{ background: MC.hoja }}>
 
         {/* LAS PASTILLAS: cada montón con su tamaño, y cada una es el filtro que
             lo muestra. Tocar la que está puesta vuelve a TODO. Una pastilla en
@@ -1638,7 +1644,7 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
         {sugerencia && (
           <nav aria-label="Filtrar la lista"
             className="sticky top-0 z-20 -mx-3 px-3 sm:-mx-4 sm:px-4 py-1.5 flex gap-1.5 overflow-x-auto"
-            style={{ background: MC.crema }}>
+            style={{ background: MC.hoja }}>
             {PASTILLAS.map(t => {
               const n = cuentas[t.id] ?? 0
               const activa = filtro === t.id

@@ -135,6 +135,40 @@ function RecetaModal({ producto, productos, onClose }: {
   )
 }
 
+// ─── Plan de fusión de duplicados ARCHIVADOS ─────────────────────────────────
+// Lo de arriba (gruposDuplicados) son duplicados VIVOS: dos productos que el POS
+// muestra hoy. Esto es el paso siguiente — un archivado que quedó de una fusión
+// anterior y todavía guarda su historia (conteos, entradas, ventas). El backend
+// dice exactamente qué se movería; acá solo se muestra y se dispara.
+
+interface RefProducto { id: number; nombre: string }
+interface Choque { tabla: string; detalle: string; resolucion: string }
+interface Fusionable {
+  muerto: RefProducto
+  vivo: RefProducto
+  mueve: Record<string, number>
+  total_filas: number
+  choques: Choque[]
+  bloqueos: string[]
+  seguro: boolean
+}
+interface Huerfano {
+  id: number; nombre: string
+  tiene_historia: boolean
+  ancla: Record<string, number>
+  combo_sombra: boolean
+}
+interface PlanDuplicados {
+  fusionables: Fusionable[]
+  ambiguos: { clave: string; vivos: RefProducto[]; archivados: RefProducto[] }[]
+  huerfanos: Huerfano[]
+  resumen: {
+    fusionables: number; seguros: number; bloqueados: number
+    ambiguos: number; huerfanos: number; huerfanos_borrables: number
+    filas_a_reapuntar: number; filas_a_reapuntar_seguras: number
+  }
+}
+
 function badge(cat: string) {
   const c = CAT_COLOR[cat as Cat] || { bg: 'oklch(93% 0.005 60)', text: 'oklch(40% 0.005 60)' }
   return (
@@ -162,6 +196,10 @@ export default function Catalogo() {
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [plan, setPlan] = useState<PlanDuplicados | null>(null)
+  const [confirmFusion, setConfirmFusion] = useState<number | 'todo' | 'huerfanos' | null>(null)
+  const [fusionando, setFusionando] = useState(false)
+  const [avisoFusion, setAvisoFusion] = useState('')
 
   // Agrupa productos que son EL MISMO escrito distinto. La clave normaliza fuerte:
   // quita acentos/mayúsculas/puntuación, separa número de unidad ("9oz"->"9 oz"),
@@ -223,7 +261,41 @@ export default function Catalogo() {
     })))
   }
 
+  // El plan es un GET read-only: se pide solo al abrir la vista Duplicados, no
+  // en cada carga del catálogo (recorre 25 columnas en 23 tablas por producto).
+  const cargarPlan = async () => {
+    try {
+      const r = await api.get('/inventario/duplicados/plan')
+      setPlan(r.data)
+    } catch { setPlan(null) }
+  }
+
   useEffect(() => { load() }, [])
+  useEffect(() => { if (showDuplicados && !plan) cargarPlan() }, [showDuplicados])
+
+  const fusionar = async (pares: { muerto: number; vivo: number }[], borrarVacios: boolean) => {
+    setFusionando(true)
+    setAvisoFusion('')
+    try {
+      const r = await api.post('/inventario/duplicados/fusionar', {
+        pares, borrar_huerfanos_vacios: borrarVacios,
+      })
+      const { fusionados, fallidos, filas_reapuntadas, huerfanos_borrados } = r.data.resumen
+      const partes = []
+      if (fusionados) partes.push(`${fusionados} fusionado${fusionados > 1 ? 's' : ''} · ${filas_reapuntadas} registros movidos`)
+      if (huerfanos_borrados) partes.push(`${huerfanos_borrados} archivado${huerfanos_borrados > 1 ? 's' : ''} vacío${huerfanos_borrados > 1 ? 's' : ''} borrado${huerfanos_borrados > 1 ? 's' : ''}`)
+      if (fallidos) {
+        const razon = r.data.pares.find((p: { ok: boolean }) => !p.ok)?.error
+        partes.push(`${fallidos} sin fusionar: ${razon}`)
+      }
+      setAvisoFusion(partes.join(' · ') || 'No había nada que fusionar.')
+      setConfirmFusion(null)
+      await Promise.all([load(), cargarPlan()])
+    } catch (e: any) { setError(e.response?.data?.detail || 'No se pudo fusionar') }
+    finally { setFusionando(false) }
+  }
+
+  const seguros = plan?.fusionables.filter(f => f.seguro) ?? []
 
   const nArchivados = productos.filter(esArchivado).length
   const productosFiltrados = productos.filter(p => {
@@ -466,12 +538,168 @@ export default function Catalogo() {
       {/* Vista duplicados */}
       {showDuplicados && (
         <div className="space-y-4">
-          {gruposDuplicados.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-gray-200 px-6 py-10 text-center">
-              <Check size={32} className="mx-auto mb-3" style={{ color: 'oklch(50% 0.12 155)' }} />
-              <p className="text-sm font-semibold text-gray-700">Sin duplicados detectados</p>
-              <p className="text-xs text-gray-400 mt-1">Todos los nombres de producto son únicos</p>
+
+          {/* Archivados que todavía se pueden fusionar. El backend calcula qué
+              se movería; el botón muestra ese número ANTES de tocar nada. */}
+          {avisoFusion && (
+            <div className="flex items-center gap-2 text-sm px-4 py-3 rounded-xl border"
+              style={{ background: 'oklch(96% 0.03 155)', borderColor: 'oklch(80% 0.08 155)', color: 'oklch(35% 0.11 155)' }}>
+              <Check size={14} /> {avisoFusion}
+              <button onClick={() => setAvisoFusion('')} className="ml-auto"><X size={13} /></button>
             </div>
+          )}
+
+          {plan && (plan.fusionables.length > 0 || plan.huerfanos.length > 0) && (
+            <div className="bg-white rounded-2xl border-2 overflow-hidden"
+              style={{ borderColor: 'oklch(85% 0.05 60)' }}>
+              <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap"
+                style={{ background: 'oklch(97% 0.012 60)' }}>
+                <Package size={13} style={{ color: 'oklch(45% 0.04 60)' }} />
+                <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'oklch(38% 0.03 60)' }}>
+                  Archivados con historia
+                </p>
+                {seguros.length > 1 && (
+                  confirmFusion === 'todo' ? (
+                    <div className="ml-auto flex items-center gap-1">
+                      <button disabled={fusionando}
+                        onClick={() => fusionar(seguros.map(f => ({ muerto: f.muerto.id, vivo: f.vivo.id })), false)}
+                        className="px-2.5 py-1 rounded-lg text-xs font-bold text-white disabled:opacity-50"
+                        style={{ background: 'oklch(45% 0.13 155)' }}>
+                        {fusionando ? 'Fusionando…' : 'Sí, fusionar'}
+                      </button>
+                      <button onClick={() => setConfirmFusion(null)}
+                        className="px-2.5 py-1 rounded-lg text-xs border-2 border-gray-200 text-gray-500">
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setConfirmFusion('todo')}
+                      className="ml-auto px-3 py-1 rounded-lg text-xs font-bold text-white"
+                      style={{ background: 'oklch(45% 0.13 155)' }}>
+                      Fusionar todo lo seguro · {seguros.length} grupos · {plan.resumen.filas_a_reapuntar_seguras} registros
+                    </button>
+                  )
+                )}
+              </div>
+
+              <div className="divide-y divide-gray-50">
+                {plan.fusionables.map(f => (
+                  <div key={f.muerto.id} className="px-4 py-3 flex items-start gap-3 flex-wrap">
+                    <div className="flex-1 min-w-[240px]">
+                      <p className="text-sm text-gray-800">
+                        <span className="font-mono text-xs text-gray-400">#{f.muerto.id}</span>{' '}
+                        <span className="font-medium">{f.muerto.nombre}</span>
+                        <span className="text-gray-400"> → </span>
+                        <span className="font-mono text-xs text-gray-400">#{f.vivo.id}</span>{' '}
+                        <span className="font-semibold">{f.vivo.nombre}</span>
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {f.total_filas > 0
+                          ? `Se mueven ${f.total_filas} registros al producto que se queda: ${Object.entries(f.mueve).map(([t, n]) => `${n} de ${t.split('.')[0]}`).join(', ')}.`
+                          : 'No tiene historia: solo se borra la ficha vacía.'}
+                      </p>
+                      {f.choques.map((c, i) => (
+                        <p key={i} className="text-xs mt-0.5" style={{ color: 'oklch(48% 0.09 70)' }}>
+                          {c.tabla}: {c.resolucion}.
+                        </p>
+                      ))}
+                      {f.bloqueos.map((b, i) => (
+                        <p key={i} className="text-xs mt-0.5" style={{ color: 'oklch(45% 0.16 25)' }}>{b}</p>
+                      ))}
+                    </div>
+                    {f.seguro ? (
+                      confirmFusion === f.muerto.id ? (
+                        <div className="flex items-center gap-1">
+                          <button disabled={fusionando}
+                            onClick={() => fusionar([{ muerto: f.muerto.id, vivo: f.vivo.id }], false)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-bold text-white disabled:opacity-50"
+                            style={{ background: 'oklch(45% 0.13 155)' }}>
+                            {fusionando ? 'Fusionando…' : 'Sí'}
+                          </button>
+                          <button onClick={() => setConfirmFusion(null)}
+                            className="px-2.5 py-1 rounded-lg text-xs border-2 border-gray-200 text-gray-500">
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setConfirmFusion(f.muerto.id)}
+                          className="px-3 py-1 rounded-lg text-xs font-bold border-2 whitespace-nowrap"
+                          style={{ borderColor: 'oklch(70% 0.1 155)', color: 'oklch(38% 0.13 155)' }}>
+                          Fusionar · {f.total_filas} registros
+                        </button>
+                      )
+                    ) : (
+                      <span className="text-xs font-semibold px-2 py-1 rounded-lg whitespace-nowrap"
+                        style={{ background: 'oklch(96% 0.03 25)', color: 'oklch(42% 0.15 25)' }}>
+                        A mano
+                      </span>
+                    )}
+                  </div>
+                ))}
+
+                {plan.ambiguos.map(a => (
+                  <div key={a.clave} className="px-4 py-3">
+                    <p className="text-sm text-gray-800">{a.archivados.map(p => p.nombre).join(', ')}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Hay {a.vivos.length} productos vivos con ese nombre ({a.vivos.map(p => `#${p.id} ${p.nombre}`).join(', ')}).
+                      Cuál se queda lo elegís vos, con Unificar.
+                    </p>
+                  </div>
+                ))}
+
+                {plan.huerfanos.length > 0 && (
+                  <div className="px-4 py-3 flex items-start gap-3 flex-wrap">
+                    <div className="flex-1 min-w-[240px]">
+                      <p className="text-sm text-gray-800">
+                        {plan.huerfanos.length} archivados del menú viejo, sin ningún producto vivo equivalente
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {plan.resumen.huerfanos_borrables > 0
+                          ? `${plan.resumen.huerfanos_borrables} están completamente vacíos y se pueden borrar. `
+                          : ''}
+                        {plan.huerfanos.length - plan.resumen.huerfanos_borrables > 0
+                          ? `Los otros ${plan.huerfanos.length - plan.resumen.huerfanos_borrables} guardan conteos, entradas o ventas que alguien registró: esos se quedan, porque borrarlos borraría ese trabajo.`
+                          : ''}
+                      </p>
+                    </div>
+                    {plan.resumen.huerfanos_borrables > 0 && (
+                      confirmFusion === 'huerfanos' ? (
+                        <div className="flex items-center gap-1">
+                          <button disabled={fusionando} onClick={() => fusionar([], true)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-bold text-white disabled:opacity-50"
+                            style={{ background: 'oklch(45% 0.18 25)' }}>
+                            {fusionando ? 'Borrando…' : 'Sí, borrar'}
+                          </button>
+                          <button onClick={() => setConfirmFusion(null)}
+                            className="px-2.5 py-1 rounded-lg text-xs border-2 border-gray-200 text-gray-500">
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setConfirmFusion('huerfanos')}
+                          className="px-3 py-1 rounded-lg text-xs font-bold border-2 whitespace-nowrap"
+                          style={{ borderColor: 'oklch(75% 0.1 25)', color: 'oklch(42% 0.15 25)' }}>
+                          Borrar {plan.resumen.huerfanos_borrables} vacíos
+                        </button>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {gruposDuplicados.length === 0 ? (
+            // El vacío honesto: acá solo se miran los productos VIVOS. Decir
+            // "todos los nombres son únicos" mientras el bloque de arriba lista
+            // archivados por fusionar sería falso, así que el texto cambia.
+            (plan && plan.fusionables.length + plan.huerfanos.length > 0) ? null : (
+              <div className="bg-white rounded-2xl border border-gray-200 px-6 py-10 text-center">
+                <Check size={32} className="mx-auto mb-3" style={{ color: 'oklch(50% 0.12 155)' }} />
+                <p className="text-sm font-semibold text-gray-700">Sin duplicados detectados</p>
+                <p className="text-xs text-gray-400 mt-1">Ningún producto activo comparte nombre con otro</p>
+              </div>
+            )
           ) : (
             gruposDuplicados.map((grupo, gi) => (
               <div key={gi} className="bg-white rounded-2xl border-2 overflow-hidden"

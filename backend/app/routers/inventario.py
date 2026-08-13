@@ -589,6 +589,82 @@ def unificar(data: UnificarRequest, db: Session = Depends(get_db),
                                   dry_run=data.dry_run)
 
 
+@router.get("/duplicados/plan")
+def duplicados_plan(db: Session = Depends(get_db),
+                    admin: Usuario = Depends(require_admin)):
+    """Admin: qué se movería si se fusionan los duplicados archivados. NO ESCRIBE.
+
+    Es el dry-run del script `scripts/fusionar_duplicados_dryrun.py` servido como
+    dato, para poder leerlo desde la app y desde producción sin abrir una consola.
+    Devuelve los tres desenlaces:
+
+      · `fusionables`  archivados con EXACTAMENTE un vivo del mismo nombre, con
+                       qué se movería por tabla, qué chocaría (y cómo se
+                       resuelve) y qué lo bloquea. `seguro: true` = se puede
+                       ejecutar sin decisiones a mano.
+      · `ambiguos`     hay más de un vivo con ese nombre: nadie adivina cuál es
+                       el bueno, lo elige el admin.
+      · `huerfanos`    archivados sin ningún vivo (el menú viejo), cada uno con
+                       `tiene_historia`: los vacíos se pueden borrar y punto;
+                       los que tienen historia se conservan, con el detalle de
+                       qué los ancla.
+    """
+    from app.services import fusion_duplicados
+    return fusion_duplicados.plan(db)
+
+
+class ParFusion(BaseModel):
+    muerto: int          # el archivado que desaparece
+    vivo: int            # el producto que se queda con la historia
+
+
+class FusionarRequest(BaseModel):
+    pares: list[ParFusion] = []
+    borrar_huerfanos_vacios: bool = False
+
+
+@router.post("/duplicados/fusionar")
+def duplicados_fusionar(data: FusionarRequest, db: Session = Depends(get_db),
+                        admin: Usuario = Depends(require_admin)):
+    """Admin: ejecuta la fusión. Cada par en su propia transacción.
+
+    Por cada par: re-apunta toda la referencia del archivado al vivo, borra el
+    cascarón ya vacío y verifica que no quedó ninguna referencia colgada (si
+    quedó, ese par se revierte). Un par que falla NO arrastra a los demás y se
+    reporta con su razón.
+
+    Con `borrar_huerfanos_vacios` borra los archivados sin ningún vivo Y sin
+    ninguna referencia en ninguna tabla. Los que tienen historia se conservan
+    siempre: se devuelven en `huerfanos_conservados` con qué los ancla.
+    """
+    from app.services import fusion_duplicados as fusion
+
+    # La validación de «jamás fusionar dos vivos» se hace ANTES de tocar nada:
+    # si un solo par del lote apunta a un producto vivo como muerto, no se
+    # ejecuta ninguno. Mover ventas reales al producto equivocado es el daño
+    # máximo de este endpoint, y un lote a medio aplicar es peor que uno
+    # rechazado entero.
+    for par in data.pares:
+        muerto = db.query(Producto).filter_by(id=par.muerto).first()
+        if muerto is None:
+            raise HTTPException(404, f"El producto #{par.muerto} no existe.")
+        if not fusion.es_archivado(muerto):
+            raise HTTPException(
+                400,
+                f"#{par.muerto} «{muerto.nombre}» no está archivado. Solo se fusiona un "
+                f"producto archivado hacia uno vivo: fusionar dos vivos movería ventas "
+                f"reales al producto equivocado.")
+        if fusion.es_combo_sombra(db, par.muerto):
+            raise HTTPException(
+                400,
+                f"#{par.muerto} «{muerto.nombre}» es el producto sombra de un combo, "
+                f"no un duplicado. Fusionarlo movería el combo a otro producto.")
+
+    return fusion.fusionar(db, [p.model_dump() for p in data.pares],
+                           borrar_huerfanos_vacios=data.borrar_huerfanos_vacios,
+                           usuario_id=admin.id)
+
+
 @router.get("/pasteleria-impulso/{tienda_id}")
 def pasteleria_impulso(tienda_id: int, db: Session = Depends(get_db),
                        user: Usuario = Depends(get_current_user)):

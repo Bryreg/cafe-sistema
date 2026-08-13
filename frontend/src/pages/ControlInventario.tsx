@@ -1628,7 +1628,11 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
   // No se inventa un flujo nuevo: /pedidos-admin ya arma la lista por proveedor
   // y el texto para WhatsApp. `?tab=pedidos` la abre en esa pestaña — sin eso el
   // link dejaría al dueño en «Solicitudes», que es otra pantalla.
-  const irAPedido = () => navigate('/pedidos-admin?tab=pedidos')
+  // La SEDE viaja también: el link salía pelado y Pedidos arrancaba en la sede
+  // del usuario, así que mirando Palmetto se aterrizaba en Vida y el pedido se
+  // armaba con el stock de la otra tienda.
+  const irAPedido = () =>
+    navigate(`/pedidos-admin?tab=pedidos&tienda_id=${tiendaId}`)
 
   return (
     <div className="space-y-3">

@@ -1,10 +1,11 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
   ShoppingCart, AlertTriangle, Clock, CheckCircle2, CheckCircle,
   Copy, ChevronDown, ChevronUp, Phone, ClipboardList, Settings2, Check, Search,
-  ChefHat,
+  ChefHat, Plus, X, HelpCircle, Package,
 } from 'lucide-react'
 
 // Timestamps en UTC naive → parsear como UTC para mostrar hora local Colombia
@@ -18,65 +19,91 @@ const parseUTC = (s: string) => {
 
 interface Sede { id: number; nombre: string }
 
-interface ProductoSugerido {
+/** Un producto DENTRO del catálogo de un proveedor. Lo arma
+ *  `services/pedidos.catalogo_proveedores` fusionando dos fuentes: lo que el
+ *  dueño asignó a mano (`fuente: manual`) y lo que las facturas enseñaron
+ *  (`fuente: compras`). */
+interface ItemCatalogo {
   producto_id: number
   nombre: string
   categoria: string
   unidad: string
-  proveedor: string | null
-  lead_time_dias: number
-  stock_actual: number
-  stock_minimo: number
+  contenido_por_empaque: number | null
+  /** ¿Se cuenta en esta sede? Si no, su stock es null — no cero. */
+  gestionado: boolean
+  /** Este proveedor es al que se le pide por defecto (asignación manual, o la
+   *  factura más reciente cuando no hay asignación). */
+  titular: boolean
+  fuente: 'manual' | 'compras' | null
+  proveedor_manual: string | null
+  ultimo_precio: number | null
+  ultima_compra: string | null
+  veces_comprado: number
+  stock_actual: number | null
+  stock_minimo: number | null
   consumo_diario: number
   dias_restantes: number | null
-  estado: 'agotado' | 'urgente' | 'pronto' | 'bajo' | 'ok'
+  estado: 'agotado' | 'urgente' | 'pronto' | 'bajo' | 'ok' | null
   cantidad_sugerida: number
-  // 'preparar' = se arma con receta en la barra (mezcla de granizado, almíbar).
-  // El backend nunca lo mete en `grupos_fijos`, así que acá solo aparece dentro
-  // de insumos generales — y sin input editable: no hay lista que mandar.
-  accion?: 'comprar' | 'preparar'
-  tandas_sugeridas?: number | null
-  rendimiento_tanda?: number | null
+  lead_time_dias: number
   barista_alerto: boolean
+  /** El motor dice que hay que reponerlo: va precargado en el pedido. */
+  necesita: boolean
+  /** Está agotado o urgente pero la fórmula dio 0 (nadie cargó `stock_minimo`
+   *  y no hay consumo registrado). Se MUESTRA con el input en cero: no se
+   *  inventa una cantidad, pero tampoco se esconde un producto en rojo. */
+  en_alerta_sin_sugerencia: boolean
+}
+
+interface ItemHuerfano extends ItemCatalogo {
+  /** Acá nadie se lo entregó nunca, pero en la otra sede sí: pista para
+   *  asignarlo de un toque. */
+  visto_en_otra_sede: string | null
 }
 
 interface GrupoProveedor {
   proveedor: string
-  lead_time_dias: number
-  alerta_mediodia: boolean
-  productos: ProductoSugerido[]
+  clave: string
+  origen: 'manual' | 'compras' | 'ambos'
+  productos: ItemCatalogo[]
+  n_necesita: number
+  n_en_alerta: number
   estado_resumen: string
+  lead_time_dias: number
+  lead_time_observado: number | null
+  ultima_compra: string | null
+  dias_desde_ultima: number | null
+  cada_dias: number | null
+  total_productos: number
 }
 
-interface Sugerencia {
-  grupos_fijos: GrupoProveedor[]
-  insumos_generales: ProductoSugerido[]
+interface Preparable {
+  producto_id: number
+  nombre: string
+  unidad: string
+  estado: string
+  cantidad_sugerida: number
+  accion: string
+  tandas_sugeridas: number | null
+  rendimiento_tanda: number | null
+  barista_alerto: boolean
+}
+
+interface SinAsignar {
+  producto_id: number; nombre: string; categoria: string
+  unidad: string; estado: string
+}
+
+interface Catalogo {
+  proveedores: GrupoProveedor[]
+  sin_proveedor: ItemHuerfano[]
+  sin_asignar: SinAsignar[]
+  preparables: Preparable[]
+  proveedores_conocidos: string[]
   total_urgentes: number
   total_pronto: number
   total_bajo: number
   total_ok: number
-}
-
-interface ConteoItem {
-  id: number
-  producto_id: number
-  producto_nombre: string
-  categoria: string
-  unidad_medida: string
-  cantidad_sistema: number
-  cantidad_real: number
-  diferencia: number
-}
-
-interface Conteo {
-  id: number
-  tienda_id: number
-  tienda_nombre: string | null
-  fecha_conteo: string
-  ajustado: boolean
-  nota: string | null
-  usuario_nombre: string
-  items: ConteoItem[]
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -93,6 +120,7 @@ const CAT_LABEL: Record<string, string> = {
   pasteleria: 'Pastelería',
   bebida: 'Bebidas e insumos',
   insumo: 'Desechables y limpieza',
+  porciones: 'Porciones',
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -113,138 +141,280 @@ function diasLabel(d: number | null): string {
   return `${d.toFixed(1)}d`
 }
 
-function copiarLista(proveedor: string, productos: ProductoSugerido[], cantidades: Record<number, number>) {
+const money = (n: number) =>
+  '$' + Math.round(n).toLocaleString('es-CO')
+
+const numero = (n: number) =>
+  Number.isInteger(n) ? n.toLocaleString('es-CO') : n.toLocaleString('es-CO', { maximumFractionDigits: 1 })
+
+/** «2 empaques de 2.500 gr» — SOLO cuando `contenido_por_empaque` está cargado.
+ *  Sin ese número no hay factor de conversión y no se inventa: la cantidad se
+ *  lee en unidades y ya. El ≈ aparece cuando la división no da entera: decir
+ *  «2 bolsas» de 2,4 bolsas sería mentir por redondeo. */
+function enEmpaques(cantidad: number, contenido: number | null, unidad: string): string | null {
+  if (!contenido || contenido <= 0 || cantidad <= 0) return null
+  const n = cantidad / contenido
+  const exacto = Math.abs(n - Math.round(n)) < 0.001
+  return `${exacto ? '' : '≈ '}${numero(exacto ? Math.round(n) : Math.round(n * 10) / 10)} empaque${
+    Math.round(n) === 1 && exacto ? '' : 's'} de ${numero(contenido)} ${unidad}`
+}
+
+/** La clave de una cantidad es (proveedor, producto) y NO solo el producto: el
+ *  mismo vaso puede estar en el catálogo de dos proveedores y se le pide a UNO.
+ *  Con una clave por producto, escribir 100 en un card los llenaba a los dos. */
+const claveCantidad = (clavePr: string, productoId: number) => `${clavePr}::${productoId}`
+
+/** LA regla de qué entra al pedido, en UN solo lugar. El botón la usa para
+ *  contar y el texto de WhatsApp para escribir, así que el número del botón y
+ *  las líneas del mensaje NO PUEDEN divergir: antes el botón contaba productos
+ *  del grupo y el texto filtraba cantidad > 0, y eran dos números distintos. */
+function lineasPedido(grupo: GrupoProveedor, cantidades: Record<string, number>): ItemCatalogo[] {
+  return grupo.productos.filter(p => (cantidades[claveCantidad(grupo.clave, p.producto_id)] ?? 0) > 0)
+}
+
+function textoWhatsApp(
+  grupo: GrupoProveedor, cantidades: Record<string, number>, sede: string,
+): string | null {
+  const lineas = lineasPedido(grupo, cantidades)
+  if (!lineas.length) return null
   const fecha = new Date().toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })
-  const lineas = productos
-    .filter(p => cantidades[p.producto_id] > 0)
-    .map(p => `- ${p.nombre}: ${cantidades[p.producto_id]} ${p.unidad}`)
-  if (!lineas.length) { alert('No hay productos con cantidad > 0'); return }
-  const texto = `*Pedido ${proveedor} — ${fecha}*\n${lineas.join('\n')}`
-  navigator.clipboard.writeText(texto)
-    .then(() => alert('Lista copiada al portapapeles ✓'))
+  const cuerpo = lineas.map(p => {
+    const cant = cantidades[claveCantidad(grupo.clave, p.producto_id)]
+    const emp = enEmpaques(cant, p.contenido_por_empaque, p.unidad)
+    return `- ${p.nombre}: ${numero(cant)} ${p.unidad}${emp ? ` (${emp})` : ''}`
+  })
+  return `*Pedido ${grupo.proveedor} — ${fecha}*\n${sede ? `${sede}\n` : ''}${cuerpo.join('\n')}`
+}
+
+function copiar(texto: string, ok: string) {
+  navigator.clipboard?.writeText(texto)
+    .then(() => alert(ok))
     .catch(() => alert(texto))
 }
 
-// ─── FilaProducto ─────────────────────────────────────────────────────────────
+// ─── Fila de producto dentro de un card de proveedor ──────────────────────────
 
-function FilaProducto({
-  p, cantidad, onCantidad,
+function FilaPedido({
+  p, cantidad, onCantidad, onQuitar,
 }: {
-  p: ProductoSugerido
+  p: ItemCatalogo
   cantidad: number
-  onCantidad: (id: number, v: number) => void
+  onCantidad: (v: number) => void
+  onQuitar: () => void
 }) {
-  const cfg = ESTADO_CFG[p.estado as keyof typeof ESTADO_CFG] ?? ESTADO_CFG.ok
+  const cfg = ESTADO_CFG[(p.estado ?? 'ok') as keyof typeof ESTADO_CFG] ?? ESTADO_CFG.ok
+  const emp = enEmpaques(cantidad, p.contenido_por_empaque, p.unidad)
+
   return (
-    <tr className={`border-b border-gray-100 last:border-0 ${p.estado === 'ok' ? 'opacity-60' : ''}`}>
-      <td className="py-2 pr-3">
-        <div className="flex items-center gap-1.5">
-          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${cfg.dot}`} />
+    <div className="flex items-start gap-2 py-2 border-b border-gray-100 last:border-0">
+      <span className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${p.gestionado ? cfg.dot : 'bg-gray-200'}`} />
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-sm text-gray-800 font-medium">{p.nombre}</span>
           {p.barista_alerto && (
-            <span className="text-xs bg-purple-100 text-purple-700 px-1.5 rounded-full font-medium">
-              barista
+            <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 rounded-full font-medium">barista</span>
+          )}
+          {!p.titular && (
+            <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 rounded-full font-medium"
+                  title={p.proveedor_manual
+                    ? `Se le pide a ${p.proveedor_manual}, pero este proveedor también lo ha traído`
+                    : 'Otro proveedor lo trajo más recientemente'}>
+              también acá
             </span>
           )}
         </div>
-      </td>
-      <td className="py-2 px-2 text-center text-sm text-gray-600 whitespace-nowrap">
-        {p.stock_actual} {p.unidad}
-      </td>
-      <td className="py-2 px-2 text-center">
-        <span className={`text-sm font-semibold ${
-          p.dias_restantes !== null && p.dias_restantes <= p.lead_time_dias
-            ? 'text-red-600' : 'text-gray-700'
-        }`}>
-          {diasLabel(p.dias_restantes)}
-        </span>
-      </td>
-      <td className="py-2 pl-2">
-        {/* Un preparable no lleva input: el número no va a ninguna lista de
-            compra, se convierte en una tanda que alguien arma en la barra. */}
-        {p.accion === 'preparar' ? (
-          <span className="text-xs font-semibold text-emerald-700 whitespace-nowrap">
-            preparar {p.cantidad_sugerida} {p.unidad}
-            {p.tandas_sugeridas
-              ? ` ≈ ${p.tandas_sugeridas} tanda${p.tandas_sugeridas === 1 ? '' : 's'}`
-              : ''}
-          </span>
-        ) : (
-          <div className="flex items-center gap-1">
-            <input
-              type="number" min={0} step={1} value={cantidad}
-              onChange={e => onCantidad(p.producto_id, Math.max(0, Number(e.target.value)))}
-              className="w-16 text-center border border-gray-300 rounded-lg py-1 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-amber-400"
-            />
-            <span className="text-xs text-gray-400">{p.unidad}</span>
-          </div>
-        )}
-      </td>
-    </tr>
+        <p className="text-[11px] text-gray-400 mt-0.5">
+          {p.gestionado
+            ? <>Hay {numero(p.stock_actual ?? 0)} {p.unidad} · dura {diasLabel(p.dias_restantes)}</>
+            : <>No se cuenta en esta sede</>}
+          {p.ultimo_precio !== null && (
+            <> · {money(p.ultimo_precio)}/{p.unidad}</>
+          )}
+          {p.veces_comprado > 0 && p.ultima_compra && (
+            <> · comprado {p.veces_comprado}×</>
+          )}
+        </p>
+      </div>
+
+      <div className="flex flex-col items-end gap-0.5">
+        <div className="flex items-center gap-1">
+          <input
+            type="number" min={0} step={1} value={cantidad}
+            onChange={e => onCantidad(Math.max(0, Number(e.target.value)))}
+            className="w-20 text-center border border-gray-300 rounded-lg py-1 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-amber-400"
+          />
+          <span className="text-xs text-gray-400 w-8">{p.unidad}</span>
+          {/* Solo se puede sacar lo que está adentro: con la cantidad en cero
+              el producto ya no es parte del pedido. */}
+          {cantidad > 0 ? (
+            <button onClick={onQuitar} title="Sacar del pedido"
+                    className="text-gray-300 hover:text-red-500 transition-colors">
+              <X size={14} />
+            </button>
+          ) : <span className="w-[14px]" />}
+        </div>
+        {emp && <span className="text-[10px] text-gray-400">{emp}</span>}
+      </div>
+    </div>
   )
 }
 
-// ─── GrupoFijo ────────────────────────────────────────────────────────────────
+// ─── Card de proveedor ────────────────────────────────────────────────────────
 
-function GrupoFijo({
-  grupo, cantidades, onCantidad,
+function CardProveedor({
+  grupo, cantidades, setCantidad, sede,
 }: {
   grupo: GrupoProveedor
-  cantidades: Record<number, number>
-  onCantidad: (id: number, v: number) => void
+  cantidades: Record<string, number>
+  setCantidad: (clave: string, productoId: number, v: number) => void
+  sede: string
 }) {
-  const [abierto, setAbierto] = useState(grupo.estado_resumen !== 'ok')
+  const [abierto, setAbierto] = useState(grupo.n_necesita + grupo.n_en_alerta > 0)
+  const [verCatalogo, setVerCatalogo] = useState(false)
   const cfg = ESTADO_CFG[grupo.estado_resumen as keyof typeof ESTADO_CFG] ?? ESTADO_CFG.ok
 
+  // El pedido = lo que tiene cantidad > 0. Mismo cálculo para el número del
+  // botón y para el texto: no hay dos verdades.
+  const enPedido = lineasPedido(grupo, cantidades)
+  const enPedidoIds = new Set(enPedido.map(p => p.producto_id))
+  // VISIBLE = lo que está en rojo del titular, más TODO lo que el usuario tocó
+  // (aunque el input haya vuelto a vacío), en EL ORDEN ORIGINAL del catálogo.
+  //
+  // La primera versión armaba [...enPedido, ...enAlerta]: la fila SALTABA al
+  // tope con la primera tecla (mis-click servido en un celular), y borrar el
+  // input la hacía DESAPARECER adentro del acordeón — Number('') es 0 y la
+  // sacaba de enPedido. Una lista de trabajo no se reordena ni se traga filas
+  // mientras la estás escribiendo: se filtra sobre el orden estable y toda
+  // clave tocada queda anclada.
+  //
+  // Solo del TITULAR: un producto que dos proveedores trajeron aparecería en
+  // rojo en los dos cards y se podría pedir dos veces. En el card del otro
+  // proveedor sigue estando, en «agregar del catálogo».
+  const visibles = grupo.productos.filter(p =>
+    enPedidoIds.has(p.producto_id)
+    || cantidades[claveCantidad(grupo.clave, p.producto_id)] !== undefined
+    || (p.en_alerta_sin_sugerencia && p.titular))
+  const nEnAlerta = grupo.productos.filter(
+    p => p.en_alerta_sin_sugerencia && p.titular && !enPedidoIds.has(p.producto_id)).length
+  const visiblesIds = new Set(visibles.map(p => p.producto_id))
+  const resto = grupo.productos.filter(p => !visiblesIds.has(p.producto_id))
+
+  const copiarPedido = () => {
+    const texto = textoWhatsApp(grupo, cantidades, sede)
+    if (!texto) { alert('Este pedido está vacío: poné una cantidad mayor a cero.'); return }
+    copiar(texto, `Pedido de ${grupo.proveedor} copiado ✓`)
+  }
+
   return (
-    <div className={`rounded-2xl border-2 ${cfg.border} overflow-hidden mb-3`}>
+    <div className={`rounded-2xl border-2 ${enPedido.length ? cfg.border : 'border-gray-200'} overflow-hidden mb-3 bg-white`}>
       <button
         onClick={() => setAbierto(v => !v)}
-        className={`w-full flex items-center justify-between px-4 py-3 ${cfg.bg}`}
+        className={`w-full flex items-center justify-between gap-2 px-4 py-3 text-left ${enPedido.length ? cfg.bg : 'bg-gray-50'}`}
       >
-        <div className="flex items-center gap-2">
-          <Phone size={14} className={cfg.text} />
-          <span className={`font-bold text-sm ${cfg.text}`}>{grupo.proveedor}</span>
-          <BadgeEstado estado={grupo.estado_resumen} />
-          {grupo.alerta_mediodia && (
-            <span className="flex items-center gap-1 text-xs text-amber-600 font-medium bg-amber-100 px-2 py-0.5 rounded-full">
-              <Clock size={11} /> Antes del mediodía
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Phone size={14} className={enPedido.length ? cfg.text : 'text-gray-400'} />
+            <span className={`font-bold text-sm ${enPedido.length ? cfg.text : 'text-gray-600'}`}>
+              {grupo.proveedor}
+            </span>
+            {grupo.n_necesita + grupo.n_en_alerta > 0 && <BadgeEstado estado={grupo.estado_resumen} />}
+            {grupo.lead_time_dias <= 1 && (
+              <span className="flex items-center gap-1 text-[11px] text-amber-700 font-medium bg-amber-100 px-2 py-0.5 rounded-full">
+                <Clock size={10} /> Entrega al día siguiente
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] text-gray-500 mt-0.5">
+            {grupo.total_productos} producto{grupo.total_productos !== 1 ? 's' : ''} en su catálogo
+            {grupo.cada_dias !== null && <> · viene cada {numero(grupo.cada_dias)} días</>}
+            {grupo.dias_desde_ultima !== null && (
+              <> · última compra hace {grupo.dias_desde_ultima} día{grupo.dias_desde_ultima !== 1 ? 's' : ''}</>
+            )}
+            {grupo.origen === 'compras' && <> · aprendido de las facturas</>}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {enPedido.length > 0 && (
+            <span className="text-xs font-bold text-white bg-amber-500 rounded-full px-2 py-0.5">
+              {enPedido.length}
             </span>
           )}
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500">{grupo.productos.length} productos</span>
           {abierto ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
         </div>
       </button>
 
       {abierto && (
-        <div className="px-4 pb-3 pt-2 bg-white">
-          <table className="w-full">
-            <thead>
-              <tr className="text-xs text-gray-400 uppercase border-b border-gray-100">
-                <th className="pb-1.5 text-left font-medium">Producto</th>
-                <th className="pb-1.5 text-center font-medium">Stock</th>
-                <th className="pb-1.5 text-center font-medium">Días</th>
-                <th className="pb-1.5 text-left font-medium pl-2">Pedir</th>
-              </tr>
-            </thead>
-            <tbody>
-              {grupo.productos.map(p => (
-                <FilaProducto
-                  key={p.producto_id}
-                  p={p}
-                  cantidad={cantidades[p.producto_id] ?? p.cantidad_sugerida}
-                  onCantidad={onCantidad}
-                />
-              ))}
-            </tbody>
-          </table>
+        <div className="px-4 pb-3 pt-1">
+          {visibles.length > 0 ? (
+            visibles.map(p => (
+              <FilaPedido
+                key={p.producto_id}
+                p={p}
+                cantidad={cantidades[claveCantidad(grupo.clave, p.producto_id)] ?? 0}
+                onCantidad={v => setCantidad(grupo.clave, p.producto_id, v)}
+                onQuitar={() => setCantidad(grupo.clave, p.producto_id, 0)}
+              />
+            ))
+          ) : (
+            <p className="text-xs text-gray-400 py-3">
+              Nada de este proveedor está en alerta. Agregá lo que quieras pedirle igual.
+            </p>
+          )}
+
+          {nEnAlerta > 0 && (
+            <p className="text-[11px] text-gray-500 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mt-2">
+              {nEnAlerta === 1 ? 'Un producto está' : `${nEnAlerta} productos están`} en
+              rojo pero sin stock mínimo cargado, así que el sistema no calcula cuánto pedir.
+              Escribí vos la cantidad y {nEnAlerta === 1 ? 'entra' : 'entran'} al pedido.
+            </p>
+          )}
+
+          {resto.length > 0 && (
+            <div className="mt-2">
+              <button
+                onClick={() => setVerCatalogo(v => !v)}
+                className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-700"
+              >
+                <Plus size={12} />
+                Agregar del catálogo de {grupo.proveedor} ({resto.length})
+                {verCatalogo ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              </button>
+
+              {verCatalogo && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {resto.map(p => (
+                    <button
+                      key={p.producto_id}
+                      onClick={() => setCantidad(
+                        grupo.clave, p.producto_id,
+                        p.cantidad_sugerida > 0 ? p.cantidad_sugerida : 1)}
+                      className="flex items-center gap-1 text-xs border border-gray-200 hover:border-amber-400 hover:bg-amber-50 rounded-lg px-2 py-1 text-gray-600 transition-colors"
+                      title={p.gestionado
+                        ? `Hay ${numero(p.stock_actual ?? 0)} ${p.unidad}`
+                        : 'No se cuenta en esta sede'}
+                    >
+                      <Plus size={11} className="text-amber-500" /> {p.nombre}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <button
-            onClick={() => copiarLista(grupo.proveedor, grupo.productos, cantidades)}
-            className="mt-3 flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors"
+            onClick={copiarPedido}
+            disabled={enPedido.length === 0}
+            className={`mt-3 flex items-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-2 transition-colors ${
+              enPedido.length
+                ? 'bg-green-600 text-white hover:bg-green-700'
+                : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+            }`}
           >
-            <Copy size={12} /> Copiar lista para WhatsApp
+            <Copy size={12} />
+            {enPedido.length
+              ? `Copiar pedido para WhatsApp (${enPedido.length} producto${enPedido.length !== 1 ? 's' : ''})`
+              : 'Sin nada que pedir'}
           </button>
         </div>
       )}
@@ -252,165 +422,286 @@ function GrupoFijo({
   )
 }
 
-// ─── GeneralesPanel ───────────────────────────────────────────────────────────
+// ─── Bucket «Sin proveedor», con asignación EN EL LUGAR ───────────────────────
 
-function GeneralesPanel({
-  items, cantidades, onCantidad,
+function BucketSinProveedor({
+  items, conocidos, onAsignado,
 }: {
-  items: ProductoSugerido[]
-  cantidades: Record<number, number>
-  onCantidad: (id: number, v: number) => void
+  items: ItemHuerfano[]
+  conocidos: string[]
+  onAsignado: () => void
 }) {
-  const [verOk, setVerOk] = useState(false)
-  const noOk    = items.filter(i => i.estado !== 'ok')
-  const ok      = items.filter(i => i.estado === 'ok')
-  const visible = verOk ? items : noOk
+  const [valores, setValores] = useState<Record<number, string>>({})
+  const [guardando, setGuardando] = useState<number | null>(null)
+  const [error, setError] = useState('')
+  const [busqueda, setBusqueda] = useState('')
+  // Con el inventario recién cargado esta lista puede tener decenas de
+  // productos: abierta de entrada enterraría los cards de proveedor, que son lo
+  // que se viene a hacer. Chica se abre sola; grande espera a que la pidan.
+  const [abierto, setAbierto] = useState(items.length <= 8)
+  const listId = 'proveedores-conocidos'
 
   if (!items.length) return null
 
-  const porCat: Record<string, ProductoSugerido[]> = {}
-  for (const item of visible) {
-    const cat = item.categoria
-    if (!porCat[cat]) porCat[cat] = []
-    porCat[cat].push(item)
+  const conPista = items.filter(p => p.visto_en_otra_sede).length
+  const filtrados = busqueda.trim()
+    ? items.filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase()))
+    : items
+
+  const asignar = async (productoId: number, nombre: string) => {
+    const valor = (nombre ?? '').trim()
+    if (!valor) return
+    setGuardando(productoId); setError('')
+    try {
+      await api.patch(`/inventario/productos/${productoId}`, { proveedor: valor })
+      onAsignado()
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'No se pudo guardar el proveedor')
+    } finally { setGuardando(null) }
   }
 
   return (
-    <div className="mt-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-bold text-gray-700">Insumos generales</h3>
-        {ok.length > 0 && (
-          <button
-            onClick={() => setVerOk(v => !v)}
-            className="text-xs text-gray-400 hover:text-gray-600 underline"
-          >
-            {verOk ? 'Ocultar OK' : `Ver ${ok.length} productos OK`}
-          </button>
-        )}
-      </div>
-
-      {noOk.length === 0 && !verOk ? (
-        <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 border border-green-200 rounded-xl px-4 py-3">
-          <CheckCircle2 size={16} />
-          Todos los insumos tienen stock suficiente
+    <div className="rounded-2xl border-2 border-dashed border-gray-300 bg-white overflow-hidden mb-3">
+      <button onClick={() => setAbierto(v => !v)}
+              className="w-full text-left px-4 py-3 bg-gray-50 border-b border-gray-100">
+        <div className="flex items-center gap-2">
+          <HelpCircle size={14} className="text-gray-400" />
+          <span className="font-bold text-sm text-gray-600">Sin proveedor</span>
+          <span className="text-xs font-bold text-white bg-gray-400 rounded-full px-2 py-0.5">{items.length}</span>
+          <span className="ml-auto">
+            {abierto ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+          </span>
         </div>
-      ) : (
-        Object.entries(porCat).map(([cat, prods]) => (
-          <div key={cat} className="mb-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
-              {CAT_LABEL[cat] ?? cat}
-            </p>
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <table className="w-full">
-                <thead>
-                  <tr className="text-xs text-gray-400 uppercase border-b border-gray-100">
-                    <th className="px-3 pb-1.5 pt-2 text-left font-medium">Producto</th>
-                    <th className="px-2 pb-1.5 pt-2 text-center font-medium">Stock</th>
-                    <th className="px-2 pb-1.5 pt-2 text-center font-medium">Días</th>
-                    <th className="px-2 pb-1.5 pt-2 text-left font-medium">Pedir</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {prods.map(p => (
-                    <FilaProducto
-                      key={p.producto_id}
-                      p={p}
-                      cantidad={cantidades[p.producto_id] ?? p.cantidad_sugerida}
-                      onCantidad={onCantidad}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ))
+        <p className="text-[11px] text-gray-500 mt-0.5">
+          Hay que pedirlos y el sistema todavía no sabe quién los trae. Asignalos acá
+          y quedan guardados en su proveedor para siempre.
+          {conPista > 0 && (
+            <span className="text-amber-700 font-medium"> {conPista} ya se sabe{conPista !== 1 ? 'n' : ''} de la otra sede.</span>
+          )}
+        </p>
+      </button>
+
+      {error && (
+        <p className="px-4 py-2 text-xs text-red-600 bg-red-50 border-b border-red-100">{error}</p>
       )}
+
+      <datalist id={listId}>
+        {conocidos.map(p => <option key={p} value={p} />)}
+      </datalist>
+
+      {abierto && items.length > 8 && (
+        <div className="px-4 pt-2.5">
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text" value={busqueda} onChange={e => setBusqueda(e.target.value)}
+              placeholder="Buscar entre los que no tienen proveedor…"
+              className="w-full pl-7 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300"
+            />
+          </div>
+        </div>
+      )}
+
+      <div className={`divide-y divide-gray-50 ${abierto ? '' : 'hidden'}`}>
+        {filtrados.map(p => {
+          const val = valores[p.producto_id] ?? ''
+          return (
+            <div key={p.producto_id} className="px-4 py-2.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
+                  <p className="text-[11px] text-gray-400">
+                    {p.necesita
+                      ? <>Pedir {numero(p.cantidad_sugerida)} {p.unidad}</>
+                      : <span className="text-red-500 font-medium">
+                          {(ESTADO_CFG[(p.estado ?? 'ok') as keyof typeof ESTADO_CFG] ?? ESTADO_CFG.ok).label}
+                        </span>}
+                    {' · '}hay {numero(p.stock_actual ?? 0)} {p.unidad}
+                  </p>
+                </div>
+                <input
+                  type="text" list={listId} value={val}
+                  onChange={e => setValores(v => ({ ...v, [p.producto_id]: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') asignar(p.producto_id, val) }}
+                  placeholder="¿Quién lo trae?"
+                  className="w-44 border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300 text-gray-700 placeholder:text-gray-300"
+                />
+                <button
+                  onClick={() => asignar(p.producto_id, val)}
+                  disabled={!val.trim() || guardando === p.producto_id}
+                  className={`shrink-0 h-8 px-3 flex items-center gap-1 rounded-lg text-xs font-semibold transition-all ${
+                    val.trim() ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-gray-100 text-gray-300'
+                  }`}
+                >
+                  {guardando === p.producto_id ? '…' : <><Check size={13} /> Asignar</>}
+                </button>
+              </div>
+              {p.visto_en_otra_sede && (
+                <button
+                  onClick={() => asignar(p.producto_id, p.visto_en_otra_sede!)}
+                  className="mt-1 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 hover:bg-amber-100 transition-colors"
+                >
+                  En la otra sede lo trae <strong>{p.visto_en_otra_sede}</strong> — asignar
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
 
-// ─── TabPedidos ───────────────────────────────────────────────────────────────
+// ─── TabPedidos: armar el pedido del día ──────────────────────────────────────
 
-function TabPedidos({ tiendaId }: { tiendaId: number | null }) {
-  const [data, setData]           = useState<Sugerencia | null>(null)
+function TabPedidos({ tiendaId, sedeNombre }: { tiendaId: number | null; sedeNombre: string }) {
+  const [data, setData]           = useState<Catalogo | null>(null)
   const [loading, setLoading]     = useState(false)
-  const [cantidades, setCantidades] = useState<Record<number, number>>({})
+  const [error, setError]         = useState('')
+  // Clave (proveedor, producto): el mismo producto puede estar en dos catálogos
+  // y se le pide a UNO.
+  const [cantidades, setCantidades] = useState<Record<string, number>>({})
 
-  useEffect(() => {
+  // `preservar`: el refetch por ASIGNAR un proveedor conserva lo tipeado. La
+  // versión sin esto hacía setCantidades(init) incondicional, e init está vacío
+  // cuando nada tiene mínimo: asignar un proveedor desde el cajón —el flujo que
+  // la propia pantalla publicita— borraba en silencio todas las cantidades del
+  // pedido a medio armar. Cambiar de SEDE sí resetea (preservar=false vía el
+  // useEffect): las cantidades de Vida no son un pedido de Palmetto.
+  const cargar = useCallback((preservar = false) => {
     if (tiendaId === null) return
-    setCantidades({})
-    setData(null)
-    setLoading(true)
-    api.get('/pedidos/sugerencia', { params: { tienda_id: tiendaId } })
+    setLoading(true); setError('')
+    api.get<Catalogo>('/pedidos/proveedores', { params: { tienda_id: tiendaId } })
       .then(r => {
         setData(r.data)
-        const init: Record<number, number> = {}
-        for (const g of r.data.grupos_fijos)
-          for (const p of g.productos) init[p.producto_id] = p.cantidad_sugerida
-        for (const p of r.data.insumos_generales) init[p.producto_id] = p.cantidad_sugerida
-        setCantidades(init)
+        // Precarga: SOLO lo que el motor dice que hay que reponer, y en el
+        // catálogo de su TITULAR. Precargar el mismo producto en los dos
+        // proveedores que lo trajeron sería pedirlo dos veces.
+        const init: Record<string, number> = {}
+        for (const g of r.data.proveedores)
+          for (const p of g.productos)
+            if (p.necesita && p.titular)
+              init[claveCantidad(g.clave, p.producto_id)] = p.cantidad_sugerida
+        setCantidades(prev => preservar ? { ...init, ...prev } : init)
       })
-      .catch(() => {})
+      .catch(e => setError(e.response?.data?.detail || 'No se pudo cargar el catálogo de proveedores'))
       .finally(() => setLoading(false))
   }, [tiendaId])
 
-  const handleCantidad = (id: number, v: number) =>
-    setCantidades(prev => ({ ...prev, [id]: v }))
+  useEffect(() => { cargar() }, [cargar])
 
-  if (loading) return (
-    <p className="text-sm text-gray-400 animate-pulse py-8 text-center">Calculando sugerencias…</p>
+  const setCantidad = (clavePr: string, productoId: number, v: number) =>
+    setCantidades(prev => ({ ...prev, [claveCantidad(clavePr, productoId)]: v }))
+
+  // Total de líneas del pedido: la MISMA regla que cada card y que cada texto.
+  const totalLineas = useMemo(
+    () => (data?.proveedores ?? []).reduce((n, g) => n + lineasPedido(g, cantidades).length, 0),
+    [data, cantidades],
+  )
+  // Lo que está en rojo y todavía no tiene cantidad. Se cuenta aparte porque NO
+  // va en ningún WhatsApp hasta que alguien escriba el número.
+  // Se recalcula CON las cantidades: el payload congelado dejaba el contador
+  // clavado mientras escribias — dos numeros peleados en la misma pantalla, el
+  // pecado exacto que este rework vino a matar. «Esperando cantidad» = en rojo
+  // del titular y todavia sin numero.
+  const totalAlertas = useMemo(
+    () => (data?.proveedores ?? []).reduce((n, g) =>
+      n + g.productos.filter(p =>
+        p.titular && (p.en_alerta_sin_sugerencia || p.necesita)
+        && !((cantidades[claveCantidad(g.clave, p.producto_id)] ?? 0) > 0)).length, 0),
+    [data, cantidades],
   )
 
+  if (loading) return (
+    <p className="text-sm text-gray-400 animate-pulse py-8 text-center">Leyendo el catálogo de proveedores…</p>
+  )
+  if (error) return (
+    <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+      <AlertTriangle size={14} /> {error}
+    </div>
+  )
   if (!data) return null
 
+  const conPedido = data.proveedores.filter(g => lineasPedido(g, cantidades).length > 0)
+
   return (
-    <>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
-          <p className="text-2xl font-bold text-red-600">{data.total_urgentes}</p>
-          <p className="text-xs text-red-500 font-medium uppercase tracking-wide mt-0.5">Urgente</p>
-        </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
-          <p className="text-2xl font-bold text-amber-600">{data.total_pronto}</p>
-          <p className="text-xs text-amber-500 font-medium uppercase tracking-wide mt-0.5">Pedir hoy</p>
-        </div>
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-center">
-          <p className="text-2xl font-bold text-yellow-600">{data.total_bajo}</p>
-          <p className="text-xs text-yellow-500 font-medium uppercase tracking-wide mt-0.5">Stock bajo</p>
-        </div>
-        <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
-          <p className="text-2xl font-bold text-green-600">{data.total_ok}</p>
-          <p className="text-xs text-green-500 font-medium uppercase tracking-wide mt-0.5">OK</p>
-        </div>
+    <div className="space-y-3">
+      {/* Resumen de trabajo: cuántas líneas y a cuántos teléfonos. */}
+      <div className="flex items-center gap-3 flex-wrap bg-white border border-gray-200 rounded-xl px-4 py-2.5">
+        <p className="text-sm text-gray-700">
+          <strong className="text-amber-600">{totalLineas}</strong> producto{totalLineas !== 1 ? 's' : ''} en el pedido
+          {conPedido.length > 0 && <> · <strong>{conPedido.length}</strong> proveedor{conPedido.length !== 1 ? 'es' : ''} a quien llamar</>}
+          {totalAlertas > 0 && (
+            <span className="text-gray-400"> · {totalAlertas} en rojo esperando cantidad</span>
+          )}
+        </p>
+        <span className="ml-auto text-xs text-gray-400">
+          {data.total_urgentes > 0 && <span className="text-red-500 font-semibold">{data.total_urgentes} urgente{data.total_urgentes !== 1 ? 's' : ''}</span>}
+          {data.total_urgentes > 0 && (data.total_pronto > 0 || data.total_bajo > 0) && ' · '}
+          {data.total_pronto > 0 && `${data.total_pronto} para pedir`}
+          {data.total_pronto > 0 && data.total_bajo > 0 && ' · '}
+          {data.total_bajo > 0 && `${data.total_bajo} bajo`}
+        </span>
       </div>
 
-      {data.total_urgentes === 0 && data.total_pronto === 0 && data.total_bajo === 0 && (
+      {data.proveedores.length === 0 && data.sin_proveedor.length === 0 && (
+        <div className="bg-white border border-gray-200 rounded-2xl px-4 py-8 text-center">
+          <Package size={28} className="text-gray-300 mx-auto mb-2" />
+          <p className="text-sm text-gray-500">
+            Todavía no hay proveedores para esta sede.
+          </p>
+          <p className="text-xs text-gray-400 mt-1">
+            Se aprenden solos al registrar facturas, o los asignás en la pestaña «Proveedores».
+          </p>
+        </div>
+      )}
+
+      <BucketSinProveedor
+        items={data.sin_proveedor}
+        conocidos={data.proveedores_conocidos}
+        onAsignado={() => cargar(true)}   // preserva lo tipeado: ver cargar()
+      />
+
+      {data.proveedores.map(g => (
+        <CardProveedor
+          key={g.clave}
+          grupo={g}
+          cantidades={cantidades}
+          setCantidad={setCantidad}
+          sede={sedeNombre}
+        />
+      ))}
+
+      {/* Lo que se ARMA en la barra: no es de ningún proveedor y no entra a
+          ningún WhatsApp, pero su necesidad es igual de real. */}
+      {data.preparables.length > 0 && (
+        <div className="rounded-2xl border-2 border-emerald-200 bg-white overflow-hidden">
+          <div className="px-4 py-3 bg-emerald-50 flex items-center gap-2">
+            <ChefHat size={14} className="text-emerald-600" />
+            <span className="font-bold text-sm text-emerald-700">Se prepara en la barra</span>
+            <span className="text-[11px] text-emerald-600">no se le pide a nadie</span>
+          </div>
+          <div className="px-4 py-2 divide-y divide-gray-50">
+            {data.preparables.map(p => (
+              <div key={p.producto_id} className="flex items-center justify-between gap-2 py-2">
+                <span className="text-sm text-gray-800">{p.nombre}</span>
+                <span className="text-xs font-semibold text-emerald-700 whitespace-nowrap">
+                  preparar {numero(p.cantidad_sugerida)} {p.unidad}
+                  {p.tandas_sugeridas ? ` ≈ ${p.tandas_sugeridas} tanda${p.tandas_sugeridas === 1 ? '' : 's'}` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {totalLineas === 0 && totalAlertas === 0 && data.proveedores.length > 0 && (
         <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-xl px-4 py-3">
           <CheckCircle2 size={16} />
-          Todo el inventario tiene stock suficiente para los próximos días
+          Nada está en alerta hoy. Abrí cualquier proveedor para agregarle lo que quieras pedirle igual.
         </div>
       )}
-
-      {data.total_urgentes > 0 && (
-        <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-          <AlertTriangle size={16} />
-          {data.total_urgentes} producto{data.total_urgentes > 1 ? 's' : ''} se agotará{data.total_urgentes > 1 ? 'n' : ''} antes de que llegue el próximo pedido
-        </div>
-      )}
-
-      {data.grupos_fijos.length > 0 && (
-        <div>
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-            Proveedores fijos
-          </p>
-          {data.grupos_fijos.map(g => (
-            <GrupoFijo key={g.proveedor} grupo={g} cantidades={cantidades} onCantidad={handleCantidad} />
-          ))}
-        </div>
-      )}
-
-      <GeneralesPanel items={data.insumos_generales} cantidades={cantidades} onCantidad={handleCantidad} />
-    </>
+    </div>
   )
 }
 
@@ -480,7 +771,7 @@ function TabSolicitudes({ onCount }: { onCount: (n: number) => void }) {
     const bloques = Object.entries(porProv).map(([prov, items]) =>
       `*${prov}*\n${items.map(i => `- ${i.nombre}: ${i.cantidad_solicitada} ${i.unidad_medida}`).join('\n')}`)
     const texto = `*Pedido ${s.tienda_nombre ?? ''} — ${fecha}*\n\n${bloques.join('\n\n')}`
-    navigator.clipboard.writeText(texto).then(() => alert('Pedido copiado por proveedor ✓')).catch(() => alert(texto))
+    copiar(texto, 'Pedido copiado por proveedor ✓')
   }
 
   const pendientes = solicitudes.filter(s => s.estado === 'pendiente')
@@ -587,77 +878,102 @@ function TabSolicitudes({ onCount }: { onCount: (n: number) => void }) {
   )
 }
 
-// ─── TabProveedores ───────────────────────────────────────────────────────────
+// ─── TabProveedores: asignar a mano lo que las facturas no enseñaron ──────────
 
-interface ProdFlat { id: number; nombre: string; categoria: string; proveedor: string }
+interface ProdAsignable {
+  id: number
+  nombre: string
+  categoria: string
+  /** El valor REAL de `Producto.proveedor`. Es contra ESTO que se compara si el
+   *  input está sucio. La versión vieja de esta pantalla mandaba `''` para todo
+   *  lo que no estuviera en un grupo fijo: lo tipeado se guardaba pero volvía a
+   *  blanco al recargar, y el botón de guardar quedaba apagado sin reintento. */
+  proveedorManual: string
+  /** Quién lo trae según el catálogo (manual o aprendido). Vacío = nadie. */
+  titular: string
+}
 
 function TabProveedores({ tiendaId }: { tiendaId: number | null }) {
-  const [productos, setProductos]   = useState<ProdFlat[]>([])
+  const [productos, setProductos]   = useState<ProdAsignable[]>([])
+  const [conocidos, setConocidos]   = useState<string[]>([])
   const [editores, setEditores]     = useState<Record<number, string>>({})
   const [saving, setSaving]         = useState<Record<number, boolean>>({})
   const [saved, setSaved]           = useState<Record<number, boolean>>({})
   const [loading, setLoading]       = useState(false)
+  const [error, setError]           = useState('')
+  const [busqueda, setBusqueda]     = useState('')
+  const listId = 'proveedores-list'
 
   const cargar = useCallback(() => {
     if (!tiendaId) return
-    setLoading(true)
-    api.get('/pedidos/sugerencia', { params: { tienda_id: tiendaId } })
+    setLoading(true); setError('')
+    api.get<Catalogo>('/pedidos/proveedores', { params: { tienda_id: tiendaId } })
       .then(r => {
-        const all: ProdFlat[] = [
-          ...r.data.grupos_fijos.flatMap((g: GrupoProveedor) =>
-            g.productos.map((p: ProductoSugerido) => ({
-              id: p.producto_id, nombre: p.nombre, categoria: p.categoria, proveedor: g.proveedor,
-            }))
-          ),
-          ...r.data.insumos_generales.map((p: ProductoSugerido) => ({
-            id: p.producto_id, nombre: p.nombre, categoria: p.categoria, proveedor: '',
-          })),
-        ]
-        all.sort((a, b) => a.proveedor.localeCompare(b.proveedor) || a.nombre.localeCompare(b.nombre))
+        // Un producto puede estar en dos catálogos; acá se lista UNA vez, con su
+        // titular y con el valor manual verdadero (que puede estar vacío aunque
+        // el catálogo lo haya aprendido de una factura).
+        const vistos = new Map<number, ProdAsignable>()
+        for (const g of r.data.proveedores) {
+          for (const p of g.productos) {
+            if (!p.titular) continue
+            vistos.set(p.producto_id, {
+              id: p.producto_id, nombre: p.nombre, categoria: p.categoria,
+              proveedorManual: p.proveedor_manual ?? '',
+              titular: g.proveedor,
+            })
+          }
+        }
+        for (const p of r.data.sin_asignar) {
+          if (vistos.has(p.producto_id)) continue
+          vistos.set(p.producto_id, {
+            id: p.producto_id, nombre: p.nombre, categoria: p.categoria,
+            proveedorManual: '', titular: '',
+          })
+        }
+        const all = [...vistos.values()].sort(
+          (a, b) => a.titular.localeCompare(b.titular) || a.nombre.localeCompare(b.nombre))
         setProductos(all)
+        setConocidos(r.data.proveedores_conocidos)
         const init: Record<number, string> = {}
-        for (const p of all) init[p.id] = p.proveedor
+        for (const p of all) init[p.id] = p.proveedorManual
         setEditores(init)
       })
-      .catch(() => {})
+      .catch(e => setError(e.response?.data?.detail || 'No se pudo cargar'))
       .finally(() => setLoading(false))
   }, [tiendaId])
 
   useEffect(() => { cargar() }, [cargar])
 
-  const proveedoresExistentes = [...new Set(productos.map(p => p.proveedor).filter(Boolean))].sort()
-
   const guardar = async (id: number) => {
-    setSaving(prev => ({ ...prev, [id]: true }))
+    setSaving(prev => ({ ...prev, [id]: true })); setError('')
     try {
       await api.patch(`/inventario/productos/${id}`, { proveedor: editores[id]?.trim() ?? '' })
       setSaved(prev => ({ ...prev, [id]: true }))
       setTimeout(() => { setSaved(prev => ({ ...prev, [id]: false })); cargar() }, 900)
-    } catch { alert('Error al guardar') }
-    finally { setSaving(prev => ({ ...prev, [id]: false })) }
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'No se pudo guardar')
+    } finally { setSaving(prev => ({ ...prev, [id]: false })) }
   }
 
-  // Agrupar por proveedor actual (en editores)
-  const grupos: Record<string, ProdFlat[]> = {}
+  // Agrupar por quién lo trae hoy (titular), no por el campo manual: así se ve
+  // el catálogo real, incluido lo que el sistema aprendió solo.
+  const grupos: Record<string, ProdAsignable[]> = {}
   for (const p of productos) {
-    const key = p.proveedor || '__sin__'
+    const key = p.titular || '__sin__'
     if (!grupos[key]) grupos[key] = []
     grupos[key].push(p)
   }
-  const gruposOrdenados: [string, ProdFlat[]][] = [
+  const gruposOrdenados: [string, ProdAsignable[]][] = [
     ...Object.entries(grupos).filter(([k]) => k !== '__sin__').sort(([a], [b]) => a.localeCompare(b)),
-    ...(grupos['__sin__'] ? [['__sin__', grupos['__sin__']] as [string, ProdFlat[]]] : []),
+    ...(grupos['__sin__'] ? [['__sin__', grupos['__sin__']] as [string, ProdAsignable[]]] : []),
   ]
 
-  const [busqueda, setBusqueda] = useState('')
-  const listId = 'proveedores-list'
-
-  const gruposFiltrados: [string, ProdFlat[]][] = busqueda.trim()
+  const gruposFiltrados: [string, ProdAsignable[]][] = busqueda.trim()
     ? gruposOrdenados
         .map(([key, items]) => [
           key,
           items.filter(p => p.nombre.toLowerCase().includes(busqueda.toLowerCase())),
-        ] as [string, ProdFlat[]])
+        ] as [string, ProdAsignable[]])
         .filter(([, items]) => items.length > 0)
     : gruposOrdenados
 
@@ -666,8 +982,14 @@ function TabProveedores({ tiendaId }: { tiendaId: number | null }) {
   return (
     <div className="space-y-4">
       <datalist id={listId}>
-        {proveedoresExistentes.map(p => <option key={p} value={p} />)}
+        {conocidos.map(p => <option key={p} value={p} />)}
       </datalist>
+
+      {error && (
+        <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-600 rounded-xl px-4 py-3 text-sm">
+          <AlertTriangle size={14} /> {error}
+        </div>
+      )}
 
       <div className="relative">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -681,8 +1003,8 @@ function TabProveedores({ tiendaId }: { tiendaId: number | null }) {
       </div>
 
       <p className="text-xs text-gray-400">
-        Asigná un proveedor a cada producto para que aparezca agrupado en la sugerencia de pedido.
-        Dejá el campo vacío para moverlo a "Insumos generales".
+        Los proveedores se aprenden solos de las facturas que se escanean. Acá se corrige
+        o se asigna a mano lo que todavía no aprendieron — y la asignación a mano manda.
       </p>
 
       {gruposFiltrados.map(([key, items]) => (
@@ -690,26 +1012,31 @@ function TabProveedores({ tiendaId }: { tiendaId: number | null }) {
           <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
             <Phone size={13} className="text-gray-400" />
             <p className="text-xs font-bold text-gray-600 uppercase tracking-wide">
-              {key === '__sin__' ? 'Sin proveedor — insumos generales' : key}
+              {key === '__sin__' ? 'Sin proveedor' : key}
             </p>
             <span className="ml-auto text-xs text-gray-400">{items.length} productos</span>
           </div>
           <div className="divide-y divide-gray-50">
             {items.map(p => {
-              const val = editores[p.id] ?? p.proveedor
-              const dirty = val.trim() !== p.proveedor
+              const val = editores[p.id] ?? p.proveedorManual
+              const dirty = val.trim() !== p.proveedorManual
               return (
                 <div key={p.id} className="flex items-center gap-3 px-4 py-2.5">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-800">{p.nombre}</p>
-                    <p className="text-xs text-gray-400">{p.categoria}</p>
+                    <p className="text-xs text-gray-400">
+                      {CAT_LABEL[p.categoria] ?? p.categoria}
+                      {!p.proveedorManual && p.titular && (
+                        <span className="text-gray-400"> · aprendido de facturas: {p.titular}</span>
+                      )}
+                    </p>
                   </div>
                   <input
                     type="text"
                     list={listId}
                     value={val}
                     onChange={e => setEditores(prev => ({ ...prev, [p.id]: e.target.value }))}
-                    placeholder="Nombre del proveedor…"
+                    placeholder={p.titular || 'Nombre del proveedor…'}
                     className="w-44 border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300 text-gray-700 placeholder:text-gray-300"
                   />
                   <button
@@ -738,29 +1065,41 @@ function TabProveedores({ tiendaId }: { tiendaId: number | null }) {
 
 export default function PedidosAdmin() {
   const { user } = useAuth()
-  const [sedes, setSedes]         = useState<Sede[]>([])
-  const [tiendaId, setTiendaId]   = useState<number | null>(user?.tienda_id ?? null)
-  // El default sigue siendo «solicitudes» (lo que las baristas pidieron y
-  // espera decisión). `?tab=pedidos` existe para que el botón «Armar pedido» de
-  // Control de inventario aterrice en la sugerencia por proveedor y no en otra
-  // pestaña: un link que deja al dueño a un click de lo que pidió es medio link.
-  // Solo decide el estado INICIAL; después manda el usuario.
-  const [tab, setTab]             = useState<'pedidos' | 'solicitudes' | 'proveedores'>(() => {
-    const t = new URLSearchParams(window.location.search).get('tab')
-    return t === 'pedidos' || t === 'proveedores' ? t : 'solicitudes'
-  })
+  const [sedes, setSedes] = useState<Sede[]>([])
+  // Sede y pestaña viven en la URL, no en un useState que solo se evalúa al
+  // montar. Dos bugs se caen juntos: `?tienda_id=` hace que el link «Armar
+  // pedido» de Inventario aterrice en la sede que se estaba mirando, y
+  // useSearchParams (en vez de leer window.location una sola vez) hace que un
+  // navigate a la MISMA ruta con otro ?tab= sí cambie de pestaña.
+  const [sp, setSp] = useSearchParams()
   const [nPendientes, setNPendientes] = useState(0)
 
+  const tabURL = sp.get('tab')
+  const tab: 'pedidos' | 'solicitudes' | 'proveedores' =
+    tabURL === 'pedidos' || tabURL === 'proveedores' ? tabURL : 'solicitudes'
+
+  const tiendaURL = Number(sp.get('tienda_id'))
+  const tiendaId: number | null =
+    Number.isFinite(tiendaURL) && tiendaURL > 0 ? tiendaURL : (user?.tienda_id ?? null)
+
+  const irA = (cambios: { tab?: string; tienda_id?: number }) => {
+    const next = new URLSearchParams(sp)
+    if (cambios.tab) next.set('tab', cambios.tab)
+    if (cambios.tienda_id) next.set('tienda_id', String(cambios.tienda_id))
+    setSp(next, { replace: true })
+  }
+
   useEffect(() => {
-    api.get('/auth/tiendas').then(r => {
+    api.get<Sede[]>('/auth/tiendas').then(r => {
       setSedes(r.data)
-      if (tiendaId === null && r.data.length > 0) setTiendaId(r.data[0].id)
     }).catch(() => {})
     // Badge de solicitudes pendientes (lo que las baristas pidieron y espera decisión)
     api.get<Solicitud[]>('/solicitudes/pedido/todas')
       .then(r => setNPendientes(r.data.filter(s => s.estado === 'pendiente').length))
       .catch(() => {})
   }, [])
+
+  const sedeNombre = sedes.find(s => s.id === tiendaId)?.nombre ?? ''
 
   return (
     <div className="space-y-4 pb-10">
@@ -769,13 +1108,14 @@ export default function PedidosAdmin() {
         <div className="flex items-center gap-2">
           <ShoppingCart size={18} className="text-amber-600" />
           <h1 className="text-lg font-bold text-gray-800">Pedidos</h1>
+          {sedeNombre && <span className="text-sm text-gray-400">· {sedeNombre}</span>}
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
           {sedes.length > 1 && (
             <div className="flex gap-1">
               {sedes.map(s => (
-                <button key={s.id} onClick={() => setTiendaId(s.id)}
+                <button key={s.id} onClick={() => irA({ tienda_id: s.id })}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     tiendaId === s.id
                       ? 'bg-amber-500 text-white'
@@ -789,15 +1129,15 @@ export default function PedidosAdmin() {
 
           <div className="flex bg-gray-100 rounded-xl p-0.5">
             <button
-              onClick={() => setTab('pedidos')}
+              onClick={() => irA({ tab: 'pedidos' })}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 tab === 'pedidos' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}
             >
-              <ShoppingCart size={13} /> Sugerencia
+              <ShoppingCart size={13} /> Armar pedido
             </button>
             <button
-              onClick={() => setTab('solicitudes')}
+              onClick={() => irA({ tab: 'solicitudes' })}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 tab === 'solicitudes' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}
@@ -810,7 +1150,7 @@ export default function PedidosAdmin() {
               )}
             </button>
             <button
-              onClick={() => setTab('proveedores')}
+              onClick={() => irA({ tab: 'proveedores' })}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 tab === 'proveedores' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}
@@ -821,7 +1161,7 @@ export default function PedidosAdmin() {
         </div>
       </div>
 
-      {tab === 'pedidos'     && <TabPedidos     tiendaId={tiendaId} />}
+      {tab === 'pedidos'     && <TabPedidos     tiendaId={tiendaId} sedeNombre={sedeNombre} />}
       {tab === 'solicitudes' && <TabSolicitudes onCount={setNPendientes} />}
       {tab === 'proveedores' && <TabProveedores tiendaId={tiendaId} />}
     </div>

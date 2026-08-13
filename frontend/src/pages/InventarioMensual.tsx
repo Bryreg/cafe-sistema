@@ -1,14 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import { Boxes, Check, Save, AlertTriangle, Lock, X } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
 import NivelEnvase from '../components/NivelEnvase'
+import { abreBloque, ordenarPorRecorrido } from '../utils/ordenConteo'
 
 interface Item {
   id: number; producto_id: number; producto_nombre: string
   categoria: string; unidad_medida: string
   fraccionable?: boolean; envase?: 'bolsa' | 'botella' | null
+  /** Posición en el recorrido físico del local (ver utils/ordenConteo). */
+  orden_conteo?: number | null
   cantidad_sistema: number; cantidad_real: number | null
   // false = el número lo puso el cierre, no una persona (ver services/inventario_mensual)
   fue_contado?: boolean
@@ -23,8 +26,6 @@ interface Inv {
 }
 
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
-const CAT_LABEL: Record<string, string> = { pasteleria: 'Pastelería', bebida: 'Bebidas', insumo: 'Insumos' }
-const CAT_ORDER = ['insumo', 'pasteleria', 'bebida']
 
 export default function InventarioMensual() {
   const { user } = useAuth()
@@ -124,11 +125,15 @@ export default function InventarioMensual() {
   }
 
   const cerrado = inv?.estado === 'cerrado'
-  const grupos = useMemo(() => {
-    const g: Record<string, Item[]> = {}
-    ;(inv?.items ?? []).forEach(it => { (g[it.categoria] ??= []).push(it) })
-    return CAT_ORDER.filter(c => g[c]?.length).map(c => ({ cat: c, items: g[c].sort((a, b) => a.producto_nombre.localeCompare(b.producto_nombre)) }))
-  }, [inv])
+  // El conteo de fin de mes es EL MISMO recorrido físico que el de apertura y
+  // cierre, así que va en el mismo orden. Antes agrupaba por categoría y
+  // alfabético adentro: eso obligaba a caminar el local tres veces, porque las
+  // zonas del recorrido mezclan categorías (el bloque de la vitrina tiene café
+  // y pastelería juntos). El corte entre zonas lo dibuja el salto de bloque.
+  const ordenados = useMemo(
+    () => ordenarPorRecorrido(inv?.items ?? [], it => it.producto_nombre),
+    [inv],
+  )
 
   const contados = useMemo(() => Object.values(valores).filter(v => v !== '').length, [valores])
 
@@ -229,17 +234,17 @@ export default function InventarioMensual() {
               </div>
             )}
 
-            {/* Grupos por categoría */}
-            {grupos.map(({ cat, items }) => (
-              <div key={cat} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-100">
-                  <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{CAT_LABEL[cat] ?? cat}</p>
-                </div>
+            {/* El recorrido del local, en el mismo orden que apertura y cierre */}
+            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="divide-y divide-gray-50">
-                  {items.map(it => {
+                  {ordenados.map((it, idx) => {
                     const d = cerrado ? it.diferencia : dif(it)
+                    // Corte entre zonas del local: una línea, sin encabezado nuevo.
+                    const corte = idx > 0 && abreBloque(it.orden_conteo, ordenados[idx - 1].orden_conteo)
                     return (
-                      <div key={it.id} className="flex items-center gap-3 px-4 py-2.5">
+                      <Fragment key={it.id}>
+                      {corte && <div className="h-3 bg-gray-50 border-y border-gray-100" aria-hidden="true" />}
+                      <div className="flex items-center gap-3 px-4 py-2.5">
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">{it.producto_nombre}</p>
                           <p className="text-xs text-gray-400">Sistema: {Math.round(it.cantidad_sistema)} {it.unidad_medida}</p>
@@ -279,11 +284,11 @@ export default function InventarioMensual() {
                           {d === 0 && <Check size={14} className="text-green-500 inline" />}
                         </div>
                       </div>
+                      </Fragment>
                     )
                   })}
                 </div>
-              </div>
-            ))}
+            </div>
 
             {msg && <p className="text-sm text-center text-gray-500">{msg}</p>}
 

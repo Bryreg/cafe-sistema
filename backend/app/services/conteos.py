@@ -399,15 +399,17 @@ def get_conteos_tienda(db: Session, tienda_id: int,
     prod_ids = {i.producto_id for c in conteos for i in c.items}
     nombres = {}
     if prod_ids:
-        for p in db.query(Producto.id, Producto.nombre, Producto.unidad_medida).filter(Producto.id.in_(prod_ids)).all():
-            nombres[p.id] = (p.nombre, p.unidad_medida)
+        for p in (db.query(Producto.id, Producto.nombre, Producto.unidad_medida,
+                           Producto.orden_conteo)
+                  .filter(Producto.id.in_(prod_ids)).all()):
+            nombres[p.id] = (p.nombre, p.unidad_medida, p.orden_conteo)
 
     result = []
     for c in conteos:
         items = []
         n_dif = 0
         for i in sorted(c.items, key=lambda x: abs(x.diferencia or 0), reverse=True):
-            nombre, unidad = nombres.get(i.producto_id, (f"#{i.producto_id}", ""))
+            nombre, unidad, orden = nombres.get(i.producto_id, (f"#{i.producto_id}", "", None))
             dif = float(i.diferencia or 0)
             if round(dif, 3) != 0:
                 n_dif += 1
@@ -416,6 +418,11 @@ def get_conteos_tienda(db: Session, tienda_id: int,
                 "sistema": float(i.cantidad_sistema or 0),
                 "real": float(i.cantidad_real or 0),
                 "diferencia": dif,
+                # Posición en el recorrido del conteo: deja al hub admin revisar
+                # en el mismo orden en que la barista caminó el local (comparar
+                # contra el papel sin saltar filas). El orden de esta lista NO
+                # cambia — sigue siendo por diferencia; el cliente reordena.
+                "orden_conteo": orden,
             })
         tipo = c.tipo.value if hasattr(c.tipo, "value") else str(c.tipo)
         result.append({

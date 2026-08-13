@@ -1,0 +1,421 @@
+{
+  "version": 1,
+  "_lease": [
+    "El ORDEN en que las baristas caminan el local al contar (apertura, cierre y",
+    "cierre de mes). Lo dictó el dueño. Los tres bloques son las tres zonas que se",
+    "recorren; el salto de orden entre bloques deja lugar para intercalar después",
+    "sin renumerar todo.",
+    "",
+    "CADA ENTRADA es una posición del recorrido, no un producto:",
+    "  entrada   — el nombre tal cual lo escribió el dueño (es la etiqueta del reporte).",
+    "  variantes — los nombres que se aceptan como ESE producto. Se comparan",
+    "              NORMALIZADOS (sin tildes, mayúsculas, espacios colapsados), por",
+    "              IGUALDAD EXACTA. Nunca por 'contiene'.",
+    "  prefijo   — expande a TODOS los productos cuyo nombre normalizado empieza así",
+    "              (una entrada de la lista que en el catálogo son varios productos).",
+    "",
+    "REGLA DURA: solo se matchea con certeza. Un producto que no cae en una variante",
+    "exacta ni en un prefijo declarado queda SIN orden y se cuenta al final,",
+    "alfabético. Un match de más es peor que ninguno: pone un producto en la fila de",
+    "otro y la barista cuenta lo que no es.",
+    "",
+    "Agregar una variante es barato y reversible. Adivinar no."
+  ],
+  "bloques": [
+    {
+      "bloque": 1,
+      "entradas": [
+        {
+          "entrada": "CAFE x2500 gr",
+          "variantes": [
+            "CAFE x2500 gr",
+            "Cafe x2500gr",
+            "Café Alta Tostión x2500g",
+            "Cafe Alta Tostion x2500 gr",
+            "Cafe Alta Tostion 2500 gr",
+            "Cafe Alta Tostion (granel)",
+            "Cafe Alta Tostion x2500"
+          ]
+        },
+        {
+          "entrada": "CAFE x500 gr",
+          "variantes": [
+            "CAFE x500 gr",
+            "Cafe x500gr",
+            "Café Libra Medium 500g",
+            "Cafe Libra Medium 500 gr",
+            "Libra Medium Cafe Exportacion",
+            "Libra Medium Café Exportación",
+            "CAFÉ LIBRA MEDIUM CAFÉ EXPORTACION"
+          ]
+        },
+        {
+          "entrada": "ALMOJABANAS",
+          "_nota": "La 'Torta de almojábana' es OTRO producto: no la captura.",
+          "variantes": [
+            "ALMOJABANAS",
+            "Almojábanas",
+            "Almojabana"
+          ]
+        },
+        {
+          "entrada": "T CHOCOLATE",
+          "_nota": "T = Torta. JAMÁS matchea 'Salsa Chocolate' (igualdad exacta).",
+          "variantes": [
+            "T CHOCOLATE",
+            "Torta Chocolate",
+            "Torta de Chocolate"
+          ]
+        },
+        {
+          "entrada": "T NARANJA",
+          "variantes": [
+            "T NARANJA",
+            "Torta Naranja",
+            "Torta de Naranja"
+          ]
+        },
+        {
+          "entrada": "T ZANAHORIA",
+          "variantes": [
+            "T ZANAHORIA",
+            "Torta Zanahoria",
+            "Torta de Zanahoria"
+          ]
+        },
+        {
+          "entrada": "T RED VELVET",
+          "variantes": [
+            "T RED VELVET",
+            "Torta Red Velvet",
+            "Torta de Red Velvet"
+          ]
+        },
+        {
+          "entrada": "PASTEL POLLO",
+          "variantes": [
+            "PASTEL POLLO",
+            "Pastel de Pollo"
+          ]
+        },
+        {
+          "entrada": "PALITO DE QUESO",
+          "_nota": "En producción se fusionaron a 'Esponjado de Queso' (ver main.py::RENOMBRES).",
+          "variantes": [
+            "PALITO DE QUESO",
+            "Palito de Queso",
+            "Esponjado de Queso",
+            "Dedo de Queso",
+            "Pan Esponjado"
+          ]
+        },
+        {
+          "entrada": "OMELETTE",
+          "_nota": "Sin prefijo a propósito: no puede llevarse el de jamón y queso.",
+          "variantes": [
+            "OMELETTE",
+            "Omelette",
+            "Omelette Queso"
+          ]
+        },
+        {
+          "entrada": "OMELETTE JAMON Y QUESO",
+          "variantes": [
+            "OMELETTE JAMON Y QUESO",
+            "Omelette Jamón y Queso",
+            "Omelette de Jamon y Queso",
+            "Omelette Jamon Queso"
+          ]
+        }
+      ]
+    },
+    {
+      "bloque": 2,
+      "entradas": [
+        {
+          "entrada": "CROISSANT DE QUESO",
+          "variantes": [
+            "CROISSANT DE QUESO",
+            "Croissant Queso",
+            "Croissant de Queso"
+          ]
+        },
+        {
+          "entrada": "CROISSANT DE CHOCOLATE",
+          "variantes": [
+            "CROISSANT DE CHOCOLATE",
+            "Croissant Chocolate",
+            "Croissant de Chocolate"
+          ]
+        },
+        {
+          "entrada": "MASA DE PANDEBONO",
+          "variantes": [
+            "MASA DE PANDEBONO",
+            "Masa Pandebono",
+            "Masa de Pandebono",
+            "MASA DE PANDEBONO X 25GRAMOS"
+          ]
+        },
+        {
+          "entrada": "TE CHAI",
+          "_nota": "Único chai del catálogo. Verificar en el reporte contra producción.",
+          "variantes": [
+            "TE CHAI",
+            "Te Chai",
+            "Té Chai",
+            "Chai Latte",
+            "Chai"
+          ]
+        },
+        {
+          "entrada": "AGUA MEDIUM",
+          "_nota": "El agua sin gas de la marca de la casa. 'Agua con Gas' es su vecina, no ella.",
+          "variantes": [
+            "AGUA MEDIUM",
+            "Agua Medium",
+            "Agua Normal Botella",
+            "Agua Normal",
+            "Agua sin Gas",
+            "AGUA MEDIUM BOTELLA"
+          ]
+        },
+        {
+          "entrada": "AGUA GAS",
+          "variantes": [
+            "AGUA GAS",
+            "Agua Gas",
+            "Agua con Gas Botella",
+            "Agua con Gas",
+            "AGUA MEDIUM CON GAS BOTELLA",
+            "Agua Medium con Gas"
+          ]
+        },
+        {
+          "entrada": "LICOR BAILEYS X700ML",
+          "_nota": "'Licor Baileys' a secas NO entra: no se sabe si es la de 700 o la de 1000.",
+          "variantes": [
+            "LICOR BAILEYS X700ML",
+            "Licor Baileys x700ml",
+            "Licor Baileys 700ml",
+            "Baileys x700ml"
+          ]
+        },
+        {
+          "entrada": "LICOR BAILEYS X1000ML",
+          "variantes": [
+            "LICOR BAILEYS X1000ML",
+            "Licor Baileys x1000ml",
+            "Licor Baileys 1000ml",
+            "Baileys x1000ml"
+          ]
+        },
+        {
+          "entrada": "LICOR WHISKY X700ML",
+          "variantes": [
+            "LICOR WHISKY X700ML",
+            "Licor Whisky x700ml",
+            "Licor Whisky Black & White x700ml",
+            "Licor Black & White x700ml",
+            "Licor Black and White x700ml"
+          ]
+        },
+        {
+          "entrada": "LICOR WHISKY X1000ML",
+          "variantes": [
+            "LICOR WHISKY X1000ML",
+            "Licor Whisky x1000ml",
+            "Licor Whisky Black & White x1000ml",
+            "Licor Black & White x1000ml",
+            "Licor Black and White x1000ml"
+          ]
+        },
+        {
+          "entrada": "LICOR AMARETTO X750ML",
+          "variantes": [
+            "LICOR AMARETTO X750ML",
+            "Licor Amaretto x750ml",
+            "Licor Amaretto 750ml",
+            "Amaretto x750ml"
+          ]
+        },
+        {
+          "entrada": "VELINO VAINILLA",
+          "_nota": "VELINO es la marca; el catálogo los llama SABORIZANTE.",
+          "variantes": [
+            "VELINO VAINILLA",
+            "Velino Vainilla",
+            "Saborizante Vainilla"
+          ]
+        },
+        {
+          "entrada": "VELINO CANELA",
+          "variantes": [
+            "VELINO CANELA",
+            "Velino Canela",
+            "Saborizante Canela"
+          ]
+        },
+        {
+          "entrada": "VELINO MACADAMIA",
+          "variantes": [
+            "VELINO MACADAMIA",
+            "Velino Macadamia",
+            "Saborizante Macadamia"
+          ]
+        },
+        {
+          "entrada": "VELINO FRUTOS AMARILLOS",
+          "variantes": [
+            "VELINO FRUTOS AMARILLOS",
+            "Velino Frutos Amarillos",
+            "Saborizante Frutos Amarillos"
+          ]
+        },
+        {
+          "entrada": "VELINO KIWI FRESA",
+          "variantes": [
+            "VELINO KIWI FRESA",
+            "Velino Kiwi Fresa",
+            "Saborizante Kiwi Fresa"
+          ]
+        },
+        {
+          "entrada": "PULPAS JUGO",
+          "_nota": "Una entrada, varios productos: todas las pulpas, alfabético entre ellas.",
+          "prefijo": "PULPA "
+        },
+        {
+          "entrada": "LECHE DESLACTOSADA",
+          "variantes": [
+            "LECHE DESLACTOSADA",
+            "Leche Deslactosada"
+          ]
+        },
+        {
+          "entrada": "LECHE ENTERA",
+          "variantes": [
+            "LECHE ENTERA",
+            "Leche Entera"
+          ]
+        },
+        {
+          "entrada": "LECHE CONDENSADA (300GR)",
+          "variantes": [
+            "LECHE CONDENSADA (300GR)",
+            "LECHE CONDENSADA",
+            "Leche Condensada",
+            "Leche Condensada 300gr"
+          ]
+        },
+        {
+          "entrada": "SOUR CREAM X 400GR",
+          "variantes": [
+            "SOUR CREAM X 400GR",
+            "Sour Cream",
+            "Sour Cream 400gr",
+            "Sour Cream x400gr"
+          ]
+        },
+        {
+          "entrada": "LECHE EN POLVO (GRAMOS)",
+          "variantes": [
+            "LECHE EN POLVO (GRAMOS)",
+            "LECHE EN POLVO",
+            "Leche en Polvo"
+          ]
+        },
+        {
+          "entrada": "SALSA CHOCOLATE",
+          "variantes": [
+            "SALSA CHOCOLATE",
+            "Salsa Chocolate"
+          ]
+        },
+        {
+          "entrada": "SALSA CARAMELO",
+          "variantes": [
+            "SALSA CARAMELO",
+            "Salsa Caramelo"
+          ]
+        },
+        {
+          "entrada": "SALSA FRUTOS ROJOS MIMOS",
+          "variantes": [
+            "SALSA FRUTOS ROJOS MIMOS",
+            "Salsa Frutos Rojos",
+            "Salsa Frutos Rojos Mimos"
+          ]
+        },
+        {
+          "entrada": "SALSA MARACUYA",
+          "variantes": [
+            "SALSA MARACUYA",
+            "Salsa Maracuyá",
+            "Salsa Maracuya"
+          ]
+        }
+      ]
+    },
+    {
+      "bloque": 3,
+      "entradas": [
+        {
+          "entrada": "AROMATICAS",
+          "_nota": "Prefijo: cubre 'Aromatica de Cidron', 'Aromática Manzanilla', etc.",
+          "prefijo": "AROMATICA"
+        },
+        {
+          "entrada": "AZUCAR TUBIPACK",
+          "_nota": "Tubipack = los tubitos/sticks. 'Azucar' a granel es OTRA entrada.",
+          "variantes": [
+            "AZUCAR TUBIPACK",
+            "Azucar Tubipack",
+            "Azúcar Tubipack",
+            "Azúcar Blanca Tubos",
+            "Azucar Blanca Tubos",
+            "Azucar en Tubos"
+          ]
+        },
+        {
+          "entrada": "AZUCAR X 2.5 KG",
+          "_nota": "Resuelto por la tabla de alias del dueño (_conteo_diario_lista.txt:45: 'AZUCAR X 2.5 KG = Azúcar a Granel x2500'). El 'Azucar' pelado sigue sin matchear: no está en la lista del recorrido.",
+          "variantes": [
+            "AZUCAR X 2.5 KG",
+            "Azucar x 2.5 kg",
+            "Azucar 2.5 kg",
+            "Azucar x2500 gr",
+            "Azucar x 2500gr",
+            "Azucar a Granel",
+            "Azúcar a Granel x2500"
+          ]
+        },
+        {
+          "entrada": "MILO GRAMOS",
+          "variantes": [
+            "MILO GRAMOS",
+            "MILO",
+            "Milo"
+          ]
+        },
+        {
+          "entrada": "GALLETA OREO GRAMOS",
+          "variantes": [
+            "GALLETA OREO GRAMOS",
+            "Galleta Oreo",
+            "Galleta Oreo Gramos"
+          ]
+        },
+        {
+          "entrada": "BATI CREMA",
+          "_nota": "SIN variante de producción: 'Crema Chantilly' es lo que se PREPARA con ella, no necesariamente el mismo renglón de inventario. Ver el reporte.",
+          "variantes": [
+            "BATI CREMA",
+            "Bati Crema",
+            "Baticrema"
+          ]
+        }
+      ]
+    }
+  ]
+}

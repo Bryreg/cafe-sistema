@@ -71,6 +71,10 @@ def _serializar(inv: InventarioMensual) -> dict:
             "categoria": it.categoria, "unidad_medida": it.unidad_medida,
             "fraccionable": bool(it.producto.fraccionable) if it.producto else False,
             "envase": it.producto.envase if it.producto else None,
+            # Posición en el recorrido del conteo. Ya viene aplicada en el orden
+            # de esta lista (ver el sorted de arriba); viaja igual porque la
+            # pantalla dibuja el corte entre zonas del local a partir de ella.
+            "orden_conteo": it.producto.orden_conteo if it.producto else None,
             "cantidad_sistema": it.cantidad_sistema,
             "cantidad_real": it.cantidad_real,
             # False = el número de al lado lo puso el cierre, no una persona.

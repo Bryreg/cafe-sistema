@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import { ChevronDown, ChevronUp, Download, ListChecks, Sun, Moon, User, DatabaseZap, Boxes, ChevronRight } from 'lucide-react'
 import { hoyLocal, haceDiasLocal } from '../utils/fechaLocal'
+import { compararRecorrido } from '../utils/ordenConteo'
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,8 @@ interface ConteoItem {
   sistema: number
   real: number
   diferencia: number
+  /** Posición en el recorrido físico del local (ver utils/ordenConteo). */
+  orden_conteo?: number | null
 }
 
 interface Conteo {
@@ -99,7 +102,11 @@ export default function ConteosAdmin() {
   const [soloDif, setSoloDif] = useState(true)
   const [verifs, setVerifs] = useState<Record<string, Verif>>({})
   const [accionando, setAccionando] = useState<string | null>(null)
-  const [ordenItems, setOrdenItems] = useState<'dif' | 'bajo'>('dif')
+  // Tres formas de leer el mismo conteo. 'recorrido' es la de por defecto porque
+  // es la única en que revisar contra el papel de la barista es lineal: mismo
+  // orden en que ella caminó el local. Las otras dos siguen ahí — 'dif' para
+  // auditar y 'bajo' para armar pedidos — porque responden otras preguntas.
+  const [ordenItems, setOrdenItems] = useState<'recorrido' | 'dif' | 'bajo'>('recorrido')
 
   const cargarVerifs = async (tid: number) => {
     try {
@@ -346,7 +353,7 @@ export default function ConteosAdmin() {
                       )}
                       {/* Modo de lectura: diferencias (auditoría) o bajo gramaje (pedidos) */}
                       <div className="flex items-center gap-1.5 px-4 py-2" style={{ background: 'oklch(98% 0.004 75)' }}>
-                        {([['dif', 'Mayores diferencias'], ['bajo', 'Bajo gramaje — para pedidos']] as const).map(([k, lbl]) => (
+                        {([['recorrido', 'Orden del conteo'], ['dif', 'Mayores diferencias'], ['bajo', 'Bajo gramaje — para pedidos']] as const).map(([k, lbl]) => (
                           <button key={k} onClick={() => setOrdenItems(k)}
                             className={`text-[11px] font-bold px-3 py-1 rounded-full transition-colors ${
                               ordenItems === k ? 'bg-gray-800 text-white' : 'bg-white border border-gray-200 text-gray-500'
@@ -366,8 +373,9 @@ export default function ConteosAdmin() {
                         </p>
                       ) : (
                         <div className="divide-y" style={{ borderColor: 'oklch(97% 0.004 75)' }}>
-                          {[...visibles].sort(ordenItems === 'bajo'
-                            ? (a, b) => a.real - b.real
+                          {[...visibles].sort(
+                            ordenItems === 'recorrido' ? compararRecorrido<ConteoItem>(i => i.nombre)
+                            : ordenItems === 'bajo'    ? (a, b) => a.real - b.real
                             : (a, b) => Math.abs(b.diferencia) - Math.abs(a.diferencia)
                           ).map(i => {
                             const hayDif = Math.round(i.diferencia * 1000) !== 0

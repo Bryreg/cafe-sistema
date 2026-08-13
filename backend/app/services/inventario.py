@@ -69,6 +69,12 @@ def get_inventario_tienda(db: Session, tienda_id: int):
             "fraccionable": bool(item.producto.fraccionable),
             "envase": item.producto.envase,
             "contenido_por_unidad": float(item.producto.contenido_por_unidad) if item.producto.contenido_por_unidad else None,
+            # Posición en el recorrido físico del conteo. Viaja al cliente porque
+            # las pantallas de conteo (apertura/cierre) ordenan EN CLIENTE y
+            # dibujan el corte entre bloques; el ORDER BY de arriba ya las deja
+            # en este mismo orden, así que los demás consumidores de este payload
+            # (kiosko, panel POS) no cambian de comportamiento.
+            "orden_conteo": item.producto.orden_conteo,
             "alerta": item.stock_actual <= item.stock_minimo,
         })
     return result

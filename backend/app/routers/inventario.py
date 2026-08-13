@@ -464,6 +464,26 @@ def resumen_admin(db: Session = Depends(get_db), user: Usuario = Depends(require
         })
     return {"tiendas": [{"id": t.id, "nombre": t.nombre} for t in tiendas], "productos": result}
 
+@router.get("/orden-conteo")
+def reporte_orden_conteo(db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    """Qué matcheó la lista del recorrido contra el catálogo REAL de esta base.
+
+    El archivo `app/data/orden_conteo.json` está escrito contra los nombres de
+    producción que se conocen, que no son todos. Este reporte es la forma de
+    verificarlo sin adivinar: dice qué entrada de la lista del dueño no encontró
+    producto (falta una variante), qué producto quedó sin posición (se cuenta al
+    final, alfabético) y qué posición difiere del archivo porque alguien la movió
+    a mano.
+
+    Solo lectura: no siembra ni corrige nada. Sembrar es cosa del arranque.
+    """
+    from app.services import orden_conteo as svc_orden
+    try:
+        return svc_orden.reporte(db)
+    except svc_orden.OrdenConteoInvalido as e:
+        raise HTTPException(500, f"El archivo del orden de conteo no se pudo leer: {e}")
+
+
 @router.delete("/productos/{producto_id}")
 def eliminar_producto(producto_id: int, db: Session = Depends(get_db),
                       user: Usuario = Depends(require_admin)):

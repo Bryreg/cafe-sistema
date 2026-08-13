@@ -807,6 +807,33 @@ def _migrate_proveedores():
 _migrate_proveedores()
 
 
+# ─── Orden del conteo: el recorrido físico del local (idempotente) ────────────
+def _seed_orden_conteo():
+    """Siembra `Producto.orden_conteo` desde app/data/orden_conteo.json.
+
+    Va DESPUÉS de _migrate_productos_reales y _migrate_proveedores a propósito:
+    esas dos crean, renombran y fusionan productos, y este cargador matchea por
+    nombre. Sembrar antes dejaría a los recién renombrados sin posición hasta el
+    siguiente arranque.
+
+    La columna `productos.orden_conteo` ya viene del loop de ALTERs de arriba
+    (`productos` es preexistente, create_all no la agregaría).
+
+    Escribe solo donde la posición es NULL, así que correrlo en cada arranque no
+    pisa nada. `sembrar` no levanta jamás: un archivo de datos no puede tumbar
+    el deploy de una cafetería abierta.
+    """
+    from app.services.orden_conteo import sembrar
+    db = SessionLocal()
+    try:
+        sembrar(db)
+    finally:
+        db.close()
+
+
+_seed_orden_conteo()
+
+
 def _seed_rutinas():
     """Crea plantillas de rutina por defecto (globales) si no existen. Idempotente por clave."""
     from app.models.models import RutinaPlantilla, CategoriaRutinaEnum, FrecuenciaRutinaEnum

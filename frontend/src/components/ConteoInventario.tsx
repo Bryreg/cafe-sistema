@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useTurno } from '../contexts/TurnoContext'
@@ -7,6 +7,7 @@ import { CheckCircle2, Circle, ArrowLeft, ArrowRight, AlertTriangle, ClipboardCh
 import { dark } from '../constants/darkTheme'
 import NivelEnvase from './NivelEnvase'
 import { evaluarExpresion, limpiarExpresion } from '../utils/calculo'
+import { abreBloque, ordenarPorRecorrido } from '../utils/ordenConteo'
 
 /** Valor numérico de una casilla que puede contener una expresión (+2500+1000). */
 const valorDe = (raw: string | undefined): number | null => {
@@ -30,6 +31,8 @@ interface InvItem {
   envase?: 'bolsa' | 'botella' | null
   /** Gramos por unidad sellada (bolsa de café 2500). Activa el conteo en gramos. */
   contenido_por_unidad?: number | null
+  /** Posición en el recorrido físico del local (ver utils/ordenConteo). */
+  orden_conteo?: number | null
 }
 
 /** Conteo en GRAMOS para fraccionables con contenido conocido: bolsas cerradas ×
@@ -173,6 +176,15 @@ export default function ConteoInventario({ tipo }: Props) {
       .then(([inv, ref]) => { setItems(inv.data); if (ref) setReferencia(ref.data) })
       .finally(() => setLoading(false))
   }, [user?.tienda_id, tipo])
+
+  // La pantalla sigue el RECORRIDO físico con que se cuenta el local, no el
+  // orden en que la base devuelve las filas. El backend ya manda este mismo
+  // orden en el ORDER BY, pero ordenar acá lo deja explícito y sobrevive a que
+  // otro consumidor del endpoint pida otro orden mañana.
+  const ordenados = useMemo(
+    () => ordenarPorRecorrido(items, i => i.producto_nombre),
+    [items],
+  )
 
   const refDe = (pid: number): number | null => {
     const v = referencia?.por_producto?.[pid]
@@ -346,7 +358,12 @@ export default function ConteoInventario({ tipo }: Props) {
             background: dark.surface,
             border: `1px solid ${dark.border}`,
           }}>
-            {items.map(item => {
+            {ordenados.map((item, idx) => {
+              // Corte entre zonas del local. Es una línea, no un encabezado: la
+              // barista ya sabe dónde está parada — lo único que necesita es ver
+              // que ahí termina un tramo del recorrido. En dos columnas, además,
+              // hace que la zona siguiente arranque en fila nueva.
+              const corte = idx > 0 && abreBloque(item.orden_conteo, ordenados[idx - 1].orden_conteo)
               const val    = conteos[item.producto_id]
               const nval   = valorDe(val)
               const filled = nval !== null
@@ -361,7 +378,15 @@ export default function ConteoInventario({ tipo }: Props) {
               if (novedad) rowBg = 'oklch(96% 0.05 70 / 0.5)'
 
               return (
-                <div key={item.producto_id} className="px-4 py-3.5 transition-colors"
+                <Fragment key={item.producto_id}>
+                {corte && (
+                  <div className="col-span-full" aria-hidden="true" style={{
+                    height: '0.75rem',
+                    background: dark.bg,
+                    borderBottom: `1px solid ${dark.border}`,
+                  }} />
+                )}
+                <div className="px-4 py-3.5 transition-colors"
                   style={{
                     background: rowBg,
                     borderBottom: `1px solid ${dark.border}`,
@@ -468,6 +493,7 @@ export default function ConteoInventario({ tipo }: Props) {
                     </p>
                   )}
                 </div>
+                </Fragment>
               )
             })}
           </div>

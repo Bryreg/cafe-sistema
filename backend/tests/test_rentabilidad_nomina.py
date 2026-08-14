@@ -401,3 +401,58 @@ class InvarianteDelDesgloseTest(RentabilidadNominaBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ─── Lo que la pantalla tiene derecho a afirmar ────────────────────────────
+
+class LaPantallaNoAfirmaDeMasTest(RentabilidadNominaBase):
+    """Dos banderas que la pantalla usa para emitir veredictos sobre el margen.
+
+    Las dos se prendían por la FORMA del dato y no por el MONTO, y una bandera
+    prendida acá no es un detalle: es una frase en pantalla diciéndole al dueño
+    que su margen ya tiene adentro un costo que no tiene adentro.
+    """
+
+    def test_horas_sin_sueldo_no_son_un_costo_fijo(self):
+        """Sin contrato cargado el costo laboral es $0, y $0 no es un costo fijo.
+
+        `nomina["pares"]` es un defaultdict: alcanza con que alguien tenga horas
+        para que exista la clave en 0.0, y un dict con claves es True. La
+        pantalla decía "el margen ya descuenta los costos fijos" con $0
+        descontado — justo el caso en que MÁS falta el dato.
+        """
+        self.turno_de_8h(self.martes)                    # horas sí, sueldo no
+        r = self.pl()["resumen"]
+        self.assertEqual(r["nomina_calculada"], 0)
+        self.assertGreater(r["nomina_sin_contrato"], 0)  # las horas están ahí
+        self.assertFalse(r["tiene_costos_fijos"])
+
+    def test_con_sueldo_cargado_si_hay_costo_fijo(self):
+        self.con_contrato()
+        self.turno_de_8h(self.martes)
+        self.assertTrue(self.pl()["resumen"]["tiene_costos_fijos"])
+
+    def test_la_nomina_manual_dentro_de_la_ventana_se_reporta_como_incluida(self):
+        self.con_contrato()
+        self.turno_de_8h(self.martes)
+        self.obligacion(self.cat_nomina, 2_000_000, date(2026, 8, 31))
+        r = self.pl(date(2026, 8, 1), date(2026, 8, 31))["resumen"]
+        self.assertEqual(r["nomina_meses_manuales"], ["2026-08"])
+        self.assertAlmostEqual(r["nomina_manual_en_ventana"], 2_000_000)
+
+    def test_si_el_devengo_cae_afuera_la_ventana_no_tiene_ni_un_peso(self):
+        """El caso que hacía mentir a la pantalla.
+
+        El mes con nómina a mano descarta su cálculo SIEMPRE —esa es la regla
+        que evita el doble conteo—, pero la plata manual entra en la ventana que
+        contiene su fecha de devengo. Mirando "del 1 al 15" con la nómina
+        devengada el 31, el costo laboral de ese mes no está en ningún lado: la
+        pantalla no puede decir "se usó la cargada a mano" sin un peso adentro.
+        """
+        self.con_contrato()
+        self.turno_de_8h(self.martes)                    # martes 11-ago
+        self.obligacion(self.cat_nomina, 2_000_000, date(2026, 8, 31))
+        r = self.pl(date(2026, 8, 1), date(2026, 8, 15))["resumen"]
+        self.assertEqual(r["nomina_meses_manuales"], ["2026-08"])   # el mes está cubierto
+        self.assertEqual(r["nomina_calculada"], 0)                  # y su cálculo, descartado
+        self.assertEqual(r["nomina_manual_en_ventana"], 0)          # pero adentro no hay nada

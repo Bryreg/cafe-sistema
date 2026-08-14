@@ -71,9 +71,12 @@ class NominaBase(unittest.TestCase):
         self.db.commit()
         return tb
 
-    def planear(self, usuario, fecha, ini="08:00", fin="16:00", publicar=True):
+    def planear(self, usuario, fecha, ini="08:00", fin="16:00", publicar=True,
+                almuerzo_inicio=None, almuerzo_minutos=None):
         tp = hsvc.guardar_turno(self.db, self.t.id, usuario.id, fecha, ini, fin,
-                                creado_por_id=self.admin.id)
+                                creado_por_id=self.admin.id,
+                                almuerzo_inicio=almuerzo_inicio,
+                                almuerzo_minutos=almuerzo_minutos)
         if publicar:
             hsvc.publicar_semana(self.db, self.t.id, svc.lunes_de(fecha), self.admin.id)
         return tp
@@ -413,3 +416,109 @@ class UmbralSemanalTest(NominaBase):
         self.assertEqual("sin_marcacion", d["estado"])
         self.assertIn(dia.isoformat(), b["dias_sin_marcacion"])
         self.assertNotIn("ausencias_sin_justificar", b)
+
+
+class AlmuerzoQueCruzaLaMedianocheTest(NominaBase):
+    """El almuerzo que TERMINA después de medianoche no puede mudar horas de mes.
+
+    Un turno nocturno con pausa pasadas las 00:00 se parte en DOS tramos: uno
+    antes del almuerzo y otro después, y el segundo arranca ya en el día
+    calendario siguiente. Cuando la liquidación bucketeaba por `inicio.date()`
+    de cada tramo, ese segundo pedazo se iba al otro mes —y si el turno era el
+    último día del mes, a un mes donde nadie lo esperaba—: la grilla decía una
+    cosa y la nómina pagaba otra. La atribución tiene que ser la del TURNO, que
+    es el día en que la persona entró; el corte del tramo es un detalle interno.
+    """
+
+    def turno_con_almuerzo_nocturno(self, dia, almuerzo="00:30", minutos=30):
+        """18:00 → 02:00 del día siguiente, con la pausa ya pasada la medianoche."""
+        self.planear(self.cath, dia, ini="18:00", fin="02:00",
+                     almuerzo_inicio=almuerzo, almuerzo_minutos=minutos)
+        self.real(self.cath, utc(dia.year, dia.month, dia.day, 18),
+                  utc(dia.year, dia.month, dia.day, 18) + timedelta(hours=8))
+
+    def horas_de_la_grilla(self, dia):
+        semana = hsvc.semana(self.db, self.t.id, svc.lunes_de(dia))
+        return [b for b in semana["baristas"]
+                if b["usuario_id"] == self.cath.id][0]["total_horas"]
+
+    def test_en_el_borde_del_mes_las_horas_no_se_van_al_mes_siguiente(self):
+        # Domingo 2026-05-31, el ÚLTIMO día del mes: 8 h de turno − 30 min = 7.5.
+        dia = date(2026, 5, 31)
+        self.turno_con_almuerzo_nocturno(dia)
+
+        self.assertAlmostEqual(self.horas_de_la_grilla(dia), 7.5)
+        mayo = self.de_cath(self.resumen(2026, 5))
+        self.assertAlmostEqual(mayo["total_acreditado"], 7.5)
+        self.assertAlmostEqual(mayo["total_real"], 7.5)
+
+        # Y junio no hereda nada: el turno terminó a las 02:00 del 1-jun, pero
+        # la jornada es del 31 de mayo.
+        junio = [b for b in self.resumen(2026, 6)["baristas"]
+                 if b["usuario_id"] == self.cath.id]
+        self.assertAlmostEqual(junio[0]["total_acreditado"] if junio else 0.0, 0.0)
+
+        # El día que reporta las horas es el de la ENTRADA, uno solo.
+        con_horas = [d["fecha"] for d in mayo["dias"] if d["horas_reales"] > 0]
+        self.assertEqual(con_horas, ["2026-05-31"])
+
+    def test_en_el_medio_del_mes_tampoco_se_parte_en_dos_dias(self):
+        # Mismo turno el 2026-08-12, lejos de cualquier borde: las 7.5 h tienen
+        # que quedar enteras en el 12, no 5.5 el 12 y 2.0 el 13.
+        dia = date(2026, 8, 12)
+        self.turno_con_almuerzo_nocturno(dia)
+
+        self.assertAlmostEqual(self.horas_de_la_grilla(dia), 7.5)
+        c = self.de_cath(self.resumen(2026, 8))
+        self.assertAlmostEqual(c["total_acreditado"], 7.5)
+        por_dia = {d["fecha"]: d["horas_reales"] for d in c["dias"]
+                   if d["horas_reales"] > 0}
+        self.assertEqual(por_dia, {"2026-08-12": 7.5})
+
+    def test_la_novedad_del_dia_siguiente_sigue_acreditando(self):
+        """El tramo post-medianoche no puede tapar el día siguiente.
+
+        Si ese pedazo se atribuía al 13, el 13 quedaba "con marcación real" y la
+        incapacidad de ese día no acreditaba NADA: 16 h esperadas se volvían 7.5.
+        """
+        dia = date(2026, 8, 12)
+        self.turno_con_almuerzo_nocturno(dia)
+        siguiente = date(2026, 8, 13)
+        self.planear(self.cath, siguiente)                       # 08:00 → 16:00
+        nsvc.crear(self.db, self.t.id, self.cath.id, "incapacidad",
+                   siguiente, siguiente, creado_por_id=self.admin.id)
+
+        c = self.de_cath(self.resumen(2026, 8))
+        self.assertAlmostEqual(c["total_acreditado"], 15.5)      # 7.5 + 8 planeadas
+        d13 = [d for d in c["dias"] if d["fecha"] == "2026-08-13"][0]
+        self.assertEqual(d13["estado"], "novedad_remunerada")
+        self.assertAlmostEqual(d13["horas_reales"], 0.0)
+
+    def test_la_grilla_y_la_nomina_dicen_lo_mismo_semana_a_semana(self):
+        """Invariante: lo que la barista ve publicado es lo que se le liquida.
+
+        Son dos módulos distintos —`horarios.semana` arma la grilla, `nomina`
+        liquida— y el almuerzo entró en los dos por caminos separados. Si alguna
+        vez vuelven a divergir, este test lo dice antes que la barista.
+        """
+        lunes = date(2026, 8, 10)
+        turnos = [
+            (lunes,                        "08:00", "16:00", "12:00", 60),
+            (lunes + timedelta(days=1),    "14:00", "22:00", "17:30", 30),
+            (lunes + timedelta(days=2),    "18:00", "02:00", "00:30", 30),
+            (lunes + timedelta(days=3),    "06:00", "14:00", None,  None),
+        ]
+        for dia, ini, fin, alm, mins in turnos:
+            self.planear(self.cath, dia, ini=ini, fin=fin,
+                         almuerzo_inicio=alm, almuerzo_minutos=mins)
+            h_ini = int(ini[:2])
+            self.real(self.cath, utc(dia.year, dia.month, dia.day, h_ini),
+                      utc(dia.year, dia.month, dia.day, h_ini) + timedelta(hours=8))
+
+        grilla = hsvc.semana(self.db, self.t.id, lunes)
+        horas_grilla = [b for b in grilla["baristas"]
+                        if b["usuario_id"] == self.cath.id][0]["total_horas"]
+        c = self.de_cath(self.resumen(2026, 8))
+        # 7.0 + 7.5 + 7.5 + 8.0 = 30.0, y la nómina no puede decir otra cosa.
+        self.assertAlmostEqual(horas_grilla, 30.0)
+        self.assertAlmostEqual(c["total_acreditado"], horas_grilla)

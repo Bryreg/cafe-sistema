@@ -33,6 +33,9 @@ export interface RentabilidadData {
     nomina_calculada?: number
     nomina_meses_calculados?: string[]
     nomina_meses_manuales?: string[]
+    /** Plata de esa nómina manual que cae DENTRO del período consultado. En 0
+     *  con `nomina_meses_manuales` no vacío = el devengo quedó afuera. */
+    nomina_manual_en_ventana?: number
     nomina_personas?: number
     nomina_horas?: number
     // Gente con horas en el período y SIN salario cargado en Contratos: sus

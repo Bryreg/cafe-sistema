@@ -159,8 +159,15 @@ def _tramos_reales(db: Session, tienda_id: int, desde: date, hasta: date,
         # Si la persona salió y volvió a marcar (dos filas), el almuerzo ya está
         # fuera de los dos tramos y no se superpone con ninguno: `restar_pausas`
         # no descuenta nada y no se paga el descanso dos veces.
+        # El 4º campo es el DÍA DE ATRIBUCIÓN: el día en que arrancó la marcación,
+        # no el día en que arranca cada pedazo. Sin él, un almuerzo que termina
+        # después de medianoche parte el turno y el segundo pedazo se atribuía al
+        # día siguiente: caía en otra semana (cambiando qué horas son extra), en
+        # otro mes, o directamente en ninguno — una hora que no se pagaba en
+        # ningún lado. Es la misma convención que el módulo ya declara: «un turno
+        # 18:00→02:00 es del día que arrancó».
         for a, b in restar_pausas(entrada, salida, (pausas or {}).get(u.id, [])):
-            tramos.setdefault(u.id, []).append((a, b, propio))
+            tramos.setdefault(u.id, []).append((a, b, propio, entrada.date()))
     return tramos, sin_salida, personas, otra_sede
 
 
@@ -179,7 +186,8 @@ def _tramos_planeados(db: Session, tienda_id: int, desde: date,
         # planeado ya viene filtrado por tienda, así que todo es propio.
         for ini, fin in hsvc.tramos_datetimes(tp.fecha, tp.hora_inicio, tp.hora_fin,
                                               tp.almuerzo_inicio, tp.almuerzo_minutos):
-            tramos.setdefault(tp.usuario_id, []).append((ini, fin, True))
+            # `tp.fecha` es el día del turno: no hay que inferirlo del tramo.
+            tramos.setdefault(tp.usuario_id, []).append((ini, fin, True, tp.fecha))
         dia = por_dia.setdefault(tp.usuario_id, {})
         dia[tp.fecha] = dia.get(tp.fecha, 0.0) + hsvc.duracion_horas(
             tp.hora_inicio, tp.hora_fin, tp.almuerzo_minutos)
@@ -238,18 +246,20 @@ def _liquidar(tramos: list[tuple[datetime, datetime]], semanas, tasas,
     for (lunes, domingo), tasa in zip(semanas, tasas):
         # La semana entra ENTERA (todas sus sedes, y sus días de otro mes): el
         # umbral que decide si una hora vale 1,0 o 1,25 es semanal y por persona.
-        de_la_semana = [t for t in tramos if lunes <= t[0].date() <= domingo]
+        # La semana se elige por el DÍA DE ATRIBUCIÓN (t[3]), no por el inicio del
+        # tramo: los dos pedazos de un turno partido por el almuerzo pertenecen a
+        # la misma semana aunque el segundo arranque después de medianoche.
+        de_la_semana = [t for t in tramos if lunes <= t[3] <= domingo]
         if not de_la_semana:
             continue
         # `liquidar_semana_por_tramo` ordena por inicio y devuelve un resultado
         # por tramo en ese mismo orden: se ordena igual acá para poder volver a
         # pegarle su etiqueta de sede a cada resultado.
         ordenados = sorted((t for t in de_la_semana if t[1] > t[0]), key=lambda t: t[0])
-        pares = [(i, f) for i, f, _ in ordenados]
+        pares = [(i, f) for i, f, _p, _d in ordenados]
         acumulado_semana = _cero()
-        for (inicio, horas), (_i, _f, propio) in zip(
+        for (_inicio, horas), (_i, _f, propio, dia) in zip(
                 liquidar_semana_por_tramo(pares, tasa, es_festivo), ordenados):
-            dia = inicio.date()
             # El CORTE es solo del reporte: se liquidó la semana completa y de
             # todas las sedes, y recién acá se suma lo que pertenece a este mes y
             # a esta sede. Antes el corte se hacía ANTES de liquidar, así que una
@@ -296,10 +306,14 @@ def _acreditar(tramos_reales: list, tramos_planeados: list,
     Un día con marcación propia NO acredita además el planeado: sería pagar el
     día dos veces.
     """
-    dias_con_real = {i.date() for i, _f, _p in tramos_reales}
+    # Por DÍA DE ATRIBUCIÓN, no por el inicio del tramo: con el turno partido por
+    # un almuerzo post-medianoche, el segundo pedazo marcaba como «trabajado» el
+    # día siguiente — y si ese día tenía una incapacidad remunerada, la novedad
+    # dejaba de acreditar. Un día entero de incapacidad se evaporaba (16 h → 7,5).
+    dias_con_real = {d for _i, _f, _p, d in tramos_reales}
     return list(tramos_reales) + [
-        (i, f, True) for i, f, _p in tramos_planeados
-        if i.date() in acreditantes and i.date() not in dias_con_real
+        (i, f, True, d) for i, f, _p, d in tramos_planeados
+        if d in acreditantes and d not in dias_con_real
     ]
 
 

@@ -136,11 +136,26 @@ def _nomina_del_periodo(db, desde: date, hasta: date, tienda_id: int | None,
                                          excluir_meses=meses_todas_las_sedes,
                                          excluir_mes_sede=pares_manuales)
     manuales = meses_todas_las_sedes | {mes for mes, _sede in pares_manuales}
+
+    # CUÁNTO de esa nómina manual cae DE VERDAD adentro de [desde, hasta].
+    # La detección de arriba mira meses COMPLETOS a propósito (ver el párrafo de
+    # las ventanas parciales), y por eso puede apagar el cálculo de un mes cuyo
+    # devengo está afuera de la ventana: mirando del 1 al 15 con la nómina
+    # devengada el 31, ni el cálculo ni lo manual están adentro. Eso es correcto
+    # —la plata se paga una sola vez, en la ventana que contiene el devengo— pero
+    # la pantalla no puede decir "se usó la cargada a mano" cuando adentro no hay
+    # ni un peso de ella. Se mide contra `oblig_rows`, que ya viene recortado por
+    # [desde, hasta] y por sede, o sea exactamente lo que entró a `gastos`.
+    manual_en_ventana = sum(
+        float(monto or 0) for _dev, monto, _tid, _cat, _grupo, clave in oblig_rows
+        if clave == CLAVE_CATEGORIA_NOMINA
+    )
     return {
         "pares": calculada["por_mes_sede"],
         "total": calculada["total"],
         "meses_calculados": calculada["meses"],
         "meses_manuales": sorted(manuales),
+        "manual_en_ventana": manual_en_ventana,
         # Personas con horas en el período y sin salario cargado: sus horas
         # entran al margen valiendo $0. Se dice, no se esconde.
         "sin_contrato": calculada["sin_contrato"],
@@ -518,7 +533,12 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             # sepa si puede emitir un veredicto o tiene que pedir el dato).
             "costos_fijos_devengados": costos_fijos_devengados,
             "n_costos_fijos": n_costos_fijos,
-            "tiene_costos_fijos": bool(fijos_rows) or bool(nomina["pares"]),
+            # `nomina["pares"]` es un defaultdict(float): basta con que alguien
+            # tenga horas marcadas para que la clave exista en 0.0, y bool() de un
+            # dict con claves da True. O sea la bandera se prendía —y la pantalla
+            # decía «el margen ya descuenta los costos fijos»— con $0 descontado,
+            # porque nadie tiene salario cargado. Se mira el MONTO, no la forma.
+            "tiene_costos_fijos": bool(fijos_rows) or nomina["total"] > 0,
             # ── Costo laboral: cuánto, de dónde salió y qué le falta ──────────
             # ADITIVO: ya está DENTRO de `gastos` y de `margen_neto`. Se expone
             # aparte para que la pantalla pueda decir de qué meses el número lo
@@ -527,6 +547,10 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             "nomina_calculada": nomina["total"],
             "nomina_meses_calculados": nomina["meses_calculados"],
             "nomina_meses_manuales": nomina["meses_manuales"],
+            # Cuánto de esa nómina manual está DENTRO de la ventana consultada.
+            # En 0 con `meses_manuales` no vacío significa que el devengo cae
+            # afuera: el mes está cubierto, pero no por plata de ESTE período.
+            "nomina_manual_en_ventana": nomina["manual_en_ventana"],
             "nomina_personas": nomina["personas"],
             "nomina_horas": nomina["horas"],
             # Gente con horas en el período y sin salario cargado en Contratos:

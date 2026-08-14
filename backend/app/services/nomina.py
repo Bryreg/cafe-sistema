@@ -60,10 +60,15 @@ ADVERTENCIAS = [
     "reales— usando la ventana que está cargada en el horario, porque la caja no "
     "marca la salida a almorzar. Un turno sin almuerzo configurado no descuenta "
     "nada.",
-    "Los días que alguien cubrió en la OTRA sede cuentan para su tope semanal (la "
-    "jornada máxima es por persona, no por local), pero su almuerzo no se les "
-    "descuenta: el horario que se está mirando es el de esta sede. Si alguien "
-    "cubre seguido en las dos, sus horas pueden quedar un poco altas.",
+    "Los días que alguien cubrió en la OTRA sede cuentan para su tope semanal: la "
+    "jornada máxima es por persona, no por local. Su almuerzo también se les "
+    "descuenta, usando el horario de la sede donde lo trabajó.",
+    "La liquidación en pesos es de la PERSONA y del mes completo: el auxilio de "
+    "transporte, la base de cotización, los aportes y las prestaciones son "
+    "mensuales por trabajador, no por local. Quien cubrió en las dos sedes "
+    "aparece con las MISMAS cifras en los dos resúmenes —es la misma obligación "
+    "mirada dos veces— así que SUMAR DOS RESÚMENES LA CUENTA DOS VECES. Las "
+    "horas sí son de esta sede.",
     # Estas tres reemplazaron a una sola que decía «no incluye auxilio de
     # transporte, prestaciones, seguridad social ni deducciones». Desde que el
     # resumen expone `liquidacion`, esa frase pasó a ser MENTIRA — y una
@@ -235,7 +240,10 @@ def _pausas_planeadas(db: Session, tienda_id: int, desde: date,
     no se está consultando acá.
     """
     pausas: dict[int, list[tuple[datetime, datetime]]] = {}
-    for tp in hsvc.turnos_publicados(db, tienda_id, desde, hasta):
+    sedes = ([tienda_id] if tienda_id is not None
+             else [t.id for t in db.query(Tienda).all()])
+    for tp in [x for sede in sedes
+               for x in hsvc.turnos_publicados(db, sede, desde, hasta)]:
         p = hsvc.pausa_datetimes(tp.fecha, tp.hora_inicio, tp.hora_fin,
                                  tp.almuerzo_inicio, tp.almuerzo_minutos)
         if p is not None:
@@ -370,7 +378,14 @@ def resumen_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> dict:
     # la corte. El recorte al mes lo hace `_liquidar` DESPUÉS de liquidar.
     # Las pausas se resuelven ANTES que lo real: son parte de la definición de
     # "tiempo trabajado", no un ajuste posterior.
-    pausas = _pausas_planeadas(db, tienda_id, borde_ini, borde_fin)
+    # PAUSAS DE TODAS LAS SEDES (tienda_id=None). El almuerzo se descuenta con
+    # la ventana del horario, y ese horario vive en la sede donde está
+    # publicado: leyendo solo las de esta sede, los tramos trabajados en la otra
+    # entraban SIN descontarles su descanso. Dos consecuencias, y la segunda es
+    # la grave: las horas de quien cubre seguido quedaban infladas, y el
+    # devengado consolidado de la persona daba DISTINTO en cada pantalla, con lo
+    # cual su liquidación —que es una sola obligación— tenía dos versiones.
+    pausas = _pausas_planeadas(db, None, borde_ini, borde_fin)
     reales, sin_salida, personas_real, otra_sede = _tramos_reales(
         db, tienda_id, borde_ini, borde_fin, pausas)
     planeados, _plan_dia_ext = _tramos_planeados(db, tienda_id, borde_ini, borde_fin)
@@ -478,9 +493,17 @@ def _resumen_barista(db, uid, u, tramos_reales, tramos_planeados, planeado_dia,
         solo_propio=False)
     estimado_persona = _estimar(semana_persona, semanas, tasas, salario)
     dev_persona = estimado_persona["total"]
-    # Con devengado 0 en las dos sedes no hay nada que repartir. Con devengado
-    # solo en esta, la parte es 1.0 y todo funciona como antes.
-    parte_sede = round(estimado["total"] / dev_persona, 6) if dev_persona > 0 else 0.0
+    # NO SE PRORRATEA. Repartir la liquidación entre sedes por fracción de
+    # devengado se probó y se cayó: la fracción arrastraba redondeo, el CSV
+    # quedaba con otro criterio que la pantalla, y la fila terminaba diciendo
+    # una cosa y el total otra. La liquidación de una persona es UNA, del mes,
+    # y no tiene una versión «de esta sede».
+    #
+    # Entonces se muestra ENTERA en las dos pantallas —el mismo número, porque
+    # es la misma obligación— y se declara que dos resúmenes NO se suman. Un
+    # número correcto que no se puede sumar, dicho, es mucho mejor que dos
+    # mitades que parecen sumables y no cierran.
+    trabajo_en_otra_sede = dev_persona > estimado["total"] + 0.01
 
     dias = []
     for d in sorted(set(plan_dia) | set(real_dia) | set(cubiertos) | set(planeado_dia)):
@@ -535,8 +558,11 @@ def _resumen_barista(db, uid, u, tramos_reales, tramos_planeados, planeado_dia,
     liquidacion = (lqsvc.liquidar(params, dev_persona, salario, dias_auxilio)
                    if params is not None else _liquidacion_vacia())
     liquidacion = {**liquidacion,
-                   "parte_de_esta_sede": parte_sede,
-                   "en_varias_sedes": parte_sede > 0 and parte_sede < 1}
+                   # Lo que devengó EN ESTA SEDE, para poder decir de dónde sale
+                   # la parte del mes que se trabajó acá sin fingir que la
+                   # liquidación se puede partir.
+                   "devengado_en_esta_sede": round(estimado["total"], 2),
+                   "en_varias_sedes": trabajo_en_otra_sede}
 
     # «Sin marcación» ≠ «faltó». El sistema solo sabe que no hay registro; la
     # causa puede ser una novedad que nadie cargó o un olvido de marcar.
@@ -672,25 +698,10 @@ def _liquidacion_vacia() -> dict:
         # igual para que la forma vacía no se quede corta: el test que compara
         # las dos formas existe justamente porque una clave faltante revienta la
         # pantalla en producción, que es cuando se descubre.
-        "parte_de_esta_sede": 0.0,
+        "devengado_en_esta_sede": 0.0,
         "en_varias_sedes": False,
         "es_estimado": True,
     }
-
-
-def _parte(barista: dict, *ruta: str) -> float:
-    """El pedazo de la liquidación de una persona que le toca a ESTA sede.
-
-    `liquidacion` viene del mes completo del trabajador (todas sus sedes),
-    porque el auxilio, el piso del IBC, los aportes y las prestaciones son
-    mensuales por persona. `parte_de_esta_sede` es la fracción que devengó acá.
-    Para quien trabajó en una sola sede vale 1.0.
-    """
-    valor = barista["liquidacion"]
-    for clave in ruta:
-        valor = valor[clave]
-    return float(valor or 0.0) * float(
-        barista["liquidacion"].get("parte_de_esta_sede", 1.0) or 0.0)
 
 
 def _totales(baristas: list[dict]) -> dict:
@@ -707,21 +718,30 @@ def _totales(baristas: list[dict]) -> dict:
         "total_real": round(sum(b["total_real"] for b in baristas), 2),
         "total_acreditado": round(sum(b["total_acreditado"] for b in baristas), 2),
         "estimado": round(sum(b["estimado"]["total"] for b in baristas), 2),
-        # PRORRATEADOS POR SEDE. `liquidacion` es del MES COMPLETO de la
-        # persona —el auxilio, el piso del IBC, los aportes y las prestaciones
-        # son por trabajador y no por local—, así que sumarla cruda en las dos
-        # sedes duplicaba media nómina de quien cubre en ambas. Acá se suma la
-        # parte que devengó en ESTA sede, y con eso Σ(sedes) vuelve a dar
-        # exactamente la nómina real de esa persona. Para quien trabaja en una
-        # sola sede `parte_de_esta_sede` es 1.0 y no cambia nada.
-        "total_devengado": round(sum(_parte(b, "devengado") for b in baristas), 2),
+        # LA LIQUIDACIÓN ENTERA DE CADA PERSONA QUE APARECE ACÁ.
+        #
+        # El auxilio, el piso del IBC, los aportes y las prestaciones son
+        # mensuales POR TRABAJADOR, así que la liquidación de una persona es
+        # una sola y no tiene versión «de esta sede». Quien cubrió en las dos
+        # aparece ENTERA en los dos resúmenes: son la misma obligación mirada
+        # dos veces, no dos obligaciones.
+        #
+        # CONSECUENCIA QUE HAY QUE DECIR Y SE DICE: dos resúmenes de sedes
+        # distintas NO SE SUMAN. Se probó prorratear por fracción de devengado
+        # y salió peor —el redondeo no cerraba, el CSV quedaba con otro criterio
+        # que la pantalla, y la fila decía una cosa y el total otra—. Un número
+        # correcto que no se puede sumar, declarado, le sirve más al dueño que
+        # dos mitades que parecen sumables.
+        "total_devengado": round(
+            sum(b["liquidacion"]["devengado"] for b in baristas), 2),
         "total_auxilio": round(
-            sum(_parte(b, "auxilio", "total") for b in baristas), 2),
+            sum(b["liquidacion"]["auxilio"]["total"] for b in baristas), 2),
         "total_deducciones": round(
-            sum(_parte(b, "deducciones", "total") for b in baristas), 2),
-        "total_neto": round(sum(_parte(b, "neto_a_pagar") for b in baristas), 2),
+            sum(b["liquidacion"]["deducciones"]["total"] for b in baristas), 2),
+        "total_neto": round(
+            sum(b["liquidacion"]["neto_a_pagar"] for b in baristas), 2),
         "total_costo_empleador": round(
-            sum(_parte(b, "costo_empleador") for b in baristas), 2),
+            sum(b["liquidacion"]["costo_empleador"] for b in baristas), 2),
         # Cuántas personas del mes trabajaron además en la otra sede: su fila
         # muestra el mes COMPLETO y los totales solo la parte de acá, así que la
         # pantalla tiene que poder decirlo o los dos números parecen pelearse.
@@ -807,7 +827,9 @@ def costo_laboral(db: Session, desde: date, hasta: date,
     for sede in sedes:
         # Mismas fuentes y mismo orden que el resumen mensual: pausas de almuerzo
         # primero, porque son parte de la definición de tiempo trabajado.
-        pausas = _pausas_planeadas(db, sede, borde_ini, borde_fin)
+        # Igual que en el resumen: el descanso se descuenta mire uno la sede que
+        # mire, o el costo laboral de quien cubre en las dos queda inflado.
+        pausas = _pausas_planeadas(db, None, borde_ini, borde_fin)
         reales, _sin_salida, personas_real, _otra = _tramos_reales(
             db, sede, borde_ini, borde_fin, pausas)
         planeados, _plan_dia = _tramos_planeados(db, sede, borde_ini, borde_fin)
@@ -906,7 +928,9 @@ def csv_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> str:
                    "Base IBC ($)", "Salud empleado ($)", "Pensión empleado ($)",
                    "Deducciones ($)", "Neto a pagar ($)", "Aportes empleador ($)",
                    "Prestaciones ($)", "Costo empleador ($)",
-                   "Diferencia (h)", "Días sin marcación ni novedad",
+                   "Diferencia (h)",
+                   "También trabajó en otra sede", "Devengado en esta sede ($)",
+                   "Días sin marcación ni novedad",
                    "Tramos sin salida", "Novedades"])
     filas = [";".join(cabecera)]
     for b in r["baristas"]:
@@ -927,12 +951,30 @@ def csv_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> str:
             f"{lq['aportes_empleador']['total']:.0f}",
             f"{lq['prestaciones']['total']:.0f}", f"{lq['costo_empleador']:.0f}",
             f"{b['diferencia_horas']:.2f}",
+            # LA COLUMNA QUE EVITA QUE EL CONTADOR SUME DOS VECES LA MISMA
+            # OBLIGACIÓN. Las cifras de plata son del MES COMPLETO de la
+            # persona (el auxilio y los aportes son por trabajador, no por
+            # local), así que quien cubrió en las dos sedes sale con las mismas
+            # cifras en los dos archivos. Sin esta columna, sumar los dos CSV
+            # duplicaba la nómina entera de esa persona.
+            "SI" if b["liquidacion"].get("en_varias_sedes") else "",
+            f"{b['liquidacion'].get('devengado_en_esta_sede', 0):.0f}",
             str(len(b["dias_sin_marcacion"])), str(b["tramos_sin_salida"]),
             novedades,
         ]))
     filas.append("")
     # El pie viaja con el archivo porque el CSV se reenvía por WhatsApp sin la
     # pantalla que lo explica: quien lo abre no vio ninguna advertencia.
+    filas.append("OJO SI TE LLEGAN DOS ARCHIVOS (uno por sede): las cifras de plata "
+                 "son del MES COMPLETO de cada persona, porque el auxilio de "
+                 "transporte, la base de cotización, los aportes y las prestaciones "
+                 "son mensuales POR TRABAJADOR y no por local. Quien cubrió en las "
+                 "dos sedes sale con las MISMAS cifras en los dos archivos —es la "
+                 "misma obligación, no dos— y está marcada en la columna «También "
+                 "trabajó en otra sede». SUMAR LOS DOS ARCHIVOS LA CUENTA DOS VECES. "
+                 "La columna «Devengado en esta sede» dice cuánto de su tiempo "
+                 "corresponde a este local.")
+    filas.append("")
     filas.append("Los montos son un ESTIMADO. El devengado es tiempo acreditado por "
                  "los recargos cargados en el sistema; auxilio, deducciones, aportes "
                  "y prestaciones salen de los parámetros de nómina vigentes. NO "

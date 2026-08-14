@@ -488,11 +488,37 @@ def ajustar_contratos_al_minimo(body: Optional[AjustarAlMinimoIn] = None,
         # y el botón no avisaba nada porque contaba «tiene múltiplo cargado»
         # en vez de «tiene múltiplo 1». Se saltea y se dice por qué.
         multiplo = float(c.salario_en_smmlv or 0.0) if c is not None else 0.0
+        # POR MONTO, NO SOLO POR FORMA. La proteccion de arriba mira el
+        # múltiplo, pero el mismo sueldo se puede tener escrito en PESOS: a
+        # quien gana $2.600.000 en pesos el botón le escribía 1.0 igual y la
+        # bajaba al mínimo. Es la misma persona, la misma plata y el mismo daño
+        # —cambia nada más el formato en que está guardado el sueldo—, así que
+        # el criterio tiene que ser el monto y no dónde está escrito.
+        actual = pnsvc.salario_del_contrato(c, params) if c is not None else 0.0
+        if multiplo <= 0 and actual > float(params.smmlv):
+            omitidas.append({
+                "usuario_id": u.id, "nombre": u.nombre,
+                "razon": (f"Gana ${actual:,.0f} en pesos, por encima del mínimo: "
+                          f"bajarla a ${float(params.smmlv):,.0f} sería un recorte de "
+                          f"${actual - float(params.smmlv):,.0f} al mes. Atala al "
+                          "mínimo desde su fila si es lo que querés.").replace(",", "."),
+            })
+            continue
         if multiplo > 0 and multiplo != 1.0:
             omitidas.append({
                 "usuario_id": u.id, "nombre": u.nombre,
-                "razon": (f"Gana {multiplo:g} SMMLV a propósito: bajarla a 1 sería "
-                          "un recorte de sueldo. Cambialo en su fila si querés."),
+                # El mensaje cambia de lado según el múltiplo. Escrito solo
+                # para el caso «gana más», a la de media jornada le decía que la
+                # protegió de un recorte cuando llevarla a 1 sería un AUMENTO —
+                # y el dueño se quedaba tranquilo con alguien liquidando por
+                # debajo de lo que él cree.
+                "razon": (
+                    f"Gana {multiplo:g} SMMLV a propósito: bajarla a 1 sería un "
+                    "recorte de sueldo. Cambialo en su fila si querés."
+                    if multiplo > 1 else
+                    f"Está en {multiplo:g} SMMLV, por DEBAJO del mínimo (media "
+                    "jornada o similar). El botón no la sube sola porque eso le "
+                    "cambia el contrato: revisá su fila."),
             })
             continue
         anterior = pnsvc.salario_del_contrato(c, params) if c is not None else 0.0

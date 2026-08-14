@@ -101,8 +101,16 @@ export default function ResumenMensual({ tiendaId, anio, mes }: Props) {
   // cargado devenga 0, su IBC es 0 y sus tres aportes exonerables dan 0).
   // Decía «por 5 barista(s)» cuando eran 3, y quien dividiera para estimar el
   // ahorro por cabeza se llevaba un número casi a la mitad del real.
+  // LAS DOS CONDICIONES, no una. `exonerado` dice si el negocio paga esos tres
+  // aportes; `ahorro_por_exoneracion` dice cuánto valdrían — y se calcula
+  // SIEMPRE, esté o no exonerado, porque es «lo que costaría tener el flag mal
+  // puesto». Filtrando solo por el monto, el cartel de alerta se prendía justo
+  // cuando el negocio SÍ está exonerado y le decía al dueño que está pagando
+  // una plata que no está pagando. Filtrando solo por la bandera, repartía el
+  // monto entre gente que aporta $0.
   const noExoneradas = data.baristas.filter(
-    b => b.liquidacion.aportes_empleador.ahorro_por_exoneracion > 0)
+    b => !b.liquidacion.aportes_empleador.exonerado
+      && b.liquidacion.aportes_empleador.ahorro_por_exoneracion > 0)
   const ahorroExoneracion = noExoneradas.reduce(
     (s, b) => s + b.liquidacion.aportes_empleador.ahorro_por_exoneracion, 0)
 
@@ -275,6 +283,19 @@ export default function ResumenMensual({ tiendaId, anio, mes }: Props) {
         )}
       </div>
 
+      {t.en_varias_sedes > 0 && (
+        <Aviso tono="info">
+          <span className="block">
+            <b>{t.en_varias_sedes} barista(s)</b> trabajaron también en la otra sede. Su
+            liquidación en pesos es del <b>mes completo de la persona</b> —el auxilio de
+            transporte, la base de cotización, los aportes y las prestaciones son
+            mensuales por trabajador, no por local— así que aparece igual en las dos
+            pantallas: es la misma obligación mirada dos veces.{' '}
+            <b>Sumar los dos resúmenes la cuenta dos veces.</b> Las horas sí son de acá,
+            y la fila de cada una dice cuánto devengó en esta sede.
+          </span>
+        </Aviso>
+      )}
       {(t.dias_sin_marcacion > 0 || t.tramos_sin_salida > 0 || t.sin_sueldo > 0) && (
         <Aviso tono="info">
           {t.dias_sin_marcacion > 0 && (

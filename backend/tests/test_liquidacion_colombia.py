@@ -533,12 +533,16 @@ class DosSedesNoDuplicanLaNominaTest(unittest.TestCase):
     """El auxilio, el piso del IBC, los aportes y las prestaciones son
     mensuales POR TRABAJADOR, no por local.
 
-    `resumen_mensual` es por sede, y quien cubre en las dos aparece en los dos.
+    `resumen_mensual` es por sede y quien cubre en las dos aparece en las dos.
     Liquidando cada pantalla con su propio devengado, la misma barista cobraba
     el auxilio ENTERO en cada una y llevaba un juego completo de aportes en
-    cada una: sumar las dos duplicaba media nómina. Medido antes del arreglo:
-    +$512.350 de costo que no existe y $140.072 de deducciones de más contra
-    su sueldo.
+    cada una — dos obligaciones donde hay una.
+
+    La liquidación es de la PERSONA y no se parte. Se probó prorratearla por
+    fracción de devengado y salió peor: el redondeo no cerraba, el CSV quedó
+    con otro criterio que la pantalla, y la fila decía una cosa y el total
+    otra. Ahora se muestra ENTERA en las dos pantallas —es la misma obligación
+    mirada dos veces— y el sistema declara que dos resúmenes NO se suman.
     """
 
     def setUp(self):
@@ -563,65 +567,91 @@ class DosSedesNoDuplicanLaNominaTest(unittest.TestCase):
         return [date(2026, 8, d) for d in range(1, 32)
                 if date(2026, 8, d).weekday() < 5]
 
-    def _totales(self, tienda):
+    def _resumen(self, tienda):
         from app.services import nomina as nsvc
-        return nsvc.resumen_mensual(self.db, tienda.id, 2026, 8)["totales"]
+        return nsvc.resumen_mensual(self.db, tienda.id, 2026, 8)
 
     def _cath(self, tienda):
-        from app.services import nomina as nsvc
-        r = nsvc.resumen_mensual(self.db, tienda.id, 2026, 8)
+        r = self._resumen(tienda)
         return [b for b in r["baristas"] if b["usuario_id"] == self._caso.cath.id][0]
 
-    def _trabajar(self, dias_en_la_primera: int):
+    def _trabajar(self, dias_en_la_primera: int, con_almuerzo: bool = True):
+        """Marca los días hábiles alternando sedes, con el turno PUBLICADO en la
+        sede donde se trabaja.
+
+        El almuerzo importa y por eso va por default: se descuenta con la
+        ventana del horario, y ese horario vive en la sede donde está publicado.
+        Si el consolidado leyera solo los almuerzos de la sede que se está
+        mirando, daría un número distinto en cada pantalla — que es exactamente
+        el bug que este escenario tiene que poder ver.
+        """
         from test_nomina_resumen import utc
+        from app.services import horarios as hsvc, nomina as nsvc
         for i, d in enumerate(self._habiles()):
-            self._caso.real(
-                self._caso.cath, utc(2026, 8, d.day, 8), utc(2026, 8, d.day, 16),
-                tienda=(self._caso.t if i < dias_en_la_primera else self.otra))
+            sede = self._caso.t if i < dias_en_la_primera else self.otra
+            if con_almuerzo:
+                hsvc.guardar_turno(self.db, sede.id, self._caso.cath.id, d,
+                                   "08:00", "16:00",
+                                   creado_por_id=self._caso.admin.id,
+                                   almuerzo_inicio="12:00", almuerzo_minutos=60)
+                hsvc.publicar_semana(self.db, sede.id, nsvc.lunes_de(d),
+                                     self._caso.admin.id)
+            self._caso.real(self._caso.cath, utc(2026, 8, d.day, 8),
+                            utc(2026, 8, d.day, 16), tienda=sede)
 
-    def test_la_suma_de_las_dos_sedes_da_la_nomina_real_de_la_persona(self):
-        """EL TEST QUE IMPORTA: Σ(sedes) tiene que dar lo mismo que si hubiera
-        trabajado las mismas jornadas en una sola."""
-        self._trabajar(dias_en_la_primera=10)
-        suma = {k: self._totales(self._caso.t)[k] + self._totales(self.otra)[k]
-                for k in ("total_devengado", "total_auxilio", "total_deducciones",
-                          "total_neto", "total_costo_empleador")}
-        # El auxilio es mensual por persona: uno solo, no dos.
-        self.assertAlmostEqual(suma["total_auxilio"], AUXILIO_2026, places=0)
-        # Y las deducciones son las de UN salario mínimo, no las de dos.
-        self.assertAlmostEqual(suma["total_deducciones"], 140_072.40, places=0)
-        self.assertAlmostEqual(suma["total_devengado"], 1_330_687.80, delta=1)
-        self.assertAlmostEqual(suma["total_costo_empleador"], 2_186_798.85, delta=2)
-
-    def test_cada_sede_declara_que_parte_le_toca(self):
+    def test_la_liquidacion_es_la_misma_obligacion_en_las_dos_pantallas(self):
+        """EL TEST QUE IMPORTA: una persona, una nómina. No dos, ni dos mitades."""
         self._trabajar(dias_en_la_primera=10)
         a, b = self._cath(self._caso.t), self._cath(self.otra)
-        self.assertTrue(a["liquidacion"]["en_varias_sedes"])
-        self.assertTrue(b["liquidacion"]["en_varias_sedes"])
-        self.assertAlmostEqual(
-            a["liquidacion"]["parte_de_esta_sede"]
-            + b["liquidacion"]["parte_de_esta_sede"], 1.0, places=4)
-
-    def test_la_fila_muestra_el_mes_COMPLETO_de_la_persona(self):
-        """Las dos sedes muestran la misma liquidación mensual: es de ella, no
-        del local. Lo que cambia entre pantallas es la parte, no el total."""
-        self._trabajar(dias_en_la_primera=10)
-        a, b = self._cath(self._caso.t), self._cath(self.otra)
-        self.assertAlmostEqual(a["liquidacion"]["costo_empleador"],
-                               b["liquidacion"]["costo_empleador"], places=2)
+        for campo in ("devengado", "neto_a_pagar", "costo_empleador"):
+            self.assertAlmostEqual(a["liquidacion"][campo], b["liquidacion"][campo],
+                                   places=2, msg=f"{campo} difiere entre sedes")
         self.assertAlmostEqual(a["liquidacion"]["auxilio"]["total"],
                                AUXILIO_2026, places=0)
 
-    def test_quien_trabaja_en_una_sola_sede_no_cambia_en_nada(self):
-        """La compatibilidad: la parte es 1.0 y todo queda como antes."""
+    def test_da_lo_mismo_que_si_hubiera_trabajado_todo_en_una_sede(self):
+        """El consolidado no puede depender de qué pantalla se esté mirando: el
+        almuerzo se descuenta de TODAS las sedes, no solo de la que se abre."""
+        self._trabajar(dias_en_la_primera=10)
+        repartida = self._cath(self._caso.t)["liquidacion"]["costo_empleador"]
+        self._caso.tearDown()
+        self.setUp()
         self._trabajar(dias_en_la_primera=99)          # todas en la primera
+        entera = self._cath(self._caso.t)["liquidacion"]["costo_empleador"]
+        self.assertAlmostEqual(repartida, entera, places=2)
+
+    def test_cada_pantalla_dice_cuanto_se_devengo_ACA(self):
+        """Sin prorratear la obligación, pero diciendo qué parte del tiempo
+        corresponde a este local: es el dato honesto que sí existe."""
+        self._trabajar(dias_en_la_primera=10)
+        a, b = self._cath(self._caso.t), self._cath(self.otra)
+        suma = (a["liquidacion"]["devengado_en_esta_sede"]
+                + b["liquidacion"]["devengado_en_esta_sede"])
+        self.assertAlmostEqual(suma, a["liquidacion"]["devengado"], places=2)
+
+    def test_las_dos_pantallas_declaran_que_trabajo_en_otra_sede(self):
+        self._trabajar(dias_en_la_primera=10)
+        self.assertTrue(self._cath(self._caso.t)["liquidacion"]["en_varias_sedes"])
+        self.assertTrue(self._cath(self.otra)["liquidacion"]["en_varias_sedes"])
+        self.assertEqual(self._resumen(self._caso.t)["totales"]["en_varias_sedes"], 1)
+
+    def test_quien_trabaja_en_una_sola_sede_no_queda_marcada(self):
+        self._trabajar(dias_en_la_primera=99)
         b = self._cath(self._caso.t)
-        self.assertEqual(b["liquidacion"]["parte_de_esta_sede"], 1.0)
         self.assertFalse(b["liquidacion"]["en_varias_sedes"])
-        t = self._totales(self._caso.t)
+        self.assertAlmostEqual(b["liquidacion"]["devengado_en_esta_sede"],
+                               b["liquidacion"]["devengado"], places=2)
+        t = self._resumen(self._caso.t)["totales"]
         self.assertAlmostEqual(t["total_costo_empleador"],
                                b["liquidacion"]["costo_empleador"], places=2)
 
-    def test_el_resumen_cuenta_cuantas_trabajaron_en_varias_sedes(self):
+    def test_el_csv_marca_la_columna_y_avisa_que_no_se_suman(self):
+        """El archivo que arma la PILA se reenvía sin la pantalla que lo explica."""
+        from app.services import nomina as nsvc
         self._trabajar(dias_en_la_primera=10)
-        self.assertEqual(self._totales(self._caso.t)["en_varias_sedes"], 1)
+        csv = nsvc.csv_mensual(self.db, self._caso.t.id, 2026, 8)
+        self.assertIn("También trabajó en otra sede", csv)
+        self.assertIn("Devengado en esta sede ($)", csv)
+        self.assertIn("SUMAR LOS DOS ARCHIVOS LA CUENTA DOS VECES", csv)
+        fila = [l for l in csv.splitlines() if l.startswith(self._caso.cath.nombre)][0]
+        self.assertIn(";SI;", fila)

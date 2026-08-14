@@ -249,6 +249,12 @@ export interface Liquidacion {
    * Antes de mostrar la vigencia hay que mirar ESTE campo, no `confirmar_contador`.
    */
   vigencia_parametros: string | null
+  /** Lo que esta persona devengó EN ESTA SEDE. El resto de las cifras de plata
+   *  son de su mes COMPLETO: el auxilio, la base de cotización, los aportes y
+   *  las prestaciones son mensuales por trabajador y no se parten por local. */
+  devengado_en_esta_sede: number
+  /** Trabajó además en otra sede: aparece con las mismas cifras allá. */
+  en_varias_sedes: boolean
   confirmar_contador: boolean
   es_estimado: boolean
 }
@@ -306,6 +312,10 @@ export interface Resumen {
      *  el aviso: contando solo las filas faltantes, el dueño leía «2 sin
      *  sueldo» cuando eran 3. */
     sin_sueldo: number
+    /** Cuántas personas del mes trabajaron también en la otra sede. Su fila
+     *  muestra la liquidación ENTERA de su mes (es una sola obligación, mirada
+     *  desde dos pantallas), así que dos resúmenes NO se suman. */
+    en_varias_sedes: number
     // Los cinco números de la nómina, sumados sobre todas las baristas del mes.
     // `total_devengado` es el mismo valor que `estimado`: convive con él para
     // que la pantalla pueda nombrarlo por lo que es dentro de la cuenta.

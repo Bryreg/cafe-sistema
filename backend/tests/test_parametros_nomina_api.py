@@ -442,9 +442,6 @@ class AjustarAlMinimoApiTest(_BaseApi):
         self.assertEqual(r.status_code, 403)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class NoLeRecortaElSueldoANadieTest(_BaseApi):
     """El botón masivo NO puede bajarle el múltiplo a quien gana más.
@@ -518,3 +515,75 @@ class NoLeRecortaElSueldoANadieTest(_BaseApi):
         self.client.put(f"/api/v1/horarios/contratos/{self.cath.id}",
                         json={"salario_mensual": self._smmlv_de_hoy()})
         self.assertFalse(self._ajustar()["reinterpreta_meses_cerrados"])
+
+class LaRazonDiceDeQueLadoProtegeTest(_BaseApi):
+    """El mensaje de `omitidas` no puede estar escrito solo para un lado.
+
+    Redactado asumiendo que el múltiplo protegido siempre es MAYOR que 1, a la
+    de media jornada le decía que la salvó de un recorte cuando llevarla a 1
+    sería un aumento. El dueño lee que el sistema la protegió y se queda
+    tranquilo con alguien liquidando por debajo de lo que él cree.
+    """
+
+    def _razon(self, multiplo):
+        self.client.put(f"/api/v1/horarios/contratos/{self.eli.id}",
+                        json={"salario_en_smmlv": multiplo})
+        r = self.client.post("/api/v1/horarios/contratos/ajustar-al-minimo",
+                             json={"tienda_id": self.t.id})
+        return [o for o in r.json()["omitidas"]
+                if o["usuario_id"] == self.eli.id][0]["razon"]
+
+    def test_arriba_del_minimo_habla_de_recorte(self):
+        self.assertIn("recorte", self._razon(1.5))
+
+    def test_abajo_del_minimo_NO_habla_de_recorte(self):
+        razon = self._razon(0.5)
+        self.assertNotIn("recorte", razon)
+        self.assertIn("DEBAJO", razon)
+
+
+class TampocoRecortaElSueldoEscritoEnPesosTest(_BaseApi):
+    """El mismo daño entra por la otra puerta si se protege por FORMA.
+
+    La primera guarda miraba el múltiplo. Pero el mismo sueldo se puede tener
+    escrito en pesos: a quien gana $2.600.000 el botón le escribía 1.0 igual y
+    la bajaba al mínimo. Misma persona, misma plata, mismo recorte — cambia
+    nada más dónde está guardado el número.
+    """
+
+    def _ajustar(self):
+        r = self.client.post("/api/v1/horarios/contratos/ajustar-al-minimo",
+                             json={"tienda_id": self.t.id})
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    def _contrato(self, uid):
+        r = self.client.get("/api/v1/horarios/contratos",
+                            params={"tienda_id": self.t.id})
+        return [c for c in r.json() if c["usuario_id"] == uid][0]
+
+    def test_un_sueldo_en_pesos_por_encima_del_minimo_no_se_toca(self):
+        self.client.put(f"/api/v1/horarios/contratos/{self.eli.id}",
+                        json={"salario_mensual": 2_600_000})
+        self._ajustar()
+        c = self._contrato(self.eli.id)
+        self.assertIsNone(c["salario_en_smmlv"])
+        self.assertAlmostEqual(c["salario_mensual"], 2_600_000)
+
+    def test_queda_declarada_con_el_recorte_que_se_evito(self):
+        self.client.put(f"/api/v1/horarios/contratos/{self.eli.id}",
+                        json={"salario_mensual": 2_600_000})
+        omitida = [o for o in self._ajustar()["omitidas"]
+                   if o["usuario_id"] == self.eli.id][0]
+        self.assertIn("recorte", omitida["razon"])
+
+    def test_un_sueldo_en_pesos_POR_DEBAJO_del_minimo_si_se_ajusta(self):
+        """Ese no es un recorte: es ponerla en lo que manda la ley."""
+        self.client.put(f"/api/v1/horarios/contratos/{self.eli.id}",
+                        json={"salario_mensual": 1_300_000})
+        self._ajustar()
+        self.assertAlmostEqual(self._contrato(self.eli.id)["salario_en_smmlv"], 1.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -32,6 +32,14 @@ interface Props { tiendaId: number }
 const enMinimos = (c: Contrato) => (c.salario_en_smmlv ?? 0) === 1
 const conOtroMultiplo = (c: Contrato) =>
   (c.salario_en_smmlv ?? 0) > 0 && (c.salario_en_smmlv ?? 0) !== 1
+// DOS PREGUNTAS DISTINTAS Y NO SE PUEDEN MEZCLAR. `enMinimos` es «está en UN
+// mínimo» y solo sirve para la cuenta del botón masivo. Todo lo demás —qué
+// input dibujar, quién tiene sueldo, quién está en pesos— pregunta si el
+// sueldo está ATADO AL MÍNIMO, valga 1 o 1,5. Usando `enMinimos` para las dos,
+// la supervisora de 1,5 SMMLV se dibujaba en modo «Pesos» con el input en $0 y
+// la tarjeta la contaba como «sin sueldo cargado», mientras el Resumen la
+// liquidaba a $2,6 M: dos pantallas diciendo cosas opuestas de la misma persona.
+const atadoAlMinimo = (c: Contrato) => (c.salario_en_smmlv ?? 0) > 0
 
 /**
  * Una barista que el ajuste masivo NO tocó. Hoy la única razón es el contrato
@@ -54,6 +62,11 @@ interface AjusteAlMinimo {
   ajustadas: number
   ya_estaban: number
   omitidas: Omitida[]
+  /** El efecto que no se ve: atar a alguien al SMMLV hace que sus meses YA
+   *  CERRADOS dejen de liquidarse con el número en pesos que tenían y pasen a
+   *  usar el mínimo de su año. Para quien ya ganaba el mínimo no cambia nada;
+   *  para el resto sí, y el margen de esos meses se mueve. */
+  reinterpreta_meses_cerrados: boolean
 }
 
 export default function SueldosPanel({ tiendaId }: Props) {
@@ -64,6 +77,7 @@ export default function SueldosPanel({ tiendaId }: Props) {
   const [ajustando, setAjustando] = useState(false)
   const [aviso, setAviso] = useState<string | null>(null)
   const [omitidas, setOmitidas] = useState<Omitida[]>([])
+  const [reinterpreta, setReinterpreta] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const cargar = () =>
@@ -159,6 +173,7 @@ export default function SueldosPanel({ tiendaId }: Props) {
       // 3» sin esta lista deja al dueño creyendo que la cuarta también se
       // ajustó y que el sistema le contó mal.
       setOmitidas(data.omitidas ?? [])
+      setReinterpreta(Boolean(data.reinterpreta_meses_cerrados))
     } catch { setError('No se pudo ajustar al salario mínimo.') }
     finally { setAjustando(false) }
   }
@@ -172,7 +187,7 @@ export default function SueldosPanel({ tiendaId }: Props) {
   // mínimos; y si tampoco, se queda en 0 y la pantalla simplemente no dice el
   // peso. Nunca se inventa un mínimo para poder escribir una cifra.
   const desdeCampo = items.find(c => (c.smmlv_vigente || 0) > 0)?.smmlv_vigente || 0
-  const despejado = items.find(c => enMinimos(c) && c.salario_resuelto > 0)
+  const despejado = items.find(c => atadoAlMinimo(c) && c.salario_resuelto > 0)
   const smmlv = desdeCampo || (despejado
     ? despejado.salario_resuelto / (despejado.salario_en_smmlv as number)
     : 0)
@@ -185,9 +200,9 @@ export default function SueldosPanel({ tiendaId }: Props) {
   // cargada la tarjeta afirmaba que las 5 tenían sueldo en pesos cuando ninguna
   // tenía sueldo, y contradecía al aviso de «sin sueldo cargado» del Resumen.
   const enPesosFijos = items.filter(
-    c => c.activo && !enMinimos(c) && c.salario_mensual > 0).length
+    c => c.activo && !atadoAlMinimo(c) && c.salario_mensual > 0).length
   const sinSueldo = items.filter(
-    c => c.activo && !enMinimos(c) && c.salario_mensual <= 0).length
+    c => c.activo && !atadoAlMinimo(c) && c.salario_mensual <= 0).length
 
   return (
     <div className="space-y-3">
@@ -196,6 +211,22 @@ export default function SueldosPanel({ tiendaId }: Props) {
       {/* Va pegado al aviso de arriba y no adentro: son dos hechos distintos
           —cuántas cambiaron y a cuántas ni se las intentó— y mezclarlos en una
           sola frase es lo que hacía que el número no cerrara. */}
+      {/* El efecto retroactivo, que es el que nadie ve venir: el múltiplo se
+          resuelve contra el mínimo de la FECHA LIQUIDADA, así que un mes ya
+          cerrado deja de usar el número en pesos con el que se liquidó. Solo
+          se avisa cuando de verdad pasa —alguien tenía otro número— porque un
+          cartel que sale siempre se deja de leer. */}
+      {reinterpreta && (
+        <Aviso tono="info">
+          <span className="block">
+            Alguna quedó atada al mínimo viniendo de un sueldo en pesos distinto.{' '}
+            <b>Sus meses ya cerrados se recalculan con el mínimo del año que
+            correspondía</b>, no con el número que tenían escrito, así que el costo y
+            el margen de esos meses se mueven. Si eso no es lo que querés, escribile
+            el sueldo en pesos en su fila.
+          </span>
+        </Aviso>
+      )}
       {omitidas.length > 0 && (
         <Aviso tono="info">
           <span className="block font-semibold">
@@ -258,7 +289,7 @@ export default function SueldosPanel({ tiendaId }: Props) {
 
       <div className="bg-white rounded-2xl border border-warm-200 divide-y divide-warm-100">
         {items.map(c => {
-          const smmlvMode = enMinimos(c)
+          const smmlvMode = atadoAlMinimo(c)
           return (
             <div key={c.usuario_id} className="flex flex-wrap items-center gap-3 px-4 py-3">
               <span className="text-sm font-semibold text-warm-700 min-w-[8rem]">{c.nombre}</span>

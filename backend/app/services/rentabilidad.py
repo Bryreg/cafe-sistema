@@ -14,6 +14,7 @@ Cruza las tres fuentes de dinero del sistema, cada una en su base:
 
 margen_bruto = ventas - compras;  margen_neto = margen_bruto - gastos.
 """
+import calendar
 import logging
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
@@ -27,6 +28,7 @@ from app.models.models import (
     ProductoInsumo, ProductoDesechable, Ticket, TicketItem,
     TicketItemComboSeleccion, Tienda, TipoMovCajaEnum,
 )
+from app.services import nomina as nomina_svc
 
 # Patrones de concepto que crea services/facturas.py para pagos a proveedor.
 # Si esos strings cambian allá, hay que actualizarlos acá (no hay FK).
@@ -41,6 +43,12 @@ _CONCEPTOS_COMPRA = ("Pago proveedor:%", "Reverso Pago proveedor:%", "Ajuste fac
 # y la dependencia inversa sería circular.
 CLAVE_CATEGORIA_PROVEEDORES = "proveedores"
 
+# Categoría de la nómina en el catálogo de costos (`_seed_categorias_costo`).
+# El costo laboral del período ya lo CALCULA services/nomina.py con las horas
+# marcadas y los recargos de ley, así que cargarlo además a mano sería la misma
+# plata dos veces. La regla de convivencia está en `_nomina_del_periodo`.
+CLAVE_CATEGORIA_NOMINA = "nomina"
+
 ESTADOS_ANULADOS = ("anulado", "reversado")
 
 logger = logging.getLogger(__name__)
@@ -48,6 +56,97 @@ logger = logging.getLogger(__name__)
 
 def _mes(dt) -> str:
     return dia_col(dt).strftime("%Y-%m")
+
+
+def _nomina_del_periodo(db, desde: date, hasta: date, tienda_id: int | None,
+                        oblig_rows: list) -> dict:
+    """El costo laboral que entra al P&L, ya resuelto el conflicto con lo manual.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    LA REGLA: SI EL MES TIENE NÓMINA CARGADA A MANO, GANA LA MANO.
+    ═══════════════════════════════════════════════════════════════════════════
+    El costo laboral se puede saber de dos formas y las dos son legítimas:
+
+      (a) CALCULADA — `services/nomina.costo_laboral`: horas realmente marcadas
+          × recargos de ley vigentes esa semana. Es lo que este sistema mide.
+      (b) MANUAL — una `Obligacion` de categoría 'nomina' que alguien cargó. Es
+          lo que de verdad se pagó, con prestaciones, seguridad social y auxilio
+          de transporte adentro; cosas que (a) declara explícitamente que NO
+          incluye (ver `horas.valorizar`).
+
+    Sumar las dos contaría la misma plata dos veces y hundiría el margen con un
+    gasto que no existe. Así que se resuelve MES POR MES: el mes que tiene una
+    obligación de nómina devengada usa esa —el número que el contador liquidó es
+    mejor que la estimación— y su cálculo se descarta entero; el mes que no la
+    tiene usa el calculado.
+
+    Por qué mes por mes y no un interruptor global: es lo que hace que prender
+    esto NO cambie ni un peso de la historia ya cargada, y que dejar de cargar la
+    nómina a mano baste para que el cálculo tome la posta. La migración es no
+    hacer nada.
+
+    LA DECISIÓN SE TOMA POR MES CALENDARIO, NO POR LA VENTANA CONSULTADA.
+    `oblig_rows` está recortado por [desde, hasta], y el P&L se consulta casi
+    siempre con ventanas PARCIALES: el período por defecto de la pantalla es "del
+    1 a hoy". Con una nómina devengada el 31, mirar del 1 al 15 no la vería,
+    daría ese mes por calculado y sumaría un costo que el mes completo considera
+    cubierto por la carga manual — o sea que dos mitades de un mes sumarían más
+    que el mes entero. Todos los demás términos del P&L son aditivos sobre
+    ventanas disjuntas y este no puede ser la excepción. Por eso la detección
+    consulta los MESES COMPLETOS que toca el rango, en su propia query.
+
+    Y SE DECIDE POR SEDE, NO SOLO POR MES. Una obligación de nómina puede ser
+    corporativa (`tienda_id` NULL) o de una sede. La corporativa cubre a todo el
+    mundo y apaga el cálculo de ese mes entero; la de una sede apaga SOLO esa.
+    Sin esta distinción, cargar la nómina de una sola sede borraba del margen el
+    costo calculado de las demás: plata que no aparecía ni calculada ni manual.
+
+    El recorte por sede del scope se respeta igual que en `oblig_rows`: en la
+    vista de una sede las corporativas no entran (no se prorratean), y entonces
+    esa sede sí ve su costo calculado, que es información que antes no tenía.
+    """
+    ini_mes = desde.replace(day=1)
+    fin_mes = hasta.replace(day=calendar.monthrange(hasta.year, hasta.month)[1])
+    q_nom = (
+        db.query(Obligacion.fecha_devengo, Obligacion.tienda_id)
+        .join(CostoCategoria, CostoCategoria.id == Obligacion.categoria_id)
+        .filter(
+            Obligacion.anulada.is_(False),
+            Obligacion.fecha_devengo >= ini_mes,
+            Obligacion.fecha_devengo <= fin_mes,
+            CostoCategoria.clave == CLAVE_CATEGORIA_NOMINA,
+        )
+    )
+    if tienda_id is not None:
+        q_nom = q_nom.filter(Obligacion.tienda_id == tienda_id)
+
+    meses_todas_las_sedes: set[str] = set()
+    pares_manuales: set[tuple[str, int]] = set()
+    for devengo, tid in q_nom.all():
+        mes = devengo.strftime("%Y-%m")
+        if tid is None:
+            meses_todas_las_sedes.add(mes)      # corporativa: cubre a todos
+        else:
+            pares_manuales.add((mes, tid))      # de esa sede y solo esa
+
+    # Las exclusiones se aplican ADENTRO del cálculo y no después: así el total,
+    # las horas y la gente contada hablan todos del mismo conjunto de días.
+    # Filtrando al final, `nomina_horas` incluiría horas cuyo costo no se sumó.
+    calculada = nomina_svc.costo_laboral(db, desde, hasta, tienda_id,
+                                         excluir_meses=meses_todas_las_sedes,
+                                         excluir_mes_sede=pares_manuales)
+    manuales = meses_todas_las_sedes | {mes for mes, _sede in pares_manuales}
+    return {
+        "pares": calculada["por_mes_sede"],
+        "total": calculada["total"],
+        "meses_calculados": calculada["meses"],
+        "meses_manuales": sorted(manuales),
+        # Personas con horas en el período y sin salario cargado: sus horas
+        # entran al margen valiendo $0. Se dice, no se esconde.
+        "sin_contrato": calculada["sin_contrato"],
+        "personas": calculada["personas"],
+        "horas": calculada["horas"],
+    }
 
 
 def _costo_unitario_productos(db) -> dict[int, float]:
@@ -231,8 +330,16 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     tot_compras = round(sum(float(r[1] or 0) for r in compras_rows), 2)
     # El gasto del período son las DOS mitades: lo que sigue suelto en caja y lo ya
     # adoptado como obligación. Adoptar mueve plata de una a la otra sin cambiar el total.
+    # ── Costo laboral CALCULADO (services/nomina) ────────────────────────────
+    # Tercer término del gasto. Sale de las horas marcadas y los recargos de ley,
+    # no de que alguien lo digite: eso era el doble trabajo que había que matar.
+    # Los meses que YA tienen nómina cargada a mano quedan afuera del cálculo
+    # —ver `_nomina_del_periodo`— así que la misma plata nunca se cuenta dos veces.
+    nomina = _nomina_del_periodo(db, desde, hasta, tienda_id, oblig_rows)
+
     tot_gastos = round(sum(float(r[1] or 0) for r in gastos_rows)
-                       + sum(float(r[1] or 0) for r in oblig_rows), 2)
+                       + sum(float(r[1] or 0) for r in oblig_rows)
+                       + nomina["total"], 2)
 
     por_mes: dict[str, dict] = defaultdict(lambda: {"ventas": 0.0, "compras": 0.0, "gastos": 0.0})
     # Clave int o None: None = gasto CORPORATIVO (sin sede), no un dato faltante.
@@ -280,13 +387,32 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
         _acum_categoria(clave or "otros", (categoria or "Sin categoría").strip(),
                         grupo, float(monto or 0))
 
+    # La nómina calculada entra a los MISMOS desgloses que cualquier otro gasto:
+    # si entrara solo al total, `Σ por_mes`, `Σ por_sede` y `Σ por_categoria`
+    # dejarían de dar `resumen.gastos` y el desglose pasaría a mentir. Por eso el
+    # cálculo viene abierto por (mes, sede) y no como un número suelto.
+    for (mes_nom, sede_nom), monto in nomina["pares"].items():
+        por_mes[mes_nom]["gastos"] += monto
+        por_sede[sede_nom]["gastos"] += monto
+        _acum_categoria(CLAVE_CATEGORIA_NOMINA, "Nómina (calculada)", "fijo", monto)
+    if nomina["total"]:
+        g = gastos_por_concepto["Nómina calculada (horas × recargos)"]
+        g["total"] += nomina["total"]
+        g["n"] += nomina["personas"]
+
     # ── Cobertura de costos FIJOS (arriendo, nómina, servicios, impuestos) ────
     # Campo ADITIVO: no entra en ninguna fórmula, solo declara si el margen neto
     # de este período está mirando los costos fijos o no. Sin esto la pantalla no
     # puede distinguir "el negocio no tiene costos fijos" de "nadie los cargó", y
     # un semáforo en verde sobre el segundo caso es una mentira tranquilizadora.
     fijos_rows = [r for r in oblig_rows if (r[4] or "") == "fijo"]
-    costos_fijos_devengados = round(sum(float(r[1] or 0) for r in fijos_rows), 2)
+    # La nómina calculada ES un costo fijo del período, y cuenta como tal: sin
+    # esto, un negocio que dejó de cargarla a mano —justamente el objetivo de la
+    # integración— aparecía como "no tiene costos fijos cargados" y el semáforo
+    # se apagaba solo el día que el dato empezó a ser mejor que antes.
+    costos_fijos_devengados = round(sum(float(r[1] or 0) for r in fijos_rows)
+                                    + nomina["total"], 2)
+    n_costos_fijos = len(fijos_rows) + len(nomina["pares"])
 
     # ── Descuentos: la plata REGALADA en mostrador ────────────────────────────
     # ADITIVO y fuera de toda fórmula: Ticket.total ya viene neto. El % se mide
@@ -391,8 +517,22 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             # `gastos` y de `margen_neto`; se expone aparte solo para que la UI
             # sepa si puede emitir un veredicto o tiene que pedir el dato).
             "costos_fijos_devengados": costos_fijos_devengados,
-            "n_costos_fijos": len(fijos_rows),
-            "tiene_costos_fijos": bool(fijos_rows),
+            "n_costos_fijos": n_costos_fijos,
+            "tiene_costos_fijos": bool(fijos_rows) or bool(nomina["pares"]),
+            # ── Costo laboral: cuánto, de dónde salió y qué le falta ──────────
+            # ADITIVO: ya está DENTRO de `gastos` y de `margen_neto`. Se expone
+            # aparte para que la pantalla pueda decir de qué meses el número lo
+            # calculó el sistema y de cuáles lo puso una persona — leerlo como un
+            # solo número escondería que son dos fuentes distintas.
+            "nomina_calculada": nomina["total"],
+            "nomina_meses_calculados": nomina["meses_calculados"],
+            "nomina_meses_manuales": nomina["meses_manuales"],
+            "nomina_personas": nomina["personas"],
+            "nomina_horas": nomina["horas"],
+            # Gente con horas en el período y sin salario cargado en Contratos:
+            # sus horas entran al margen valiendo $0 y el costo está subdeclarado.
+            "nomina_sin_contrato": nomina["sin_contrato"],
+            "nomina_es_estimado": True,
             # Plata regalada en mostrador (ADITIVA: NO se resta de nada, `ventas`
             # ya es neto). Sin este número un descuento y una venta que no ocurrió
             # son indistinguibles.
@@ -494,9 +634,14 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
         "nota": (
             "Compras = facturas de proveedor RECIBIDAS en el período (no el consumo real): "
             "un mes donde se stockea fuerte se ve con menos margen del real. "
-            "Gastos = egresos de caja manuales + obligaciones devengadas (arriendo, nómina, "
-            "servicios); los pagos a proveedor por caja se excluyen porque ya están dentro "
-            "de Compras, y un egreso adoptado cuenta como obligación, nunca dos veces."
+            "Gastos = egresos de caja manuales + obligaciones devengadas (arriendo, "
+            "servicios) + el costo laboral CALCULADO con las horas marcadas y los recargos "
+            "de ley; los pagos a proveedor por caja se excluyen porque ya están dentro "
+            "de Compras, y un egreso adoptado cuenta como obligación, nunca dos veces. "
+            "El mes que tenga una obligación de nómina cargada a mano usa ESA y no el "
+            "cálculo, para no contar el sueldo dos veces. El costo calculado es el tiempo "
+            "trabajado con sus recargos: no incluye prestaciones, seguridad social ni "
+            "auxilio de transporte, así que es un piso, no la liquidación del contador."
         ),
     }
 

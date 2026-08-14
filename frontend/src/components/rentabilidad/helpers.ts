@@ -22,6 +22,23 @@ export interface RentabilidadData {
     costos_fijos_devengados?: number
     n_costos_fijos?: number
     tiene_costos_fijos?: boolean
+    // Costo laboral CALCULADO por services/nomina (horas marcadas × recargos de
+    // ley), no digitado a mano. ADITIVO: ya está DENTRO de `gastos` y de
+    // `margen_neto`; viaja aparte para poder decir de qué meses el número lo
+    // sacó el sistema y de cuáles lo puso una persona.
+    //
+    // Un mes NO puede estar en las dos listas: el que tiene una obligación de
+    // nómina cargada a mano usa esa y descarta el cálculo, o el sueldo se
+    // contaría dos veces.
+    nomina_calculada?: number
+    nomina_meses_calculados?: string[]
+    nomina_meses_manuales?: string[]
+    nomina_personas?: number
+    nomina_horas?: number
+    // Gente con horas en el período y SIN salario cargado en Contratos: sus
+    // horas entran al margen valiendo $0. Es una instrucción de trabajo.
+    nomina_sin_contrato?: number
+    nomina_es_estimado?: boolean
     // Plata REGALADA en mostrador (Ticket.descuento). ADITIVA: `ventas` ya viene
     // neto, así que esto cuenta lo que se resignó, nunca lo vuelve a restar. Sin
     // el número, un descuento y una venta que no ocurrió se ven igual.

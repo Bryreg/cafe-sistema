@@ -133,6 +133,37 @@ class HorariosApiTest(unittest.TestCase):
     def test_borrar_turno_inexistente_da_404(self):
         self.assertEqual(self.client.delete("/api/v1/horarios/turno/9999").status_code, 404)
 
+    def test_turno_con_almuerzo_devuelve_las_horas_ya_descontadas(self):
+        r = self.client.post("/api/v1/horarios/turno", json={
+            "tienda_id": self.t.id, "usuario_id": self.cath.id,
+            "fecha": self.lunes.isoformat(), "hora_inicio": "07:00", "hora_fin": "15:00",
+            "almuerzo_inicio": "13:00", "almuerzo_minutos": 60,
+        })
+        self.assertEqual(r.status_code, 200, r.text)
+        cuerpo = r.json()
+        self.assertEqual(cuerpo["horas"], 7.0)
+        self.assertEqual(cuerpo["horas_brutas"], 8.0)
+        self.assertEqual(cuerpo["almuerzo_fin"], "14:00")
+
+    def test_almuerzo_fuera_del_turno_da_400_con_mensaje_util(self):
+        r = self.client.post("/api/v1/horarios/turno", json={
+            "tienda_id": self.t.id, "usuario_id": self.cath.id,
+            "fecha": self.lunes.isoformat(), "hora_inicio": "08:00", "hora_fin": "16:00",
+            "almuerzo_inicio": "18:00", "almuerzo_minutos": 60,
+        })
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("almuerzo", r.json()["detail"])
+
+    def test_turno_sin_almuerzo_mantiene_el_contrato_viejo(self):
+        """Un cliente que no manda los campos nuevos tiene que seguir andando."""
+        r = self.client.post("/api/v1/horarios/turno", json={
+            "tienda_id": self.t.id, "usuario_id": self.cath.id,
+            "fecha": self.lunes.isoformat(), "hora_inicio": "08:00", "hora_fin": "16:00",
+        })
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["horas"], 8.0)
+        self.assertIsNone(r.json()["almuerzo_inicio"])
+
     # ── Novedades ───────────────────────────────────────────────────────────
 
     def test_catalogo_de_tipos_trae_la_razon_de_cada_uno(self):

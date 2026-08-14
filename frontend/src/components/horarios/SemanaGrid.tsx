@@ -23,6 +23,24 @@ interface Props { tiendaId: number }
 const HORAS_SUGERIDAS = ['06:00', '07:00', '08:00', '12:00', '13:00', '14:00',
   '16:00', '18:00', '20:00', '22:00']
 
+/** Duraciones de almuerzo que se usan de verdad. 0 = el turno no tiene. */
+const MINUTOS_ALMUERZO = [0, 30, 45, 60, 90]
+
+/** Lo que el formulario devuelve: el turno completo, almuerzo incluido. */
+interface DatosTurno {
+  hora_inicio: string
+  hora_fin: string
+  almuerzo_inicio: string | null
+  almuerzo_minutos: number | null
+}
+
+/** Qué celda está abierta y, si se está editando, sobre qué turno. */
+interface Edicion {
+  usuarioId: number
+  fecha: string
+  turno?: TurnoProgramado
+}
+
 export default function SemanaGrid({ tiendaId }: Props) {
   const [lunes, setLunes] = useState(() => lunesDe(new Date()))
   const [data, setData] = useState<Semana | null>(null)
@@ -30,7 +48,7 @@ export default function SemanaGrid({ tiendaId }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
-  const [editando, setEditando] = useState<{ usuarioId: number; fecha: string } | null>(null)
+  const [editando, setEditando] = useState<Edicion | null>(null)
 
   const cargar = () => {
     setLoading(true)
@@ -44,13 +62,21 @@ export default function SemanaGrid({ tiendaId }: Props) {
 
   const mover = (semanas: number) => setLunes(l => sumarDias(l, semanas * 7))
 
-  const guardar = async (usuarioId: number, fecha: string, ini: string, fin: string) => {
+  const guardar = async (usuarioId: number, fecha: string, datos: DatosTurno) => {
     setBusy(true); setError(null); setAviso(null)
     try {
+      // La clave natural es (barista, fecha, hora de entrada): guardar con la
+      // misma entrada EDITA el turno, no lo duplica.
       await api.post('/horarios/turno', {
-        tienda_id: tiendaId, usuario_id: usuarioId, fecha,
-        hora_inicio: ini, hora_fin: fin,
+        tienda_id: tiendaId, usuario_id: usuarioId, fecha, ...datos,
       })
+      // Si se editó un turno y le cambiaron la ENTRADA, la clave natural es otra
+      // y el guardado creó uno nuevo: el viejo se borra después de que el nuevo
+      // está guardado, para que un error no deje a la barista sin turno.
+      const previo = editando?.turno
+      if (previo && previo.hora_inicio !== datos.hora_inicio) {
+        await api.delete(`/horarios/turno/${previo.id}`)
+      }
       setEditando(null)
       cargar()
     } catch (e: any) {
@@ -145,6 +171,7 @@ export default function SemanaGrid({ tiendaId }: Props) {
         (vigencia del {data.tasa.vigente_desde}
         {data.tasa.confirmar_contador && ' · sin confirmar con el contador'}).
         Se envían solo los turnos en borrador; los ya enviados no se reenvían.
+        Los totales son horas <b>trabajadas</b>: el almuerzo no cuenta.
       </p>
 
       {error && <Aviso tono="error">{error}</Aviso>}
@@ -202,9 +229,9 @@ function FilaBarista({
   barista: BaristaSemana
   dias: { fecha: string; nombre: string }[]
   jornada: number
-  editando: { usuarioId: number; fecha: string } | null
-  setEditando: (v: { usuarioId: number; fecha: string } | null) => void
-  onGuardar: (usuarioId: number, fecha: string, ini: string, fin: string) => void
+  editando: Edicion | null
+  setEditando: (v: Edicion | null) => void
+  onGuardar: (usuarioId: number, fecha: string, datos: DatosTurno) => void
   onBorrar: (turnoId: number) => void
   busy: boolean
 }) {
@@ -226,12 +253,24 @@ function FilaBarista({
           <td key={d.fecha} className="px-1 py-1">
             <div className="space-y-1">
               {turnos.map(t => (
-                <Chip key={t.id} turno={t} onBorrar={() => onBorrar(t.id)} busy={busy} />
+                <Chip
+                  key={t.id}
+                  turno={t}
+                  onEditar={() => setEditando({
+                    usuarioId: barista.usuario_id, fecha: d.fecha, turno: t,
+                  })}
+                  onBorrar={() => onBorrar(t.id)}
+                  busy={busy}
+                />
               ))}
               {abierto ? (
                 <FormTurno
+                  // Remonta al saltar de un turno a otro en la misma celda: si
+                  // no, el formulario se queda con los valores del anterior.
+                  key={editando?.turno?.id ?? 'nuevo'}
+                  turno={editando?.turno}
                   onCancelar={() => setEditando(null)}
-                  onGuardar={(ini, fin) => onGuardar(barista.usuario_id, d.fecha, ini, fin)}
+                  onGuardar={datos => onGuardar(barista.usuario_id, d.fecha, datos)}
                   busy={busy}
                 />
               ) : (
@@ -252,6 +291,11 @@ function FilaBarista({
           barista.excede_jornada ? 'text-danger-700' : 'text-warm-700'}`}>
           {fmtHoras(barista.total_horas)}
         </span>
+        {barista.minutos_almuerzo > 0 && (
+          <span className="block text-[10px] text-warm-400">
+            sin {fmtHoras(barista.minutos_almuerzo / 60)} de almuerzo
+          </span>
+        )}
         {barista.excede_jornada && (
           <span className="flex items-center justify-end gap-1 text-[10px] text-danger-500 font-semibold">
             <AlertTriangle size={11} />
@@ -268,8 +312,8 @@ function FilaBarista({
   )
 }
 
-function Chip({ turno, onBorrar, busy }: {
-  turno: TurnoProgramado; onBorrar: () => void; busy: boolean
+function Chip({ turno, onEditar, onBorrar, busy }: {
+  turno: TurnoProgramado; onEditar: () => void; onBorrar: () => void; busy: boolean
 }) {
   const publicado = turno.estado === 'publicado'
   return (
@@ -278,10 +322,22 @@ function Chip({ turno, onBorrar, busy }: {
         ? 'bg-forest-50 border-forest-100 text-forest-700'
         : 'bg-warm-100 border-warm-200 text-warm-600 border-dashed'
     }`}>
-      <span className="flex-1 whitespace-nowrap">
+      <button
+        onClick={onEditar}
+        className="flex-1 text-left whitespace-nowrap hover:underline"
+        title="Editar el turno o su almuerzo"
+      >
         {turno.hora_inicio}–{turno.hora_fin}
         {turno.cruza_medianoche && <span title="Termina al día siguiente">+1</span>}
-      </span>
+        {turno.almuerzo_minutos ? (
+          // La hora de almuerzo se muestra en la grilla y no escondida en el
+          // formulario: es lo que explica por qué el total no es la resta de
+          // entrada y salida.
+          <span className="block text-[9px] opacity-70">
+            🍽 {turno.almuerzo_inicio} · {turno.almuerzo_minutos}′
+          </span>
+        ) : null}
+      </button>
       <button
         onClick={onBorrar}
         disabled={busy}
@@ -294,33 +350,68 @@ function Chip({ turno, onBorrar, busy }: {
   )
 }
 
-function FormTurno({ onGuardar, onCancelar, busy }: {
-  onGuardar: (ini: string, fin: string) => void
+function FormTurno({ turno, onGuardar, onCancelar, busy }: {
+  turno?: TurnoProgramado
+  onGuardar: (datos: DatosTurno) => void
   onCancelar: () => void
   busy: boolean
 }) {
-  const [ini, setIni] = useState('08:00')
-  const [fin, setFin] = useState('16:00')
+  const [ini, setIni] = useState(turno?.hora_inicio ?? '08:00')
+  const [fin, setFin] = useState(turno?.hora_fin ?? '16:00')
+  const [almIni, setAlmIni] = useState(turno?.almuerzo_inicio ?? '13:00')
+  const [almMin, setAlmMin] = useState(turno?.almuerzo_minutos ?? 0)
+
+  const enviar = () => onGuardar({
+    hora_inicio: ini,
+    hora_fin: fin,
+    // Sin minutos no hay almuerzo: los dos campos viajan en null y el turno se
+    // liquida entero. Es el default, y es lo que tienen todos los turnos viejos.
+    almuerzo_inicio: almMin > 0 ? almIni : null,
+    almuerzo_minutos: almMin > 0 ? almMin : null,
+  })
+
   return (
     <div className="rounded-lg border border-forest-100 bg-white p-1.5 space-y-1">
       <div className="flex items-center gap-1">
         <input
           type="time" value={ini} onChange={e => setIni(e.target.value)}
-          list="horas-sugeridas"
+          list="horas-sugeridas" title="Entrada"
           className="w-full text-[11px] font-mono border border-warm-200 rounded px-1 py-0.5"
         />
         <input
           type="time" value={fin} onChange={e => setFin(e.target.value)}
-          list="horas-sugeridas"
+          list="horas-sugeridas" title="Salida"
           className="w-full text-[11px] font-mono border border-warm-200 rounded px-1 py-0.5"
         />
       </div>
       <datalist id="horas-sugeridas">
         {HORAS_SUGERIDAS.map(h => <option key={h} value={h} />)}
       </datalist>
+
+      <div className="flex items-center gap-1">
+        <span className="text-[10px] text-warm-400" title="Almuerzo">🍽</span>
+        <select
+          value={almMin}
+          onChange={e => setAlmMin(Number(e.target.value))}
+          title="Cuánto dura el almuerzo"
+          className="text-[11px] font-mono border border-warm-200 rounded px-1 py-0.5"
+        >
+          {MINUTOS_ALMUERZO.map(m => (
+            <option key={m} value={m}>{m === 0 ? 'sin' : `${m}′`}</option>
+          ))}
+        </select>
+        {almMin > 0 && (
+          <input
+            type="time" value={almIni} onChange={e => setAlmIni(e.target.value)}
+            title="A qué hora arranca el almuerzo"
+            className="flex-1 min-w-0 text-[11px] font-mono border border-warm-200 rounded px-1 py-0.5"
+          />
+        )}
+      </div>
+
       <div className="flex items-center gap-1">
         <button
-          onClick={() => onGuardar(ini, fin)} disabled={busy}
+          onClick={enviar} disabled={busy}
           className="flex-1 flex items-center justify-center gap-1 py-1 rounded bg-forest text-white text-[11px] font-semibold disabled:opacity-40"
         >
           <Check size={11} /> Poner

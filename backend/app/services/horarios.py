@@ -21,7 +21,7 @@ from app.models.models import (
     EstadoProgramadoEnum, RolEnum, TurnoProgramado, Usuario,
 )
 from app.services import notificaciones, tasas_laborales
-from app.services.horas import lunes_de
+from app.services.horas import lunes_de, restar_pausas as hsvc_restar_pausas
 
 _HORA_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
@@ -45,18 +45,41 @@ def _minutos(hhmm: str) -> int:
     return int(h) * 60 + int(m)
 
 
-def duracion_horas(hora_inicio: str, hora_fin: str) -> float:
-    """Duración en horas. Si el fin es menor o igual al inicio, el turno cruza la
-    medianoche y termina al día siguiente."""
+def duracion_bruta_horas(hora_inicio: str, hora_fin: str) -> float:
+    """Horas de PRESENCIA: de la entrada a la salida, almuerzo incluido. Si el fin
+    es menor o igual al inicio, el turno cruza la medianoche y termina al día
+    siguiente."""
     ini, fin = _minutos(hora_inicio), _minutos(hora_fin)
     if fin <= ini:
         fin += 24 * 60
     return (fin - ini) / 60.0
 
 
+def duracion_horas(hora_inicio: str, hora_fin: str,
+                   almuerzo_minutos: int | None = None) -> float:
+    """Horas TRABAJADAS: la presencia menos el almuerzo.
+
+    El almuerzo es descanso NO remunerado: no cuenta como jornada ni consume el
+    tope semanal del art. 161 CST. Sin `almuerzo_minutos` (o en cero) devuelve lo
+    mismo que devolvía antes de que existiera el descanso, que es lo que hace que
+    los turnos viejos —todos sin almuerzo— sigan liquidando igual.
+    """
+    bruta = duracion_bruta_horas(hora_inicio, hora_fin)
+    return max(0.0, bruta - max(0, int(almuerzo_minutos or 0)) / 60.0)
+
+
+def _offset_minutos(hora_inicio: str, hora: str) -> int:
+    """Minutos desde la entrada del turno hasta esa hora de pared. Si la hora es
+    anterior a la entrada, es del día siguiente (el turno cruzó la medianoche)."""
+    delta = _minutos(hora) - _minutos(hora_inicio)
+    return delta + 24 * 60 if delta < 0 else delta
+
+
 def rango_datetimes(fecha: date, hora_inicio: str, hora_fin: str) -> tuple[datetime, datetime]:
-    """El turno planeado como par de datetimes LOCALES (hora Colombia), listos
-    para `services/horas`. No son UTC y no deben guardarse como tal."""
+    """El turno planeado como par de datetimes LOCALES (hora Colombia), de la
+    entrada a la salida y SIN descontar el almuerzo. No son UTC y no deben
+    guardarse como tal. Para liquidar horas usá `tramos_datetimes`, que sí saca
+    el descanso."""
     ini = datetime.combine(fecha, datetime.min.time()) + timedelta(minutes=_minutos(hora_inicio))
     fin = datetime.combine(fecha, datetime.min.time()) + timedelta(minutes=_minutos(hora_fin))
     if fin <= ini:
@@ -64,9 +87,82 @@ def rango_datetimes(fecha: date, hora_inicio: str, hora_fin: str) -> tuple[datet
     return ini, fin
 
 
+def pausa_datetimes(fecha: date, hora_inicio: str, hora_fin: str,
+                    almuerzo_inicio: str | None,
+                    almuerzo_minutos: int | None) -> tuple[datetime, datetime] | None:
+    """El almuerzo como par de datetimes locales, o None si el turno no tiene.
+
+    Se ancla al INICIO del turno y no a la fecha: en un turno 18:00→02:00 un
+    almuerzo a las 00:30 es del día siguiente, y anclarlo a la fecha lo pondría
+    dieciocho horas antes de que la persona entrara.
+    """
+    if not almuerzo_inicio or not almuerzo_minutos or int(almuerzo_minutos) <= 0:
+        return None
+    ini, _fin = rango_datetimes(fecha, hora_inicio, hora_fin)
+    arranque = ini + timedelta(minutes=_offset_minutos(hora_inicio, almuerzo_inicio))
+    return arranque, arranque + timedelta(minutes=int(almuerzo_minutos))
+
+
+def tramos_datetimes(fecha: date, hora_inicio: str, hora_fin: str,
+                     almuerzo_inicio: str | None = None,
+                     almuerzo_minutos: int | None = None) -> list[tuple[datetime, datetime]]:
+    """Los tramos de TIEMPO TRABAJADO del turno planeado, ya sin el almuerzo.
+
+    Un turno sin almuerzo devuelve un solo tramo (idéntico a `rango_datetimes`);
+    con almuerzo devuelve dos. Es lo que hay que darle a `services/horas`: así el
+    descanso se descuenta de la franja en la que cae y los recargos de las horas
+    que sí se trabajaron quedan intactos.
+    """
+    ini, fin = rango_datetimes(fecha, hora_inicio, hora_fin)
+    pausa = pausa_datetimes(fecha, hora_inicio, hora_fin, almuerzo_inicio, almuerzo_minutos)
+    if pausa is None:
+        return [(ini, fin)]
+    return hsvc_restar_pausas(ini, fin, [pausa])
+
+
 # ---------------------------------------------------------------------------
 # Escritura
 # ---------------------------------------------------------------------------
+
+def validar_almuerzo(hora_inicio: str, hora_fin: str, almuerzo_inicio: str | None,
+                     almuerzo_minutos: int | None) -> tuple[str | None, int | None]:
+    """Normaliza el almuerzo del turno y lo valida contra el turno mismo.
+
+    Devuelve `(None, None)` cuando el turno no tiene almuerzo — que es el caso de
+    todos los turnos que ya existían y el default de los nuevos.
+
+    Se exigen los DOS datos juntos: la hora sola no dice cuánto dura y los
+    minutos solos no dicen de qué franja sacarlos (un almuerzo diurno y uno
+    nocturno cuestan distinto). Y el descanso tiene que caber ENTERO y con
+    trabajo de los dos lados: un "almuerzo" pegado a la entrada o a la salida no
+    es un descanso, es un turno más corto, y conviene escribirlo así.
+    """
+    minutos = int(almuerzo_minutos or 0)
+    hora = (almuerzo_inicio or "").strip() or None
+
+    if minutos <= 0 and hora is None:
+        return None, None
+    if minutos <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Pusiste hora de almuerzo pero no cuánto dura. Indicá los minutos.")
+    if hora is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Falta a qué hora arranca el almuerzo: sin eso no se sabe si sale "
+                   "de horas diurnas o nocturnas, que se pagan distinto.")
+
+    hora = validar_hora(hora, "La hora de almuerzo")
+    total = int(round(duracion_bruta_horas(hora_inicio, hora_fin) * 60))
+    arranque = _offset_minutos(hora_inicio, hora)
+    if arranque <= 0 or arranque + minutos >= total:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El almuerzo tiene que quedar adentro del turno "
+                   f"({hora_inicio} a {hora_fin}) y dejar trabajo antes y después. "
+                   f"{hora} por {minutos} min no entra.")
+    return hora, minutos
+
 
 def _barista(db: Session, usuario_id: int) -> Usuario:
     u = db.query(Usuario).filter(Usuario.id == usuario_id).first()
@@ -77,7 +173,8 @@ def _barista(db: Session, usuario_id: int) -> Usuario:
 
 def guardar_turno(db: Session, tienda_id: int, usuario_id: int, fecha: date,
                   hora_inicio: str, hora_fin: str, creado_por_id: int | None = None,
-                  nota: str | None = None) -> TurnoProgramado:
+                  nota: str | None = None, almuerzo_inicio: str | None = None,
+                  almuerzo_minutos: int | None = None) -> TurnoProgramado:
     """Crea o actualiza un turno planeado.
 
     La clave natural es (barista, fecha, hora de entrada): volver a guardar la
@@ -95,6 +192,8 @@ def guardar_turno(db: Session, tienda_id: int, usuario_id: int, fecha: date,
         raise HTTPException(
             status_code=400,
             detail="La entrada y la salida no pueden ser la misma hora.")
+    almuerzo_inicio, almuerzo_minutos = validar_almuerzo(
+        hora_inicio, hora_fin, almuerzo_inicio, almuerzo_minutos)
 
     u = _barista(db, usuario_id)
     fila = db.query(TurnoProgramado).filter(
@@ -107,6 +206,7 @@ def guardar_turno(db: Session, tienda_id: int, usuario_id: int, fecha: date,
         fila = TurnoProgramado(
             tienda_id=tienda_id, usuario_id=usuario_id, nombre_snapshot=u.nombre,
             fecha=fecha, hora_inicio=hora_inicio, hora_fin=hora_fin,
+            almuerzo_inicio=almuerzo_inicio, almuerzo_minutos=almuerzo_minutos,
             estado=EstadoProgramadoEnum.borrador, nota=nota,
             creado_por_id=creado_por_id,
         )
@@ -115,8 +215,12 @@ def guardar_turno(db: Session, tienda_id: int, usuario_id: int, fecha: date,
         db.refresh(fila)
         return fila
 
-    cambio = (fila.hora_fin != hora_fin) or (fila.nota != nota)
+    cambio = (fila.hora_fin != hora_fin) or (fila.nota != nota) or (
+        fila.almuerzo_inicio != almuerzo_inicio
+        or (fila.almuerzo_minutos or 0) != (almuerzo_minutos or 0))
     fila.hora_fin = hora_fin
+    fila.almuerzo_inicio = almuerzo_inicio
+    fila.almuerzo_minutos = almuerzo_minutos
     fila.nota = nota
     fila.tienda_id = tienda_id
     fila.nombre_snapshot = u.nombre
@@ -124,7 +228,8 @@ def guardar_turno(db: Session, tienda_id: int, usuario_id: int, fecha: date,
         fila.estado = EstadoProgramadoEnum.borrador
     if cambio and fila.estado == EstadoProgramadoEnum.publicado:
         _avisar_cambio(db, fila, f"Cambió tu turno del {_dia_legible(fecha)}: "
-                                 f"ahora es de {hora_inicio} a {hora_fin}.")
+                                 f"ahora es de {hora_inicio} a {hora_fin}"
+                                 f"{_texto_almuerzo(almuerzo_inicio, almuerzo_minutos)}.")
     db.commit()
     db.refresh(fila)
     return fila
@@ -172,9 +277,12 @@ def publicar_semana(db: Session, tienda_id: int, lunes: date, publicado_por_id: 
 
     for usuario_id, turnos in por_barista.items():
         nombre = turnos[0].nombre_snapshot
-        total = sum(duracion_horas(t.hora_inicio, t.hora_fin) for t in turnos)
+        total = sum(duracion_horas(t.hora_inicio, t.hora_fin, t.almuerzo_minutos)
+                    for t in turnos)
         detalle = " · ".join(
-            f"{DIAS_ES[t.fecha.weekday()]} {t.hora_inicio}-{t.hora_fin}" for t in turnos)
+            f"{DIAS_ES[t.fecha.weekday()]} {t.hora_inicio}-{t.hora_fin}"
+            f"{_texto_almuerzo(t.almuerzo_inicio, t.almuerzo_minutos)}"
+            for t in turnos)
         mensaje = (f"{nombre}: horario de la semana del {lunes.isoformat()} "
                    f"({_fmt_horas(total)} h) — {detalle}")
         notificaciones.disparar(
@@ -215,6 +323,9 @@ def copiar_semana(db: Session, tienda_id: int, lunes_origen: date, lunes_destino
             tienda_id=tienda_id, usuario_id=tp.usuario_id,
             nombre_snapshot=tp.nombre_snapshot, fecha=nueva_fecha,
             hora_inicio=tp.hora_inicio, hora_fin=tp.hora_fin,
+            # El almuerzo viaja con el turno: copiar la semana y perder los
+            # descansos inflaría las horas de la semana nueva en silencio.
+            almuerzo_inicio=tp.almuerzo_inicio, almuerzo_minutos=tp.almuerzo_minutos,
             estado=EstadoProgramadoEnum.borrador, nota=tp.nota,
             creado_por_id=creado_por_id,
         ))
@@ -238,6 +349,14 @@ def _dia_legible(f: date) -> str:
     return f"{DIAS_ES[f.weekday()]} {f.day:02d}/{f.month:02d}"
 
 
+def _texto_almuerzo(almuerzo_inicio: str | None, almuerzo_minutos: int | None) -> str:
+    """Sufijo para los avisos. El almuerzo se le dice a la barista con hora Y
+    duración: es tiempo suyo, no de la cafetería, y tiene que poder planearlo."""
+    if not almuerzo_inicio or not almuerzo_minutos:
+        return ""
+    return f" (almuerzo {almuerzo_inicio}, {int(almuerzo_minutos)} min)"
+
+
 def _fmt_horas(h: float) -> str:
     return f"{h:.0f}" if abs(h - round(h)) < 0.01 else f"{h:.1f}"
 
@@ -247,6 +366,12 @@ def _fmt_horas(h: float) -> str:
 # ---------------------------------------------------------------------------
 
 def _out(tp: TurnoProgramado) -> dict:
+    # `horas` son las TRABAJADAS (sin almuerzo): es el número que se paga y el
+    # que se compara contra la jornada máxima. `horas_brutas` queda al lado para
+    # que la pantalla pueda mostrar las dos y nadie tenga que adivinar si el
+    # descanso ya está descontado.
+    pausa = pausa_datetimes(tp.fecha, tp.hora_inicio, tp.hora_fin,
+                            tp.almuerzo_inicio, tp.almuerzo_minutos)
     return {
         "id": tp.id,
         "usuario_id": tp.usuario_id,
@@ -254,7 +379,11 @@ def _out(tp: TurnoProgramado) -> dict:
         "fecha": tp.fecha.isoformat(),
         "hora_inicio": tp.hora_inicio,
         "hora_fin": tp.hora_fin,
-        "horas": duracion_horas(tp.hora_inicio, tp.hora_fin),
+        "almuerzo_inicio": tp.almuerzo_inicio,
+        "almuerzo_minutos": int(tp.almuerzo_minutos) if tp.almuerzo_minutos else None,
+        "almuerzo_fin": pausa[1].strftime("%H:%M") if pausa else None,
+        "horas": duracion_horas(tp.hora_inicio, tp.hora_fin, tp.almuerzo_minutos),
+        "horas_brutas": duracion_bruta_horas(tp.hora_inicio, tp.hora_fin),
         "cruza_medianoche": _minutos(tp.hora_fin) <= _minutos(tp.hora_inicio),
         "estado": tp.estado.value if hasattr(tp.estado, "value") else tp.estado,
         "nota": tp.nota,
@@ -315,13 +444,19 @@ def semana(db: Session, tienda_id: int, lunes: date) -> dict:
     baristas = []
     for uid, u in sorted(personas.items(), key=lambda kv: kv[1].nombre or ""):
         mios = por_usuario.get(uid, [])
-        total = sum(duracion_horas(t.hora_inicio, t.hora_fin) for t in mios)
+        # Contra la jornada máxima se compara el tiempo TRABAJADO: el almuerzo es
+        # descanso y no consume el tope semanal del art. 161 CST. Sumar la
+        # presencia marcaría en rojo semanas que están dentro de la ley.
+        total = sum(duracion_horas(t.hora_inicio, t.hora_fin, t.almuerzo_minutos)
+                    for t in mios)
+        minutos_almuerzo = sum(int(t.almuerzo_minutos or 0) for t in mios)
         baristas.append({
             "usuario_id": uid,
             "nombre": u.nombre,
             "activa": bool(u.activo) and u.tienda_id == tienda_id,
             "turnos": [_out(t) for t in mios],
             "total_horas": round(total, 2),
+            "minutos_almuerzo": minutos_almuerzo,
             "excede_jornada": total > jornada + 1e-9,
             "horas_sobre_jornada": round(max(0.0, total - jornada), 2),
             "publicados": sum(1 for t in mios if t.estado == EstadoProgramadoEnum.publicado),

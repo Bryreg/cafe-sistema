@@ -8,7 +8,14 @@ export interface TurnoProgramado {
   fecha: string
   hora_inicio: string
   hora_fin: string
+  /** Almuerzo: descanso no remunerado. null = el turno no tiene. */
+  almuerzo_inicio: string | null
+  almuerzo_minutos: number | null
+  almuerzo_fin: string | null
+  /** Horas TRABAJADAS: ya sin el almuerzo. Es lo que se paga. */
   horas: number
+  /** Horas de PRESENCIA: de la entrada a la salida, almuerzo incluido. */
+  horas_brutas: number
   cruza_medianoche: boolean
   estado: 'borrador' | 'publicado' | 'cancelado'
   nota: string | null
@@ -19,7 +26,9 @@ export interface BaristaSemana {
   nombre: string
   activa: boolean
   turnos: TurnoProgramado[]
+  /** Horas trabajadas de la semana: el almuerzo ya está descontado. */
   total_horas: number
+  minutos_almuerzo: number
   excede_jornada: boolean
   horas_sobre_jornada: number
   publicados: number

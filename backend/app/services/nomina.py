@@ -28,6 +28,7 @@ y se convierten con core/tz antes de tocar el cálculo.
 from __future__ import annotations
 
 import calendar
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
@@ -35,14 +36,16 @@ from sqlalchemy.orm import Session
 
 from app.core.tz import local_col
 from app.models.models import (
-    CajaTurno, ContratoBarista, NovedadNomina, RolEnum, TurnoBarista, Usuario,
+    CajaTurno, ContratoBarista, NovedadNomina, RolEnum, Tienda, TurnoBarista,
+    Usuario,
 )
 from app.services import festivos as fsvc
 from app.services import horarios as hsvc
 from app.services import novedades_nomina as nsvc
 from app.services import tasas_laborales
 from app.services.horas import (
-    CATEGORIAS, ETIQUETAS, liquidar_semana_por_tramo, lunes_de, valorizar,
+    CATEGORIAS, ETIQUETAS, liquidar_semana_por_tramo, lunes_de, restar_pausas,
+    valorizar,
 )
 
 ADVERTENCIAS = [
@@ -51,6 +54,14 @@ ADVERTENCIAS = [
     "la hora del cierre: esos días pueden quedar con más horas de las que se "
     "trabajaron de verdad.",
     "El planeado cuenta solo los turnos PUBLICADOS. Los borradores no entran.",
+    "El almuerzo es descanso y no se paga: se descuenta de las horas —planeadas y "
+    "reales— usando la ventana que está cargada en el horario, porque la caja no "
+    "marca la salida a almorzar. Un turno sin almuerzo configurado no descuenta "
+    "nada.",
+    "Los días que alguien cubrió en la OTRA sede cuentan para su tope semanal (la "
+    "jornada máxima es por persona, no por local), pero su almuerzo no se les "
+    "descuenta: el horario que se está mirando es el de esta sede. Si alguien "
+    "cubre seguido en las dos, sus horas pueden quedar un poco altas.",
     "Los montos son un ESTIMADO del tiempo trabajado con los recargos que están "
     "cargados en la pantalla de Tasas. No incluye auxilio de transporte, "
     "prestaciones, seguridad social ni deducciones. La liquidación la hace tu "
@@ -84,9 +95,16 @@ def _redondear(h: dict[str, float]) -> dict[str, float]:
     return {c: round(v, 2) for c, v in h.items()}
 
 
-def _tramos_reales(db: Session, tienda_id: int, desde: date,
-                   hasta: date) -> tuple[dict[int, list], dict[int, int], dict[int, Usuario]]:
+def _tramos_reales(db: Session, tienda_id: int, desde: date, hasta: date,
+                   pausas: dict[int, list[tuple[datetime, datetime]]] | None = None,
+                   ) -> tuple[dict[int, list], dict[int, int], dict[int, Usuario]]:
     """Tramos REALES (entró/salió) de la sede en el rango, en hora Colombia.
+
+    A cada tramo se le sacan las ventanas de almuerzo PLANEADAS que caigan
+    adentro (ver `_pausas_planeadas`): la caja no marca el descanso, así que sin
+    esto la hora de almuerzo se pagaría como trabajada. Un turno sin almuerzo
+    configurado no pierde ni un minuto — el descuento es exactamente la ventana
+    que alguien puso en el horario.
 
     El rango se filtra con margen de un día a cada lado sobre los timestamps UTC
     y después se recorta en local: un turno que empieza a las 20:00 Colombia está
@@ -138,24 +156,58 @@ def _tramos_reales(db: Session, tienda_id: int, desde: date,
             if propio:
                 sin_salida[u.id] = sin_salida.get(u.id, 0) + 1
             continue
-        tramos.setdefault(u.id, []).append((entrada, salida, propio))
+        # Si la persona salió y volvió a marcar (dos filas), el almuerzo ya está
+        # fuera de los dos tramos y no se superpone con ninguno: `restar_pausas`
+        # no descuenta nada y no se paga el descanso dos veces.
+        for a, b in restar_pausas(entrada, salida, (pausas or {}).get(u.id, [])):
+            tramos.setdefault(u.id, []).append((a, b, propio))
     return tramos, sin_salida, personas, otra_sede
 
 
 def _tramos_planeados(db: Session, tienda_id: int, desde: date,
                       hasta: date) -> tuple[dict[int, list], dict[int, dict[date, float]]]:
     """Tramos PLANEADOS (publicados) como datetimes locales, y las horas
-    programadas por día — que son las que se acreditan cuando hay novedad."""
+    programadas por día — que son las que se acreditan cuando hay novedad.
+
+    Un turno con almuerzo entra como DOS tramos, uno de cada lado del descanso:
+    el almuerzo no se trabaja, no se paga y no consume jornada.
+    """
     tramos: dict[int, list[tuple[datetime, datetime]]] = {}
     por_dia: dict[int, dict[date, float]] = {}
     for tp in hsvc.turnos_publicados(db, tienda_id, desde, hasta):
-        ini, fin = hsvc.rango_datetimes(tp.fecha, tp.hora_inicio, tp.hora_fin)
         # El tercer campo es la etiqueta de sede que `_liquidar` necesita: el
         # planeado ya viene filtrado por tienda, así que todo es propio.
-        tramos.setdefault(tp.usuario_id, []).append((ini, fin, True))
+        for ini, fin in hsvc.tramos_datetimes(tp.fecha, tp.hora_inicio, tp.hora_fin,
+                                              tp.almuerzo_inicio, tp.almuerzo_minutos):
+            tramos.setdefault(tp.usuario_id, []).append((ini, fin, True))
         dia = por_dia.setdefault(tp.usuario_id, {})
-        dia[tp.fecha] = dia.get(tp.fecha, 0.0) + hsvc.duracion_horas(tp.hora_inicio, tp.hora_fin)
+        dia[tp.fecha] = dia.get(tp.fecha, 0.0) + hsvc.duracion_horas(
+            tp.hora_inicio, tp.hora_fin, tp.almuerzo_minutos)
     return tramos, por_dia
+
+
+def _pausas_planeadas(db: Session, tienda_id: int, desde: date,
+                      hasta: date) -> dict[int, list[tuple[datetime, datetime]]]:
+    """Las ventanas de almuerzo del horario PUBLICADO, por persona.
+
+    Sirven para descontar el descanso también de lo REAL. La marcación de caja no
+    registra el almuerzo —se marca al entrar y al salir, no al sentarse a comer—,
+    así que sin esto un turno 07:00→15:00 con una hora de almuerzo se liquidaría
+    con 8 h reales contra 7 h planeadas y el resumen mostraría una hora extra
+    todos los días. Se descuenta la ventana PLANEADA, que es el único dato que el
+    sistema tiene sobre el descanso, y se dice en `advertencias`.
+
+    LÍMITE: el almuerzo sale del horario de ESTA sede. Un tramo trabajado en la
+    otra entra al umbral semanal sin descontarle su descanso, porque su horario
+    no se está consultando acá.
+    """
+    pausas: dict[int, list[tuple[datetime, datetime]]] = {}
+    for tp in hsvc.turnos_publicados(db, tienda_id, desde, hasta):
+        p = hsvc.pausa_datetimes(tp.fecha, tp.hora_inicio, tp.hora_fin,
+                                 tp.almuerzo_inicio, tp.almuerzo_minutos)
+        if p is not None:
+            pausas.setdefault(tp.usuario_id, []).append(p)
+    return pausas
 
 
 def _semanas(desde: date, hasta: date) -> list[tuple[date, date]]:
@@ -212,6 +264,45 @@ def _liquidar(tramos: list[tuple[datetime, datetime]], semanas, tasas,
     return total, por_dia, por_semana
 
 
+def _dias_con_novedad(novedades, desde: date,
+                      hasta: date) -> tuple[dict[date, NovedadNomina], set[date]]:
+    """Qué días del rango cubre cada novedad, y cuáles de esos días ACREDITAN
+    tiempo (novedad remunerada de un tipo que acredita horas)."""
+    cubiertos: dict[date, NovedadNomina] = {}
+    acreditantes: set[date] = set()
+    for n in novedades:
+        tipo = n.tipo.value if hasattr(n.tipo, "value") else n.tipo
+        meta = nsvc.TIPOS.get(tipo, {})
+        d = max(n.fecha_desde, desde)
+        fin = min(n.fecha_hasta, hasta)
+        while d <= fin:
+            cubiertos.setdefault(d, n)
+            if bool(n.remunerada) and meta.get("acredita_horas"):
+                acreditantes.add(d)
+            d += timedelta(days=1)
+    return cubiertos, acreditantes
+
+
+def _acreditar(tramos_reales: list, tramos_planeados: list,
+               acreditantes: set[date]) -> list:
+    """ACREDITADO = lo real + lo PROGRAMADO de los días con novedad remunerada y
+    sin marcación. Es la base de lo que se paga.
+
+    Vive en su propia función porque la usan dos consumidores —el resumen mensual
+    y el costo que entra al P&L— y son el MISMO número: si se calculara en dos
+    lados, la pantalla de nómina y el margen podrían empezar a discrepar sin que
+    nadie lo note.
+
+    Un día con marcación propia NO acredita además el planeado: sería pagar el
+    día dos veces.
+    """
+    dias_con_real = {i.date() for i, _f, _p in tramos_reales}
+    return list(tramos_reales) + [
+        (i, f, True) for i, f, _p in tramos_planeados
+        if i.date() in acreditantes and i.date() not in dias_con_real
+    ]
+
+
 def resumen_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> dict:
     """El resumen del mes: por barista, horas por categoría, novedades y
     planeado vs real. Es la pantalla que el dueño pidió para fin de mes."""
@@ -230,8 +321,11 @@ def resumen_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> dict:
     # Los tramos se traen sobre las SEMANAS COMPLETAS (borde_ini..borde_fin), no
     # sobre el mes: el umbral semanal necesita ver la semana entera aunque el mes
     # la corte. El recorte al mes lo hace `_liquidar` DESPUÉS de liquidar.
+    # Las pausas se resuelven ANTES que lo real: son parte de la definición de
+    # "tiempo trabajado", no un ajuste posterior.
+    pausas = _pausas_planeadas(db, tienda_id, borde_ini, borde_fin)
     reales, sin_salida, personas_real, otra_sede = _tramos_reales(
-        db, tienda_id, borde_ini, borde_fin)
+        db, tienda_id, borde_ini, borde_fin, pausas)
     planeados, _plan_dia_ext = _tramos_planeados(db, tienda_id, borde_ini, borde_fin)
     # `planeado_por_dia` alimenta la tabla día por día y las ausencias: ese SÍ va
     # acotado al mes, o el resumen mostraría días que no le corresponden.
@@ -294,29 +388,11 @@ def _resumen_barista(db, uid, u, tramos_reales, tramos_planeados, planeado_dia,
     plan_total, plan_dia, _ = _liquidar(tramos_planeados, semanas, tasas, es_festivo, desde, hasta)
 
     # Días cubiertos por una novedad, y cuáles de ellas acreditan tiempo.
-    cubiertos: dict[date, NovedadNomina] = {}
-    acreditantes: set[date] = set()
-    for n in novedades:
-        tipo = n.tipo.value if hasattr(n.tipo, "value") else n.tipo
-        meta = nsvc.TIPOS.get(tipo, {})
-        d = max(n.fecha_desde, desde)
-        fin = min(n.fecha_hasta, hasta)
-        while d <= fin:
-            cubiertos.setdefault(d, n)
-            if bool(n.remunerada) and meta.get("acredita_horas"):
-                acreditantes.add(d)
-            d += timedelta(days=1)
+    cubiertos, acreditantes = _dias_con_novedad(novedades, desde, hasta)
 
-    # Los días con marcación PROPIA: un día cubierto en la otra sede no habilita
-    # acreditar además el planeado de acá (sería pagar el día dos veces).
-    dias_con_real = {i.date() for i, _f, _p in tramos_reales}
-    # Acreditado = real + lo PROGRAMADO de los días con novedad remunerada y sin
-    # marcación. Se arma como una lista de tramos y se liquida igual que el resto,
-    # para que esas horas también pasen por el umbral semanal y por las franjas.
-    tramos_acreditados = list(tramos_reales) + [
-        (i, f, True) for i, f, _p in tramos_planeados
-        if i.date() in acreditantes and i.date() not in dias_con_real
-    ]
+    # Se arma como una lista de tramos y se liquida igual que el resto, para que
+    # esas horas también pasen por el umbral semanal y por las franjas.
+    tramos_acreditados = _acreditar(tramos_reales, tramos_planeados, acreditantes)
     acred_total, acred_dia, acred_semana = _liquidar(
         tramos_acreditados, semanas, tasas, es_festivo, desde, hasta)
 
@@ -420,6 +496,148 @@ def _totales(baristas: list[dict]) -> dict:
         "tramos_sin_salida": sum(b["tramos_sin_salida"] for b in baristas),
         "sin_contrato": sum(1 for b in baristas if not b["tiene_contrato"]),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COSTO LABORAL DEL PERÍODO — lo que consume el P&L
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def costo_laboral(db: Session, desde: date, hasta: date,
+                  tienda_id: int | None = None,
+                  excluir_meses: set[str] | None = None,
+                  excluir_mes_sede: set[tuple[str, int]] | None = None) -> dict:
+    """Costo laboral ESTIMADO de un rango cualquiera, abierto por mes y por sede.
+
+    Es el MISMO cálculo que muestra el resumen mensual —horas acreditadas,
+    liquidadas semana por semana con la tasa vigente de cada una— pero sobre un
+    rango arbitrario y con el corte que el P&L necesita. Reusa las mismas
+    primitivas (`_tramos_reales`, `_acreditar`, `_liquidar`, `valorizar`), no una
+    copia: si las dos pantallas calcularan por su cuenta, la nómina y el margen
+    empezarían a discrepar sin que nadie lo note.
+
+    CORTE POR PERÍODO: las semanas se liquidan ENTERAS (el umbral de hora extra
+    es semanal) y recién después se suman los días que caen adentro del rango.
+    Una hora se atribuye al día en que EMPEZÓ su tramo, igual que en el resumen.
+    Cada semana se valoriza con SU tasa, así que recalcular un período viejo da
+    siempre el mismo número.
+
+    SIN SALARIO CARGADO NO HAY COSTO. `valorizar` parte del salario del contrato:
+    quien no tiene contrato aporta $0 y viaja contado en `sin_contrato`. Por eso
+    esto no le cambia el margen a nadie que todavía no haya cargado sueldos —
+    aparece cuando el dato existe, no antes.
+
+    La granularidad de valorización es (persona, semana, mes): para las semanas
+    que no cruzan el borde del mes —casi todas— es exactamente la misma llamada
+    que hace el resumen mensual, y el número coincide al peso.
+
+    Dos formas de excluir, que el P&L usa para los meses que ya tienen la nómina
+    cargada a mano: `excluir_meses` saca un mes en TODAS las sedes (es lo que
+    corresponde a una obligación corporativa, que cubre a todo el mundo) y
+    `excluir_mes_sede` saca el par (mes, sede) de una obligación que pertenece a
+    una sede sola. Mezclar las dos en una era el bug: la nómina cargada para una
+    sede borraba el costo calculado de las otras.
+
+    Se descartan ADENTRO del cálculo y no después, para que `personas`, `horas` y
+    `total` hablen siempre del mismo conjunto de días: un total que no incluye un
+    mes y un contador de horas que sí lo incluye es un pie de página que miente.
+    """
+    if hasta < desde:
+        return _costo_vacio()
+    excluidos = excluir_meses or set()
+    excluidos_sede = excluir_mes_sede or set()
+
+    sedes = ([tienda_id] if tienda_id is not None
+             else [t.id for t in db.query(Tienda).order_by(Tienda.id).all()])
+    if not sedes:
+        return _costo_vacio()
+
+    semanas = _semanas(desde, hasta)
+    tasas = [tasas_laborales.tasa_para(db, lunes) for lunes, _ in semanas]
+    por_lunes = {lunes: tasa for (lunes, _), tasa in zip(semanas, tasas)}
+    borde_ini, borde_fin = semanas[0][0], semanas[-1][1]
+    festivas = fsvc.fechas_festivas(db, borde_ini, borde_fin)
+
+    def es_festivo(d: date) -> bool:
+        return d in festivas
+
+    por_mes_sede: dict[tuple[str, int], float] = defaultdict(float)
+    personas_con_costo: set[int] = set()
+    sin_contrato: set[int] = set()
+    horas = 0.0
+
+    for sede in sedes:
+        # Mismas fuentes y mismo orden que el resumen mensual: pausas de almuerzo
+        # primero, porque son parte de la definición de tiempo trabajado.
+        pausas = _pausas_planeadas(db, sede, borde_ini, borde_fin)
+        reales, _sin_salida, personas_real, _otra = _tramos_reales(
+            db, sede, borde_ini, borde_fin, pausas)
+        planeados, _plan_dia = _tramos_planeados(db, sede, borde_ini, borde_fin)
+        novedades = nsvc.listar(db, sede, desde, hasta)
+
+        personas = dict(personas_real)
+        for uid in list(planeados) + [n.usuario_id for n in novedades]:
+            if uid not in personas:
+                u = db.query(Usuario).filter(Usuario.id == uid).first()
+                if u is not None and _es_persona(u):
+                    personas[uid] = u
+        if not personas:
+            continue
+
+        contratos = {
+            c.usuario_id: c
+            for c in db.query(ContratoBarista).filter(
+                ContratoBarista.usuario_id.in_(list(personas) or [0])).all()
+        }
+
+        for uid in personas:
+            _cub, acreditantes = _dias_con_novedad(
+                [n for n in novedades if n.usuario_id == uid], desde, hasta)
+            tramos = _acreditar(reales.get(uid, []), planeados.get(uid, []), acreditantes)
+            _total, por_dia, _por_semana = _liquidar(
+                tramos, semanas, tasas, es_festivo, desde, hasta)
+            if not por_dia:
+                continue
+
+            # (semana, mes): la semana manda porque es la unidad de la tasa y del
+            # umbral de extras; el mes, porque es como corta el P&L.
+            agrupado: dict[tuple[date, str], dict[str, float]] = {}
+            horas_persona = 0.0
+            for dia, h in por_dia.items():
+                mes = dia.strftime("%Y-%m")
+                if mes in excluidos or (mes, sede) in excluidos_sede:
+                    continue
+                _sumar(agrupado.setdefault((lunes_de(dia), mes), _cero()), h)
+                horas_persona += sum(h.values())
+            if not agrupado:
+                continue
+
+            contrato = contratos.get(uid)
+            salario = float(contrato.salario_mensual) if contrato else 0.0
+            personas_con_costo.add(uid)
+            horas += horas_persona
+            if salario <= 0:
+                # Tiene horas y no tiene sueldo: su costo es $0 y hay que decirlo,
+                # o el margen se lee como si esas horas fueran gratis.
+                sin_contrato.add(uid)
+
+            for (lunes, mes), h in agrupado.items():
+                por_mes_sede[(mes, sede)] += valorizar(h, por_lunes[lunes], salario)["total"]
+
+    pares = {k: round(v, 2) for k, v in por_mes_sede.items()}
+    return {
+        "por_mes_sede": pares,
+        "total": round(sum(pares.values()), 2),
+        "meses": sorted({mes for mes, _sede in pares}),
+        "personas": len(personas_con_costo),
+        "sin_contrato": len(sin_contrato),
+        "horas": round(horas, 2),
+        "es_estimado": True,
+    }
+
+
+def _costo_vacio() -> dict:
+    return {"por_mes_sede": {}, "total": 0.0, "meses": [], "personas": 0,
+            "sin_contrato": 0, "horas": 0.0, "es_estimado": True}
 
 
 def csv_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> str:

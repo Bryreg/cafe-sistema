@@ -34,6 +34,10 @@ class TurnoIn(BaseModel):
     fecha: date
     hora_inicio: str
     hora_fin: str
+    # Almuerzo del turno. Los dos en None = sin almuerzo, que es el default y lo
+    # que mandan los clientes viejos: el turno se liquida entero, como siempre.
+    almuerzo_inicio: Optional[str] = None
+    almuerzo_minutos: Optional[int] = None
     nota: Optional[str] = None
 
 
@@ -126,7 +130,9 @@ def guardar_turno(body: TurnoIn, db: Session = Depends(get_db),
                   admin: Usuario = Depends(require_admin)):
     tp = hsvc.guardar_turno(db, body.tienda_id, body.usuario_id, body.fecha,
                             body.hora_inicio, body.hora_fin,
-                            creado_por_id=admin.id, nota=body.nota)
+                            creado_por_id=admin.id, nota=body.nota,
+                            almuerzo_inicio=body.almuerzo_inicio,
+                            almuerzo_minutos=body.almuerzo_minutos)
     return hsvc.serializar(tp)
 
 

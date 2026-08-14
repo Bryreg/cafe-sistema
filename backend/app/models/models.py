@@ -1713,6 +1713,17 @@ class TurnoProgramado(Base):
     fecha = Column(Date, nullable=False, index=True)
     hora_inicio = Column(String(5), nullable=False)   # "07:00"
     hora_fin = Column(String(5), nullable=False)      # "15:00"
+    # ── Almuerzo (descanso NO remunerado dentro del turno) ────────────────────
+    # Se guarda como HORA DE PARED + duración, y no como un simple "minutos de
+    # descanso", porque el descanso hay que sacarlo de la FRANJA en la que cae:
+    # una hora de almuerzo a las 13:00 sale de horas diurnas y una a las 21:00 de
+    # horas nocturnas, que valen distinto. Con un total suelto no se sabe de cuál
+    # descontar y el recargo queda mal.
+    # Los dos NULL = el turno no tiene almuerzo configurado, que es como quedan
+    # todos los turnos anteriores a esta columna: sin almuerzo no se descuenta
+    # nada y el cálculo da exactamente lo mismo que antes.
+    almuerzo_inicio = Column(String(5), nullable=True)      # "13:00"
+    almuerzo_minutos = Column(Integer, nullable=True)       # 60
     estado = Column(SAEnum(EstadoProgramadoEnum), nullable=False,
                     default=EstadoProgramadoEnum.borrador, index=True)
     nota = Column(String(300), nullable=True)

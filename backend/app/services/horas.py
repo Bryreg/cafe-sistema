@@ -166,6 +166,40 @@ def segmentar(inicio: datetime, fin: datetime, tasa: Tasa,
     return segmentos
 
 
+def restar_pausas(inicio: datetime, fin: datetime,
+                  pausas: Iterable[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
+    """Saca del tramo `[inicio, fin)` los descansos que caen adentro.
+
+    Devuelve los pedazos de TIEMPO TRABAJADO que quedan, en orden. Es álgebra de
+    intervalos pura: recorta cada pausa contra el tramo (una pausa que se sale
+    por un borde solo descuenta lo que se superpone) y no toca lo que no se
+    solapa.
+
+    Por qué acá y no restando minutos al total: el descanso hay que sacarlo de la
+    FRANJA en la que ocurre. Un almuerzo a las 13:00 sale de horas diurnas; uno a
+    las 21:00, de nocturnas, que valen más. Devolver tramos —y no un número— deja
+    que `segmentar` clasifique lo que quedó, con sus recargos intactos.
+
+    Si las pausas se comen el tramo entero, devuelve lista vacía: cero horas
+    trabajadas, que es la respuesta correcta y no un error.
+    """
+    tramos = [(inicio, fin)] if fin > inicio else []
+    for p_ini, p_fin in sorted(pausas, key=lambda p: p[0]):
+        if p_fin <= p_ini:
+            continue
+        siguiente: list[tuple[datetime, datetime]] = []
+        for a, b in tramos:
+            if p_fin <= a or p_ini >= b:   # no se tocan
+                siguiente.append((a, b))
+                continue
+            if p_ini > a:
+                siguiente.append((a, p_ini))
+            if p_fin < b:
+                siguiente.append((p_fin, b))
+        tramos = siguiente
+    return tramos
+
+
 def _cero(categorias: Sequence[str]) -> dict[str, float]:
     return {c: 0.0 for c in categorias}
 

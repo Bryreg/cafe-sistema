@@ -415,6 +415,49 @@ export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refre
             </div>
           )}
 
+          {/* NÓMINA: de dónde salió el costo laboral de este período.
+              El número ya está DENTRO de "Costos operativos" y del margen neto —
+              acá no se vuelve a sumar nada. Se muestra porque son DOS fuentes
+              posibles y leerlas como una sola escondería cuál se usó: los meses
+              calculados salen de las horas marcadas, los manuales de una
+              obligación que alguien cargó. Un mes nunca está en las dos. */}
+          {((r.nomina_calculada ?? 0) > 0 || (r.nomina_meses_manuales?.length ?? 0) > 0) && (
+            <div className="bg-white rounded-2xl border border-warm-200 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-warm-500 mb-2">
+                Nómina — de dónde sale este costo
+              </p>
+              {(r.nomina_calculada ?? 0) > 0 && (
+                <p className="text-sm text-warm-700">
+                  <span className="font-mono font-bold tabular-nums">{fmt(r.nomina_calculada!)}</span>{' '}
+                  calculados con {r.nomina_horas} h marcadas de {r.nomina_personas}{' '}
+                  {r.nomina_personas === 1 ? 'persona' : 'personas'} y los recargos de ley
+                  {(r.nomina_meses_calculados?.length ?? 0) > 0 &&
+                    ` (${r.nomina_meses_calculados!.join(', ')})`}.
+                </p>
+              )}
+              {(r.nomina_meses_manuales?.length ?? 0) > 0 && (
+                <p className="text-xs text-warm-500 mt-1">
+                  {r.nomina_meses_manuales!.join(', ')}: se usó la nómina cargada a mano y el
+                  cálculo de esos meses se descartó, para no contar el sueldo dos veces.
+                </p>
+              )}
+              {(r.nomina_sin_contrato ?? 0) > 0 && (
+                <p className="text-xs text-gold-700 mt-1.5">
+                  <b>{r.nomina_sin_contrato}</b>{' '}
+                  {r.nomina_sin_contrato === 1 ? 'persona trabajó' : 'personas trabajaron'} sin
+                  salario cargado en Contratos: esas horas entran al margen valiendo $0 y el
+                  costo real es mayor.
+                </p>
+              )}
+              {(r.nomina_calculada ?? 0) > 0 && (
+                <p className="text-[11px] text-warm-400 mt-1.5">
+                  Es el tiempo trabajado con sus recargos: no incluye prestaciones, seguridad
+                  social ni auxilio de transporte. Es un piso, no la liquidación del contador.
+                </p>
+              )}
+            </div>
+          )}
+
           {/* DESCUENTOS: la plata que se regaló en mostrador. El POS la escribe en
               cada ticket y ningún reporte la sumaba, así que un descuento y una
               venta que no ocurrió se veían igual. NO se resta de nada: `ventas` ya

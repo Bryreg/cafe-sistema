@@ -257,6 +257,12 @@ with engine.connect() as _conn:
         # como si nunca se hubiera cerrado.
         "UPDATE inventarios_mensuales SET fecha_primer_cierre = fecha_cierre "
         "WHERE fecha_primer_cierre IS NULL AND fecha_cierre IS NOT NULL",
+        # Almuerzo del turno: descanso NO remunerado, con su HORA además de su
+        # duración (hay que descontarlo de la franja en la que cae, no del total).
+        # Los turnos viejos quedan en NULL —sin almuerzo— y siguen liquidando
+        # igual que antes: no se les inventa un descanso que nadie configuró.
+        "ALTER TABLE turnos_programados ADD COLUMN almuerzo_inicio VARCHAR(5)",
+        "ALTER TABLE turnos_programados ADD COLUMN almuerzo_minutos INTEGER",
     ]:
         try:
             _conn.execute(_text(_sql))

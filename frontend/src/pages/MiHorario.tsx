@@ -133,6 +133,15 @@ export default function MiHorario() {
                       {t.hora_inicio} a {t.hora_fin}
                       {t.cruza_medianoche && ' (del día siguiente)'} · {fmtHoras(t.horas)}
                     </p>
+                    {t.almuerzo_minutos ? (
+                      // El almuerzo es tiempo de ella: tiene que saber cuándo es
+                      // para poder planearlo, y por qué el turno cuenta menos
+                      // horas de las que dura.
+                      <p className="text-xs text-warm-500 font-mono">
+                        🍽 Almuerzo {t.almuerzo_inicio} a {t.almuerzo_fin}{' '}
+                        ({t.almuerzo_minutos} min, no cuentan como trabajadas)
+                      </p>
+                    ) : null}
                     {nov && (
                       <p className="text-xs text-clay-600 mt-0.5">
                         {nov.label} cargada para este día

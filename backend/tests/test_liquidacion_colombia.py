@@ -42,11 +42,19 @@ class ParametrosBase(unittest.TestCase):
     def p(self, fecha=date(2026, 3, 15)):
         return pn.para(self.db, fecha)
 
-    def exonerar(self):
+    def _set_exo(self, valor: bool):
         self.db.query(ParametroNomina).filter(
             ParametroNomina.vigente_desde == date(2026, 1, 1)
-        ).update({"exonerado_114_1": True})
+        ).update({"exonerado_114_1": valor})
         self.db.commit()
+
+    def exonerar(self):
+        self._set_exo(True)
+
+    def no_exonerar(self):
+        """MEDIUM CAFÉ viene exonerada por default (persona natural con 2+
+        trabajadores), así que el escenario SIN exoneración hay que pedirlo."""
+        self._set_exo(False)
 
 
 class VigenciaTest(ParametrosBase):
@@ -185,6 +193,9 @@ class ElPisoDelIbcTest(ParametrosBase):
 
 class CostoDelEmpleadorTest(ParametrosBase):
     def test_sin_exoneracion_el_costo_es_1_69_veces_el_sueldo(self):
+        """El escenario de la persona natural con UN solo empleado, o de quien
+        no declara renta: paga los tres aportes completos."""
+        self.no_exonerar()
         r = liq.liquidar(self.p(), SMMLV_2026, SMMLV_2026, 30)
         self.assertFalse(r["aportes_empleador"]["exonerado"])
         self.assertAlmostEqual(r["aportes_empleador"]["total"], 525_657.0, delta=5)
@@ -195,7 +206,6 @@ class CostoDelEmpleadorTest(ParametrosBase):
     def test_con_exoneracion_baja_pero_la_caja_se_sigue_pagando(self):
         """El art. 114-1 apaga salud patronal, SENA e ICBF. La caja NO: es el
         error que más se ve cuando alguien dice «estoy exonerado de parafiscales»."""
-        self.exonerar()
         ap = liq.liquidar(self.p(), SMMLV_2026, SMMLV_2026, 30)["aportes_empleador"]
         self.assertEqual(ap["salud"], 0.0)
         self.assertEqual(ap["sena"], 0.0)
@@ -205,22 +215,22 @@ class CostoDelEmpleadorTest(ParametrosBase):
         self.assertGreater(ap["arl"], 0.0)
 
     def test_con_exoneracion_el_costo_total_baja_a_1_55(self):
-        self.exonerar()
         r = liq.liquidar(self.p(), SMMLV_2026, SMMLV_2026, 30)
         self.assertAlmostEqual(r["costo_empleador"], 2_715_573.0, delta=15)
         self.assertAlmostEqual(r["factor_costo"], 1.551, places=2)
 
     def test_la_exoneracion_vale_236_mil_al_mes_por_barista(self):
-        """El número exacto que el dueño tiene que confirmar con su contador."""
+        """El número que hay que poder mostrar en pantalla: lo que costaría
+        tener este flag mal puesto, en cualquiera de los dos sentidos."""
         r = liq.liquidar(self.p(), SMMLV_2026, SMMLV_2026, 30)
         self.assertAlmostEqual(r["aportes_empleador"]["ahorro_por_exoneracion"],
                                236_372.0, delta=5)
 
     def test_el_ahorro_declarado_es_exactamente_la_diferencia_medida(self):
         """No es un número decorativo: tiene que ser la resta de verdad."""
-        sin_exo = liq.liquidar(self.p(), SMMLV_2026, SMMLV_2026, 30)
-        self.exonerar()
         con_exo = liq.liquidar(self.p(), SMMLV_2026, SMMLV_2026, 30)
+        self.no_exonerar()
+        sin_exo = liq.liquidar(self.p(), SMMLV_2026, SMMLV_2026, 30)
         self.assertAlmostEqual(
             sin_exo["aportes_empleador"]["ahorro_por_exoneracion"],
             sin_exo["costo_empleador"] - con_exo["costo_empleador"], places=2)
@@ -241,7 +251,10 @@ class CostoDelEmpleadorTest(ParametrosBase):
     def test_el_costo_es_mucho_mayor_que_el_neto_que_recibe_la_barista(self):
         """El malentendido que este módulo existe para evitar."""
         r = liq.liquidar(self.p(), SMMLV_2026, SMMLV_2026, 30)
-        self.assertGreater(r["costo_empleador"], r["neto_a_pagar"] * 1.5)
+        self.assertGreater(r["costo_empleador"], r["neto_a_pagar"] * 1.4)
+        self.no_exonerar()
+        self.assertGreater(liq.liquidar(self.p(), SMMLV_2026, SMMLV_2026, 30)["costo_empleador"],
+                           r["neto_a_pagar"] * 1.5)
 
     def test_los_cinco_numeros_cierran_entre_si(self):
         """Invariante: neto = devengado + auxilio − deducciones, y el costo es
@@ -280,3 +293,61 @@ class SalarioEnSmmlvTest(ParametrosBase):
         c = ContratoBarista(usuario_id=1, salario_mensual=0.0, salario_en_smmlv=1.5)
         self.assertAlmostEqual(pn.salario_del_contrato(c, self.p()),
                                round(SMMLV_2026 * 1.5, 2))
+
+
+class LaExoneracionDeUnaPersonaNaturalTest(ParametrosBase):
+    """MEDIUM CAFÉ es PERSONA NATURAL con ~5 baristas.
+
+    El art. 114-1 ET exonera a la persona natural empleadora que tenga DOS O
+    MÁS trabajadores. Con un solo empleado NO aplica, y esa condición se puede
+    perder sin que nadie toque el sistema: alcanza con que se vaya gente.
+    """
+
+    def test_viene_prendida_por_default(self):
+        self.assertTrue(self.p().exonerado_114_1)
+
+    def test_todas_las_vigencias_sembradas_la_traen_igual(self):
+        """Si 2025 quedara sin exonerar, comparar años mostraría un salto de
+        costo que no ocurrió: sería un cambio de criterio disfrazado de dato."""
+        for fila in pn.listar(self.db):
+            self.assertTrue(fila.exonerado_114_1)
+
+    def test_con_dos_contratos_activos_no_avisa_nada(self):
+        for uid in (1, 2):
+            self.db.add(ContratoBarista(usuario_id=uid, salario_mensual=0.0,
+                                        salario_en_smmlv=1.0, activo=True))
+        self.db.commit()
+        self.assertIsNone(pn.alerta_exoneracion(self.db, self.p()))
+
+    def test_con_un_solo_trabajador_avisa_que_se_pierde(self):
+        self.db.add(ContratoBarista(usuario_id=1, salario_mensual=0.0,
+                                    salario_en_smmlv=1.0, activo=True))
+        self.db.commit()
+        aviso = pn.alerta_exoneracion(self.db, self.p())
+        self.assertIsNotNone(aviso)
+        self.assertIn("SENA", aviso)
+
+    def test_los_contratos_inactivos_no_cuentan_como_trabajadores(self):
+        self.db.add(ContratoBarista(usuario_id=1, salario_mensual=0.0,
+                                    salario_en_smmlv=1.0, activo=True))
+        self.db.add(ContratoBarista(usuario_id=2, salario_mensual=0.0,
+                                    salario_en_smmlv=1.0, activo=False))
+        self.db.commit()
+        self.assertIsNotNone(pn.alerta_exoneracion(self.db, self.p()))
+
+    def test_apagada_la_exoneracion_no_hay_nada_que_avisar(self):
+        """El aviso es sobre un riesgo de la exoneración. Sin ella, no aplica."""
+        self.no_exonerar()
+        self.assertIsNone(pn.alerta_exoneracion(self.db, self.p()))
+
+    def test_el_aviso_dice_lo_que_el_sistema_VE_y_no_acusa(self):
+        """El conteo son los contratos de ESTE sistema, que pueden ser menos que
+        los trabajadores reales (un cocinero, alguien de aseo). El mensaje no
+        puede afirmar que la exoneración esté mal: un aviso que se equivoca
+        seguido termina ignorado, y éste tiene que doler el día que importe."""
+        self.db.add(ContratoBarista(usuario_id=1, salario_mensual=0.0,
+                                    salario_en_smmlv=1.0, activo=True))
+        self.db.commit()
+        aviso = pn.alerta_exoneracion(self.db, self.p())
+        self.assertIn("1 contrato activo", aviso)
+        self.assertIn("Si en total", aviso)

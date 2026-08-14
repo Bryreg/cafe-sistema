@@ -59,7 +59,16 @@ DEFAULTS: dict = {
     "caja_compensacion": 0.04,
     "sena": 0.02,
     "icbf": 0.03,
-    "exonerado_114_1": False,
+    # PRENDIDA: MEDIUM CAFÉ opera como PERSONA NATURAL con ~5 baristas, y el
+    # art. 114-1 ET exonera a la persona natural empleadora que tenga DOS O MÁS
+    # trabajadores (por cada uno que gane menos de 10 SMMLV). Lo que dejaría
+    # afuera es tener un solo empleado. Apaga salud patronal 8,5% + SENA 2% +
+    # ICBF 3%; la caja de compensación (4%) se sigue pagando siempre.
+    #
+    # Vale $236.372 por barista por mes, así que es editable y por sede-año:
+    # si el negocio se constituye como sociedad, o si alguna vez queda con un
+    # solo trabajador, esta fila es la que hay que corregir.
+    "exonerado_114_1": True,
     "prima": 0.0833333,
     "cesantias": 0.0833333,
     "intereses_cesantias": 0.01,
@@ -196,6 +205,40 @@ def salario_del_contrato(contrato, params: Parametros | None) -> float:
     if en_smmlv and params is not None and params.smmlv:
         return round(float(en_smmlv) * float(params.smmlv), 2)
     return float(contrato.salario_mensual or 0.0)
+
+
+MINIMO_TRABAJADORES_EXONERACION = 2
+
+
+def alerta_exoneracion(db: Session, params: Parametros | None) -> str | None:
+    """Avisa si la exoneración prendida podría no corresponder.
+
+    La condición que la sostiene para una PERSONA NATURAL es tener DOS O MÁS
+    trabajadores, y esa condición se puede perder sin que nadie toque el
+    sistema: alcanza con que se vaya gente. El día que quede un solo empleado,
+    la exoneración se cae y vuelven a deberse salud patronal, SENA e ICBF —
+    retroactivamente para ese período, no desde que alguien se dé cuenta.
+
+    OJO CON EL CONTEO: acá se cuentan los contratos cargados en ESTE sistema,
+    que pueden ser menos que los trabajadores reales (un cocinero, alguien de
+    aseo, un administrador que no usa la app). Por eso el mensaje no afirma que
+    la exoneración esté mal: dice lo que el sistema ve y deja la conclusión al
+    dueño. Un aviso que se equivoca seguido termina ignorado, y éste tiene que
+    seguir doliendo el día que importe.
+    """
+    if params is None or not params.exonerado_114_1:
+        return None
+    from app.models.models import ContratoBarista
+    n = db.query(ContratoBarista).filter(ContratoBarista.activo.is_(True)).count()
+    if n >= MINIMO_TRABAJADORES_EXONERACION:
+        return None
+    return (
+        f"La exoneración de aportes está prendida y exige "
+        f"{MINIMO_TRABAJADORES_EXONERACION} trabajadores o más. El sistema ve "
+        f"{n} contrato{'s' if n != 1 else ''} activo{'s' if n != 1 else ''}. "
+        "Si en total tenés menos de dos empleados, no aplica y hay que pagar "
+        "salud patronal, SENA e ICBF."
+    )
 
 
 def a_dict(fila: ParametroNomina) -> dict:

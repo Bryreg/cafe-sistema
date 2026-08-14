@@ -146,11 +146,21 @@ def _nomina_del_periodo(db, desde: date, hasta: date, tienda_id: int | None,
     # la pantalla no puede decir "se usó la cargada a mano" cuando adentro no hay
     # ni un peso de ella. Se mide contra `oblig_rows`, que ya viene recortado por
     # [desde, hasta] y por sede, o sea exactamente lo que entró a `gastos`.
-    manual_en_ventana = sum(
-        float(monto or 0) for _dev, monto, _tid, _cat, _grupo, clave in oblig_rows
-        if clave == CLAVE_CATEGORIA_NOMINA
-    )
+    #
+    # SE ABRE POR MES, no como un total. Con una ventana que toca varios meses
+    # —los presets "30 días" y "Este año" lo hacen siempre— un solo número deja
+    # que un mes bien cubierto tape a otro que quedó afuera: alcanza con que UNO
+    # tenga plata adentro para que el total sea > 0 y la pantalla afirme
+    # cobertura de la lista entera. El mes sin un peso hay que poder nombrarlo.
+    manual_por_mes: dict[str, float] = {mes: 0.0 for mes in
+                                        meses_todas_las_sedes | {m for m, _s in pares_manuales}}
+    for dev, monto, _tid, _cat, _grupo, clave in oblig_rows:
+        if clave == CLAVE_CATEGORIA_NOMINA:
+            mes = dev.strftime("%Y-%m")
+            manual_por_mes[mes] = manual_por_mes.get(mes, 0.0) + float(monto or 0)
+    manual_en_ventana = round(sum(manual_por_mes.values()), 2)
     return {
+        "manual_por_mes": {m: round(v, 2) for m, v in manual_por_mes.items()},
         "pares": calculada["por_mes_sede"],
         "total": calculada["total"],
         "meses_calculados": calculada["meses"],
@@ -407,6 +417,13 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # dejarían de dar `resumen.gastos` y el desglose pasaría a mentir. Por eso el
     # cálculo viene abierto por (mes, sede) y no como un número suelto.
     for (mes_nom, sede_nom), monto in nomina["pares"].items():
+        if not monto:
+            # `pares` es un defaultdict: la clave (mes, sede) existe con solo que
+            # alguien haya marcado horas ahí, aunque el costo sea $0 por falta de
+            # sueldo cargado. Sumar 0 no mueve ningún total, pero SÍ deja la fila
+            # "Nómina (calculada) — $0 (0%)" en el desglose "en qué se fueron los
+            # $X", que es ruido que pretende ser un costo.
+            continue
         por_mes[mes_nom]["gastos"] += monto
         por_sede[sede_nom]["gastos"] += monto
         _acum_categoria(CLAVE_CATEGORIA_NOMINA, "Nómina (calculada)", "fijo", monto)
@@ -427,7 +444,13 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # se apagaba solo el día que el dato empezó a ser mejor que antes.
     costos_fijos_devengados = round(sum(float(r[1] or 0) for r in fijos_rows)
                                     + nomina["total"], 2)
-    n_costos_fijos = len(fijos_rows) + len(nomina["pares"])
+    # Se cuentan los pares CON PLATA, por el mismo motivo que `tiene_costos_fijos`
+    # mira el monto: `pares` tiene una clave por cada (mes, sede) donde alguien
+    # marcó horas, valga lo que valga. Contando claves, un negocio sin un solo peso
+    # de costo fijo cargado veía "1 obligación fija devengada — el margen neto ya
+    # las descuenta", y el aviso "no hay arriendo, nómina ni servicios devengados"
+    # se volvía inalcanzable: la advertencia moría justo en el caso que la necesita.
+    n_costos_fijos = len(fijos_rows) + sum(1 for v in nomina["pares"].values() if v)
 
     # ── Descuentos: la plata REGALADA en mostrador ────────────────────────────
     # ADITIVO y fuera de toda fórmula: Ticket.total ya viene neto. El % se mide
@@ -547,10 +570,13 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             "nomina_calculada": nomina["total"],
             "nomina_meses_calculados": nomina["meses_calculados"],
             "nomina_meses_manuales": nomina["meses_manuales"],
-            # Cuánto de esa nómina manual está DENTRO de la ventana consultada.
-            # En 0 con `meses_manuales` no vacío significa que el devengo cae
-            # afuera: el mes está cubierto, pero no por plata de ESTE período.
+            # Cuánto de esa nómina manual está DENTRO de la ventana consultada,
+            # ABIERTO POR MES. Un mes en 0 significa que su devengo cae afuera:
+            # el mes está cubierto —su cálculo se descartó— pero ese costo
+            # laboral no está en ESTE margen. Se abre por mes porque un total
+            # dejaría que un mes cubierto tape a uno que quedó sin nada.
             "nomina_manual_en_ventana": nomina["manual_en_ventana"],
+            "nomina_manual_por_mes": nomina["manual_por_mes"],
             "nomina_personas": nomina["personas"],
             "nomina_horas": nomina["horas"],
             # Gente con horas en el período y sin salario cargado en Contratos:

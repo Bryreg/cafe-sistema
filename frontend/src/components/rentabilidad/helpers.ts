@@ -36,6 +36,9 @@ export interface RentabilidadData {
     /** Plata de esa nómina manual que cae DENTRO del período consultado. En 0
      *  con `nomina_meses_manuales` no vacío = el devengo quedó afuera. */
     nomina_manual_en_ventana?: number
+    /** Lo mismo abierto POR MES. Hace falta porque una ventana multi-mes puede
+     *  tener un mes cubierto y otro sin un peso adentro, y el total los tapa. */
+    nomina_manual_por_mes?: Record<string, number>
     nomina_personas?: number
     nomina_horas?: number
     // Gente con horas en el período y SIN salario cargado en Contratos: sus

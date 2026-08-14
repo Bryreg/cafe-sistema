@@ -456,3 +456,69 @@ class LaPantallaNoAfirmaDeMasTest(RentabilidadNominaBase):
         self.assertEqual(r["nomina_meses_manuales"], ["2026-08"])   # el mes está cubierto
         self.assertEqual(r["nomina_calculada"], 0)                  # y su cálculo, descartado
         self.assertEqual(r["nomina_manual_en_ventana"], 0)          # pero adentro no hay nada
+
+
+class ElContadorTambienMiraElMontoTest(RentabilidadNominaBase):
+    """`n_costos_fijos` es el hermano de `tiene_costos_fijos` y tenía el mismo bug.
+
+    La pantalla Datos decide por el CONTADOR: en 0 avisa "no hay arriendo, nómina
+    ni servicios devengados este mes", y en 1+ afirma "el margen neto ya las
+    descuenta". Contando claves de `pares` —que existe con solo tener horas—, el
+    aviso quedaba inalcanzable justo en el negocio que no cargó ni un peso.
+    """
+
+    def test_horas_sin_sueldo_no_cuentan_como_obligacion_fija(self):
+        self.turno_de_8h(self.martes)                    # horas sí, sueldo no
+        r = self.pl()["resumen"]
+        self.assertEqual(r["n_costos_fijos"], 0)
+        self.assertEqual(r["costos_fijos_devengados"], 0)
+
+    def test_con_sueldo_cargado_la_nomina_si_es_una_obligacion_fija(self):
+        self.con_contrato()
+        self.turno_de_8h(self.martes)
+        self.assertEqual(self.pl()["resumen"]["n_costos_fijos"], 1)
+
+    def test_la_nomina_en_cero_no_deja_una_fila_fantasma_en_el_desglose(self):
+        """"Nómina (calculada) — $0 (0%)" es ruido que se hace pasar por costo."""
+        self.turno_de_8h(self.martes)
+        claves = {c["clave"] for c in self.pl()["gastos_por_categoria"]}
+        self.assertNotIn("nomina", claves)
+
+
+class LaNominaManualSeAbrePorMesTest(RentabilidadNominaBase):
+    """Con una ventana de varios meses, un mes cubierto no puede tapar a otro.
+
+    Los presets "30 días" y "Este año" cruzan meses siempre. Con un solo total,
+    bastaba que UN mes tuviera su devengo adentro para que la pantalla afirmara
+    cobertura de la lista entera —y el mes que quedó sin un peso de costo laboral
+    desaparecía detrás del monto del otro.
+    """
+
+    def test_un_mes_adentro_y_otro_afuera_se_reportan_por_separado(self):
+        self.con_contrato()
+        self.turno_de_8h(date(2026, 7, 14))              # julio
+        self.turno_de_8h(date(2026, 8, 11))              # agosto
+        self.obligacion(self.cat_nomina, 1_500_000, date(2026, 7, 15))   # ADENTRO
+        self.obligacion(self.cat_nomina, 1_500_000, date(2026, 8, 31))   # AFUERA
+
+        r = self.pl(date(2026, 7, 1), date(2026, 8, 15))["resumen"]
+        self.assertEqual(r["nomina_meses_manuales"], ["2026-07", "2026-08"])
+        por_mes = r["nomina_manual_por_mes"]
+        self.assertAlmostEqual(por_mes["2026-07"], 1_500_000)
+        self.assertAlmostEqual(por_mes["2026-08"], 0)
+
+    def test_el_total_sigue_siendo_la_suma_de_los_meses(self):
+        self.con_contrato()
+        self.obligacion(self.cat_nomina, 900_000, date(2026, 7, 15))
+        self.obligacion(self.cat_nomina, 600_000, date(2026, 8, 5))
+        r = self.pl(date(2026, 7, 1), date(2026, 8, 15))["resumen"]
+        self.assertAlmostEqual(r["nomina_manual_en_ventana"],
+                               sum(r["nomina_manual_por_mes"].values()))
+        self.assertAlmostEqual(r["nomina_manual_en_ventana"], 1_500_000)
+
+    def test_el_mes_cubierto_aparece_aunque_no_haya_ninguno_afuera(self):
+        self.con_contrato()
+        self.turno_de_8h(self.martes)
+        self.obligacion(self.cat_nomina, 2_000_000, date(2026, 8, 31))
+        r = self.pl(date(2026, 8, 1), date(2026, 8, 31))["resumen"]
+        self.assertAlmostEqual(r["nomina_manual_por_mes"]["2026-08"], 2_000_000)

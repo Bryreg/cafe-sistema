@@ -435,31 +435,46 @@ export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refre
                     ` (${r.nomina_meses_calculados!.join(', ')})`}.
                 </p>
               )}
-              {/* Dos frases distintas para dos situaciones distintas. El mes con
-                  nómina a mano descarta su cálculo SIEMPRE —esa es la regla—,
-                  pero la plata manual entra en la ventana que contiene su fecha
-                  de devengo. Mirando "del 1 a hoy" con la nómina devengada el
-                  31, el costo laboral de ese mes no está adentro de ningún lado:
-                  decir "se usó la cargada a mano" ahí sería mentir sobre un
-                  número que no está en pantalla. */}
-              {(r.nomina_meses_manuales?.length ?? 0) > 0 &&
-                ((r.nomina_manual_en_ventana ?? 0) > 0 ? (
-                  <p className="text-xs text-warm-500 mt-1">
-                    {r.nomina_meses_manuales!.join(', ')}:{' '}
-                    <span className="font-mono tabular-nums">
-                      {fmt(r.nomina_manual_en_ventana!)}
-                    </span>{' '}
-                    de nómina cargada a mano; el cálculo de esos meses se descartó, para no
-                    contar el sueldo dos veces.
-                  </p>
-                ) : (
-                  <p className="text-xs text-gold-700 mt-1">
-                    {r.nomina_meses_manuales!.join(', ')}: la nómina de esos meses está
-                    cargada a mano con fecha fuera de este período, así que{' '}
-                    <b>su costo laboral no está en este margen</b>. Consultá el mes completo
-                    para verlo.
-                  </p>
-                ))}
+              {/* Dos frases distintas para dos situaciones distintas, y la
+                  separación se hace MES POR MES. El mes con nómina a mano
+                  descarta su cálculo SIEMPRE —esa es la regla—, pero la plata
+                  manual entra en la ventana que contiene su fecha de devengo.
+                  Mirando "del 1 a hoy" con la nómina devengada el 31, el costo
+                  laboral de ese mes no está adentro de ningún lado. Y con un
+                  rango de varios meses los dos casos CONVIVEN: si se decidiera
+                  por el total, un mes cubierto taparía al que quedó sin nada. */}
+              {(() => {
+                const meses = r.nomina_meses_manuales ?? []
+                if (!meses.length) return null
+                const porMes = r.nomina_manual_por_mes ?? {}
+                const adentro = meses.filter((m) => (porMes[m] ?? 0) > 0)
+                const afuera = meses.filter((m) => !((porMes[m] ?? 0) > 0))
+                const plata = adentro.reduce((a, m) => a + (porMes[m] ?? 0), 0)
+                return (
+                  <>
+                    {adentro.length > 0 && (
+                      <p className="text-xs text-warm-500 mt-1">
+                        {adentro.join(', ')}:{' '}
+                        <span className="font-mono tabular-nums">{fmt(plata)}</span> de nómina
+                        cargada a mano; el cálculo de esos meses se descartó, para no contar
+                        el sueldo dos veces.
+                      </p>
+                    )}
+                    {afuera.length > 0 && (
+                      <p className="text-xs text-gold-700 mt-1">
+                        {afuera.join(', ')}: la nómina de{' '}
+                        {afuera.length === 1 ? 'ese mes está cargada' : 'esos meses está cargada'}{' '}
+                        a mano con fecha fuera de este período, así que{' '}
+                        <b>
+                          su costo laboral no está en este margen
+                        </b>
+                        . Consultá {afuera.length === 1 ? 'ese mes completo' : 'esos meses completos'}{' '}
+                        para verlo.
+                      </p>
+                    )}
+                  </>
+                )
+              })()}
               {(r.nomina_sin_contrato ?? 0) > 0 && (
                 <p className="text-xs text-gold-700 mt-1.5">
                   <b>{r.nomina_sin_contrato}</b>{' '}

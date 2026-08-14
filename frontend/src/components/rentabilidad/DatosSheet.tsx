@@ -53,6 +53,10 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh, 
   // mirando solo el costeo de producto — o sea, con el arriendo entero faltando.
   const nFijos = plMes?.resumen.n_costos_fijos ?? 0
   const montoFijos = plMes?.resumen.costos_fijos_devengados ?? 0
+  // La alerta se decide por el MONTO, no por el contador. Un costo fijo de $0
+  // cargado no es cobertura: si el aviso dependiera del contador, bastaría una
+  // fila en cero para apagar para siempre el "no hay costos fijos cargados".
+  const sinFijos = montoFijos <= 0
 
   const toggleAliases = async () => {
     const abrir = !verAliases
@@ -179,14 +183,14 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh, 
           </div>
 
           {/* Costos fijos del mes */}
-          <div className={`rounded-xl border p-4 ${nFijos === 0 ? 'border-l-[3px] border-gold-500 border-warm-200 bg-gold-50' : 'border-warm-200'}`}>
+          <div className={`rounded-xl border p-4 ${sinFijos ? 'border-l-[3px] border-gold-500 border-warm-200 bg-gold-50' : 'border-warm-200'}`}>
             <div className="flex items-baseline justify-between">
               <p className="text-[11px] font-bold uppercase tracking-wide text-warm-500">Costos fijos del mes</p>
               <p className="text-lg font-mono font-extrabold text-warm-700 tabular-nums">
-                {nFijos === 0 ? '0' : fmt(montoFijos)}
+                {fmt(montoFijos)}
               </p>
             </div>
-            {nFijos === 0 ? (
+            {sinFijos ? (
               <p className="text-[11px] text-warm-600 mt-1.5 leading-relaxed">
                 No hay arriendo, nómina ni servicios devengados este mes. Mientras falten, el
                 margen neto se ve MÁS ALTO de lo que es y el semáforo no puede decir si el

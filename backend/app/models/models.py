@@ -1654,6 +1654,89 @@ class TasaLaboral(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ParametroNomina(Base):
+    """Plata de la nómina colombiana CON VIGENCIA: mínimo, auxilio y aportes.
+
+    Hermana de `TasaLaboral` y por el mismo motivo: el salario mínimo y el
+    auxilio de transporte se decretan cada diciembre y rigen desde el 1 de
+    enero. Un número quemado en el código no avisa cuando envejece — el sistema
+    sigue liquidando con el mínimo del año pasado y nadie se entera hasta que
+    alguien compara con el desprendible. Cada fila es un SNAPSHOT COMPLETO
+    vigente desde `vigente_desde`, y el cálculo resuelve por la FECHA DEL
+    PERÍODO liquidado: recalcular un mes de 2025 usa el mínimo de 2025.
+
+    TABLA APARTE de `tasas_laborales` y no columnas nuevas sobre ella, por dos
+    razones. Una práctica: `tasas_laborales` ya existe en producción, así que
+    cada columna nueva ahí exigiría su ALTER en el loop de main.py, mientras que
+    una tabla nueva la crea `create_all` sola. Y otra de fondo: los recargos
+    cambian por ETAPAS de una reforma (16-jul-2025, 1-jul-2026...) y el mínimo
+    cambia cada 1 de enero. Son dos calendarios distintos; meterlos en la misma
+    fila obligaría a duplicar cada snapshot por los cortes del otro.
+
+    Es EDITABLE desde la pantalla, igual que las tasas: el sistema no reemplaza
+    al contador, le da un piso verificable.
+    """
+    __tablename__ = "parametros_nomina"
+    id = Column(Integer, primary_key=True)
+    vigente_desde = Column(Date, nullable=False, unique=True, index=True)
+
+    # ── Lo que se decreta cada diciembre ──────────────────────────────────────
+    smmlv = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    auxilio_transporte = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    # El auxilio se prorratea por DÍA con divisor 30 fijo — no por los días
+    # calendario del mes. Un febrero no paga más caro el día que un enero.
+    dias_base_auxilio = Column(Integer, nullable=False, default=30)
+    # Tienen derecho al auxilio quienes devengan hasta 2 SMMLV. Se guarda EN
+    # SMMLV y no en pesos para que el umbral se mueva solo con el mínimo.
+    tope_auxilio_smmlv = Column(Float, nullable=False, default=2.0)
+
+    # ── Deducciones del TRABAJADOR (salen de su sueldo) ───────────────────────
+    # Sobre el IBC, que incluye recargos y extras pero NO el auxilio.
+    salud_empleado = Column(Float, nullable=False, default=0.04)
+    pension_empleado = Column(Float, nullable=False, default=0.04)
+    # Fondo de Solidaridad Pensional: solo desde 4 SMMLV, o sea que a una
+    # barista de mínimo no le aplica. Se guarda el umbral igual para que el día
+    # que haya un sueldo alto el sistema no lo ignore en silencio.
+    fsp_desde_smmlv = Column(Float, nullable=False, default=4.0)
+    fsp_tarifa = Column(Float, nullable=False, default=0.01)
+
+    # ── Aportes del EMPLEADOR (van por encima del sueldo) ─────────────────────
+    salud_empleador = Column(Float, nullable=False, default=0.085)
+    pension_empleador = Column(Float, nullable=False, default=0.12)
+    # ARL por clase de riesgo. Decreto 1607/2002 pone «expendio a la mesa de
+    # comidas preparadas en cafeterías» en CLASE I = 0,522%. Sube a clase II si
+    # el expendio es por autoservicio y a III si se hornea pan en la sede, así
+    # que es EDITABLE: el sistema no puede ver cómo trabaja el local.
+    arl = Column(Float, nullable=False, default=0.00522)
+    caja_compensacion = Column(Float, nullable=False, default=0.04)
+    sena = Column(Float, nullable=False, default=0.02)
+    icbf = Column(Float, nullable=False, default=0.03)
+    # Exoneración del art. 114-1 ET: apaga salud patronal (8,5%), SENA e ICBF
+    # por cada trabajador de menos de 10 SMMLV. NO apaga la caja (4%), que se
+    # paga siempre. Cubre a sociedades declarantes de renta, a la persona
+    # natural con DOS O MÁS trabajadores y al Régimen Simple; deja afuera a la
+    # persona natural con un solo empleado y a las ESAL.
+    #
+    # Arranca en FALSE a propósito. El sistema no puede saber cómo está
+    # constituido el negocio, y de los dos errores posibles este es el barato:
+    # sobreestimar el costo hace ver el margen peor de lo que es, que es el lado
+    # seguro para decidir. Prenderlo es un click y la pantalla dice cuánto vale.
+    exonerado_114_1 = Column(Boolean, nullable=False, default=False)
+
+    # ── Prestaciones sociales (provisión mensual equivalente) ─────────────────
+    # OJO CON LAS BASES, que son DOS y es el error clásico: prima, cesantías e
+    # intereses se liquidan sobre salario + auxilio (excepción del art. 7 de la
+    # Ley 1ª de 1963), y las vacaciones SOLO sobre el salario.
+    prima = Column(Float, nullable=False, default=0.0833333)
+    cesantias = Column(Float, nullable=False, default=0.0833333)
+    intereses_cesantias = Column(Float, nullable=False, default=0.01)
+    vacaciones = Column(Float, nullable=False, default=0.0416667)
+
+    nota = Column(Text, nullable=True)
+    confirmar_contador = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Festivo(Base):
     """OVERRIDE de festivos, no el catálogo.
 
@@ -1680,6 +1763,15 @@ class ContratoBarista(Base):
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"),
                         nullable=False, unique=True, index=True)
     salario_mensual = Column(Numeric(12, 2, asdecimal=False), default=0.0, nullable=False)
+    # Sueldo expresado EN SMMLV (1.0 = el mínimo). Cuando está puesto, MANDA
+    # sobre `salario_mensual` y el sueldo se deriva del mínimo vigente en la
+    # fecha liquidada. Dos cosas se arreglan solas con esto: en enero el sueldo
+    # sube sin que nadie se acuerde, y un mes viejo se recalcula con el mínimo
+    # de SU año en vez de con el de hoy. Sin esto, subir a la barista al mínimo
+    # de 2026 reescribía hacia atrás todos los meses de 2025 ya liquidados.
+    # NULL = sueldo en pesos fijos, que sigue siendo válido para quien gana por
+    # encima del mínimo y no se mueve con él.
+    salario_en_smmlv = Column(Float, nullable=True)
     # Jornada PACTADA (medio tiempo, etc.). NULL = la máxima legal de su fecha.
     horas_semana_pactadas = Column(Float, nullable=True)
     fecha_ingreso = Column(Date, nullable=True)

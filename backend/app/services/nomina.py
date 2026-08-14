@@ -41,6 +41,7 @@ from app.models.models import (
 )
 from app.services import festivos as fsvc
 from app.services import horarios as hsvc
+from app.services import parametros_nomina as pnsvc
 from app.services import novedades_nomina as nsvc
 from app.services import tasas_laborales
 from app.services.horas import (
@@ -410,7 +411,11 @@ def _resumen_barista(db, uid, u, tramos_reales, tramos_planeados, planeado_dia,
     acred_total, acred_dia, acred_semana = _liquidar(
         tramos_acreditados, semanas, tasas, es_festivo, desde, hasta)
 
-    salario = float(contrato.salario_mensual) if contrato else 0.0
+    # El sueldo se resuelve POR LA FECHA DEL PERÍODO, no por el número de hoy:
+    # un contrato que dice «1 SMMLV» vale el mínimo de ESE mes. Sin esto, subir
+    # a la barista al mínimo de 2026 reescribía hacia atrás todo 2025.
+    params = pnsvc.para(db, desde)
+    salario = pnsvc.salario_del_contrato(contrato, params)
     estimado = _estimar(acred_semana, semanas, tasas, salario)
 
     dias = []
@@ -602,6 +607,10 @@ def costo_laboral(db: Session, desde: date, hasta: date,
             for c in db.query(ContratoBarista).filter(
                 ContratoBarista.usuario_id.in_(list(personas) or [0])).all()
         }
+        # Parámetros vigentes en el período liquidado: el contrato que dice «1
+        # SMMLV» vale el mínimo de ESA fecha, no el de hoy. Se resuelve una vez
+        # por período para que ninguna persona quede mezclando dos vigencias.
+        params_periodo = pnsvc.para(db, desde)
 
         for uid in personas:
             _cub, acreditantes = _dias_con_novedad(
@@ -626,7 +635,7 @@ def costo_laboral(db: Session, desde: date, hasta: date,
                 continue
 
             contrato = contratos.get(uid)
-            salario = float(contrato.salario_mensual) if contrato else 0.0
+            salario = pnsvc.salario_del_contrato(contrato, params_periodo)
             personas_con_costo.add(uid)
             horas += horas_persona
             if salario <= 0:

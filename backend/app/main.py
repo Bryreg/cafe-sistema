@@ -263,6 +263,13 @@ with engine.connect() as _conn:
         # igual que antes: no se les inventa un descanso que nadie configuró.
         "ALTER TABLE turnos_programados ADD COLUMN almuerzo_inicio VARCHAR(5)",
         "ALTER TABLE turnos_programados ADD COLUMN almuerzo_minutos INTEGER",
+        # Sueldo expresado en SMMLV (1.0 = el mínimo). NULL = sueldo en pesos
+        # fijos, que es como quedan todos los contratos anteriores a esta
+        # columna: siguen liquidando exactamente igual que antes. La tabla de
+        # parámetros (`parametros_nomina`) es NUEVA y la crea create_all, así
+        # que no lleva ALTER; esta columna sí, porque contratos_barista ya
+        # existe en producción y el loop corre antes de create_all.
+        "ALTER TABLE contratos_barista ADD COLUMN salario_en_smmlv FLOAT",
     ]:
         try:
             _conn.execute(_text(_sql))
@@ -313,6 +320,28 @@ def _seed_tasas_laborales():
         db.close()
 
 _seed_tasas_laborales()
+
+
+def _seed_parametros_nomina():
+    """SMMLV, auxilio de transporte y aportes de ley, con vigencia.
+
+    Idempotente y NO destructivo: `sembrar` salta las vigencias que ya existen,
+    así que un porcentaje que el dueño corrigió desde la pantalla —la clase de
+    ARL, la exoneración del 114-1— sobrevive al deploy siguiente.
+    """
+    from app.services import parametros_nomina
+    db = SessionLocal()
+    try:
+        creadas = parametros_nomina.sembrar(db)
+        if creadas:
+            logger.info("Parámetros de nómina sembrados: %d vigencias", creadas)
+    except Exception as e:
+        db.rollback()
+        logger.warning("No se pudieron sembrar los parámetros de nómina: %s", e)
+    finally:
+        db.close()
+
+_seed_parametros_nomina()
 
 
 def _backfill_dia_operativo():

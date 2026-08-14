@@ -41,6 +41,7 @@ from app.models.models import (
 )
 from app.services import festivos as fsvc
 from app.services import horarios as hsvc
+from app.services import liquidacion as lqsvc
 from app.services import parametros_nomina as pnsvc
 from app.services import novedades_nomina as nsvc
 from app.services import tasas_laborales
@@ -63,10 +64,33 @@ ADVERTENCIAS = [
     "jornada máxima es por persona, no por local), pero su almuerzo no se les "
     "descuenta: el horario que se está mirando es el de esta sede. Si alguien "
     "cubre seguido en las dos, sus horas pueden quedar un poco altas.",
-    "Los montos son un ESTIMADO del tiempo trabajado con los recargos que están "
-    "cargados en la pantalla de Tasas. No incluye auxilio de transporte, "
-    "prestaciones, seguridad social ni deducciones. La liquidación la hace tu "
-    "contador.",
+    # Estas tres reemplazaron a una sola que decía «no incluye auxilio de
+    # transporte, prestaciones, seguridad social ni deducciones». Desde que el
+    # resumen expone `liquidacion`, esa frase pasó a ser MENTIRA — y una
+    # advertencia que miente es peor que ninguna, porque el dueño deja de
+    # leerlas. La regla acá es que la advertencia NOMBRE lo que falta: «es un
+    # estimado» a secas no le sirve a nadie para saber qué revisar.
+    "Los montos son un ESTIMADO. El DEVENGADO sale del tiempo acreditado "
+    "valorizado con los recargos que están cargados en la pantalla de Tasas. El "
+    "auxilio de transporte, las deducciones de la barista, los aportes del "
+    "empleador y las prestaciones salen del mínimo y de los porcentajes de la "
+    "pantalla de Parámetros de nómina: si un porcentaje de ahí está mal, todo "
+    "ese bloque está mal.",
+    "El auxilio de transporte se prorratea por DÍA con divisor 30 —un mes de "
+    "nómina son 30 días, tenga 28 o 31 el calendario— y se SUSPENDE los días de "
+    "incapacidad, vacaciones, licencia y permiso no remunerado. A quien trabaja "
+    "medio tiempo se le paga el día completo: nunca se prorratea por horas. Y "
+    "ojo con el otro lado: los aportes de un medio tiempo NO se parten a la "
+    "mitad, porque la base de cotización nunca baja de un salario mínimo entero.",
+    "Lo que este cálculo NO tiene y tu contador SÍ va a poner: retención en la "
+    "fuente, embargos, libranzas y cualquier descuento autorizado (préstamos, "
+    "cooperativa, fondo de empleados), y el redondeo de aportes de PILA "
+    "(Decreto 1990/2016), que aproxima cada aporte al múltiplo de 100 de arriba "
+    "y mueve el neto unos pesos. Las incapacidades acreditan el TIEMPO al 100%: "
+    "acá no se reparte quién paga qué parte (EPS/ARL o el negocio) ni se aplica "
+    "el 66,67% de la incapacidad general. Y las prestaciones son la PROVISIÓN "
+    "del mes, no un pago: la prima se gira en junio y diciembre, las cesantías "
+    "en febrero.",
 ]
 
 
@@ -382,7 +406,17 @@ def resumen_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> dict:
             "horas programadas de los días cubiertos por una novedad remunerada. El "
             "planeado se muestra al lado para poder compararlo."
         ),
-        "advertencias": ADVERTENCIAS,
+        # Las fijas MÁS la de la exoneración, que depende del estado de HOY y no
+        # se puede escribir en una constante. La exoneración del art. 114-1
+        # exige dos trabajadores o más, y esa condición se pierde sin que nadie
+        # toque el sistema: alcanza con que se vaya gente. El día que pase, se
+        # deben salud patronal, SENA e ICBF retroactivamente para ese período,
+        # no desde que alguien se dé cuenta — por eso el aviso viaja acá, en la
+        # pantalla que el dueño abre todos los meses, y no en la de parámetros,
+        # que se mira una vez al año.
+        "advertencias": ADVERTENCIAS + [
+            a for a in [pnsvc.alerta_exoneracion(db, pnsvc.para(db, desde))] if a
+        ],
         "categorias": [{"clave": c, "label": ETIQUETAS[c]} for c in CATEGORIAS],
         "semanas": [
             {"lunes": lunes.isoformat(), "domingo": domingo.isoformat(),
@@ -434,6 +468,42 @@ def _resumen_barista(db, uid, u, tramos_reales, tramos_planeados, planeado_dia,
                                   d in dias_otra_sede),
         })
 
+    # ── De UN número a los CINCO ────────────────────────────────────────────
+    # `estimado` es tiempo × recargos: el DEVENGADO. Solo con eso, la pantalla
+    # dejaba creer que el sueldo es lo que cuesta la persona, cuando el costo
+    # real es ~1,69 veces y el neto que ella recibe es otro número distinto.
+    # `liquidacion.liquidar` es puro y ya está probado contra los decretos: acá
+    # solo se le arman las tres entradas.
+    #
+    # Va DESPUÉS del armado de `dias` a propósito: los días que suspenden el
+    # auxilio se cuentan de esa misma lista —que ya trae la novedad de cada
+    # día— en vez de volver a la base. Dos recorridos distintos de las mismas
+    # novedades es la forma más barata de que la pantalla y el CSV empiecen a
+    # discrepar sin que nadie lo note.
+    #
+    # UN DÍA QUE SE TRABAJÓ NO PIERDE EL AUXILIO, tenga la novedad que tenga.
+    # Si alguien está de vacaciones del 10 al 14 pero vino a cubrir el 12, ese
+    # día se desplazó y gastó el pasaje: descontárselo sería sacarle plata por
+    # un dato que la propia lista desmiente. Es el reflejo exacto del criterio
+    # de `_acreditar`, que no acredita el planeado de un día con marcación
+    # propia para no pagarlo dos veces; acá es al revés y por el mismo motivo:
+    # manda lo que PASÓ, no lo que estaba cargado.
+    dias_sin_auxilio = sum(
+        1 for d in dias
+        if d["novedad"]
+        and d["horas_reales"] <= 0
+        and d["novedad"]["tipo"] in lqsvc.NOVEDADES_SIN_AUXILIO)
+    # SIN DEVENGADO NO HAY AUXILIO. `auxilio_del_periodo` le da derecho a
+    # cualquier sueldo por debajo del tope, y un sueldo de $0 —barista sin
+    # contrato cargado— está por debajo: sin este guardia, quien no tiene
+    # contrato aparecía cobrando el auxilio entero y nada más. Es el mismo
+    # criterio que ya usa `liquidacion.ibc`: sin jornada no se inventa nada.
+    dias_auxilio = (lqsvc.dias_con_auxilio(_dias_de_nomina(desde, hasta, params),
+                                           dias_sin_auxilio)
+                    if estimado["total"] > 0 else 0)
+    liquidacion = (lqsvc.liquidar(params, estimado["total"], salario, dias_auxilio)
+                   if params is not None else _liquidacion_vacia())
+
     # «Sin marcación» ≠ «faltó». El sistema solo sabe que no hay registro; la
     # causa puede ser una novedad que nadie cargó o un olvido de marcar.
     sin_marcacion = [d["fecha"] for d in dias if d["estado"] == "sin_marcacion"]
@@ -445,6 +515,13 @@ def _resumen_barista(db, uid, u, tramos_reales, tramos_planeados, planeado_dia,
         "nombre": u.nombre,
         "activa": bool(u.activo),
         "tiene_contrato": contrato is not None,
+        # DOS COSAS DISTINTAS, y confundirlas es el bug recurrente de este
+        # proyecto: `tiene_contrato` es «existe la fila» y `tiene_sueldo` es
+        # «hay plata adentro». El PUT de la pestaña Sueldos crea la fila con
+        # salario 0, así que una barista puede tener contrato y valer $0 —y
+        # entonces su devengado, su auxilio, su neto y su costo dan todos cero
+        # sin que nada lo explique. La pantalla tiene que decidir por el MONTO.
+        "tiene_sueldo": salario > 0,
         "salario_mensual": salario,
         "horas_planeadas": _redondear(plan_total),
         "total_planeado": total_plan,
@@ -458,6 +535,7 @@ def _resumen_barista(db, uid, u, tramos_reales, tramos_planeados, planeado_dia,
         "dias_sin_marcacion": sin_marcacion,
         "dias": dias,
         "estimado": estimado,
+        "liquidacion": liquidacion,
     }
 
 
@@ -505,15 +583,92 @@ def _estimar(acred_semana, semanas, tasas, salario: float) -> dict:
     }
 
 
+def _dias_de_nomina(desde: date, hasta: date, params) -> int:
+    """Días de nómina del período, en MES COMERCIAL de 30 días.
+
+    En Colombia el mes de nómina son 30 días SIEMPRE: febrero paga 30 y agosto
+    paga 30. Contar los días del calendario acá rompería el auxilio por los dos
+    lados, porque el divisor de `Parametros.auxilio_por_dia` ya es 30 fijo:
+    agosto (31 días) pagaría $257.398 y febrero (28) pagaría $232.489, cuando
+    el decreto dice $249.095 en los dos. De más en siete meses del año, y de
+    MENOS en febrero — que además es ilegal, el auxilio es un piso, no un
+    promedio. La regla es numerador y denominador en la misma unidad.
+
+    Un período que NO es un mes entero cuenta sus días de calendario con tope
+    en la base. Hoy no existe —`resumen_mensual` siempre pide un mes completo—
+    pero la función no puede depender de eso para dar un número correcto.
+    """
+    base = int(getattr(params, "dias_base_auxilio", 30) or 30) if params else 30
+    ultimo = calendar.monthrange(desde.year, desde.month)[1]
+    if desde.day == 1 and hasta == date(desde.year, desde.month, ultimo):
+        return base
+    return min((hasta - desde).days + 1, base)
+
+
+def _liquidacion_vacia() -> dict:
+    """La misma FORMA que devuelve `liquidacion.liquidar`, toda en cero.
+
+    Se usa cuando no hay ni una vigencia de parámetros que resolver — una base
+    recién creada cuya siembra falló. La pantalla, el CSV y `_totales` leen
+    `liquidacion` sin preguntar: devolver `None` los rompe en el primer acceso
+    y devolver medio dict los rompe más adentro y más tarde. Cero, con
+    `confirmar_contador` prendido, es la respuesta honesta: no hay con qué
+    liquidar y hay que decirlo, no adivinar un mínimo.
+    """
+    return {
+        "devengado": 0.0,
+        "auxilio": {"tiene_derecho": False, "dias": 0, "por_dia": 0.0, "total": 0.0,
+                    "razon": "No hay parámetros de nómina cargados."},
+        "deducciones": {"base_ibc": 0.0, "salud": 0.0, "pension": 0.0,
+                        "fondo_solidaridad": 0.0, "total": 0.0},
+        "neto_a_pagar": 0.0,
+        "aportes_empleador": {"base_ibc": 0.0, "base_parafiscales": 0.0,
+                              "exonerado": False, "salud": 0.0,
+                              "pension": 0.0, "arl": 0.0, "caja_compensacion": 0.0,
+                              "sena": 0.0, "icbf": 0.0, "total": 0.0,
+                              "ahorro_por_exoneracion": 0.0},
+        "prestaciones": {"base_con_auxilio": 0.0, "base_sin_auxilio": 0.0,
+                         "prima": 0.0, "cesantias": 0.0, "intereses_cesantias": 0.0,
+                         "vacaciones": 0.0, "total": 0.0},
+        "costo_empleador": 0.0,
+        "factor_costo": 0.0,
+        "vigencia_parametros": None,
+        "confirmar_contador": True,
+        "es_estimado": True,
+    }
+
+
 def _totales(baristas: list[dict]) -> dict:
+    """Los agregados del mes. Los cinco números se SUMAN, nunca se recalculan.
+
+    Recalcular el total sobre el devengado agregado daría OTRO número y sería
+    el equivocado: el piso del IBC y el tope del auxilio son por PERSONA. Dos
+    baristas de medio tiempo cotizan sobre dos mínimos enteros, no sobre uno
+    solo; sumar sus devengados y liquidar eso una vez se comería la mitad de
+    los aportes. El total es la suma de las liquidaciones, punto.
+    """
     return {
         "total_planeado": round(sum(b["total_planeado"] for b in baristas), 2),
         "total_real": round(sum(b["total_real"] for b in baristas), 2),
         "total_acreditado": round(sum(b["total_acreditado"] for b in baristas), 2),
         "estimado": round(sum(b["estimado"]["total"] for b in baristas), 2),
+        "total_devengado": round(
+            sum(b["liquidacion"]["devengado"] for b in baristas), 2),
+        "total_auxilio": round(
+            sum(b["liquidacion"]["auxilio"]["total"] for b in baristas), 2),
+        "total_deducciones": round(
+            sum(b["liquidacion"]["deducciones"]["total"] for b in baristas), 2),
+        "total_neto": round(
+            sum(b["liquidacion"]["neto_a_pagar"] for b in baristas), 2),
+        "total_costo_empleador": round(
+            sum(b["liquidacion"]["costo_empleador"] for b in baristas), 2),
         "dias_sin_marcacion": sum(len(b["dias_sin_marcacion"]) for b in baristas),
         "tramos_sin_salida": sum(b["tramos_sin_salida"] for b in baristas),
         "sin_contrato": sum(1 for b in baristas if not b["tiene_contrato"]),
+        # El que la pantalla usa para avisar: cuenta a quien NO tiene sueldo,
+        # tenga o no fila de contrato. Contando solo las filas faltantes, el
+        # dueño leía «2 sin sueldo cargado» cuando eran 3.
+        "sin_sueldo": sum(1 for b in baristas if not b["tiene_sueldo"]),
     }
 
 
@@ -664,28 +819,61 @@ def _costo_vacio() -> dict:
 
 
 def csv_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> str:
-    """Export plano para pasarle al contador. Una fila por barista, una columna
-    por categoría de hora, más el estimado y la diferencia contra lo planeado."""
+    """Export plano para pasarle al contador. Una fila por barista con sus horas
+    por categoría y la liquidación entera del mes.
+
+    ESTA es la superficie que el contador lee de verdad —la pantalla la mira el
+    dueño, el CSV lo abre quien arma la PILA—, así que lleva los cinco números y
+    además las piezas con las que se auditan: la base de cotización, salud y
+    pensión por separado (que es como van en la planilla) y la apertura del
+    costo en aportes y prestaciones. Un `costo_empleador` sin sus partes no se
+    puede verificar, y lo que no se puede verificar no se usa.
+
+    La columna que antes se llamaba «Estimado ($)» ahora se llama «Devengado
+    ($)»: es el mismo número, con el nombre que usa el resto del módulo. Tener
+    «estimado» y «devengado» como dos columnas iguales al lado era la forma
+    segura de que alguien sumara las dos.
+    """
     r = resumen_mensual(db, tienda_id, anio, mes)
     cabecera = (["Barista", "Salario mensual", "Planeado (h)", "Real (h)", "Acreditado (h)"]
                 + [ETIQUETAS[c] for c in CATEGORIAS]
-                + ["Estimado ($)", "Diferencia (h)", "Días sin marcación ni novedad",
+                + ["Devengado ($)", "Auxilio transporte ($)", "Días con auxilio",
+                   "Base IBC ($)", "Salud empleado ($)", "Pensión empleado ($)",
+                   "Deducciones ($)", "Neto a pagar ($)", "Aportes empleador ($)",
+                   "Prestaciones ($)", "Costo empleador ($)",
+                   "Diferencia (h)", "Días sin marcación ni novedad",
                    "Tramos sin salida", "Novedades"])
     filas = [";".join(cabecera)]
     for b in r["baristas"]:
         novedades = " | ".join(
             f"{n['label']} {n['fecha_desde']}→{n['fecha_hasta']}" for n in b["novedades"])
+        lq = b["liquidacion"]
         filas.append(";".join([
             b["nombre"], f"{b['salario_mensual']:.0f}",
             f"{b['total_planeado']:.2f}", f"{b['total_real']:.2f}",
             f"{b['total_acreditado']:.2f}",
             *[f"{b['horas_acreditadas'][c]:.2f}" for c in CATEGORIAS],
-            f"{b['estimado']['total']:.0f}", f"{b['diferencia_horas']:.2f}",
+            f"{lq['devengado']:.0f}", f"{lq['auxilio']['total']:.0f}",
+            str(lq["auxilio"]["dias"]),
+            f"{lq['deducciones']['base_ibc']:.0f}",
+            f"{lq['deducciones']['salud']:.0f}",
+            f"{lq['deducciones']['pension']:.0f}",
+            f"{lq['deducciones']['total']:.0f}", f"{lq['neto_a_pagar']:.0f}",
+            f"{lq['aportes_empleador']['total']:.0f}",
+            f"{lq['prestaciones']['total']:.0f}", f"{lq['costo_empleador']:.0f}",
+            f"{b['diferencia_horas']:.2f}",
             str(len(b["dias_sin_marcacion"])), str(b["tramos_sin_salida"]),
             novedades,
         ]))
     filas.append("")
-    filas.append("Los montos son un ESTIMADO del tiempo trabajado con los recargos "
-                 "cargados en el sistema. No incluye prestaciones ni deducciones. "
-                 "Confirmalo con tu contador.")
+    # El pie viaja con el archivo porque el CSV se reenvía por WhatsApp sin la
+    # pantalla que lo explica: quien lo abre no vio ninguna advertencia.
+    filas.append("Los montos son un ESTIMADO. El devengado es tiempo acreditado por "
+                 "los recargos cargados en el sistema; auxilio, deducciones, aportes "
+                 "y prestaciones salen de los parámetros de nómina vigentes. NO "
+                 "incluye retención en la fuente, embargos, libranzas ni el redondeo "
+                 "de aportes de PILA (Decreto 1990/2016). Las incapacidades acreditan "
+                 "el tiempo al 100%: acá no se reparte quién paga qué parte. Las "
+                 "prestaciones son la provisión del mes, no el pago. Confirmalo con "
+                 "tu contador.")
     return "\n".join(filas)

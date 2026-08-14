@@ -351,3 +351,179 @@ class LaExoneracionDeUnaPersonaNaturalTest(ParametrosBase):
         aviso = pn.alerta_exoneracion(self.db, self.p())
         self.assertIn("1 contrato activo", aviso)
         self.assertIn("Si en total", aviso)
+
+
+class LasClavesDeNovedadExistenDeVerdadTest(ParametrosBase):
+    """La guarda del bug que ningún test podía ver.
+
+    NOVEDADES_SIN_AUXILIO nació con tres claves INVENTADAS que no existían en
+    el enum. Nunca matchearon con nada, así que la licencia cobraba el auxilio
+    entero mientras la pantalla y el CSV prometían que no. Un nombre que no
+    matchea no revienta: simplemente no hace nada, y por eso sobrevive callado.
+    """
+
+    def test_todas_las_claves_son_novedades_que_existen(self):
+        from app.services import novedades_nomina as nsvc
+        fantasmas = liq.NOVEDADES_SIN_AUXILIO - set(nsvc.TIPOS)
+        self.assertEqual(fantasmas, set(),
+                         f"claves que no existen en novedades_nomina.TIPOS: {fantasmas}")
+
+    def test_todas_son_valores_validos_del_enum(self):
+        from app.models.models import TipoNovedadNominaEnum
+        validos = {t.value for t in TipoNovedadNominaEnum}
+        self.assertTrue(liq.NOVEDADES_SIN_AUXILIO <= validos)
+
+    def test_la_licencia_suspende_el_auxilio(self):
+        """El caso que se pagaba de más: 5 días de licencia costaban $41.516."""
+        self.assertIn("licencia", liq.NOVEDADES_SIN_AUXILIO)
+
+    def test_quien_trabajo_en_otro_horario_NO_pierde_el_auxilio(self):
+        """cambio_turno = se desplazó igual, solo que a otra hora."""
+        self.assertNotIn("cambio_turno", liq.NOVEDADES_SIN_AUXILIO)
+
+    def test_el_permiso_remunerado_conserva_el_auxilio(self):
+        """Decisión declarada: no hay fuente que diga que lo pierde, y quitarle
+        plata a la trabajadora necesita una norma detrás, no una deducción."""
+        self.assertNotIn("permiso_remunerado", liq.NOVEDADES_SIN_AUXILIO)
+
+
+class LosParafiscalesNoTienenPisoTest(ParametrosBase):
+    """Seguridad social sobre el IBC (con piso); parafiscales sobre lo devengado.
+
+    Son DOS bases y solo se separan cuando alguien devenga menos de un mínimo,
+    o sea justo en el medio tiempo. Con una sola base se le cobraban $35.036 de
+    más al mes por barista de media jornada.
+    """
+
+    def test_la_caja_se_liquida_sobre_lo_devengado_y_no_sobre_el_piso(self):
+        medio = SMMLV_2026 / 2
+        ap = liq.liquidar(self.p(), medio, medio, 30)["aportes_empleador"]
+        self.assertAlmostEqual(ap["base_ibc"], SMMLV_2026, places=2)      # con piso
+        self.assertAlmostEqual(ap["base_parafiscales"], medio, places=2)  # sin piso
+        self.assertAlmostEqual(ap["caja_compensacion"], round(medio * 0.04, 2))
+
+    def test_salud_pension_y_arl_si_usan_el_piso(self):
+        medio = SMMLV_2026 / 2
+        self.no_exonerar()
+        ap = liq.liquidar(self.p(), medio, medio, 30)["aportes_empleador"]
+        self.assertAlmostEqual(ap["salud"], round(SMMLV_2026 * 0.085, 2))
+        self.assertAlmostEqual(ap["pension"], round(SMMLV_2026 * 0.12, 2))
+        self.assertAlmostEqual(ap["arl"], round(SMMLV_2026 * 0.00522, 2))
+
+    def test_sena_e_icbf_tampoco_llevan_piso(self):
+        medio = SMMLV_2026 / 2
+        self.no_exonerar()
+        ap = liq.liquidar(self.p(), medio, medio, 30)["aportes_empleador"]
+        self.assertAlmostEqual(ap["sena"], round(medio * 0.02, 2))
+        self.assertAlmostEqual(ap["icbf"], round(medio * 0.03, 2))
+
+    def test_arriba_del_minimo_las_dos_bases_coinciden(self):
+        """La separación solo se nota abajo del mínimo: si divergiera arriba,
+        alguna de las dos estaría mal."""
+        ap = liq.liquidar(self.p(), SMMLV_2026 * 1.5, SMMLV_2026 * 1.5,
+                          30)["aportes_empleador"]
+        self.assertAlmostEqual(ap["base_ibc"], ap["base_parafiscales"], places=2)
+
+    def test_el_ahorro_declarado_sigue_siendo_la_resta_real_en_medio_tiempo(self):
+        """Con dos bases el ahorro es fácil de calcular mal: se pincha."""
+        medio = SMMLV_2026 / 2
+        con = liq.liquidar(self.p(), medio, medio, 30)
+        self.no_exonerar()
+        sin = liq.liquidar(self.p(), medio, medio, 30)
+        self.assertAlmostEqual(con["aportes_empleador"]["ahorro_por_exoneracion"],
+                               sin["costo_empleador"] - con["costo_empleador"], places=2)
+
+
+class LaAlertaLlegaAlResumenTest(unittest.TestCase):
+    """La guarda no sirve de nada si no la ve nadie.
+
+    `alerta_exoneracion` existía pero no estaba cableada a ningún router ni
+    servicio: solo la usaban sus propios tests. Una alarma que no suena en
+    ninguna pantalla es código muerto con forma de seguridad.
+    """
+
+    def setUp(self):
+        from test_nomina_resumen import NominaBase
+        self._caso = NominaBase("run")
+        self._caso.setUp()
+        self.db = self._caso.db
+        pn.sembrar(self.db)
+
+    def tearDown(self):
+        self._caso.tearDown()
+
+    def _advertencias(self):
+        from app.services import nomina as nsvc
+        return nsvc.resumen_mensual(self.db, self._caso.t.id, 2026, 8)["advertencias"]
+
+    def test_con_un_solo_contrato_activo_el_resumen_lo_avisa(self):
+        textos = " ".join(self._advertencias())
+        self.assertIn("exoneración de aportes está prendida", textos)
+
+    def test_con_dos_contratos_el_resumen_no_avisa_nada(self):
+        from app.models.models import ContratoBarista
+        self.db.add(ContratoBarista(usuario_id=self._caso.admin.id,
+                                    salario_mensual=0.0, salario_en_smmlv=1.0,
+                                    activo=True))
+        self.db.commit()
+        textos = " ".join(self._advertencias())
+        self.assertNotIn("exoneración de aportes está prendida", textos)
+
+    def test_las_advertencias_fijas_siguen_estando(self):
+        from app.services import nomina as nsvc
+        for fija in nsvc.ADVERTENCIAS:
+            self.assertIn(fija, self._advertencias())
+
+
+class TenerContratoNoEsTenerSueldoTest(unittest.TestCase):
+    """La tercera vez que aparece el mismo bug en esta sesión.
+
+    `tiene_contrato` es «existe la fila» y el PUT de la pestaña Sueldos crea la
+    fila con salario 0. Decidiendo por la fila, la pantalla escribía «sueldo $0
+    ÷ el divisor» —presentando el cero como un sueldo que alguien cargó— y el
+    aviso agregado no la contaba: el dueño leía «2 sin sueldo» cuando eran 3, y
+    el costo del mes quedaba corto sin que nada lo dijera.
+    """
+
+    def setUp(self):
+        from test_nomina_resumen import NominaBase
+        self._caso = NominaBase("run")
+        self._caso.setUp()
+        self.db = self._caso.db
+        pn.sembrar(self.db)
+
+    def tearDown(self):
+        self._caso.tearDown()
+
+    def _cath(self):
+        from app.services import nomina as nsvc
+        r = nsvc.resumen_mensual(self.db, self._caso.t.id, 2026, 8)
+        return [b for b in r["baristas"] if b["usuario_id"] == self._caso.cath.id][0], r
+
+    def test_un_contrato_en_cero_tiene_fila_pero_no_tiene_sueldo(self):
+        from app.models.models import ContratoBarista
+        c = self.db.query(ContratoBarista).filter(
+            ContratoBarista.usuario_id == self._caso.cath.id).first()
+        c.salario_mensual = 0.0
+        c.salario_en_smmlv = None
+        self.db.commit()
+        b, r = self._cath()
+        self.assertTrue(b["tiene_contrato"])          # la fila está
+        self.assertFalse(b["tiene_sueldo"])           # la plata no
+        self.assertGreaterEqual(r["totales"]["sin_sueldo"], 1)
+
+    def test_con_sueldo_cargado_las_dos_banderas_coinciden(self):
+        b, r = self._cath()
+        self.assertTrue(b["tiene_contrato"])
+        self.assertTrue(b["tiene_sueldo"])
+
+    def test_sin_sueldo_cuenta_mas_que_sin_contrato_cuando_hay_filas_en_cero(self):
+        """El caso exacto que hacía mentir al aviso."""
+        from app.models.models import ContratoBarista
+        c = self.db.query(ContratoBarista).filter(
+            ContratoBarista.usuario_id == self._caso.cath.id).first()
+        c.salario_mensual = 0.0
+        c.salario_en_smmlv = None
+        self.db.commit()
+        _b, r = self._cath()
+        self.assertGreater(r["totales"]["sin_sueldo"], r["totales"]["sin_contrato"])

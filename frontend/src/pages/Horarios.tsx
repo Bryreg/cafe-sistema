@@ -6,20 +6,24 @@ import NovedadesPanel from '../components/horarios/NovedadesPanel'
 import ResumenMensual from '../components/horarios/ResumenMensual'
 import SueldosPanel from '../components/horarios/SueldosPanel'
 import TasasPanel from '../components/horarios/TasasPanel'
+import ParametrosNominaPanel from '../components/horarios/ParametrosNominaPanel'
 import { aISO, MESES } from '../components/horarios/tipos'
 
 /**
  * Horarios & horas trabajadas.
  *
- * Cinco pestañas, una por pregunta:
+ * Seis pestañas, una por pregunta:
  *   Semana   → ¿quién trabaja esta semana? (y ¿alguien se pasa de la jornada?)
  *   Novedades→ ¿qué pasó con la gente? (incapacidades, permisos, vacaciones)
  *   El mes   → ¿cuántas horas de cada tipo, planeado vs real, y cuánto sale?
  *   Sueldos  → el dato que hace falta para estimar la plata
  *   Tasas    → los números de ley que usa el cálculo, editables y con su origen
+ *   Nómina   → hermana de Tasas: el mínimo, el auxilio y los aportes de ley.
+ *              Van separadas porque se corrigen en momentos distintos (las tasas
+ *              cuando cambia una norma; éstos cada enero, con el decreto nuevo).
  */
 
-type Tab = 'semana' | 'novedades' | 'mes' | 'sueldos' | 'tasas'
+type Tab = 'semana' | 'novedades' | 'mes' | 'sueldos' | 'tasas' | 'nomina'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'semana', label: 'Semana' },
@@ -27,6 +31,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'mes', label: 'El mes' },
   { id: 'sueldos', label: 'Sueldos' },
   { id: 'tasas', label: 'Tasas y festivos' },
+  { id: 'nomina', label: 'Parámetros de nómina' },
 ]
 
 export default function Horarios() {
@@ -106,6 +111,10 @@ export default function Horarios() {
       {tab === 'mes' && <ResumenMensual tiendaId={tiendaId} anio={anio} mes={mes} />}
       {tab === 'sueldos' && <SueldosPanel tiendaId={tiendaId} />}
       {tab === 'tasas' && <TasasPanel anio={anio} />}
+      {/* Sin el selector de mes a propósito (no está en `conMes`): estas filas
+          tienen su propia vigencia y no se filtran por el mes que se esté
+          mirando arriba. Un selector que no hace nada haría creer lo contrario. */}
+      {tab === 'nomina' && <ParametrosNominaPanel />}
     </div>
   )
 }

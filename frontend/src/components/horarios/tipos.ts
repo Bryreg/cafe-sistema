@@ -52,6 +52,51 @@ export interface Tasa {
   confirmar_contador: boolean
 }
 
+/**
+ * Una vigencia de parámetros de nómina. Espejo EXACTO de
+ * `parametros_nomina.a_dict()`: mismo nombre por campo, sin alias más lindos,
+ * para que el número que el dueño ve en la pantalla sea grep-able hasta la
+ * función que lo usa.
+ *
+ * TODOS los porcentajes viajan en FRACCIÓN (0.085 = 8,5%), igual que se
+ * guardan. La pantalla los muestra y los recibe como porcentaje y convierte en
+ * el borde; el tipo se queda con la unidad del backend a propósito, porque el
+ * día que alguien pase una de estas filas a un cálculo no puede quedarle la
+ * duda de si el 8,5 es un 8,5% o un 850%.
+ */
+export interface ParametroNomina {
+  id: number
+  /** No se puede mover: cada mes se liquida con la vigencia de SU fecha. */
+  vigente_desde: string
+  /** Pesos decretados cada diciembre, rigen desde el 1 de enero. */
+  smmlv: number
+  auxilio_transporte: number
+  /** Divisor del auxilio por día: 30 fijo, no los días del mes. */
+  dias_base_auxilio: number
+  /** Tope del derecho al auxilio, EN SMMLV (2 = dos mínimos). */
+  tope_auxilio_smmlv: number
+  salud_empleado: number
+  pension_empleado: number
+  /** Desde cuántos SMMLV de IBC arranca el fondo de solidaridad. */
+  fsp_desde_smmlv: number
+  fsp_tarifa: number
+  salud_empleador: number
+  pension_empleador: number
+  arl: number
+  caja_compensacion: number
+  sena: number
+  icbf: number
+  /** Art. 114-1 ET: apaga salud patronal, SENA e ICBF. NUNCA la caja. */
+  exonerado_114_1: boolean
+  prima: number
+  cesantias: number
+  intereses_cesantias: number
+  vacaciones: number
+  nota: string | null
+  /** true = todavía sin confirmar con el contador. */
+  confirmar_contador: boolean
+}
+
 export interface Semana {
   tienda_id: number
   lunes: string
@@ -108,11 +153,116 @@ export interface Estimado {
   es_estimado: boolean
 }
 
+// ─── Liquidación colombiana ────────────────────────────────────────────────
+// Espejo EXACTO de lo que devuelve app/services/liquidacion.py::liquidar().
+// Cada campo se tipa con el mismo nombre que allá a propósito: cuando la
+// pantalla dice «auxilio», que sea grep-able hasta la función que lo calcula.
+// Si acá se le pone un alias más lindo, en seis meses nadie sabe si el número
+// de la pantalla es el que el contador está mirando.
+
+/**
+ * Auxilio de transporte del período. Se prorratea por DÍA (divisor 30 fijo) y
+ * lo suspenden incapacidad, vacaciones, licencia y permiso no remunerado.
+ * `razon` viene con texto SOLO cuando no hay derecho (sueldo sobre el tope).
+ */
+export interface AuxilioTransporte {
+  tiene_derecho: boolean
+  dias: number
+  por_dia: number
+  total: number
+  razon: string | null
+}
+
+/** Lo que se le DESCUENTA a la barista de su propio sueldo. */
+export interface Deducciones {
+  /** Base de cotización: el devengado con piso de 1 SMMLV. El auxilio NO entra. */
+  base_ibc: number
+  salud: number
+  pension: number
+  /** Fondo de Solidaridad Pensional: solo desde 4 SMMLV. En el mínimo da 0. */
+  fondo_solidaridad: number
+  total: number
+}
+
+/** Lo que el NEGOCIO paga por encima del sueldo, sin contar prestaciones. */
+export interface AportesEmpleador {
+  /** Base de salud, pensión y ARL del empleador: el devengado con piso de 1 SMMLV. */
+  base_ibc: number
+  /**
+   * Base de los PARAFISCALES (SENA, ICBF, caja): lo realmente devengado, SIN el
+   * piso del mínimo. Es un campo aparte y no un alias de `base_ibc` porque las
+   * dos se separan cuando alguien devenga menos de un mínimo —o sea en medio
+   * tiempo— y ahí es donde se cobra de más. La pantalla tiene que poder
+   * nombrarlas por separado en vez de hablar de «la base» como si fuera una.
+   */
+  base_parafiscales: number
+  /** Si el negocio está exonerado del art. 114-1 según los parámetros cargados. */
+  exonerado: boolean
+  salud: number
+  pension: number
+  arl: number
+  /** La caja se paga SIEMPRE: la exoneración del 114-1 nunca la apaga. */
+  caja_compensacion: number
+  sena: number
+  icbf: number
+  total: number
+  /**
+   * Salud patronal (sobre el IBC) + SENA + ICBF (sobre los parafiscales):
+   * exactamente lo que se dejaría de pagar si la exoneración aplicara. Cuando
+   * `exonerado` es false, este número es plata que HOY está saliendo.
+   */
+  ahorro_por_exoneracion: number
+}
+
+/** Provisión mensual. Prima/cesantías/intereses llevan auxilio; vacaciones no. */
+export interface Prestaciones {
+  base_con_auxilio: number
+  base_sin_auxilio: number
+  prima: number
+  cesantias: number
+  intereses_cesantias: number
+  vacaciones: number
+  total: number
+}
+
+export interface Liquidacion {
+  /** Tiempo trabajado con recargos. Es el mismo número que `estimado.total`. */
+  devengado: number
+  auxilio: AuxilioTransporte
+  deducciones: Deducciones
+  /** devengado + auxilio − deducciones. Lo que la barista recibe. */
+  neto_a_pagar: number
+  aportes_empleador: AportesEmpleador
+  prestaciones: Prestaciones
+  /** devengado + auxilio + aportes + prestaciones. Lo que sale del negocio. */
+  costo_empleador: number
+  /** costo_empleador ÷ devengado. 0 si no hubo devengado. */
+  factor_costo: number
+  /**
+   * Desde cuándo rigen los parámetros con los que se liquidó.
+   *
+   * NULL cuando no hay NINGUNA vigencia cargada: ahí el backend devuelve la
+   * liquidación vacía (todo en cero y `confirmar_contador` en true) para no
+   * romper a quien lee estos campos sin preguntar. Estaba tipado `string` y por
+   * eso la pantalla escribía «vigentes desde ,» sobre una liquidación que no se
+   * calculó con ningún parámetro: el tipo tapaba el único caso que importaba.
+   * Antes de mostrar la vigencia hay que mirar ESTE campo, no `confirmar_contador`.
+   */
+  vigencia_parametros: string | null
+  confirmar_contador: boolean
+  es_estimado: boolean
+}
+
 export interface BaristaResumen {
   usuario_id: number
   nombre: string
   activa: boolean
+  /** Existe la FILA de contrato. No dice si hay plata adentro: para eso está
+   *  `tiene_sueldo`. Confundirlas hace que una barista con contrato en $0 no
+   *  aparezca en el aviso de «sin sueldo cargado». */
   tiene_contrato: boolean
+  /** El sueldo resuelto de esa persona es > 0. Es el que decide las frases. */
+  tiene_sueldo: boolean
   salario_mensual: number
   horas_planeadas: Record<string, number>
   total_planeado: number
@@ -126,6 +276,7 @@ export interface BaristaResumen {
   dias_sin_marcacion: string[]
   dias: DiaResumen[]
   estimado: Estimado
+  liquidacion: Liquidacion
 }
 
 export interface Resumen {
@@ -151,13 +302,44 @@ export interface Resumen {
     dias_sin_marcacion: number
     tramos_sin_salida: number
     sin_contrato: number
+    /** Las que no tienen SUELDO (con o sin fila de contrato). Es el que va en
+     *  el aviso: contando solo las filas faltantes, el dueño leía «2 sin
+     *  sueldo» cuando eran 3. */
+    sin_sueldo: number
+    // Los cinco números de la nómina, sumados sobre todas las baristas del mes.
+    // `total_devengado` es el mismo valor que `estimado`: convive con él para
+    // que la pantalla pueda nombrarlo por lo que es dentro de la cuenta.
+    total_devengado: number
+    total_auxilio: number
+    total_deducciones: number
+    total_neto: number
+    total_costo_empleador: number
   }
 }
 
 export interface Contrato {
   usuario_id: number
   nombre: string
+  /** Pesos tecleados a mano. Se IGNORA cuando `salario_en_smmlv` tiene valor. */
   salario_mensual: number
+  /**
+   * Sueldo expresado en salarios mínimos: 1 = "un mínimo", 1.5 = "uno y medio".
+   * null = el sueldo son los pesos fijos de `salario_mensual`.
+   * Cuando tiene valor, el sueldo se resuelve contra el mínimo VIGENTE en el
+   * mes que se liquida, así que cada enero sube solo. Ese es el punto.
+   */
+  salario_en_smmlv: number | null
+  /**
+   * El sueldo que el backend realmente va a usar hoy, ya resuelto:
+   * `salario_en_smmlv × SMMLV vigente` si está en mínimos, si no
+   * `salario_mensual`. Nunca lo recalcules a partir de los otros dos para
+   * mostrarlo como si fuera lo guardado: este es el que manda.
+   */
+  salario_resuelto: number
+  /** SMMLV vigente hoy. `null` cuando no hay ninguna vigencia de parámetros
+   *  cargada — el backend manda null, no 0, y tiparlo `number` escondía el
+   *  único caso que importa (el mismo bug que tenía `vigencia_parametros`). */
+  smmlv_vigente: number | null
   horas_semana_pactadas: number | null
   fecha_ingreso: string | null
   activo: boolean

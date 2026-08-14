@@ -15,11 +15,12 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_user, require_admin
 from app.core.tz import hoy_col
 from app.database import get_db
-from app.models.models import ContratoBarista, Festivo, Usuario
+from app.models.models import ContratoBarista, Festivo, ParametroNomina, Usuario
 from app.services import festivos as fsvc
 from app.services import horarios as hsvc
 from app.services import nomina as nmsvc
 from app.services import novedades_nomina as nsvc
+from app.services import parametros_nomina as pnsvc
 from app.services import tasas_laborales as tsvc
 from app.services.horas import lunes_de
 
@@ -74,10 +75,56 @@ class NovedadPatch(BaseModel):
 
 class ContratoIn(BaseModel):
     salario_mensual: float = 0.0
+    # Sueldo EN SMMLV (1.0 = "gana el mínimo"). Manda sobre `salario_mensual`.
+    # Tres estados y los tres significan cosas distintas, por eso el endpoint
+    # mira `model_fields_set` y no el valor:
+    #   ausente  → no se toca lo que haya (ver `guardar_contrato`)
+    #   null     → vuelve a pesos fijos
+    #   > 0      → queda atado al mínimo vigente de cada fecha liquidada
+    salario_en_smmlv: Optional[float] = None
     horas_semana_pactadas: Optional[float] = None
     fecha_ingreso: Optional[date] = None
     activo: bool = True
     nota: Optional[str] = None
+
+
+class AjustarAlMinimoIn(BaseModel):
+    tienda_id: int
+
+
+class ParametroNominaPatch(BaseModel):
+    """Edición de una vigencia de nómina desde la pantalla.
+
+    `vigente_desde` se declara SOLO para poder rechazarlo con un mensaje que se
+    entienda. Si no estuviera en el schema, Pydantic lo descartaría en silencio,
+    devolvería 200 y el dueño se iría convencido de que movió la fecha.
+
+    `confirmar_contador` es el cartel de "esto todavía no lo validó nadie". Se
+    puede mandar solo (revisé y está bien, bajá el cartel), pero escribir
+    cualquier OTRO campo ya lo baja solo: ver `editar_parametro_nomina`.
+    """
+    vigente_desde: Optional[date] = None
+    smmlv: Optional[float] = None
+    auxilio_transporte: Optional[float] = None
+    dias_base_auxilio: Optional[int] = None
+    tope_auxilio_smmlv: Optional[float] = None
+    salud_empleado: Optional[float] = None
+    pension_empleado: Optional[float] = None
+    fsp_desde_smmlv: Optional[float] = None
+    fsp_tarifa: Optional[float] = None
+    salud_empleador: Optional[float] = None
+    pension_empleador: Optional[float] = None
+    arl: Optional[float] = None
+    caja_compensacion: Optional[float] = None
+    sena: Optional[float] = None
+    icbf: Optional[float] = None
+    exonerado_114_1: Optional[bool] = None
+    prima: Optional[float] = None
+    cesantias: Optional[float] = None
+    intereses_cesantias: Optional[float] = None
+    vacaciones: Optional[float] = None
+    nota: Optional[str] = None
+    confirmar_contador: Optional[bool] = None
 
 
 class TasaPatch(BaseModel):
@@ -280,25 +327,75 @@ def resumen_csv(tienda_id: int = Query(..., ge=1), anio: Optional[int] = Query(N
 
 # ─── Contratos (salario para el estimado) ───────────────────────────────────
 
+# Guardrail de tecleo, NO un valor de nómina: nadie en una cafetería gana veinte
+# mínimos, así que un número más grande que esto es un cero de más. El valor del
+# mínimo en pesos no aparece por ningún lado acá — sale de `parametros_nomina`.
+MAX_SALARIO_EN_SMMLV = 20.0
+
+
+def _validar_salario_en_smmlv(valor: Optional[float]) -> Optional[float]:
+    """Normaliza el múltiplo de SMMLV que llega de la pantalla.
+
+    Devuelve lo que hay que GUARDAR: None significa "sueldo en pesos fijos".
+    El 0 se guarda como None a propósito y no como 0.0, porque
+    `parametros_nomina.salario_del_contrato` trata el 0 como falsy y cae a los
+    pesos fijos igual: dejar el 0.0 en la base sería un valor que dice una cosa
+    y hace otra, y el día que alguien lea la fila va a creer que la persona está
+    atada al mínimo y gana cero.
+    """
+    if valor is None:
+        return None
+    valor = float(valor)
+    if valor < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="El salario en SMMLV no puede ser negativo.")
+    if valor > MAX_SALARIO_EN_SMMLV:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"{valor:g} SMMLV es un salario imposible para una barista "
+                    f"(el máximo que acepta la pantalla son {MAX_SALARIO_EN_SMMLV:g}). "
+                    "Si querés un sueldo en pesos, dejá el campo en blanco y usá "
+                    "el salario mensual."))
+    return valor or None
+
+
+def _fila_contrato(c: Optional[ContratoBarista], u: Usuario,
+                   params: Optional[pnsvc.Parametros]) -> dict:
+    """Un contrato como lo ve la pantalla, con el sueldo YA RESUELTO.
+
+    El resuelto viaja calculado desde acá y no se deriva en el cliente porque
+    la regla de resolución (el múltiplo de SMMLV manda sobre los pesos fijos, y
+    el mínimo depende de la FECHA) tiene que existir en un solo lugar. Un
+    segundo cálculo en JavaScript es un segundo lugar donde equivocarse, y
+    encima uno que nadie testea.
+    """
+    return {
+        "usuario_id": u.id, "nombre": u.nombre,
+        "salario_mensual": float(c.salario_mensual) if c else 0.0,
+        "salario_en_smmlv": (float(c.salario_en_smmlv)
+                             if c and c.salario_en_smmlv else None),
+        # Lo que gana HOY, ya con el múltiplo aplicado sobre el mínimo vigente.
+        "salario_resuelto": pnsvc.salario_del_contrato(c, params) if c else 0.0,
+        # Va en cada fila —y no una sola vez arriba— para no romper la forma de
+        # este endpoint, que hoy devuelve una LISTA y así la consume la pantalla.
+        "smmlv_vigente": float(params.smmlv) if params else None,
+        "horas_semana_pactadas": c.horas_semana_pactadas if c else None,
+        "fecha_ingreso": c.fecha_ingreso.isoformat() if c and c.fecha_ingreso else None,
+        "activo": bool(c.activo) if c else True,
+        "nota": c.nota if c else None,
+        "tiene_contrato": c is not None,
+    }
+
+
 @router.get("/contratos")
 def listar_contratos(tienda_id: int = Query(..., ge=1), db: Session = Depends(get_db),
                      admin: Usuario = Depends(require_admin)):
     personas = hsvc.baristas_de(db, tienda_id)
     contratos = {c.usuario_id: c for c in db.query(ContratoBarista).filter(
         ContratoBarista.usuario_id.in_([u.id for u in personas] or [0])).all()}
-    out = []
-    for u in personas:
-        c = contratos.get(u.id)
-        out.append({
-            "usuario_id": u.id, "nombre": u.nombre,
-            "salario_mensual": float(c.salario_mensual) if c else 0.0,
-            "horas_semana_pactadas": c.horas_semana_pactadas if c else None,
-            "fecha_ingreso": c.fecha_ingreso.isoformat() if c and c.fecha_ingreso else None,
-            "activo": bool(c.activo) if c else True,
-            "nota": c.nota if c else None,
-            "tiene_contrato": c is not None,
-        })
-    return out
+    params = pnsvc.para(db, hoy_col())
+    return [_fila_contrato(contratos.get(u.id), u, params) for u in personas]
 
 
 @router.put("/contratos/{usuario_id}")
@@ -310,14 +407,107 @@ def guardar_contrato(usuario_id: int, body: ContratoIn, db: Session = Depends(ge
         fila = ContratoBarista(usuario_id=usuario_id)
         db.add(fila)
     fila.salario_mensual = body.salario_mensual
+    # El múltiplo de SMMLV solo se toca si el cliente lo MANDÓ. Es la única
+    # excepción al reemplazo total de este PUT, y es a propósito: un formulario
+    # viejo —o cualquier cliente que no conozca el campo— manda el contrato sin
+    # él, y con reemplazo total desataría del mínimo a una persona que el dueño
+    # acababa de ajustar, en silencio y sin tocar esa pantalla. Para volver a
+    # pesos fijos hay que mandar `salario_en_smmlv: null` explícitamente.
+    if "salario_en_smmlv" in body.model_fields_set:
+        fila.salario_en_smmlv = _validar_salario_en_smmlv(body.salario_en_smmlv)
     fila.horas_semana_pactadas = body.horas_semana_pactadas
     fila.fecha_ingreso = body.fecha_ingreso
     fila.activo = body.activo
     fila.nota = body.nota
     db.commit()
     db.refresh(fila)
-    return {"usuario_id": usuario_id, "salario_mensual": float(fila.salario_mensual),
-            "ok": True}
+    params = pnsvc.para(db, hoy_col())
+    return {
+        "usuario_id": usuario_id,
+        "salario_mensual": float(fila.salario_mensual),
+        "salario_en_smmlv": (float(fila.salario_en_smmlv)
+                             if fila.salario_en_smmlv else None),
+        "salario_resuelto": pnsvc.salario_del_contrato(fila, params),
+        "smmlv_vigente": float(params.smmlv) if params else None,
+        "ok": True,
+    }
+
+
+@router.post("/contratos/ajustar-al-minimo")
+def ajustar_contratos_al_minimo(body: Optional[AjustarAlMinimoIn] = None,
+                                tienda_id: Optional[int] = Query(None, ge=1),
+                                db: Session = Depends(get_db),
+                                admin: Usuario = Depends(require_admin)):
+    """Pone a TODAS las baristas activas de la sede en 1 SMMLV, de una.
+
+    Existe como operación masiva y no como "andá contrato por contrato" porque
+    el pedido real es "que ganen el mínimo", y hacerlo de a una garantiza que
+    algún mes quede una sin ajustar — que es justo el error que nadie ve hasta
+    que la persona reclama. Además deja a todas atadas al MÚLTIPLO y no a un
+    número en pesos: en enero, cuando salga el decreto, los sueldos suben solos.
+
+    NO toca a las inactivas: una barista que ya no trabaja acá conserva su
+    contrato apagado para que sus meses viejos sigan liquidando igual, y
+    reactivarle el sueldo desde acá le cambiaría el histórico.
+
+    La sede se acepta por QUERY o por body, las dos. No es indecisión: la
+    pantalla lo manda como query (`?tienda_id=`) con el body vacío, y exigir
+    solo body dejaba el botón contestando 422 para siempre — un error que no se
+    ve en ningún test de backend porque los dos lados están bien por separado.
+    """
+    sede = tienda_id if tienda_id is not None else (body.tienda_id if body else None)
+    if sede is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Falta `tienda_id` (por query o en el cuerpo) para saber qué sede ajustar.")
+
+    params = pnsvc.para(db, hoy_col())
+    if params is None or not params.smmlv:
+        # Sin parámetros no hay mínimo que aplicar. Preferimos no escribir nada
+        # antes que atar a todo el mundo a un múltiplo que resuelve a cero.
+        raise HTTPException(
+            status_code=400,
+            detail=("No hay parámetros de nómina cargados, así que no se sabe cuánto "
+                    "vale el salario mínimo. Revisá la pantalla de parámetros."))
+
+    personas = hsvc.baristas_de(db, sede)
+    contratos = {c.usuario_id: c for c in db.query(ContratoBarista).filter(
+        ContratoBarista.usuario_id.in_([u.id for u in personas] or [0])).all()}
+
+    ajustadas, ya_estaban, omitidas = [], [], []
+    for u in personas:
+        c = contratos.get(u.id)
+        if c is not None and not c.activo:
+            omitidas.append({"usuario_id": u.id, "nombre": u.nombre,
+                             "razon": "El contrato está inactivo."})
+            continue
+        anterior = pnsvc.salario_del_contrato(c, params) if c is not None else 0.0
+        if c is None:
+            # Sin contrato es exactamente la que se olvidaría de a una.
+            c = ContratoBarista(usuario_id=u.id, salario_mensual=0.0, activo=True)
+            db.add(c)
+        cambio = float(c.salario_en_smmlv or 0.0) != 1.0
+        # `salario_mensual` se deja como estaba: pasa a ser referencia
+        # informativa (lo que ganaba antes), porque el múltiplo manda.
+        c.salario_en_smmlv = 1.0
+        destino = ajustadas if cambio else ya_estaban
+        destino.append({"usuario_id": u.id, "nombre": u.nombre,
+                        "salario_anterior": anterior,
+                        "salario_nuevo": round(float(params.smmlv), 2)})
+    db.commit()
+
+    return {
+        "tienda_id": sede,
+        "smmlv_vigente": float(params.smmlv),
+        "vigencia_parametros": params.vigente_desde.isoformat(),
+        "salario_resultante": round(float(params.smmlv), 2),
+        "ajustadas": len(ajustadas),
+        "ya_estaban": len(ya_estaban),
+        # Las dos listas juntas son "cuáles quedaron en el mínimo".
+        "baristas": ajustadas + ya_estaban,
+        "detalle_ajustadas": ajustadas,
+        "omitidas": omitidas,
+    }
 
 
 # ─── Tasas de ley ───────────────────────────────────────────────────────────
@@ -342,6 +532,131 @@ def editar_tasa(tasa_id: int, body: TasaPatch, db: Session = Depends(get_db),
     if fila is None:
         raise HTTPException(status_code=404, detail="Esa tasa no existe.")
     return tsvc.a_dict(fila)
+
+
+# ─── Parámetros de nómina (mínimo, auxilio y aportes de ley) ────────────────
+
+# Lo de acá abajo son GUARDRAILS DE TECLEO, no valores de ley: esta lista no
+# decide cuánto vale nada, solo rechaza lo que no puede ser un número válido.
+# La plata y los porcentajes viven todos en `parametros_nomina`.
+
+# Van en TANTO POR UNO: 0.04 es el 4%. El error que ataja el rango 0–1 es el
+# clásico "escribí 4 donde iba 0,04", que multiplica por cien el aporte de todo
+# el mes y recién se nota cuando el costo de nómina no cierra contra el banco.
+PARAMS_PORCENTAJE = (
+    "salud_empleado", "pension_empleado", "fsp_tarifa",
+    "salud_empleador", "pension_empleador", "arl", "caja_compensacion",
+    "sena", "icbf", "prima", "cesantias", "intereses_cesantias", "vacaciones",
+)
+# Estos NO son porcentajes: están EN SMMLV (el tope del auxilio son 2 mínimos,
+# el fondo de solidaridad arranca en 4). Meterlos en la bolsa de arriba los
+# haría rebotar siempre por "fuera de 0 a 1", y el tope del auxilio quedaría
+# imposible de corregir desde la pantalla para siempre.
+PARAMS_EN_SMMLV = ("tope_auxilio_smmlv", "fsp_desde_smmlv")
+MAX_PARAM_EN_SMMLV = 50.0
+# Pesos decretados cada diciembre: positivos y punto. Un cero de más o de menos
+# en el mínimo desfigura la nómina entera, así que ni el cero pasa.
+PARAMS_EN_PESOS = ("smmlv", "auxilio_transporte")
+
+CAMPOS_EDITABLES_PARAMS = (
+    PARAMS_EN_PESOS + PARAMS_EN_SMMLV + PARAMS_PORCENTAJE
+    + ("dias_base_auxilio", "exonerado_114_1", "nota")
+)
+
+
+def _validar_parametros_nomina(cambios: dict) -> None:
+    """Rechaza los valores que no pueden ser. Ninguna columna es nullable, así
+    que un `null` explícito también rebota: mandarlo tumbaría la liquidación
+    entera con un error de base de datos en vez de con un mensaje."""
+    for campo in PARAMS_EN_PESOS:
+        if campo in cambios:
+            v = cambios[campo]
+            if v is None or float(v) <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"«{campo}» es un valor en pesos y tiene que ser mayor que cero.")
+    for campo in PARAMS_PORCENTAJE:
+        if campo in cambios:
+            v = cambios[campo]
+            if v is None or not (0.0 <= float(v) <= 1.0):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(f"«{campo}» se escribe en tanto por uno, entre 0 y 1: "
+                            "el 4% se carga como 0.04, no como 4."))
+    for campo in PARAMS_EN_SMMLV:
+        if campo in cambios:
+            v = cambios[campo]
+            if v is None or not (0.0 < float(v) <= MAX_PARAM_EN_SMMLV):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(f"«{campo}» se expresa en salarios mínimos (2 = dos SMMLV) "
+                            f"y tiene que estar entre 0 y {MAX_PARAM_EN_SMMLV:g}."))
+    if "dias_base_auxilio" in cambios:
+        v = cambios["dias_base_auxilio"]
+        if v is None or not (1 <= int(v) <= 31):
+            raise HTTPException(
+                status_code=400,
+                detail=("«dias_base_auxilio» es el divisor del auxilio por día "
+                        "(30 por ley) y tiene que estar entre 1 y 31."))
+
+
+@router.get("/parametros-nomina")
+def listar_parametros_nomina(db: Session = Depends(get_db),
+                             admin: Usuario = Depends(require_admin)):
+    """Las vigencias del mínimo, el auxilio y los aportes, de la más vieja a la
+    más nueva. Siembra antes de listar, igual que `/tasas`: una base donde nunca
+    corrió el seed devolvería una lista vacía y la pantalla diría que no hay
+    parámetros, cuando lo que falta es escribirlos."""
+    pnsvc.sembrar(db)
+    return [pnsvc.a_dict(p) for p in pnsvc.listar(db)]
+
+
+@router.put("/parametros-nomina/{param_id}")
+def editar_parametro_nomina(param_id: int, body: ParametroNominaPatch,
+                            db: Session = Depends(get_db),
+                            admin: Usuario = Depends(require_admin)):
+    """Corrige una vigencia. La fecha NO se toca.
+
+    Es la misma regla que `tasas_laborales.actualizar()`: mover `vigente_desde`
+    reescribe hacia atrás meses ya liquidados, porque cada período se resuelve
+    con la vigencia de SU fecha. Allá la fecha simplemente no está en la lista
+    de campos editables; acá además se contesta 400, porque este endpoint es un
+    PUT que recibe la fila entera y descartar la fecha en silencio le haría
+    creer al dueño que la movió.
+    """
+    cambios = body.model_dump(exclude_unset=True)
+    if "vigente_desde" in cambios:
+        raise HTTPException(
+            status_code=400,
+            detail=("La fecha de una vigencia no se puede mover: cada mes se liquida "
+                    "con los parámetros de SU fecha, así que correrla recalcularía "
+                    "nóminas que ya se pagaron. Si la fecha está mal, creá otra "
+                    "vigencia con la fecha correcta."))
+
+    fila = db.query(ParametroNomina).filter(ParametroNomina.id == param_id).first()
+    if fila is None:
+        raise HTTPException(status_code=404, detail="Esa vigencia de nómina no existe.")
+
+    _validar_parametros_nomina(cambios)
+    escritos = 0
+    for campo in CAMPOS_EDITABLES_PARAMS:
+        if campo in cambios:
+            setattr(fila, campo, cambios[campo])
+            escritos += 1
+
+    if escritos:
+        # Tocar un número ES la revisión: el cartel de "confirmar con el
+        # contador" marca los valores que sembró el sistema y que nadie miró
+        # todavía, así que en cuanto el dueño escribe encima deja de aplicar.
+        fila.confirmar_contador = False
+    elif "confirmar_contador" in cambios:
+        # Sin cambios de valor, el único envío que tiene sentido es bajar (o
+        # volver a subir) el cartel: "lo revisé y está bien como está".
+        fila.confirmar_contador = bool(cambios["confirmar_contador"])
+
+    db.commit()
+    db.refresh(fila)
+    return pnsvc.a_dict(fila)
 
 
 # ─── Festivos ───────────────────────────────────────────────────────────────

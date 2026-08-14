@@ -24,7 +24,14 @@ import { fmtPesos, type Contrato } from './tipos'
 interface Props { tiendaId: number }
 
 /** El sueldo de este contrato está atado al mínimo, no a un número tecleado. */
-const enMinimos = (c: Contrato) => (c.salario_en_smmlv || 0) > 0
+// «Está en UN mínimo», no «tiene algún múltiplo cargado». Con lo segundo, una
+// supervisora guardada en 1,5 SMMLV contaba como ya ajustada: el confirm decía
+// «todas ya están en 1 SMMLV, ¿aplicar igual?» —falso— y el dueño aceptaba
+// creyendo que no pasaba nada. El backend ahora la saltea y la devuelve en
+// `omitidas`, pero la cuenta de acá tenía que dejar de mentir igual.
+const enMinimos = (c: Contrato) => (c.salario_en_smmlv ?? 0) === 1
+const conOtroMultiplo = (c: Contrato) =>
+  (c.salario_en_smmlv ?? 0) > 0 && (c.salario_en_smmlv ?? 0) !== 1
 
 /**
  * Una barista que el ajuste masivo NO tocó. Hoy la única razón es el contrato
@@ -116,11 +123,18 @@ export default function SueldosPanel({ tiendaId }: Props) {
     // uno— y en false solo cuando hay un contrato apagado, que es justo el que
     // saltea. Los dos lados cuentan lo mismo porque leen el mismo campo.
     const activas = items.filter(c => c.activo)
-    const faltantes = activas.filter(c => !enMinimos(c)).length
+    // Quien tiene un múltiplo distinto de 1 NO entra: el backend la saltea
+    // porque bajarla sería recortarle el sueldo, no ajustarlo.
+    const protegidas = activas.filter(conOtroMultiplo)
+    const faltantes = activas.filter(c => !enMinimos(c) && !conOtroMultiplo(c)).length
     const inactivas = items.length - activas.length
-    const nota = inactivas > 0
+    const nota = (inactivas > 0
       ? ` No se toca a ${inactivas} con el contrato inactivo: su sueldo queda como está.`
-      : ''
+      : '')
+      + (protegidas.length > 0
+        ? ` Tampoco se toca a ${protegidas.map(c => c.nombre).join(', ')}: `
+          + 'gana(n) por encima del mínimo a propósito.'
+        : '')
     if (!confirm(
       (faltantes === 0
         ? 'Todas las activas ya están en 1 SMMLV. ¿Aplicar igual?'

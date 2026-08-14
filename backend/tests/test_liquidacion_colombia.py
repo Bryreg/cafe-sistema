@@ -527,3 +527,101 @@ class TenerContratoNoEsTenerSueldoTest(unittest.TestCase):
         self.db.commit()
         _b, r = self._cath()
         self.assertGreater(r["totales"]["sin_sueldo"], r["totales"]["sin_contrato"])
+
+
+class DosSedesNoDuplicanLaNominaTest(unittest.TestCase):
+    """El auxilio, el piso del IBC, los aportes y las prestaciones son
+    mensuales POR TRABAJADOR, no por local.
+
+    `resumen_mensual` es por sede, y quien cubre en las dos aparece en los dos.
+    Liquidando cada pantalla con su propio devengado, la misma barista cobraba
+    el auxilio ENTERO en cada una y llevaba un juego completo de aportes en
+    cada una: sumar las dos duplicaba media nómina. Medido antes del arreglo:
+    +$512.350 de costo que no existe y $140.072 de deducciones de más contra
+    su sueldo.
+    """
+
+    def setUp(self):
+        from test_nomina_resumen import NominaBase
+        from app.models.models import Tienda, ContratoBarista
+        self._caso = NominaBase("run")
+        self._caso.setUp()
+        self.db = self._caso.db
+        pn.sembrar(self.db)
+        self.otra = Tienda(nombre="Centro", direccion="y")
+        self.db.add(self.otra)
+        self.db.commit()
+        c = self.db.query(ContratoBarista).filter(
+            ContratoBarista.usuario_id == self._caso.cath.id).first()
+        c.salario_en_smmlv = 1.0
+        self.db.commit()
+
+    def tearDown(self):
+        self._caso.tearDown()
+
+    def _habiles(self):
+        return [date(2026, 8, d) for d in range(1, 32)
+                if date(2026, 8, d).weekday() < 5]
+
+    def _totales(self, tienda):
+        from app.services import nomina as nsvc
+        return nsvc.resumen_mensual(self.db, tienda.id, 2026, 8)["totales"]
+
+    def _cath(self, tienda):
+        from app.services import nomina as nsvc
+        r = nsvc.resumen_mensual(self.db, tienda.id, 2026, 8)
+        return [b for b in r["baristas"] if b["usuario_id"] == self._caso.cath.id][0]
+
+    def _trabajar(self, dias_en_la_primera: int):
+        from test_nomina_resumen import utc
+        for i, d in enumerate(self._habiles()):
+            self._caso.real(
+                self._caso.cath, utc(2026, 8, d.day, 8), utc(2026, 8, d.day, 16),
+                tienda=(self._caso.t if i < dias_en_la_primera else self.otra))
+
+    def test_la_suma_de_las_dos_sedes_da_la_nomina_real_de_la_persona(self):
+        """EL TEST QUE IMPORTA: Σ(sedes) tiene que dar lo mismo que si hubiera
+        trabajado las mismas jornadas en una sola."""
+        self._trabajar(dias_en_la_primera=10)
+        suma = {k: self._totales(self._caso.t)[k] + self._totales(self.otra)[k]
+                for k in ("total_devengado", "total_auxilio", "total_deducciones",
+                          "total_neto", "total_costo_empleador")}
+        # El auxilio es mensual por persona: uno solo, no dos.
+        self.assertAlmostEqual(suma["total_auxilio"], AUXILIO_2026, places=0)
+        # Y las deducciones son las de UN salario mínimo, no las de dos.
+        self.assertAlmostEqual(suma["total_deducciones"], 140_072.40, places=0)
+        self.assertAlmostEqual(suma["total_devengado"], 1_330_687.80, delta=1)
+        self.assertAlmostEqual(suma["total_costo_empleador"], 2_186_798.85, delta=2)
+
+    def test_cada_sede_declara_que_parte_le_toca(self):
+        self._trabajar(dias_en_la_primera=10)
+        a, b = self._cath(self._caso.t), self._cath(self.otra)
+        self.assertTrue(a["liquidacion"]["en_varias_sedes"])
+        self.assertTrue(b["liquidacion"]["en_varias_sedes"])
+        self.assertAlmostEqual(
+            a["liquidacion"]["parte_de_esta_sede"]
+            + b["liquidacion"]["parte_de_esta_sede"], 1.0, places=4)
+
+    def test_la_fila_muestra_el_mes_COMPLETO_de_la_persona(self):
+        """Las dos sedes muestran la misma liquidación mensual: es de ella, no
+        del local. Lo que cambia entre pantallas es la parte, no el total."""
+        self._trabajar(dias_en_la_primera=10)
+        a, b = self._cath(self._caso.t), self._cath(self.otra)
+        self.assertAlmostEqual(a["liquidacion"]["costo_empleador"],
+                               b["liquidacion"]["costo_empleador"], places=2)
+        self.assertAlmostEqual(a["liquidacion"]["auxilio"]["total"],
+                               AUXILIO_2026, places=0)
+
+    def test_quien_trabaja_en_una_sola_sede_no_cambia_en_nada(self):
+        """La compatibilidad: la parte es 1.0 y todo queda como antes."""
+        self._trabajar(dias_en_la_primera=99)          # todas en la primera
+        b = self._cath(self._caso.t)
+        self.assertEqual(b["liquidacion"]["parte_de_esta_sede"], 1.0)
+        self.assertFalse(b["liquidacion"]["en_varias_sedes"])
+        t = self._totales(self._caso.t)
+        self.assertAlmostEqual(t["total_costo_empleador"],
+                               b["liquidacion"]["costo_empleador"], places=2)
+
+    def test_el_resumen_cuenta_cuantas_trabajaron_en_varias_sedes(self):
+        self._trabajar(dias_en_la_primera=10)
+        self.assertEqual(self._totales(self._caso.t)["en_varias_sedes"], 1)

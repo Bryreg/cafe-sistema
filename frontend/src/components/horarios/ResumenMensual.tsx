@@ -95,7 +95,14 @@ export default function ResumenMensual({ tiendaId, anio, mes }: Props) {
   // Plata que HOY se está pagando en salud patronal + SENA + ICBF y que la
   // exoneración del art. 114-1 apagaría. Solo suma a las que no están marcadas
   // como exoneradas: si ya lo están, no hay nada que ahorrar.
-  const noExoneradas = data.baristas.filter(b => !b.liquidacion.aportes_empleador.exonerado)
+  // Por MONTO y no por la bandera. `exonerado` sale de los parámetros, así que
+  // vale lo mismo para TODAS las baristas del mes: contando por ahí, el cartel
+  // repartía el ahorro entre gente que aporta $0 (la que no tiene sueldo
+  // cargado devenga 0, su IBC es 0 y sus tres aportes exonerables dan 0).
+  // Decía «por 5 barista(s)» cuando eran 3, y quien dividiera para estimar el
+  // ahorro por cabeza se llevaba un número casi a la mitad del real.
+  const noExoneradas = data.baristas.filter(
+    b => b.liquidacion.aportes_empleador.ahorro_por_exoneracion > 0)
   const ahorroExoneracion = noExoneradas.reduce(
     (s, b) => s + b.liquidacion.aportes_empleador.ahorro_por_exoneracion, 0)
 

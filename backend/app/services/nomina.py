@@ -255,7 +255,8 @@ def _semanas(desde: date, hasta: date) -> list[tuple[date, date]]:
 
 
 def _liquidar(tramos: list[tuple[datetime, datetime]], semanas, tasas,
-              es_festivo, desde: date, hasta: date) -> tuple[dict, dict, dict]:
+              es_festivo, desde: date, hasta: date,
+              solo_propio: bool = True) -> tuple[dict, dict, dict]:
     """Liquida los tramos semana por semana y devuelve
     (total_del_mes, horas_por_dia, estimado_bruto_por_semana).
 
@@ -290,7 +291,14 @@ def _liquidar(tramos: list[tuple[datetime, datetime]], semanas, tasas,
             # a esta sede. Antes el corte se hacía ANTES de liquidar, así que una
             # semana partida por el borde del mes arrancaba de cero en los dos y
             # las extras desaparecían — 14 h y $26.250 en una sola semana.
-            if not (propio and desde <= dia <= hasta):
+            # `solo_propio=False` suma TODAS las sedes: es lo que hace falta
+            # para liquidar a la PERSONA. El auxilio de transporte, el piso del
+            # IBC, los aportes y las prestaciones son mensuales por trabajador,
+            # no por local; calculándolos con el devengado de una sola sede, la
+            # misma barista recibía un juego entero en cada pantalla y sumar las
+            # dos duplicaba media nómina (medido: +$512.350 de costo inventado y
+            # $140.072 de deducciones de más contra su sueldo).
+            if not ((propio or not solo_propio) and desde <= dia <= hasta):
                 continue
             _sumar(total, horas)
             _sumar(por_dia.setdefault(dia, _cero()), horas)
@@ -452,6 +460,28 @@ def _resumen_barista(db, uid, u, tramos_reales, tramos_planeados, planeado_dia,
     salario = pnsvc.salario_del_contrato(contrato, params)
     estimado = _estimar(acred_semana, semanas, tasas, salario)
 
+    # ── El devengado de la PERSONA, sumando sus dos sedes ─────────────────────
+    # `estimado` es de ESTA sede y así tiene que quedar: el dueño quiere saber
+    # qué le cuesta Vida. Pero el auxilio de transporte, el piso del IBC, los
+    # aportes y las prestaciones NO son por local: son mensuales por trabajador.
+    # Liquidándolos con el devengado de una sola sede, quien cubre en las dos
+    # aparecía cobrando el auxilio ENTERO en cada pantalla y con un juego
+    # completo de aportes en cada una. Sumar las dos sedes duplicaba media
+    # nómina de esa persona: +$512.350 de costo que no existe y $140.072 de
+    # deducciones de más contra su sueldo.
+    #
+    # Entonces se liquida UNA vez sobre el consolidado, y a cada sede se le
+    # atribuye la parte que le corresponde por lo que devengó ahí. Con eso
+    # Σ(sedes) vuelve a dar exactamente la nómina real de la persona.
+    _tot_persona, _dia_persona, semana_persona = _liquidar(
+        tramos_acreditados, semanas, tasas, es_festivo, desde, hasta,
+        solo_propio=False)
+    estimado_persona = _estimar(semana_persona, semanas, tasas, salario)
+    dev_persona = estimado_persona["total"]
+    # Con devengado 0 en las dos sedes no hay nada que repartir. Con devengado
+    # solo en esta, la parte es 1.0 y todo funciona como antes.
+    parte_sede = round(estimado["total"] / dev_persona, 6) if dev_persona > 0 else 0.0
+
     dias = []
     for d in sorted(set(plan_dia) | set(real_dia) | set(cubiertos) | set(planeado_dia)):
         if not (desde <= d <= hasta):
@@ -500,9 +530,13 @@ def _resumen_barista(db, uid, u, tramos_reales, tramos_planeados, planeado_dia,
     # criterio que ya usa `liquidacion.ibc`: sin jornada no se inventa nada.
     dias_auxilio = (lqsvc.dias_con_auxilio(_dias_de_nomina(desde, hasta, params),
                                            dias_sin_auxilio)
-                    if estimado["total"] > 0 else 0)
-    liquidacion = (lqsvc.liquidar(params, estimado["total"], salario, dias_auxilio)
+                    if dev_persona > 0 else 0)
+    # Sobre el devengado de la PERSONA (todas sus sedes), no sobre el de esta.
+    liquidacion = (lqsvc.liquidar(params, dev_persona, salario, dias_auxilio)
                    if params is not None else _liquidacion_vacia())
+    liquidacion = {**liquidacion,
+                   "parte_de_esta_sede": parte_sede,
+                   "en_varias_sedes": parte_sede > 0 and parte_sede < 1}
 
     # «Sin marcación» ≠ «faltó». El sistema solo sabe que no hay registro; la
     # causa puede ser una novedad que nadie cargó o un olvido de marcar.
@@ -634,8 +668,29 @@ def _liquidacion_vacia() -> dict:
         "factor_costo": 0.0,
         "vigencia_parametros": None,
         "confirmar_contador": True,
+        # Las dos que `_resumen_barista` pisa con los valores reales. Van acá
+        # igual para que la forma vacía no se quede corta: el test que compara
+        # las dos formas existe justamente porque una clave faltante revienta la
+        # pantalla en producción, que es cuando se descubre.
+        "parte_de_esta_sede": 0.0,
+        "en_varias_sedes": False,
         "es_estimado": True,
     }
+
+
+def _parte(barista: dict, *ruta: str) -> float:
+    """El pedazo de la liquidación de una persona que le toca a ESTA sede.
+
+    `liquidacion` viene del mes completo del trabajador (todas sus sedes),
+    porque el auxilio, el piso del IBC, los aportes y las prestaciones son
+    mensuales por persona. `parte_de_esta_sede` es la fracción que devengó acá.
+    Para quien trabajó en una sola sede vale 1.0.
+    """
+    valor = barista["liquidacion"]
+    for clave in ruta:
+        valor = valor[clave]
+    return float(valor or 0.0) * float(
+        barista["liquidacion"].get("parte_de_esta_sede", 1.0) or 0.0)
 
 
 def _totales(baristas: list[dict]) -> dict:
@@ -652,16 +707,26 @@ def _totales(baristas: list[dict]) -> dict:
         "total_real": round(sum(b["total_real"] for b in baristas), 2),
         "total_acreditado": round(sum(b["total_acreditado"] for b in baristas), 2),
         "estimado": round(sum(b["estimado"]["total"] for b in baristas), 2),
-        "total_devengado": round(
-            sum(b["liquidacion"]["devengado"] for b in baristas), 2),
+        # PRORRATEADOS POR SEDE. `liquidacion` es del MES COMPLETO de la
+        # persona —el auxilio, el piso del IBC, los aportes y las prestaciones
+        # son por trabajador y no por local—, así que sumarla cruda en las dos
+        # sedes duplicaba media nómina de quien cubre en ambas. Acá se suma la
+        # parte que devengó en ESTA sede, y con eso Σ(sedes) vuelve a dar
+        # exactamente la nómina real de esa persona. Para quien trabaja en una
+        # sola sede `parte_de_esta_sede` es 1.0 y no cambia nada.
+        "total_devengado": round(sum(_parte(b, "devengado") for b in baristas), 2),
         "total_auxilio": round(
-            sum(b["liquidacion"]["auxilio"]["total"] for b in baristas), 2),
+            sum(_parte(b, "auxilio", "total") for b in baristas), 2),
         "total_deducciones": round(
-            sum(b["liquidacion"]["deducciones"]["total"] for b in baristas), 2),
-        "total_neto": round(
-            sum(b["liquidacion"]["neto_a_pagar"] for b in baristas), 2),
+            sum(_parte(b, "deducciones", "total") for b in baristas), 2),
+        "total_neto": round(sum(_parte(b, "neto_a_pagar") for b in baristas), 2),
         "total_costo_empleador": round(
-            sum(b["liquidacion"]["costo_empleador"] for b in baristas), 2),
+            sum(_parte(b, "costo_empleador") for b in baristas), 2),
+        # Cuántas personas del mes trabajaron además en la otra sede: su fila
+        # muestra el mes COMPLETO y los totales solo la parte de acá, así que la
+        # pantalla tiene que poder decirlo o los dos números parecen pelearse.
+        "en_varias_sedes": sum(
+            1 for b in baristas if b["liquidacion"].get("en_varias_sedes")),
         "dias_sin_marcacion": sum(len(b["dias_sin_marcacion"]) for b in baristas),
         "tramos_sin_salida": sum(b["tramos_sin_salida"] for b in baristas),
         "sin_contrato": sum(1 for b in baristas if not b["tiene_contrato"]),

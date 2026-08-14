@@ -481,6 +481,20 @@ def ajustar_contratos_al_minimo(body: Optional[AjustarAlMinimoIn] = None,
             omitidas.append({"usuario_id": u.id, "nombre": u.nombre,
                              "razon": "El contrato está inactivo."})
             continue
+        # UN MÚLTIPLO EXPLÍCITO DISTINTO DE 1 NO SE PISA. Una supervisora
+        # guardada en 1,5 SMMLV no está «sin ajustar»: está ganando por encima
+        # del mínimo a propósito. Bajarla a 1.0 desde un botón masivo es un
+        # RECORTE de sueldo —$875.453 al mes en ese caso— disfrazado de ajuste,
+        # y el botón no avisaba nada porque contaba «tiene múltiplo cargado»
+        # en vez de «tiene múltiplo 1». Se saltea y se dice por qué.
+        multiplo = float(c.salario_en_smmlv or 0.0) if c is not None else 0.0
+        if multiplo > 0 and multiplo != 1.0:
+            omitidas.append({
+                "usuario_id": u.id, "nombre": u.nombre,
+                "razon": (f"Gana {multiplo:g} SMMLV a propósito: bajarla a 1 sería "
+                          "un recorte de sueldo. Cambialo en su fila si querés."),
+            })
+            continue
         anterior = pnsvc.salario_del_contrato(c, params) if c is not None else 0.0
         if c is None:
             # Sin contrato es exactamente la que se olvidaría de a una.
@@ -507,6 +521,15 @@ def ajustar_contratos_al_minimo(body: Optional[AjustarAlMinimoIn] = None,
         "baristas": ajustadas + ya_estaban,
         "detalle_ajustadas": ajustadas,
         "omitidas": omitidas,
+        # El efecto que no se ve y hay que decir: el múltiplo se resuelve contra
+        # el mínimo de la FECHA LIQUIDADA, así que un mes ya cerrado deja de
+        # liquidarse con el número en pesos que tenía y pasa a usar el mínimo de
+        # su año. Para quien ya ganaba el mínimo no cambia nada; para quien
+        # tenía otro número, sí, y el P&L de esos meses se mueve.
+        "reinterpreta_meses_cerrados": any(
+            a["salario_anterior"] > 0
+            and abs(a["salario_anterior"] - float(params.smmlv)) > 1
+            for a in ajustadas),
     }
 
 

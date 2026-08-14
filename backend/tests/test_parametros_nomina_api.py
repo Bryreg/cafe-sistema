@@ -444,3 +444,77 @@ class AjustarAlMinimoApiTest(_BaseApi):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoLeRecortaElSueldoANadieTest(_BaseApi):
+    """El botón masivo NO puede bajarle el múltiplo a quien gana más.
+
+    Contaba «tiene múltiplo cargado» en vez de «tiene múltiplo 1», así que una
+    supervisora guardada en 1,5 SMMLV no entraba en la cuenta del confirm —la
+    pantalla decía «todas ya están en 1 SMMLV, ¿aplicar igual?»— y el backend
+    le escribía 1.0 igual: $875.453 menos al mes, sin que nada lo mencionara.
+    Un recorte de sueldo disfrazado de ajuste.
+    """
+
+    def _ajustar(self):
+        r = self.client.post("/api/v1/horarios/contratos/ajustar-al-minimo",
+                             json={"tienda_id": self.t.id})
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    def _contrato(self, uid):
+        r = self.client.get("/api/v1/horarios/contratos",
+                            params={"tienda_id": self.t.id})
+        return [c for c in r.json() if c["usuario_id"] == uid][0]
+
+    def test_un_multiplo_mayor_no_se_pisa(self):
+        self.client.put(f"/api/v1/horarios/contratos/{self.eli.id}",
+                        json={"salario_en_smmlv": 1.5})
+        self._ajustar()
+        self.assertAlmostEqual(self._contrato(self.eli.id)["salario_en_smmlv"], 1.5)
+
+    def test_queda_declarada_en_omitidas_con_su_razon(self):
+        self.client.put(f"/api/v1/horarios/contratos/{self.eli.id}",
+                        json={"salario_en_smmlv": 1.5})
+        data = self._ajustar()
+        omitida = [o for o in data["omitidas"] if o["usuario_id"] == self.eli.id]
+        self.assertEqual(len(omitida), 1)
+        self.assertIn("recorte", omitida[0]["razon"])
+
+    def test_las_demas_si_se_ajustan(self):
+        """Proteger a una no puede cancelar la operación para el resto."""
+        self.client.put(f"/api/v1/horarios/contratos/{self.eli.id}",
+                        json={"salario_en_smmlv": 1.5})
+        data = self._ajustar()
+        self.assertGreaterEqual(data["ajustadas"], 1)
+        self.assertAlmostEqual(self._contrato(self.cath.id)["salario_en_smmlv"], 1.0)
+
+    def test_un_multiplo_MENOR_tampoco_se_pisa(self):
+        """Medio tiempo guardado en 0,5 SMMLV: subirlo también es cambiarle el
+        contrato a alguien desde un botón masivo."""
+        self.client.put(f"/api/v1/horarios/contratos/{self.eli.id}",
+                        json={"salario_en_smmlv": 0.5})
+        self._ajustar()
+        self.assertAlmostEqual(self._contrato(self.eli.id)["salario_en_smmlv"], 0.5)
+
+    def test_quien_ya_esta_exactamente_en_1_no_se_reporta_como_omitida(self):
+        self.client.put(f"/api/v1/horarios/contratos/{self.eli.id}",
+                        json={"salario_en_smmlv": 1.0})
+        data = self._ajustar()
+        self.assertEqual([o for o in data["omitidas"]
+                          if o["usuario_id"] == self.eli.id], [])
+
+    def test_avisa_cuando_reinterpreta_meses_ya_cerrados(self):
+        """El efecto que no se ve: el múltiplo se resuelve contra el mínimo de
+        la fecha liquidada, así que un mes viejo deja de usar el número en
+        pesos con el que se liquidó."""
+        self.client.put(f"/api/v1/horarios/contratos/{self.eli.id}",
+                        json={"salario_mensual": 1_300_000})
+        self.assertTrue(self._ajustar()["reinterpreta_meses_cerrados"])
+
+    def test_si_ya_ganaba_el_minimo_en_pesos_no_reinterpreta_nada(self):
+        self.client.put(f"/api/v1/horarios/contratos/{self.eli.id}",
+                        json={"salario_mensual": self._smmlv_de_hoy()})
+        self.client.put(f"/api/v1/horarios/contratos/{self.cath.id}",
+                        json={"salario_mensual": self._smmlv_de_hoy()})
+        self.assertFalse(self._ajustar()["reinterpreta_meses_cerrados"])

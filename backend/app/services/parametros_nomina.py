@@ -46,6 +46,20 @@ SIEMBRA: list[dict] = [
 # Valores por defecto de todo lo que NO cambia año a año. Viven acá y no en el
 # modelo para que una vigencia nueva no tenga que repetirlos, pero el snapshot
 # guardado en la base SÍ los lleva completos.
+#
+# ─── Las dos decisiones que dependen del negocio y no de la ley ───────────────
+# Están confirmadas con el dueño (agosto 2026) y anotadas acá porque el año que
+# viene nadie se va a acordar de por qué el número es ese:
+#
+#   ARL CLASE I (0,522%). El Decreto 1607/2002 pone «1 5522 01 expendio A LA
+#   MESA de comidas preparadas en cafeterías» en clase I. MEDIUM CAFÉ atiende en
+#   barra y mesa y NO hornea en la sede — confirmado. Las dos cosas que lo
+#   moverían: si pasara a autoservicio sube a clase II (1,044%) y si empezaran a
+#   hornear pan o pastelería en el local, a clase III (2,436%), casi cinco veces
+#   más. Es un cambio de operación, no de norma: el día que pase hay que venir
+#   a esta fila.
+#
+#   EXONERADO DEL 114-1. Ver el comentario de `exonerado_114_1` abajo.
 DEFAULTS: dict = {
     "dias_base_auxilio": 30,
     "tope_auxilio_smmlv": 2.0,

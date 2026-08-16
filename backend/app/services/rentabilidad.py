@@ -473,13 +473,23 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     descuentos = round(sum(float(r[3] or 0) for r in ventas_rows), 2)
     n_con_descuento = sum(1 for r in ventas_rows if float(r[3] or 0) > 0)
 
-    def _cerrar(d: dict) -> dict:
+    def _cerrar(d: dict, mes: str | None = None) -> dict:
         """Cada fila del desglose se cierra con el MISMO criterio que el total:
         `ventas` es lo cobrado y el margen se calcula sobre la venta NETA. Si
-        una fila usara otra base, sumar el desglose no daría el resumen y
-        nadie sabría cuál de los dos creerle."""
+        una fila usara otra base, sumar el desglose no daría el resumen y nadie
+        sabría cuál de los dos creerle.
+
+        La fila de un MES usa la tarifa vigente ESE mes, no la del arranque del
+        rango: mirando «este año» con una reforma en el medio, todos los meses
+        se liquidarían con la tarifa de enero. Es la misma disciplina de las
+        tablas con vigencia — el pasado se recalcula con lo que regía entonces.
+        """
         v, c, g = round(d["ventas"], 2), round(d["compras"], 2), round(d["gastos"], 2)
-        neta, imp = tributos.separar(v)
+        trib = tributos
+        if mes:
+            anio, mm = mes.split("-")
+            trib = ptsvc.para(db, date(int(anio), int(mm), 1))
+        neta, imp = trib.separar(v)
         neto = round(neta - c - g, 2)
         return {"ventas": v, "venta_neta": neta, "impoconsumo": imp,
                 "compras": c, "gastos": g,
@@ -686,7 +696,7 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             "fuga_sedes_rango": sedes_rango,
         },
         "por_mes": [
-            {"mes": mes, **_cerrar(vals)}
+            {"mes": mes, **_cerrar(vals, mes=mes)}
             for mes, vals in sorted(por_mes.items())
         ],
         "por_sede": [
@@ -769,6 +779,10 @@ def get_rentabilidad_productos(db) -> dict:
     - Producto con receta (ProductoInsumo): costo = Σ cantidad_insumo × costo_insumo.
     - Producto sin receta (reventa): costo = su propio costo de compra.
     Los costos salen de las facturas escaneadas; lo que falte se reporta."""
+    # El precio de la carta lleva el impoconsumo adentro, así que el margen por
+    # producto se mide contra la venta NETA. Es la misma corrección que en el
+    # P&L, y acá pesa igual: es la pantalla donde el dueño decide qué empujar.
+    tributos = ptsvc.para(db, hoy_col())
     costo_prom, costo_ult = _costos_insumos(db)
     productos = db.query(Producto).all()
     por_id = {p.id: p for p in productos}
@@ -801,6 +815,8 @@ def get_rentabilidad_productos(db) -> dict:
     out = []
     for p in productos:
         precio_venta = float(p.precio_venta or 0)
+        # La venta neta del producto: el precio de la carta sin el impoconsumo.
+        precio_neto, _imp_unitario = tributos.separar(precio_venta)
         if precio_venta <= 0:
             continue  # no se vende en el POS: es insumo puro
         ingredientes = recetas.get(p.id)
@@ -857,14 +873,14 @@ def get_rentabilidad_productos(db) -> dict:
         tiene_desech = bool(lista_desech)
         if costo is not None and tiene_desech:
             costo_full = round(costo + costo_desech, 2)
-            margen_full = round(precio_venta - costo_full, 2)
+            margen_full = round(precio_neto - costo_full, 2)
         else:
             costo_full = round(costo, 2) if costo is not None else None
-            margen_full = round(precio_venta - costo, 2) if costo is not None else None
+            margen_full = round(precio_neto - costo, 2) if costo is not None else None
 
         v = ventas_30d.get(p.id, {"unidades": 0, "plata": 0.0})
         completo = costo is not None and not faltantes
-        margen = round(precio_venta - costo, 2) if costo is not None else None
+        margen = round(precio_neto - costo, 2) if costo is not None else None
         out.append({
             "producto_id": p.id,
             "nombre": p.nombre,
@@ -875,14 +891,22 @@ def get_rentabilidad_productos(db) -> dict:
             "costo_completo": completo,
             "insumos_sin_costo": faltantes,
             "margen": margen,
-            "pct_margen": round(margen / precio_venta * 100, 1) if margen is not None else None,
+            # SOBRE LA VENTA NETA. `precio_venta` es el de la carta y lleva el
+            # impoconsumo adentro: medir el margen contra él lo infla igual que
+            # pasaba en el P&L antes de separarlo. Es la misma corrección, en la
+            # pantalla donde el dueño decide qué producto le conviene empujar.
+            "precio_neto": precio_neto,
+            "impoconsumo_unitario": _imp_unitario,
+            "pct_margen": (round(margen / precio_neto * 100, 1)
+                           if margen is not None and precio_neto > 0 else None),
             # Costo completo (receta + desechables para llevar). costo_desechables
             # es None si al producto no se le cargó ningún desechable todavía.
             "costo_desechables": round(costo_desech, 2) if tiene_desech else None,
             "costo_con_desechables": costo_full,
             "desechables_sin_costo": desech_faltan,
             "margen_con_desechables": margen_full,
-            "pct_margen_con_desechables": round(margen_full / precio_venta * 100, 1) if margen_full is not None else None,
+            "pct_margen_con_desechables": (round(margen_full / precio_neto * 100, 1)
+                                           if margen_full is not None and precio_neto > 0 else None),
             "unidades_30d": v["unidades"],
             "venta_30d": round(v["plata"], 2),
         })

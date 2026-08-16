@@ -125,5 +125,30 @@ class VigenciaTributariaTest(TributosBase):
         self.assertAlmostEqual(self.t().gmf, 0.004)
 
 
+class CadaMesConSuTarifaTest(TributosBase):
+    """Una fila de mes usa la tarifa vigente ESE mes, no la del arranque del
+    rango. Mirando «este año» con una reforma en el medio, todos los meses se
+    liquidarían con la tarifa de enero — que es justo lo que las tablas con
+    vigencia existen para evitar."""
+
+    def test_una_vigencia_nueva_solo_afecta_de_su_fecha_en_adelante(self):
+        self.db.add(ParametroTributario(
+            vigente_desde=date(2026, 7, 1), impoconsumo=0.19,
+            precio_incluye_impoconsumo=True, gmf=0.004))
+        self.db.commit()
+        self.assertAlmostEqual(pt.para(self.db, date(2026, 6, 30)).impoconsumo, 0.08)
+        self.assertAlmostEqual(pt.para(self.db, date(2026, 7, 1)).impoconsumo, 0.19)
+
+    def test_el_mes_viejo_se_recalcula_con_la_tarifa_vieja(self):
+        self.db.add(ParametroTributario(
+            vigente_desde=date(2026, 7, 1), impoconsumo=0.19,
+            precio_incluye_impoconsumo=True, gmf=0.004))
+        self.db.commit()
+        junio = pt.para(self.db, date(2026, 6, 1)).separar(10_800)
+        julio = pt.para(self.db, date(2026, 7, 1)).separar(10_800)
+        self.assertAlmostEqual(junio[0], 10_000, places=0)     # 10.800/1,08
+        self.assertNotAlmostEqual(junio[0], julio[0], places=0)
+
+
 if __name__ == "__main__":
     unittest.main()

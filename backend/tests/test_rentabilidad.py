@@ -243,14 +243,18 @@ class RentabilidadTest(unittest.TestCase):
         c = por_nombre["Capuchino"]
         self.assertEqual(c["tipo"], "receta")
         self.assertAlmostEqual(c["costo"], 180 * 2.5 + 18 * 40)   # 450 + 720 = 1170
-        self.assertAlmostEqual(c["margen"], 8000 - 1170)
+        # Contra el precio NETO: el de la carta lleva el impoconsumo adentro y
+        # medir el margen contra él lo infla, igual que pasaba en el P&L.
+        self.assertAlmostEqual(c["margen"], round(round(8000 / 1.08, 2) - 1170, 2))
         self.assertTrue(c["costo_completo"])
         self.assertEqual(c["unidades_30d"], 2)
 
         g = por_nombre["Gaseosa"]
         self.assertEqual(g["tipo"], "reventa")
         self.assertAlmostEqual(g["costo"], 2000)
-        self.assertAlmostEqual(g["margen"], 3000)
+        # Contra el precio NETO, igual que el resto: $5.000 de carta son
+        # $4.629,63 de venta, y el impoconsumo no es margen de nadie.
+        self.assertAlmostEqual(g["margen"], round(round(5000 / 1.08, 2) - 2000, 2))
 
         t = por_nombre["Té"]
         self.assertFalse(t["costo_completo"])
@@ -349,9 +353,12 @@ class RentabilidadTest(unittest.TestCase):
         self.assertAlmostEqual(latte_r["costo_desechables"], 430)
         self.assertIn("Tapa", latte_r["desechables_sin_costo"])
         self.assertAlmostEqual(latte_r["costo_con_desechables"], 800 + 430)  # 1230
-        self.assertAlmostEqual(latte_r["margen_con_desechables"], 8000 - 1230)
+        # Contra el precio NETO: el de la carta lleva el impoconsumo adentro y
+        # medir el margen contra él lo infla, igual que pasaba en el P&L.
+        self.assertAlmostEqual(latte_r["margen_con_desechables"],
+                               round(round(8000 / 1.08, 2) - 1230, 2))
         # el margen "de receta" queda intacto para comparar.
-        self.assertAlmostEqual(latte_r["margen"], 8000 - 800)
+        self.assertAlmostEqual(latte_r["margen"], round(round(8000 / 1.08, 2) - 800, 2))
 
         # Producto sin desechables cargados: costo_desechables None y el costo
         # completo cae de vuelta al costo de receta.
@@ -391,7 +398,10 @@ class RentabilidadTest(unittest.TestCase):
         por = {p["nombre"]: p for p in get_rentabilidad_productos(self.db)["productos"]}
         self.assertAlmostEqual(por["Omelette JyQ"]["costo"], 7445)
         self.assertTrue(por["Omelette JyQ"]["costo_completo"])
-        self.assertAlmostEqual(por["Omelette JyQ"]["margen"], 16900 - 7445)
+        # Contra el precio NETO: el de la carta lleva el impoconsumo adentro y
+        # medir el margen contra él lo infla, igual que pasaba en el P&L.
+        self.assertAlmostEqual(por["Omelette JyQ"]["margen"],
+                               round(round(16900 / 1.08, 2) - 7445, 2))
 
 
     def test_alertas_costo_insumo_subiendo(self):

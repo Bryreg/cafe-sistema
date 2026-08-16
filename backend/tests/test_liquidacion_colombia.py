@@ -760,3 +760,145 @@ class NingunInsumoDeLaLiquidacionPuedeSerPorSedeTest(unittest.TestCase):
                             utc(2026, 8, d, 16), tienda=self._caso.t)
         # 30 días menos los 4 de vacaciones que NO trabajó (10, 11, 13, 14).
         self.assertEqual(self._liq(self._caso.t)["auxilio"]["dias"], 26)
+
+
+class LaPANTALLAEsDeLaSedeAunqueElCALCULOSeaDeLaPersonaTest(unittest.TestCase):
+    """El eje que el invariante anterior NO cubría, y por eso pasó 1111 tests.
+
+    `NingunInsumoDeLaLiquidacionPuedeSerPorSede` exige que la liquidación sea
+    idéntica en las dos pantallas — y lo era. El quinto bug no estaba en QUÉ se
+    muestra sino en QUIÉN aparece: al consolidar el planeado y las novedades
+    para poder CALCULAR bien, esas listas se usaron también para armar el
+    universo de personas, y las baristas de la otra sede entraron al resumen de
+    ésta con su liquidación entera adentro de los totales. Medido: Vida decía
+    $13.120.793 de costo cuando lo suyo eran $6.560.396.
+
+    La regla: el consolidado es un insumo del CÁLCULO de quien ya está en la
+    pantalla, nunca un criterio de PERTENENCIA a ella.
+    """
+
+    def setUp(self):
+        from test_nomina_resumen import NominaBase
+        from app.models.models import Tienda, Usuario, RolEnum, ContratoBarista
+        self._caso = NominaBase("run")
+        self._caso.setUp()
+        self.db = self._caso.db
+        pn.sembrar(self.db)
+        self.otra = Tienda(nombre="Palmetto", direccion="y")
+        self.db.add(self.otra)
+        self.db.flush()
+        # Una barista que es de la OTRA sede y nunca pisa ésta.
+        self.zulma = Usuario(nombre="Zulma", email="zulma@t.local", password_hash="h",
+                             rol=RolEnum.barista, tienda_id=self.otra.id, activo=True)
+        self.db.add(self.zulma)
+        self.db.flush()
+        # `NominaBase` ya le creó el contrato a Catherin: acá solo el de Zulma.
+        self.db.add(ContratoBarista(usuario_id=self.zulma.id, salario_mensual=0.0,
+                                    salario_en_smmlv=1.0, activo=True))
+        self.db.query(ContratoBarista).filter(
+            ContratoBarista.usuario_id == self._caso.cath.id
+        ).update({"salario_en_smmlv": 1.0})
+        self.db.commit()
+
+    def tearDown(self):
+        self._caso.tearDown()
+
+    def _resumen(self, tienda):
+        from app.services import nomina as nsvc
+        return nsvc.resumen_mensual(self.db, tienda.id, 2026, 8)
+
+    def _trabajar_zulma_solo_en_la_otra(self):
+        from test_nomina_resumen import utc
+        from app.services import horarios as hsvc, nomina as nsvc
+        for d in [date(2026, 8, x) for x in range(1, 32)
+                  if date(2026, 8, x).weekday() < 5]:
+            hsvc.guardar_turno(self.db, self.otra.id, self.zulma.id, d,
+                               "08:00", "16:00", creado_por_id=self._caso.admin.id)
+            hsvc.publicar_semana(self.db, self.otra.id, nsvc.lunes_de(d),
+                                 self._caso.admin.id)
+            self._caso.real(self.zulma, utc(2026, 8, d.day, 8),
+                            utc(2026, 8, d.day, 16), tienda=self.otra)
+
+    def test_la_barista_de_la_otra_sede_NO_aparece_en_esta(self):
+        self._trabajar_zulma_solo_en_la_otra()
+        nombres = [b["nombre"] for b in self._resumen(self._caso.t)["baristas"]]
+        self.assertNotIn("Zulma", nombres)
+
+    def test_ni_su_plata_entra_en_los_totales_de_esta_sede(self):
+        """El número que la pantalla llama «para decidir contrataciones»."""
+        self._trabajar_zulma_solo_en_la_otra()
+        t = self._resumen(self._caso.t)["totales"]
+        self.assertEqual(t["total_costo_empleador"], 0.0)
+        self.assertEqual(t["total_neto"], 0.0)
+
+    def test_ni_sale_en_el_CSV_del_contador(self):
+        from app.services import nomina as nsvc
+        self._trabajar_zulma_solo_en_la_otra()
+        csv = nsvc.csv_mensual(self.db, self._caso.t.id, 2026, 8)
+        self.assertNotIn("Zulma", csv)
+
+    def test_una_novedad_en_la_otra_sede_tampoco_la_arrastra(self):
+        from app.services import novedades_nomina as nsv
+        nsv.crear(self.db, self.otra.id, self.zulma.id, "incapacidad",
+                  date(2026, 8, 10), date(2026, 8, 14),
+                  creado_por_id=self._caso.admin.id)
+        nombres = [b["nombre"] for b in self._resumen(self._caso.t)["baristas"]]
+        self.assertNotIn("Zulma", nombres)
+
+    def test_en_SU_sede_si_aparece_entera(self):
+        """Proteger a una pantalla no puede hacerla desaparecer de la otra."""
+        self._trabajar_zulma_solo_en_la_otra()
+        b = [x for x in self._resumen(self.otra)["baristas"] if x["nombre"] == "Zulma"]
+        self.assertEqual(len(b), 1)
+        self.assertGreater(b[0]["liquidacion"]["costo_empleador"], 0)
+
+    def test_el_planeado_de_la_otra_sede_no_se_cuenta_como_propio(self):
+        """Antes la pantalla acusaba a la barista de deber horas que trabajó en
+        el otro local: plan 168 h acá, diferencia −168 h."""
+        from test_nomina_resumen import utc
+        from app.services import horarios as hsvc, nomina as nsvc
+        dia = date(2026, 8, 11)
+        # Catherin tiene turno acá y ADEMÁS cubre un día en la otra sede.
+        hsvc.guardar_turno(self.db, self._caso.t.id, self._caso.cath.id, dia,
+                           "08:00", "16:00", creado_por_id=self._caso.admin.id)
+        hsvc.guardar_turno(self.db, self.otra.id, self._caso.cath.id,
+                           date(2026, 8, 12), "08:00", "16:00",
+                           creado_por_id=self._caso.admin.id)
+        hsvc.publicar_semana(self.db, self._caso.t.id, nsvc.lunes_de(dia),
+                             self._caso.admin.id)
+        hsvc.publicar_semana(self.db, self.otra.id, nsvc.lunes_de(dia),
+                             self._caso.admin.id)
+        self._caso.real(self._caso.cath, utc(2026, 8, 11, 8), utc(2026, 8, 11, 16))
+        b = [x for x in self._resumen(self._caso.t)["baristas"]
+             if x["usuario_id"] == self._caso.cath.id][0]
+        self.assertAlmostEqual(b["total_planeado"], 8.0)      # solo el de acá
+        self.assertAlmostEqual(b["diferencia_horas"], 0.0)    # no debe nada
+
+    def test_el_devengado_de_cada_sede_suma_el_de_la_persona(self):
+        """Con la etiqueta pisada, un día acreditado en la otra sede se contaba
+        como propio en las dos y esta suma dejaba de cerrar."""
+        from test_nomina_resumen import utc
+        from app.services import horarios as hsvc, nomina as nsvc
+        from app.services import novedades_nomina as nsv
+        for i, d in enumerate([date(2026, 8, x) for x in range(3, 15)
+                               if date(2026, 8, x).weekday() < 5]):
+            sede = self._caso.t if i % 2 else self.otra
+            hsvc.guardar_turno(self.db, sede.id, self._caso.cath.id, d,
+                               "08:00", "16:00", creado_por_id=self._caso.admin.id)
+            hsvc.publicar_semana(self.db, sede.id, nsvc.lunes_de(d),
+                                 self._caso.admin.id)
+            if d.day != 12:
+                self._caso.real(self._caso.cath, utc(2026, 8, d.day, 8),
+                                utc(2026, 8, d.day, 16), tienda=sede)
+        nsv.crear(self.db, self._caso.t.id, self._caso.cath.id, "incapacidad",
+                  date(2026, 8, 12), date(2026, 8, 12),
+                  creado_por_id=self._caso.admin.id)
+
+        def liq(t):
+            return [x for x in self._resumen(t)["baristas"]
+                    if x["usuario_id"] == self._caso.cath.id][0]["liquidacion"]
+        a, b = liq(self._caso.t), liq(self.otra)
+        self.assertAlmostEqual(a["devengado"], b["devengado"], places=2)
+        self.assertAlmostEqual(
+            a["devengado_en_esta_sede"] + b["devengado_en_esta_sede"],
+            a["devengado"], places=2)

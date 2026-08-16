@@ -202,7 +202,8 @@ def _tramos_reales(db: Session, tienda_id: int, desde: date, hasta: date,
 
 
 def _tramos_planeados(db: Session, tienda_id: int | None, desde: date,
-                      hasta: date) -> tuple[dict[int, list], dict[int, dict[date, float]]]:
+                      hasta: date, sede_propia: int | None = None
+                      ) -> tuple[dict[int, list], dict[int, dict[date, float]]]:
     """Tramos PLANEADOS (publicados) como datetimes locales, y las horas
     programadas por día — que son las que se acreditan cuando hay novedad.
 
@@ -219,17 +220,28 @@ def _tramos_planeados(db: Session, tienda_id: int | None, desde: date,
     por_dia: dict[int, dict[date, float]] = {}
     sedes = ([tienda_id] if tienda_id is not None
              else [t.id for t in db.query(Tienda).all()])
-    for tp in [x for sede in sedes
-               for x in hsvc.turnos_publicados(db, sede, desde, hasta)]:
-        # El tercer campo es la etiqueta de sede que `_liquidar` necesita: el
-        # planeado ya viene filtrado por tienda, así que todo es propio.
-        for ini, fin in hsvc.tramos_datetimes(tp.fecha, tp.hora_inicio, tp.hora_fin,
-                                              tp.almuerzo_inicio, tp.almuerzo_minutos):
-            # `tp.fecha` es el día del turno: no hay que inferirlo del tramo.
-            tramos.setdefault(tp.usuario_id, []).append((ini, fin, True, tp.fecha))
-        dia = por_dia.setdefault(tp.usuario_id, {})
-        dia[tp.fecha] = dia.get(tp.fecha, 0.0) + hsvc.duracion_horas(
-            tp.hora_inicio, tp.hora_fin, tp.almuerzo_minutos)
+    # De quién es «propio» un tramo. Mientras esta función leía UNA sede, todo
+    # lo que devolvía era de esa sede y etiquetar `True` era correcto. Al pasar
+    # a leer TODAS —para poder acreditar una novedad de un turno publicado en la
+    # otra— el `True` fijo se volvió mentira: el planeado ajeno entraba como
+    # propio y la pantalla mostraba horas planeadas y una «diferencia» que
+    # acusaban a la barista de deber tiempo que trabajó en el otro local.
+    propia = sede_propia if sede_propia is not None else tienda_id
+    for sede in sedes:
+        for tp in hsvc.turnos_publicados(db, sede, desde, hasta):
+            propio = propia is None or sede == propia
+            for ini, fin in hsvc.tramos_datetimes(
+                    tp.fecha, tp.hora_inicio, tp.hora_fin,
+                    tp.almuerzo_inicio, tp.almuerzo_minutos):
+                # `tp.fecha` es el día del turno: no hay que inferirlo del tramo.
+                tramos.setdefault(tp.usuario_id, []).append((ini, fin, propio, tp.fecha))
+            if not propio:
+                # `por_dia` alimenta «horas planeadas» y el estado del día en la
+                # pantalla de ESTA sede: el turno de la otra no va acá.
+                continue
+            dia = por_dia.setdefault(tp.usuario_id, {})
+            dia[tp.fecha] = dia.get(tp.fecha, 0.0) + hsvc.duracion_horas(
+                tp.hora_inicio, tp.hora_fin, tp.almuerzo_minutos)
     return tramos, por_dia
 
 
@@ -361,8 +373,12 @@ def _acreditar(tramos_reales: list, tramos_planeados: list,
     # día siguiente — y si ese día tenía una incapacidad remunerada, la novedad
     # dejaba de acreditar. Un día entero de incapacidad se evaporaba (16 h → 7,5).
     dias_con_real = {d for _i, _f, _p, d in tramos_reales}
+    # Se PROPAGA la etiqueta de sede del turno planeado, no se pisa con True.
+    # Pisándola, un día de novedad cuyo turno estaba publicado en la otra sede
+    # se acreditaba y se devengaba como propio en las DOS pantallas, y
+    # `devengado_en_esta_sede` dejaba de sumar el devengado de la persona.
     return list(tramos_reales) + [
-        (i, f, True, d) for i, f, _p, d in tramos_planeados
+        (i, f, p, d) for i, f, p, d in tramos_planeados
         if d in acreditantes and d not in dias_con_real
     ]
 
@@ -400,7 +416,8 @@ def resumen_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> dict:
     # DE TODAS LAS SEDES: alimenta el umbral semanal y, sobre todo, lo que se
     # ACREDITA en un día de novedad. Si a alguien le dan incapacidad un día que
     # tenía turno en la otra sede, las horas acreditadas son las de ese turno.
-    planeados, _plan_dia_ext = _tramos_planeados(db, None, borde_ini, borde_fin)
+    planeados, _plan_dia_ext = _tramos_planeados(db, None, borde_ini, borde_fin,
+                                                sede_propia=tienda_id)
     # `planeado_por_dia` alimenta la tabla día por día y las ausencias: ese SÍ va
     # acotado al mes, o el resumen mostraría días que no le corresponden.
     _plan_mes, planeado_por_dia = _tramos_planeados(db, tienda_id, desde, hasta)
@@ -412,12 +429,24 @@ def resumen_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> dict:
     # abriera. Medido: $250.301 de diferencia en el neto y $318.353 en el costo.
     # Es la misma fuga que tenían las pausas de almuerzo, por otra puerta.
     novedades = nsvc.listar(db, None, desde, hasta)
+    # Las de ESTA sede deciden quién aparece en la pantalla. Las consolidadas de
+    # arriba son para el cálculo: una incapacidad cargada en el otro local le
+    # acredita horas a la persona, pero no la convierte en gente de acá.
+    novedades_de_la_sede = nsvc.listar(db, tienda_id, desde, hasta)
 
     # Universo de personas: las de la sede + cualquiera con horas, horario o
     # novedad en el mes (alguien que se fue a mitad de mes tiene que aparecer).
+    #
+    # QUIÉN APARECE es una pregunta de SEDE; el consolidado es un insumo del
+    # CÁLCULO de quien ya está en la pantalla, no un criterio de pertenencia a
+    # ella. Armando el universo con las listas consolidadas, las baristas de la
+    # otra sede entraban al resumen de ésta con su liquidación entera adentro de
+    # los totales: medido, Vida mostraba $13.120.793 de costo cuando lo suyo
+    # eran $6.560.396 — la nómina de las dos sedes en el número que la propia
+    # pantalla llama «el número para decidir contrataciones».
     personas: dict[int, Usuario] = {u.id: u for u in hsvc.baristas_de(db, tienda_id)}
     personas.update(personas_real)
-    for uid in list(planeados) + [n.usuario_id for n in novedades]:
+    for uid in list(planeado_por_dia) + [n.usuario_id for n in novedades_de_la_sede]:
         if uid not in personas:
             u = db.query(Usuario).filter(Usuario.id == uid).first()
             if u is not None and _es_persona(u):

@@ -344,6 +344,28 @@ def _seed_parametros_nomina():
 _seed_parametros_nomina()
 
 
+def _seed_parametros_tributarios():
+    """Impoconsumo y GMF con vigencia. Idempotente y no destructivo.
+
+    Va acá y no en la primera consulta que los necesite: sembrar de forma
+    perezosa adentro de un GET hace que dos requests simultáneos al primer P&L
+    intenten crear la misma vigencia y uno reviente con IntegrityError.
+    """
+    from app.services import parametros_tributarios
+    db = SessionLocal()
+    try:
+        creadas = parametros_tributarios.sembrar(db)
+        if creadas:
+            logger.info("Parámetros tributarios sembrados: %d vigencias", creadas)
+    except Exception as e:
+        db.rollback()
+        logger.warning("No se pudieron sembrar los parámetros tributarios: %s", e)
+    finally:
+        db.close()
+
+_seed_parametros_tributarios()
+
+
 def _backfill_dia_operativo():
     """Asigna día operativo a los turnos previos a la Fase 1 (dia_operativo_id NULL).
 

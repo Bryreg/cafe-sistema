@@ -366,6 +366,25 @@ def _seed_parametros_tributarios():
 _seed_parametros_tributarios()
 
 
+def _seed_cuentas_bancarias():
+    """Los rieles del banco (Occidente y Bold), con los nombres de la hoja de
+    tesorería del dueño para que las dos columnas se puedan leer una al lado de
+    la otra. Idempotente: nunca pisa ni renombra una cuenta existente."""
+    from app.services import banco
+    db = SessionLocal()
+    try:
+        creadas = banco.sembrar_cuentas(db)
+        if creadas:
+            logger.info("Cuentas bancarias sembradas: %d", creadas)
+    except Exception as e:
+        db.rollback()
+        logger.warning("No se pudieron sembrar las cuentas bancarias: %s", e)
+    finally:
+        db.close()
+
+_seed_cuentas_bancarias()
+
+
 def _backfill_dia_operativo():
     """Asigna día operativo a los turnos previos a la Fase 1 (dia_operativo_id NULL).
 

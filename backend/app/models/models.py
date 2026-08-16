@@ -1737,6 +1737,75 @@ class ParametroNomina(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class CuentaBancaria(Base):
+    """Los rieles por donde entra y sale la plata del banco.
+
+    El dueño ya los lleva así en su hoja de tesorería: OCCIDENTE (lo que se
+    consigna en efectivo) y BOLD (lo que liquida el datáfono), cada uno con su
+    columna de entradas y su columna de débitos. Sin la cuenta, un movimiento
+    dice cuánto se movió pero no por dónde, y conciliar contra el extracto —que
+    llega por banco— deja de ser posible.
+    """
+    __tablename__ = "cuentas_bancarias"
+    id = Column(Integer, primary_key=True)
+    nombre = Column(String(60), nullable=False, unique=True)
+    # Para ordenar las columnas como están en la hoja, sin depender del id.
+    orden = Column(Integer, nullable=False, default=0)
+    activa = Column(Boolean, nullable=False, default=True)
+    nota = Column(String(200), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MovimientoBanco(Base):
+    """UN movimiento del banco, TECLEADO. El libro, no la proyección.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    POR QUÉ TECLEADO Y NO DERIVADO — ES UNA DECISIÓN, NO UNA LIMITACIÓN
+    ═══════════════════════════════════════════════════════════════════════════
+    El sistema podría deducir lo que entró al banco de las consignaciones que ya
+    registra y de las ventas con tarjeta. Sería menos trabajo diario y estaría
+    MAL: el datáfono liquida con rezago y con comisión descontada, así que el
+    número deducido nunca coincide con el extracto. El dueño eligió teclearlo,
+    que es lo que hace hace años, porque un libro que cuadra al peso con el
+    banco vale más que uno cómodo que no cuadra.
+
+    Consecuencia que hay que respetar en todo el módulo: esta tabla es LA
+    VERDAD del saldo. Nada de acá se recalcula desde tickets ni consignaciones.
+
+    EL SALDO NO SE GUARDA, SE DERIVA. No hay columna de saldo: se calcula como
+    ancla + Σ(entradas − salidas) hasta la fecha. Guardar el saldo de cada día
+    obligaría a reescribir toda la cadena al corregir un movimiento viejo, y el
+    día que un recálculo fallara a la mitad el libro quedaría partido en dos sin
+    que nadie lo note. Derivado, corregir un movimiento arregla todo aguas abajo
+    solo — que es exactamente lo que hace la fórmula de su hoja.
+    """
+    __tablename__ = "movimientos_banco"
+    id = Column(Integer, primary_key=True)
+    # Fecha del banco (no un timestamp): la hoja es día por día y el extracto
+    # también. Sin hora no hay que pelear con la zona horaria acá.
+    fecha = Column(Date, nullable=False, index=True)
+    cuenta_id = Column(Integer, ForeignKey("cuentas_bancarias.id", ondelete="RESTRICT"),
+                       nullable=False, index=True)
+    # 'entrada' | 'salida'. Los montos se guardan SIEMPRE en positivo y el signo
+    # lo pone el tipo: un monto negativo en una columna de salidas se resta dos
+    # veces y nadie lo ve hasta que el saldo no cuadra.
+    tipo = Column(String(10), nullable=False)
+    monto = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    concepto = Column(String(160), nullable=False)
+    # Marca los que el sistema puede sugerir solo (GMF, comisión) para poder
+    # distinguirlos de lo que el dueño escribió a mano.
+    automatico = Column(Boolean, nullable=False, default=False)
+    # Si el movimiento paga una obligación ya cargada, se enlaza: así el
+    # calendario puede tachar el vencimiento y el libro no lo cuenta dos veces.
+    obligacion_id = Column(Integer, ForeignKey("obligaciones.id", ondelete="SET NULL"),
+                           nullable=True, index=True)
+    nota = Column(String(300), nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    cuenta = relationship("CuentaBancaria")
+
+
 class ParametroTributario(Base):
     """Impuestos que tocan la venta y la plata, CON VIGENCIA.
 

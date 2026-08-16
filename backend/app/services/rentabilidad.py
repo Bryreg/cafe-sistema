@@ -29,6 +29,7 @@ from app.models.models import (
     TicketItemComboSeleccion, Tienda, TipoMovCajaEnum,
 )
 from app.services import nomina as nomina_svc
+from app.services import parametros_tributarios as ptsvc
 
 # Patrones de concepto que crea services/facturas.py para pagos a proveedor.
 # Si esos strings cambian allá, hay que actualizarlos acá (no hay FK).
@@ -352,6 +353,19 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
 
     # ── Agregaciones ──────────────────────────────────────────────────────────
     tot_ventas = round(sum(float(r[1] or 0) for r in ventas_rows), 2)
+
+    # ── EL IMPOCONSUMO NO ES PLATA DEL NEGOCIO ────────────────────────────────
+    # El precio de la carta lo lleva adentro: de una aromática de $5.900, $437
+    # son de la DIAN. `tot_ventas` es lo que el cliente PAGÓ —está bien, es lo
+    # que entró al cajón— pero usarlo como base del margen contaba un impuesto
+    # como utilidad. Son 7,41% de cada peso facturado: en el flujo de caja real
+    # del dueño, $55,2 millones en siete meses de margen que no existía.
+    #
+    # El dueño ya lo hacía bien en su Excel (deriva la venta como
+    # impoconsumo/0,08) y el sistema no. Los márgenes se calculan sobre la venta
+    # NETA; `ventas` sigue siendo lo cobrado, que es lo que cuadra contra caja.
+    tributos = ptsvc.para(db, desde)
+    tot_venta_neta, tot_impoconsumo = tributos.separar(tot_ventas)
     tot_compras = round(sum(float(r[1] or 0) for r in compras_rows), 2)
     # El gasto del período son las DOS mitades: lo que sigue suelto en caja y lo ya
     # adoptado como obligación. Adoptar mueve plata de una a la otra sin cambiar el total.
@@ -460,13 +474,20 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     n_con_descuento = sum(1 for r in ventas_rows if float(r[3] or 0) > 0)
 
     def _cerrar(d: dict) -> dict:
+        """Cada fila del desglose se cierra con el MISMO criterio que el total:
+        `ventas` es lo cobrado y el margen se calcula sobre la venta NETA. Si
+        una fila usara otra base, sumar el desglose no daría el resumen y
+        nadie sabría cuál de los dos creerle."""
         v, c, g = round(d["ventas"], 2), round(d["compras"], 2), round(d["gastos"], 2)
-        neto = round(v - c - g, 2)
-        return {"ventas": v, "compras": c, "gastos": g,
+        neta, imp = tributos.separar(v)
+        neto = round(neta - c - g, 2)
+        return {"ventas": v, "venta_neta": neta, "impoconsumo": imp,
+                "compras": c, "gastos": g,
                 "margen_neto": neto,
-                "pct_margen_neto": round(neto / v * 100, 1) if v > 0 else None}
+                "pct_margen_neto": round(neto / neta * 100, 1) if neta > 0 else None}
 
-    margen_bruto = round(tot_ventas - tot_compras, 2)
+    # Sobre la venta NETA, no sobre lo cobrado: ver el bloque del impoconsumo.
+    margen_bruto = round(tot_venta_neta - tot_compras, 2)
     margen_neto = round(margen_bruto - tot_gastos, 2)
 
     # ── Fuga de inventario MEDIDA por los cierres del período ─────────────────
@@ -537,12 +558,20 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
         "hasta": hasta.isoformat(),
         "resumen": {
             "ventas": tot_ventas,
+            # Lo cobrado menos el impoconsumo: la plata que de verdad es del
+            # negocio y la base de todos los márgenes de acá abajo.
+            "venta_neta": tot_venta_neta,
+            "impoconsumo": tot_impoconsumo,
+            "tasa_impoconsumo": tributos.impoconsumo,
+            "impoconsumo_confirmar_contador": tributos.confirmar_contador,
             "compras": tot_compras,
             "gastos": tot_gastos,
             "margen_bruto": margen_bruto,
             "margen_neto": margen_neto,
-            "pct_margen_bruto": round(margen_bruto / tot_ventas * 100, 1) if tot_ventas > 0 else None,
-            "pct_margen_neto": round(margen_neto / tot_ventas * 100, 1) if tot_ventas > 0 else None,
+            "pct_margen_bruto": round(margen_bruto / tot_venta_neta * 100, 1) if tot_venta_neta > 0 else None,
+            # Contra la venta NETA, igual que `pct_margen_bruto`. Con bases
+            # distintas, las dos cifras de la misma tarjeta no se pueden comparar.
+            "pct_margen_neto": round(margen_neto / tot_venta_neta * 100, 1) if tot_venta_neta > 0 else None,
             "n_tickets": len(ventas_rows),
             "n_facturas": len(compras_rows),
             # Base de CONSUMO (complementa a compras, que es base de recepción):

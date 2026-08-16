@@ -166,8 +166,14 @@ class PlataAgregadosTest(unittest.TestCase):
         regalo, nunca volver a restarlo."""
         r = get_rentabilidad(self.db, self.hoy, self.hoy)
         self.assertAlmostEqual(r["resumen"]["ventas"], 150000)
-        self.assertAlmostEqual(r["resumen"]["margen_neto"],
-                               150000 - r["resumen"]["compras"] - r["resumen"]["gastos"])
+        # El margen arranca de la venta NETA, no de lo cobrado: el impoconsumo
+        # que va adentro del precio es de la DIAN. Lo que este test cuida es que
+        # el DESCUENTO no vuelva a restarse, y eso sigue valiendo.
+        self.assertAlmostEqual(
+            r["resumen"]["margen_neto"],
+            r["resumen"]["venta_neta"] - r["resumen"]["compras"] - r["resumen"]["gastos"],
+            places=1)
+        self.assertAlmostEqual(r["resumen"]["venta_neta"], round(150000 / 1.08, 2))
 
     def test_pct_descuento_sobre_la_venta_bruta(self):
         """El % se mide contra lo que se HABRIA facturado (venta + descuento):

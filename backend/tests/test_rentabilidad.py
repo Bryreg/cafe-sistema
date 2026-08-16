@@ -105,12 +105,28 @@ class RentabilidadTest(unittest.TestCase):
 
     def test_totales_globales(self):
         r = get_rentabilidad(self.db, hoy_col(), hoy_col())
+        # `ventas` sigue siendo LO COBRADO: es lo que entró al cajón y lo que
+        # cuadra contra caja. Los MÁRGENES, en cambio, se calculan sobre la
+        # venta NETA, porque el precio de la carta lleva el impoconsumo adentro
+        # y ese impuesto es de la DIAN, no del negocio. Antes el margen lo
+        # contaba como utilidad: 7,41% de cada peso facturado.
         self.assertEqual(r["resumen"]["ventas"], 170000)      # 100k+50k+20k, sin la anulada
+        self.assertAlmostEqual(r["resumen"]["venta_neta"], round(170000 / 1.08, 2))
+        self.assertAlmostEqual(r["resumen"]["impoconsumo"],
+                               round(170000 - 170000 / 1.08, 2))
         self.assertEqual(r["resumen"]["compras"], 65000)      # 40k+25k
         self.assertEqual(r["resumen"]["gastos"], 10000)       # solo el arriendo
-        self.assertEqual(r["resumen"]["margen_bruto"], 105000)
-        self.assertEqual(r["resumen"]["margen_neto"], 95000)
+        self.assertAlmostEqual(r["resumen"]["margen_bruto"],
+                               round(round(170000 / 1.08, 2) - 65000, 2))
+        self.assertAlmostEqual(r["resumen"]["margen_neto"],
+                               round(round(170000 / 1.08, 2) - 65000 - 10000, 2))
         self.assertEqual(r["resumen"]["n_tickets"], 3)
+
+    def test_lo_cobrado_es_la_venta_neta_mas_el_impuesto(self):
+        """La invariante que evita que se pierda un peso en el camino."""
+        r = get_rentabilidad(self.db, hoy_col(), hoy_col())["resumen"]
+        self.assertAlmostEqual(r["venta_neta"] + r["impoconsumo"],
+                               r["ventas"], places=1)
 
     def test_egreso_proveedor_no_es_gasto(self):
         r = get_rentabilidad(self.db, hoy_col(), hoy_col())
@@ -119,10 +135,12 @@ class RentabilidadTest(unittest.TestCase):
 
     def test_filtro_por_sede(self):
         r = get_rentabilidad(self.db, hoy_col(), hoy_col(), tienda_id=self.t2.id)
-        self.assertEqual(r["resumen"]["ventas"], 20000)
+        self.assertEqual(r["resumen"]["ventas"], 20000)       # lo cobrado
         self.assertEqual(r["resumen"]["compras"], 0)
         self.assertEqual(r["resumen"]["gastos"], 0)
-        self.assertEqual(r["resumen"]["margen_neto"], 20000)
+        # Sin compras ni gastos, el margen es la venta NETA: los $1.481,48 de
+        # impoconsumo no son utilidad de nadie más que la DIAN.
+        self.assertAlmostEqual(r["resumen"]["margen_neto"], round(20000 / 1.08, 2))
 
     def test_por_sede_desglosa(self):
         r = get_rentabilidad(self.db, hoy_col(), hoy_col())
@@ -134,7 +152,11 @@ class RentabilidadTest(unittest.TestCase):
 
     def test_pct_margen(self):
         r = get_rentabilidad(self.db, hoy_col(), hoy_col())
-        self.assertAlmostEqual(r["resumen"]["pct_margen_neto"], round(95000 / 170000 * 100, 1))
+        # El % también se mide contra la venta neta. Baja respecto de antes, y
+        # esa baja no es una pérdida nueva: es que dejó de contar el impuesto.
+        neta = round(170000 / 1.08, 2)
+        self.assertAlmostEqual(r["resumen"]["pct_margen_neto"],
+                               round((neta - 65000 - 10000) / neta * 100, 1))
 
     def test_rango_sin_datos(self):
         from datetime import date

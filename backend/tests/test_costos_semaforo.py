@@ -178,15 +178,23 @@ class CoberturaCostosFijosTest(unittest.TestCase):
         despues = self.pl()["resumen"]
 
         # Lo que cambia es lo que TIENE que cambiar (hay un gasto nuevo)…
-        self.assertEqual(despues["gastos"], antes["gastos"] + 800000)
-        self.assertEqual(despues["margen_neto"], antes["margen_neto"] - 800000)
+        # assertAlmostEqual y no assertEqual: el margen sale de una división
+        # (la venta neta) y restarle 800000 en el test arrastra ruido de punto
+        # flotante que el código ya redondeó. Comparar floats con == es pedirle
+        # al test que falle por un decimal decimoquinto.
+        self.assertAlmostEqual(despues["gastos"], antes["gastos"] + 800000, places=2)
+        self.assertAlmostEqual(despues["margen_neto"], antes["margen_neto"] - 800000,
+                               places=2)
         # …y nada más: ventas, compras y margen bruto no dependen de los fijos.
-        self.assertEqual(despues["ventas"], antes["ventas"])
-        self.assertEqual(despues["compras"], antes["compras"])
-        self.assertEqual(despues["margen_bruto"], antes["margen_bruto"])
-        # El % de margen neto sigue derivándose del margen neto, no del campo nuevo.
-        self.assertEqual(despues["pct_margen_neto"],
-                         round(despues["margen_neto"] / despues["ventas"] * 100, 1))
+        self.assertAlmostEqual(despues["ventas"], antes["ventas"], places=2)
+        self.assertAlmostEqual(despues["compras"], antes["compras"], places=2)
+        self.assertAlmostEqual(despues["margen_bruto"], antes["margen_bruto"], places=2)
+        # El % de margen neto sigue derivándose del margen neto, no del campo
+        # nuevo. La base es la venta NETA (sin impoconsumo), que es la misma que
+        # usa el margen: con bases distintas el % no describiría a su numerador.
+        self.assertAlmostEqual(
+            despues["pct_margen_neto"],
+            round(despues["margen_neto"] / despues["venta_neta"] * 100, 1))
 
 
 if __name__ == "__main__":

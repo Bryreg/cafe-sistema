@@ -1737,6 +1737,45 @@ class ParametroNomina(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ParametroTributario(Base):
+    """Impuestos que tocan la venta y la plata, CON VIGENCIA.
+
+    Tercera hermana de `TasaLaboral` y `ParametroNomina`, por el mismo motivo:
+    las tarifas las mueve una reforma y un número quemado no avisa cuando
+    envejece. Tabla aparte y no columnas sobre las otras dos porque los tres
+    calendarios son distintos —los recargos cambian por etapas de la reforma
+    laboral, el mínimo cada 1 de enero, y los impuestos cuando sale una
+    tributaria—; meterlos juntos obligaría a duplicar cada snapshot por los
+    cortes de los otros.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    EL IMPOCONSUMO NO ES PLATA DEL NEGOCIO.
+    ═══════════════════════════════════════════════════════════════════════════
+    El precio de la carta lo lleva ADENTRO: una aromática de $5.900 son $5.463
+    de venta y $437 que se le giran a la DIAN. Hasta acá el sistema sumaba los
+    $5.900 como venta propia, así que TODO margen que mostró estaba inflado —
+    7,41% de cada peso facturado era un impuesto contado como utilidad.
+
+    Se guarda `precio_incluye_impoconsumo` porque las dos formas existen: si el
+    precio ya lo lleva adentro, la venta neta es total/(1+tasa); si se suma
+    aparte, la venta neta es el total. Confundirlas mueve el margen un 8%.
+    """
+    __tablename__ = "parametros_tributarios"
+    id = Column(Integer, primary_key=True)
+    vigente_desde = Column(Date, nullable=False, unique=True, index=True)
+    # Impuesto nacional al consumo de bares y restaurantes.
+    impoconsumo = Column(Float, nullable=False, default=0.08)
+    # True = el precio de la carta ya lo incluye (es el caso de MEDIUM CAFÉ).
+    precio_incluye_impoconsumo = Column(Boolean, nullable=False, default=True)
+    # Gravamen a los movimientos financieros (4x1000). Sale del banco en cada
+    # movimiento y ningún reporte del sistema lo veía: medido en el flujo de
+    # caja real del dueño, $3,4 millones en siete meses.
+    gmf = Column(Float, nullable=False, default=0.004)
+    nota = Column(Text, nullable=True)
+    confirmar_contador = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Festivo(Base):
     """OVERRIDE de festivos, no el catálogo.
 

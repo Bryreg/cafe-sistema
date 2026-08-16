@@ -655,3 +655,108 @@ class DosSedesNoDuplicanLaNominaTest(unittest.TestCase):
         self.assertIn("SUMAR LOS DOS ARCHIVOS LA CUENTA DOS VECES", csv)
         fila = [l for l in csv.splitlines() if l.startswith(self._caso.cath.nombre)][0]
         self.assertIn(";SI;", fila)
+
+
+class NingunInsumoDeLaLiquidacionPuedeSerPorSedeTest(unittest.TestCase):
+    """EL TEST QUE ROMPE EL CICLO.
+
+    Este módulo falló CUATRO veces seguidas por la misma causa: `resumen_mensual`
+    es por sede, la liquidación es por persona, y cada vez apareció un insumo
+    distinto que venía filtrado por `tienda_id` —los tramos, después las pausas
+    de almuerzo, después las novedades, después las horas reales del guardia del
+    auxilio—. Cada arreglo tapó UNO y el siguiente apareció por otra puerta.
+
+    En vez de perseguirlos de a uno, este test afirma la propiedad de fondo:
+    con TODAS las complicaciones encima, el dict de liquidación de una persona
+    tiene que ser IDÉNTICO en las dos pantallas. Si mañana alguien agrega otro
+    insumo por sede, esto se cae acá y no en la nómina de una barista.
+    """
+
+    def setUp(self):
+        from test_nomina_resumen import NominaBase
+        from app.models.models import Tienda, ContratoBarista
+        self._caso = NominaBase("run")
+        self._caso.setUp()
+        self.db = self._caso.db
+        pn.sembrar(self.db)
+        self.otra = Tienda(nombre="Centro", direccion="y")
+        self.db.add(self.otra)
+        self.db.commit()
+        c = self.db.query(ContratoBarista).filter(
+            ContratoBarista.usuario_id == self._caso.cath.id).first()
+        c.salario_en_smmlv = 1.0
+        self.db.commit()
+
+    def tearDown(self):
+        self._caso.tearDown()
+
+    def _liq(self, tienda):
+        from app.services import nomina as nsvc
+        r = nsvc.resumen_mensual(self.db, tienda.id, 2026, 8)
+        return [b for b in r["baristas"]
+                if b["usuario_id"] == self._caso.cath.id][0]["liquidacion"]
+
+    def _escenario_completo(self):
+        """Todo junto: turnos publicados con almuerzo en las dos sedes, días
+        cubiertos en la otra, y una novedad cargada en UNA sola sede."""
+        from test_nomina_resumen import utc
+        from app.services import horarios as hsvc, nomina as nsvc
+        from app.services import novedades_nomina as nsv
+        habiles = [date(2026, 8, d) for d in range(1, 32)
+                   if date(2026, 8, d).weekday() < 5]
+        for i, d in enumerate(habiles):
+            sede = self._caso.t if i % 3 else self.otra      # alterna sedes
+            hsvc.guardar_turno(self.db, sede.id, self._caso.cath.id, d,
+                               "08:00", "16:00",
+                               creado_por_id=self._caso.admin.id,
+                               almuerzo_inicio="12:00", almuerzo_minutos=60)
+            hsvc.publicar_semana(self.db, sede.id, nsvc.lunes_de(d),
+                                 self._caso.admin.id)
+            if d.day not in (24, 25, 26, 27, 28):            # los deja la novedad
+                self._caso.real(self._caso.cath, utc(2026, 8, d.day, 8),
+                                utc(2026, 8, d.day, 16), tienda=sede)
+        # La incapacidad se carga en UNA sede, que es como la carga el admin.
+        nsv.crear(self.db, self._caso.t.id, self._caso.cath.id, "incapacidad",
+                  date(2026, 8, 24), date(2026, 8, 28),
+                  creado_por_id=self._caso.admin.id)
+
+    def test_la_liquidacion_es_IDENTICA_mire_uno_la_pantalla_que_mire(self):
+        self._escenario_completo()
+        a, b = self._liq(self._caso.t), self._liq(self.otra)
+        # Se comparan TODAS las claves de plata, no una muestra: el punto es que
+        # no quede ni un rincón que dependa de la sede.
+        for clave in ("devengado", "neto_a_pagar", "costo_empleador",
+                      "factor_costo"):
+            self.assertAlmostEqual(a[clave], b[clave], places=2,
+                                   msg=f"«{clave}» depende de la sede")
+        for bloque in ("auxilio", "deducciones", "aportes_empleador",
+                       "prestaciones"):
+            for clave, valor in a[bloque].items():
+                if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+                    self.assertAlmostEqual(
+                        valor, b[bloque][clave], places=2,
+                        msg=f"«{bloque}.{clave}» depende de la sede")
+
+    def test_la_novedad_cargada_en_una_sede_cuenta_en_las_dos(self):
+        """La incapacidad no es de un local: es de ella."""
+        self._escenario_completo()
+        a, b = self._liq(self._caso.t), self._liq(self.otra)
+        self.assertEqual(a["auxilio"]["dias"], b["auxilio"]["dias"])
+        self.assertAlmostEqual(a["auxilio"]["total"], b["auxilio"]["total"], places=2)
+
+    def test_un_dia_cubierto_en_la_otra_sede_NO_pierde_el_auxilio(self):
+        """Vino a trabajar, se desplazó y pagó el pasaje: el día cuenta."""
+        from test_nomina_resumen import utc
+        from app.services import novedades_nomina as nsv
+        # Vacaciones cargadas del 10 al 14 en su sede, pero el 12 fue a cubrir
+        # a la OTRA. Ese día no puede perder el auxilio.
+        nsv.crear(self.db, self._caso.t.id, self._caso.cath.id, "vacaciones",
+                  date(2026, 8, 10), date(2026, 8, 14),
+                  creado_por_id=self._caso.admin.id)
+        self._caso.real(self._caso.cath, utc(2026, 8, 12, 8),
+                        utc(2026, 8, 12, 16), tienda=self.otra)
+        for d in (17, 18, 19):                                # algo de mes normal
+            self._caso.real(self._caso.cath, utc(2026, 8, d, 8),
+                            utc(2026, 8, d, 16), tienda=self._caso.t)
+        # 30 días menos los 4 de vacaciones que NO trabajó (10, 11, 13, 14).
+        self.assertEqual(self._liq(self._caso.t)["auxilio"]["dias"], 26)

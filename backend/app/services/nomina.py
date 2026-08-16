@@ -201,17 +201,26 @@ def _tramos_reales(db: Session, tienda_id: int, desde: date, hasta: date,
     return tramos, sin_salida, personas, otra_sede
 
 
-def _tramos_planeados(db: Session, tienda_id: int, desde: date,
+def _tramos_planeados(db: Session, tienda_id: int | None, desde: date,
                       hasta: date) -> tuple[dict[int, list], dict[int, dict[date, float]]]:
     """Tramos PLANEADOS (publicados) como datetimes locales, y las horas
     programadas por día — que son las que se acreditan cuando hay novedad.
 
     Un turno con almuerzo entra como DOS tramos, uno de cada lado del descanso:
     el almuerzo no se trabaja, no se paga y no consume jornada.
+
+    `tienda_id=None` trae los de TODAS las sedes. Hace falta para acreditar una
+    novedad: si a alguien le dan incapacidad un día que tenía turno en la otra
+    sede, las horas que se le acreditan son las de ESE turno. Leyendo solo los
+    de la sede que se mira, se le acreditaba 0 y su liquidación daba distinto en
+    cada pantalla.
     """
     tramos: dict[int, list[tuple[datetime, datetime]]] = {}
     por_dia: dict[int, dict[date, float]] = {}
-    for tp in hsvc.turnos_publicados(db, tienda_id, desde, hasta):
+    sedes = ([tienda_id] if tienda_id is not None
+             else [t.id for t in db.query(Tienda).all()])
+    for tp in [x for sede in sedes
+               for x in hsvc.turnos_publicados(db, sede, desde, hasta)]:
         # El tercer campo es la etiqueta de sede que `_liquidar` necesita: el
         # planeado ya viene filtrado por tienda, así que todo es propio.
         for ini, fin in hsvc.tramos_datetimes(tp.fecha, tp.hora_inicio, tp.hora_fin,
@@ -388,11 +397,21 @@ def resumen_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> dict:
     pausas = _pausas_planeadas(db, None, borde_ini, borde_fin)
     reales, sin_salida, personas_real, otra_sede = _tramos_reales(
         db, tienda_id, borde_ini, borde_fin, pausas)
-    planeados, _plan_dia_ext = _tramos_planeados(db, tienda_id, borde_ini, borde_fin)
+    # DE TODAS LAS SEDES: alimenta el umbral semanal y, sobre todo, lo que se
+    # ACREDITA en un día de novedad. Si a alguien le dan incapacidad un día que
+    # tenía turno en la otra sede, las horas acreditadas son las de ese turno.
+    planeados, _plan_dia_ext = _tramos_planeados(db, None, borde_ini, borde_fin)
     # `planeado_por_dia` alimenta la tabla día por día y las ausencias: ese SÍ va
     # acotado al mes, o el resumen mostraría días que no le corresponden.
     _plan_mes, planeado_por_dia = _tramos_planeados(db, tienda_id, desde, hasta)
-    novedades = nsvc.listar(db, tienda_id, desde, hasta)
+    # NOVEDADES DE TODAS LAS SEDES. Una incapacidad no es de un local: es de la
+    # persona. Se carga en la sede donde el admin la escribe, pero alimenta dos
+    # entradas del cálculo que son POR PERSONA —las horas acreditadas y los días
+    # que suspenden el auxilio—, así que leyendo solo las de esta sede la misma
+    # barista salía con dos liquidaciones distintas según qué pantalla se
+    # abriera. Medido: $250.301 de diferencia en el neto y $318.353 en el costo.
+    # Es la misma fuga que tenían las pausas de almuerzo, por otra puerta.
+    novedades = nsvc.listar(db, None, desde, hasta)
 
     # Universo de personas: las de la sede + cualquiera con horas, horario o
     # novedad en el mes (alguien que se fue a mitad de mes tiene que aparecer).
@@ -485,11 +504,20 @@ def _resumen_barista(db, uid, u, tramos_reales, tramos_planeados, planeado_dia,
     # nómina de esa persona: +$512.350 de costo que no existe y $140.072 de
     # deducciones de más contra su sueldo.
     #
-    # Entonces se liquida UNA vez sobre el consolidado, y a cada sede se le
-    # atribuye la parte que le corresponde por lo que devengó ahí. Con eso
-    # Σ(sedes) vuelve a dar exactamente la nómina real de la persona.
+    # REGLA DE ORO DE ESTE BLOQUE, aprendida a los golpes: TODO insumo de la
+    # liquidación de una persona tiene que venir consolidado de todas las sedes.
+    # Ya se filtraron tres por acá —los tramos, las pausas de almuerzo y las
+    # novedades— y cada uno hizo que la misma barista saliera con dos
+    # liquidaciones distintas según qué pantalla se abriera. Si mañana se agrega
+    # otro insumo, va consolidado o vuelve el mismo bug.
     _tot_persona, _dia_persona, semana_persona = _liquidar(
         tramos_acreditados, semanas, tasas, es_festivo, desde, hasta,
+        solo_propio=False)
+    # Horas REALES de la persona por día, de todas las sedes: sin esto, un día
+    # que vino a trabajar pero marcó en la OTRA sede figura con 0 h acá y el
+    # auxilio de ese día se le descuenta. Se desplazó y pagó el pasaje.
+    _rt_persona, real_dia_persona, _rs = _liquidar(
+        tramos_reales, semanas, tasas, es_festivo, desde, hasta,
         solo_propio=False)
     estimado_persona = _estimar(semana_persona, semanas, tasas, salario)
     dev_persona = estimado_persona["total"]
@@ -541,10 +569,16 @@ def _resumen_barista(db, uid, u, tramos_reales, tramos_planeados, planeado_dia,
     # de `_acreditar`, que no acredita el planeado de un día con marcación
     # propia para no pagarlo dos veces; acá es al revés y por el mismo motivo:
     # manda lo que PASÓ, no lo que estaba cargado.
+    def _trabajo_ese_dia(fecha: date) -> bool:
+        """Marcó en CUALQUIER sede. `d["horas_reales"]` son las de esta sede
+        nada más, así que usarla acá le descontaba el auxilio a quien ese día
+        fue a cubrir al otro local."""
+        return sum(real_dia_persona.get(fecha, {}).values()) > 0
+
     dias_sin_auxilio = sum(
         1 for d in dias
         if d["novedad"]
-        and d["horas_reales"] <= 0
+        and not _trabajo_ese_dia(date.fromisoformat(d["fecha"]))
         and d["novedad"]["tipo"] in lqsvc.NOVEDADES_SIN_AUXILIO)
     # SIN DEVENGADO NO HAY AUXILIO. `auxilio_del_periodo` le da derecho a
     # cualquier sueldo por debajo del tope, y un sueldo de $0 —barista sin

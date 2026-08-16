@@ -235,15 +235,22 @@ def a_dict_publico(n: NovedadNomina) -> dict:
     return d
 
 
-def listar(db: Session, tienda_id: int, desde: date, hasta: date,
+def listar(db: Session, tienda_id: int | None, desde: date, hasta: date,
            usuario_id: int | None = None) -> list[NovedadNomina]:
     """Novedades que TOCAN el rango (no solo las que empiezan dentro): unas
-    vacaciones que arrancan el 28 del mes pasado siguen afectando este mes."""
+    vacaciones que arrancan el 28 del mes pasado siguen afectando este mes.
+
+    `tienda_id=None` trae las de TODAS las sedes. Hace falta para liquidar a una
+    PERSONA: una novedad se carga en la sede donde el admin la escribe, pero una
+    incapacidad no es de un local — es de ella. Leyendo solo las de la sede que
+    se está mirando, su liquidación daba distinto en cada pantalla.
+    """
     q = db.query(NovedadNomina).filter(
-        NovedadNomina.tienda_id == tienda_id,
         NovedadNomina.fecha_desde <= hasta,
         NovedadNomina.fecha_hasta >= desde,
     )
+    if tienda_id is not None:
+        q = q.filter(NovedadNomina.tienda_id == tienda_id)
     if usuario_id is not None:
         q = q.filter(NovedadNomina.usuario_id == usuario_id)
     return q.order_by(NovedadNomina.fecha_desde.asc()).all()

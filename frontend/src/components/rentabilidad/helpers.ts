@@ -1,16 +1,60 @@
 // Shared types and derived-data helpers for the Rentabilidad cockpit views.
 
 export interface Bucket {
-  ventas: number; compras: number; gastos: number
-  margen_neto: number; pct_margen_neto: number | null
+  /** Lo COBRADO: Σ Ticket.total. Es lo que entró al cajón y lo que cuadra contra
+   *  caja — pero NO es todo plata del negocio (ver `impoconsumo`). */
+  ventas: number
+  // ── EL IMPOCONSUMO NO ES PLATA DEL NEGOCIO ─────────────────────────────────
+  // El precio de la carta lo lleva ADENTRO: de una aromática de $5.900, $437 son
+  // de la DIAN. El backend (services/parametros_tributarios.separar) parte lo
+  // cobrado en estas dos mitades y TODOS los márgenes se calculan contra
+  // `venta_neta`, no contra `ventas`.
+  //
+  // INVARIANTE que la pantalla puede usar: venta_neta + impoconsumo == ventas.
+  // De ahí sale la escalera de PnLView: sin el escalón del impuesto en el medio,
+  // Ventas − Compras − Costos NO da el margen neto y la resta se ve rota.
+  //
+  // Los dos llegan SIEMPRE (backend: `_cerrar` y el `resumen`), pero con tarifa
+  // en 0 —o con un parámetro que dice que el precio no lleva el impuesto
+  // adentro— `impoconsumo` vale 0 y `venta_neta` == `ventas`. Por eso lo que se
+  // muestra se condiciona por el MONTO y nunca por la presencia del campo.
+  venta_neta: number
+  impoconsumo: number
+  compras: number; gastos: number
+  /** venta_neta − compras − gastos (NO ventas − …: ver arriba). */
+  margen_neto: number
+  /** margen_neto / venta_neta × 100. La base es la venta NETA: toda leyenda que
+   *  lo muestre tiene que decirlo, y la pantalla tiene que mostrar esa base. */
+  pct_margen_neto: number | null
 }
 export interface RentabilidadData {
   desde: string; hasta: string
   resumen: Bucket & {
+    /** Tarifa del impoconsumo vigente al ARRANQUE del rango, como FRACCIÓN:
+     *  0,08 = 8%. No es el % de lo cobrado — con el impuesto adentro del precio
+     *  el impuesto es el 7,41% del precio final, no el 8%. Para mostrarla se
+     *  usa `fmtTasa`, nunca `tasa * 100` a pelo. */
+    tasa_impoconsumo: number
+    /** true = la tarifa está cargada pero todavía sin confirmar con el contador,
+     *  igual que las tasas laborales. Se muestra SOLO cuando de verdad está
+     *  separando plata (`impoconsumo > 0`): con la tarifa en 0 esta bandera
+     *  viene prendida por defecto y avisar de "la tarifa sin confirmar" hablaría
+     *  de una tarifa que no existe — la misma trampa de siempre, prender un
+     *  cartel por la FORMA del dato en vez de por el MONTO. */
+    impoconsumo_confirmar_contador: boolean
+    /** venta_neta − compras. Sobre la venta NETA, no sobre lo cobrado. */
     margen_bruto: number
+    /** margen_bruto / venta_neta × 100. */
     pct_margen_bruto: number | null
     n_tickets: number; n_facturas: number
     cogs_teorico?: number
+    // ── OJO: ESTE PAR NO USA LA MISMA BASE QUE EL MARGEN NETO ─────────────────
+    // `margen_bruto_real` es `ventas − cogs_teorico` y su % es sobre `ventas`,
+    // o sea sobre lo COBRADO, con el impoconsumo adentro (backend:
+    // services/rentabilidad.py, `margen_bruto_real` / `pct_margen_bruto_real`).
+    // El margen neto y `margen_bruto` en cambio salen de `venta_neta`. Las dos
+    // cifras conviven en la misma pantalla, así que cada leyenda tiene que decir
+    // su base o el dueño compara dos números que no miden lo mismo.
     margen_bruto_real?: number
     pct_margen_bruto_real?: number | null
     brecha_compras?: number
@@ -65,6 +109,9 @@ export interface RentabilidadData {
     // "nadie cerró un conteo completo dentro de este rango, así que no se midió".
     fuga_inventario?: number | null
     tiene_fuga_medida?: boolean
+    // Mismo eje que `margen_bruto_real`: parten de `ventas` (lo cobrado) y su %
+    // también, así que este bloque entero se lee sobre lo COBRADO y no sobre la
+    // venta neta. Se dice en la tarjeta.
     margen_bruto_real_con_fuga?: number | null
     pct_margen_bruto_real_con_fuga?: number | null
     periodos_con_fuga_medida?: { tienda_id: number; anio: number; mes: number
@@ -113,12 +160,29 @@ export interface RentabilidadData {
 
 export interface ProdMargen {
   producto_id: number; nombre: string; categoria: string; tipo: string
-  precio_venta: number; costo: number | null; costo_completo: boolean
+  /** El precio de la CARTA, con el impoconsumo adentro. NO es la base del margen. */
+  precio_venta: number
+  // ── LA BASE DEL MARGEN POR PRODUCTO ES EL PRECIO NETO ──────────────────────
+  // Misma corrección que en el P&L: `margen`, `pct_margen`,
+  // `margen_con_desechables` y `pct_margen_con_desechables` ya vienen calculados
+  // contra `precio_neto` (backend: get_rentabilidad_productos). Cualquier frase
+  // que diga "margen sobre el precio de venta" quedó falsa, y cualquier cuenta
+  // que la pantalla rehaga con `precio_venta` (el simulador lo hacía) muestra un
+  // margen más alto que el de la tabla de al lado.
+  //
+  // `impoconsumo_unitario` en 0 significa que este precio no lleva impuesto
+  // adentro y ahí `precio_neto == precio_venta`: por eso lo que se muestra se
+  // condiciona por ese MONTO, producto por producto.
+  precio_neto: number
+  impoconsumo_unitario: number
+  costo: number | null; costo_completo: boolean
   insumos_sin_costo: string[]; margen: number | null; pct_margen: number | null
   costo_desechables: number | null; costo_con_desechables: number | null
   desechables_sin_costo: string[]; margen_con_desechables: number | null
   pct_margen_con_desechables: number | null
-  unidades_30d: number; venta_30d: number
+  unidades_30d: number
+  /** Plata VENDIDA en 30d (Σ TicketItem.subtotal): lo cobrado, con impuesto. */
+  venta_30d: number
 }
 export interface AlertaCosto {
   insumo_id: number; nombre: string; unidad_medida: string | null
@@ -157,6 +221,13 @@ export const fmtK = (v: number) => {
 }
 export const pctDelta = (actual: number, anterior: number): number | null =>
   anterior > 0 ? Math.round(((actual - anterior) / anterior) * 100) : null
+
+/** Tasa que viaja como FRACCIÓN (0,08) → texto de porcentaje ("8%").
+ *  Se redondea ANTES de formatear porque en coma flotante 0.08 * 100 da
+ *  8.000000000000002, y ese ruido terminaría impreso en un cartel de impuestos.
+ *  Existe para que ninguna vista escriba `tasa * 100` a mano. */
+export const fmtTasa = (frac: number) =>
+  (Math.round((frac || 0) * 10000) / 100).toLocaleString('es-CO', { maximumFractionDigits: 2 }) + '%'
 
 // Utility contributed per month = unit margin × units sold (the real money maker).
 export const prodUtil = (p: ProdMargen) => (p.margen ?? 0) * p.unidades_30d

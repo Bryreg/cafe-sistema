@@ -39,6 +39,17 @@ export default function MenuView({ prodData, pulso }: {
 
   if (!prodData) return <p className="text-sm text-warm-400 px-1">Cargando…</p>
   const all = prodData.productos
+  // ── LA BASE DEL MARGEN DE ESTA PANTALLA ES EL PRECIO NETO ─────────────────
+  // El precio de la carta lleva el impoconsumo adentro y el backend ya calcula
+  // `margen` y `pct_margen` contra `precio_neto`. Decir "margen sobre el precio
+  // de venta" quedó falso, y mostrar solo el precio de la carta deja el % sin
+  // base a la vista: el dueño hace la cuenta con el número que ve y no le da.
+  //
+  // Se decide por MONTO (`impoconsumo_unitario > 0`), no por el campo: con la
+  // tarifa en 0 el precio neto ES el de la carta y un renglón "neto" repetiría
+  // el mismo número. Y contra un backend viejo (campo ausente) el gate es false
+  // y la pantalla queda como estaba, en vez de mostrar "neto $NaN".
+  const hayImpo = all.some(p => p.impoconsumo_unitario > 0)
   const matrix = buildMatrix(all)
   const enQuad = matrix.prods.filter(p => matrix.quadOf(p) === quad)
     .sort((a, b) => prodUtil(b) - prodUtil(a)).slice(0, 8)
@@ -85,8 +96,11 @@ export default function MenuView({ prodData, pulso }: {
             )
           })}
         </div>
+        {/* La matriz ordena por % de margen, así que la base del % tiene que
+            estar dicha acá también: los cuadrantes se arman con ella. */}
         <p className="px-4 pb-1 text-[11px] text-warm-500">
           <b className="text-warm-600">{QUAD_UI[quad].nombre}</b> → acción: <b className="text-warm-600">{QUAD_UI[quad].accion}</b>
+          {hayImpo && <span className="text-warm-400"> · el % es sobre el precio neto (carta sin impoconsumo)</span>}
         </p>
         <div>
           {enQuad.map(p => (
@@ -198,7 +212,11 @@ export default function MenuView({ prodData, pulso }: {
               </div>
               <div className="flex items-center gap-3 mt-1 text-[11px] text-warm-500 font-mono tabular-nums">
                 <span>{p.unidades_30d}u</span>
+                {/* El precio de la carta y, al lado, la base contra la que se
+                    calculó el % del badge de arriba. Sin el neto a la vista, el
+                    margen no se puede verificar con los números de la tarjeta. */}
                 <span>{fmt(p.precio_venta)}</span>
+                {p.impoconsumo_unitario > 0 && <span className="text-warm-400">neto {fmt(p.precio_neto)}</span>}
                 <span>costo {p.costo != null ? fmt(p.costo) : '—'}</span>
                 <span className="ml-auto font-bold text-warm-600">{p.margen != null && p.unidades_30d > 0 ? fmtK(prodUtil(p)) : '—'}</span>
               </div>
@@ -214,9 +232,9 @@ export default function MenuView({ prodData, pulso }: {
               <tr className="text-[11px] uppercase tracking-wide text-warm-400 border-b border-warm-100">
                 <th className="text-left px-4 py-2 font-bold">Producto</th>
                 <th className="text-right px-3 py-2 font-bold">Vend 30d</th>
-                <th className="text-right px-3 py-2 font-bold">Precio</th>
+                <th className="text-right px-3 py-2 font-bold">{hayImpo ? 'Precio carta' : 'Precio'}</th>
                 <th className="text-right px-3 py-2 font-bold">Costo</th>
-                <th className="text-right px-3 py-2 font-bold">Margen</th>
+                <th className="text-right px-3 py-2 font-bold">{hayImpo ? 'Margen s/neto' : 'Margen'}</th>
                 <th className="text-right px-4 py-2 font-bold">Utilidad 30d</th>
               </tr>
             </thead>
@@ -238,7 +256,15 @@ export default function MenuView({ prodData, pulso }: {
                       )}
                     </td>
                     <td className="px-3 py-2 text-right font-mono text-warm-500 tabular-nums">{p.unidades_30d > 0 ? p.unidades_30d : '—'}</td>
-                    <td className="px-3 py-2 text-right font-mono text-warm-700 tabular-nums">{fmt(p.precio_venta)}</td>
+                    {/* El neto va como segunda línea, igual que "p/llevar" en la
+                        columna de costo: es la base del margen de dos columnas
+                        más allá, y sin ella la cuenta no se puede rehacer. */}
+                    <td className="px-3 py-2 text-right font-mono text-warm-700 tabular-nums">
+                      {fmt(p.precio_venta)}
+                      {p.impoconsumo_unitario > 0 && (
+                        <span className="block text-[11px] text-warm-400">neto {fmt(p.precio_neto)}</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums">
                       <span className={p.costo_completo ? 'text-warm-500' : 'text-gold-700'}>
                         {p.costo != null ? `${p.costo_completo ? '' : '≥ '}${fmt(p.costo)}` : '—'}
@@ -261,6 +287,14 @@ export default function MenuView({ prodData, pulso }: {
           </table>
         </div>
         <p className="px-4 py-2 text-[11px] text-warm-400 border-t border-warm-100">
+          {/* La frase vieja decía "margen" sin base y la base cambió: ahora es
+              el precio NETO. Se dice acá, donde está la tabla que lo muestra. */}
+          {hayImpo && (
+            <>
+              El margen y su % se miden contra el <b>precio neto</b> (el de la carta menos el
+              impoconsumo, que se le gira a la DIAN), no contra el precio de la carta.{' '}
+            </>
+          )}
           Utilidad 30d = margen × unidades: lo que el producto APORTA al mes. "p/llevar" suma los desechables.
           Tocá el nombre de un producto para ver con qué se vende junto.
           Ventana: últimos 30 días, ambas sedes.

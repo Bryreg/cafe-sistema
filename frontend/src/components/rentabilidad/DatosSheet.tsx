@@ -3,7 +3,7 @@ import { X, ShieldAlert, ScanLine, Loader2, Trash2 } from 'lucide-react'
 import api from '../../api/client'
 import {
   PorProductoData, RentabilidadData,
-  computeOutliers, computeInsumosSinCosto, fmt,
+  computeOutliers, computeInsumosSinCosto, fmt, fmtTasa,
 } from './helpers'
 
 // Fila de GET /rentabilidad/aliases (administración mínima de la Fase 2).
@@ -44,6 +44,10 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh, 
   if (!open) return null
 
   const all = prodData?.productos ?? []
+  // Por MONTO, no por presencia del campo: si no se está separando ni un peso de
+  // impuesto, el precio neto es el de la carta y nombrar la base sería ruido.
+  const hayImpoProd = all.some(p => p.impoconsumo_unitario > 0)
+  const hayImpoPL = (plMes?.resumen.impoconsumo ?? 0) > 0
   const outliers = computeOutliers(all)
   const insumos = computeInsumosSinCosto(all)
   const completos = all.filter(p => p.costo_completo).length
@@ -248,6 +252,9 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh, 
               </div>
             ))}
             <p className="text-[11px] text-warm-400 mt-1.5">
+              {/* El % de cada fila es `pct_margen`, que el backend calcula contra
+                  el precio NETO. La base va dicha donde están los números. */}
+              {hayImpoProd && <>Los % son margen sobre el precio neto (la carta sin impoconsumo). </>}
               Un margen muy desviado del promedio de su categoría suele ser un costo mal cargado
               (así se cazó el helado de las malteadas y los omelettes).
             </p>
@@ -273,6 +280,24 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh, 
             <div className="text-xs text-warm-500 leading-relaxed mt-2 space-y-2">
               {plMes?.nota && <p>{plMes.nota}</p>}
               {prodData?.nota && <p>{prodData.nota}</p>}
+              {/* La corrección que cambió TODOS los márgenes del sistema. Va en
+                  metodología porque es la respuesta a "¿por qué mi margen bajó?"
+                  y se muestra con los montos del período que se está mirando,
+                  no como una afirmación general sobre impuestos. */}
+              {hayImpoPL && plMes && (
+                <p>
+                  El precio de la carta lleva el impoconsumo adentro
+                  ({fmtTasa(plMes.resumen.tasa_impoconsumo)} sobre la venta neta). De los{' '}
+                  {fmt(plMes.resumen.ventas)} cobrados este mes, {fmt(plMes.resumen.impoconsumo)} se
+                  le giran a la DIAN y nunca fueron del negocio: el margen neto y su % se miden
+                  contra la venta neta ({fmt(plMes.resumen.venta_neta)}) y no contra lo cobrado, y
+                  el margen de cada producto contra su precio neto. La excepción es el margen sobre
+                  lo vendido (COGS teórico y fuga de inventario): ese sí se compara contra lo
+                  cobrado, así que se ve más alto.
+                  {plMes.resumen.impoconsumo_confirmar_contador &&
+                    ' La tarifa está cargada pero todavía sin confirmar con tu contador.'}
+                </p>
+              )}
               <p>
                 El margen neto ya descuenta los costos fijos que estén cargados en Costos (arriendo,
                 nómina, servicios, impuestos) — pero solo esos: lo que nadie cargó no se resta, y por

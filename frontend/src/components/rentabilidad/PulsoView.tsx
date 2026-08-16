@@ -71,6 +71,16 @@ export default function PulsoView({
   const act = pulso?.mes_actual
   const ant = pulso?.mes_anterior
   const pct = r?.pct_margen_neto ?? null
+  // El margen neto se mide contra la venta NETA (lo cobrado menos el
+  // impoconsumo, que se le gira a la DIAN). Decir "% de la venta" mandaba al
+  // dueño a dividir contra las ventas del mes —que están en la tarjeta de acá
+  // abajo— y no le daba. Se nombra la base Y se muestra, que es la mitad que
+  // faltaba: un % contra una base invisible no se puede verificar.
+  //
+  // Gate por MONTO: sin impuesto separado, venta_neta == ventas y repetir el
+  // número sería ruido (y contra un backend viejo, `undefined > 0` es false y
+  // esta vista queda exactamente como estaba).
+  const hayImpo = (r?.impoconsumo ?? 0) > 0
   // Con la fase 3 el margen neto YA resta las obligaciones devengadas (arriendo,
   // nómina, servicios). Pero solo resta las que alguien cargó: sin una sola
   // obligación fija en el período, este número sigue siendo el margen de antes y
@@ -145,7 +155,9 @@ export default function PulsoView({
                 fin resta arriendo y nómina. Cuando NO hay cobertura, el texto lo
                 dice — la ausencia de dato no puede leerse como buena noticia. */}
             <p className="text-xs text-warm-500 mt-0.5">
-              {!r ? '' : tieneFijos ? (pct != null ? `${pct}% de la venta` : 'Sin ventas en el período') : (
+              {!r ? '' : tieneFijos ? (pct != null
+                ? (hayImpo ? `${pct}% de la venta neta (${fmt(r.venta_neta)})` : `${pct}% de la venta`)
+                : 'Sin ventas en el período') : (
                 <>
                   Faltan los costos fijos del mes —{' '}
                   <button onClick={onIrACalendario} className="font-bold text-forest underline decoration-dotted">
@@ -225,6 +237,16 @@ export default function PulsoView({
               </div>
             ))}
           </div>
+          {/* Las dos cifras de cada sede NO salen de la misma base: la barra y el
+              primer número son lo COBRADO, y el margen con su % salen de la venta
+              neta de esa sede. Se dice acá porque es la única forma de que el
+              dueño no intente dividir un número por el otro. */}
+          {sedes.some(s => s.impoconsumo > 0) && (
+            <p className="text-[11px] text-warm-400 mt-2">
+              El primer número es lo cobrado; el margen y su % salen de la venta neta (sin el
+              impoconsumo).
+            </p>
+          )}
         </div>
       )}
 

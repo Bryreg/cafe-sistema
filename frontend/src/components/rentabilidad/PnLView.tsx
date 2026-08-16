@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useState } from 'react'
 import { Wallet, ShoppingCart, Receipt, TrendingUp, TrendingDown, HelpCircle, ArrowRight, Inbox, Scissors } from 'lucide-react'
 import api from '../../api/client'
-import { RentabilidadData, fmt } from './helpers'
+import { RentabilidadData, fmt, fmtTasa } from './helpers'
 
 interface Tienda { id: number; nombre: string }
 
@@ -52,6 +52,40 @@ function Kpi({ label, value, sub, Icon, tint }: {
   )
 }
 
+/** Un renglón de la escalera «De lo cobrado al margen».
+ *
+ *  `signo` es el operador que se aplica sobre el renglón de ARRIBA, y por eso
+ *  vive en una columna propia: los montos van siempre en positivo. Pintar el
+ *  descuento como `-$1.234` obligaría a leer el menos pegado al peso y, con
+ *  `fmt`, un margen negativo saldría con DOS signos distintos en la misma
+ *  columna. El operador a la izquierda es lo que hace que la resta se lea como
+ *  resta. */
+function Fila({ signo, label, hint, valor, tono = 'neutro', fuerte = false }: {
+  signo?: '−' | '='
+  label: string
+  hint?: ReactNode
+  valor: number
+  tono?: 'neutro' | 'gold' | 'success' | 'danger'
+  fuerte?: boolean
+}) {
+  const color = tono === 'gold' ? 'text-gold-700'
+    : tono === 'success' ? 'text-success-600'
+    : tono === 'danger' ? 'text-danger-700'
+    : 'text-warm-700'
+  return (
+    <div className={`flex items-baseline gap-2 px-4 py-2.5 ${fuerte ? 'bg-warm-50' : ''}`}>
+      <span className="w-3 shrink-0 font-mono text-sm text-warm-400" aria-hidden="true">{signo ?? ''}</span>
+      <span className="min-w-0 flex-1">
+        <span className={`block text-sm text-warm-700 ${fuerte ? 'font-bold' : 'font-semibold'}`}>{label}</span>
+        {hint && <span className="block text-[11px] text-warm-400 leading-snug">{hint}</span>}
+      </span>
+      <span className={`shrink-0 font-mono tabular-nums ${fuerte ? 'text-base font-extrabold' : 'text-sm font-bold'} ${color}`}>
+        {fmt(valor)}
+      </span>
+    </div>
+  )
+}
+
 /**
  * `refreshKey` cierra el loop CTA→acción→resultado del cajón «Egresos sin
  * categorizar». Esta vista tiene su PROPIO `data` (necesita el selector de período
@@ -91,6 +125,50 @@ export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refre
 
   const r = data?.resumen
   const margenPositivo = (r?.margen_neto ?? 0) >= 0
+
+  // ══ LA ESCALERA DEL P&L ═══════════════════════════════════════════════════
+  // El backend separó el impoconsumo de la venta: el precio de la carta lo lleva
+  // adentro, así que `ventas` es lo COBRADO y todos los márgenes se miden contra
+  // `venta_neta`. Sin el escalón del impuesto a la vista, Ventas − Compras −
+  // Costos NO da el margen neto: el dueño ve una resta rota y un "% de la venta"
+  // medido contra una base que la pantalla nunca muestra.
+  //
+  // EL GATE ES EL MONTO, NO LA PRESENCIA DEL CAMPO. Con la tarifa en 0 —o con un
+  // parámetro que diga que el precio no lleva el impuesto adentro— el backend
+  // devuelve impoconsumo 0 y venta_neta == ventas: un renglón "menos Impoconsumo
+  // $0" sería un escalón inventado. De yapa, mirar el monto es lo que hace que
+  // este frontend contra un backend viejo (campo ausente → undefined, y
+  // `undefined > 0` es false) muestre la escalera clásica en vez de $NaN.
+  const hayImpo = (r?.impoconsumo ?? 0) > 0
+  // Pesos ENTEROS, y los dos renglones nuevos se DERIVAN de los otros cuatro.
+  // `venta_neta` sale de una división por (1 + tasa), o sea que arrastra centavos
+  // arbitrarios: redondeando cada renglón por su cuenta, la escalera podía quedar
+  // corrida $1 a la vista — que es exactamente la queja que este cambio vino a
+  // matar. Los números que tienen GEMELO en otra pantalla se muestran tal cual
+  // los manda el backend (ventas contra caja, compras contra facturas, costos
+  // contra el desglose de abajo, margen neto contra el hero de «Hoy»); el centavo
+  // lo absorben Impoconsumo y Venta neta, que no se cruzan con nada más.
+  //
+  // La identidad se sostiene sola: ventas − margen_neto − compras − gastos ==
+  // ventas − venta_neta == impoconsumo (backend: margen_neto = venta_neta −
+  // compras − gastos, exacto en 2 decimales). Acá solo se redondea a peso.
+  //
+  // Sin impuesto no hay división y la escalera arranca directo en `ventas`: los
+  // cuatro renglones son los del backend, con el mismo redondeo a peso que usa
+  // el resto de la app. `eNeta` y `eImpo` no se pintan en ese caso.
+  const eVentas = Math.round(r?.ventas ?? 0)
+  const eCompras = Math.round(r?.compras ?? 0)
+  const eGastos = Math.round(r?.gastos ?? 0)
+  const eMargen = Math.round(r?.margen_neto ?? 0)
+  const eNeta = eMargen + eCompras + eGastos
+  const eImpo = eVentas - eNeta
+  // Leyenda del %: la base cambió y decir "de la venta" a secas ya no alcanza.
+  const basePct = hayImpo ? 'de la venta neta' : 'de la venta'
+  // El desglose por mes se cierra con la tarifa vigente de CADA mes, así que un
+  // rango puede tener meses con impuesto y meses sin él. Los encabezados se
+  // deciden por si ALGÚN mes separa plata; cada fila decide lo suyo por su
+  // propio monto.
+  const hayImpoMes = (data?.por_mes ?? []).some(m => m.impoconsumo > 0)
   // Los dos ejes de la cobertura de la fuga: MESES y SEDES. Cada uno se declara
   // solo cuando falta algo, y los dos sesgan para el mismo lado (subdeclaran).
   const mesesParcial = (r?.fuga_meses ?? 0) > 0 && (r?.fuga_meses ?? 0) < (r?.fuga_meses_rango ?? 0)
@@ -125,8 +203,13 @@ export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refre
       {!loading && data && r && (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* "Ventas" es lo COBRADO y lo dice: el margen neto y su % ya no se
+                miden contra este número sino contra la venta neta. (El margen
+                bruto real de más abajo SÍ sigue saliendo de acá, y esa tarjeta
+                lo declara: son dos bases conviviendo en la misma pantalla.) */}
             <Kpi label="Ventas" value={fmt(r.ventas)} Icon={Wallet} tint="text-forest"
-              sub={`${r.n_tickets} tickets`} />
+              sub={hayImpo ? `${r.n_tickets} tickets · lo cobrado, impoconsumo adentro`
+                           : `${r.n_tickets} tickets`} />
             <Kpi label="Compras proveedor" value={fmt(r.compras)} Icon={ShoppingCart} tint="text-gold-600"
               sub={`${r.n_facturas} facturas recibidas`} />
             {/* El valor ya son las DOS mitades: egresos de caja sin adoptar +
@@ -149,11 +232,92 @@ export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refre
               {/* Sin muletilla cuando hay cobertura: el número ya resta arriendo y
                   nómina. Cuando NO la hay, se declara — un margen sin costos fijos
                   leído como si los tuviera es la mentira que esta fase corrige. */}
+              {/* La leyenda del % nombra su base. `pct_margen_neto` sale de
+                  margen_neto / venta_neta: llamarlo "de la venta" a secas
+                  invitaba a dividirlo contra las ventas de la tarjeta de al
+                  lado y no daba. La venta neta está en la escalera de abajo. */}
               <p className="text-xs text-warm-400 mt-1.5">
-                {r.pct_margen_neto != null ? `${r.pct_margen_neto}% de la venta` : 'sin ventas'}
+                {r.pct_margen_neto != null ? `${r.pct_margen_neto}% ${basePct}` : 'sin ventas'}
                 {r.tiene_costos_fijos ? '' : ' · sin costos fijos cargados'}
               </p>
             </div>
+          </div>
+
+          {/* ── DE LO COBRADO AL MARGEN: la resta, completa y en orden ───────
+              Las tarjetas de arriba son cuatro números sueltos; el dueño los
+              resta de cabeza y desde que el impoconsumo salió de la venta esa
+              resta ya no cierra. Acá está el camino entero con el escalón del
+              impuesto en el medio, que es lo único que hace que cierre. */}
+          <div className="bg-white rounded-2xl border border-warm-200 overflow-hidden">
+            <div className="px-4 py-3 border-b border-warm-100">
+              <p className="text-sm font-bold text-warm-700">De lo cobrado al margen</p>
+              <p className="text-[11px] text-warm-500">
+                {hayImpo
+                  ? 'El precio de la carta lleva el impoconsumo adentro: esa parte se le gira a la DIAN, nunca fue del negocio.'
+                  : 'La resta completa, renglón por renglón.'}
+              </p>
+            </div>
+            <div className="divide-y divide-warm-100">
+              <Fila label="Ventas" valor={eVentas}
+                hint={hayImpo ? `${r.n_tickets} tickets · lo que cobraste` : `${r.n_tickets} tickets`} />
+              {hayImpo && (
+                <>
+                  <Fila signo="−" label="Impoconsumo" valor={eImpo} tono="gold"
+                    hint={`${fmtTasa(r.tasa_impoconsumo)} sobre la venta neta, incluido en el precio de la carta`} />
+                  {/* OJO con el copy: la venta neta es la base del margen neto y
+                      de su %, NO de todos los % de la pantalla — el margen bruto
+                      real y la fuga se miden contra lo cobrado (y lo dicen en su
+                      propia tarjeta). Prometer "todos" acá sería falso. */}
+                  <Fila signo="=" label="Venta neta" valor={eNeta} fuerte
+                    hint="la plata que sí es del negocio — la base del margen neto y de su %" />
+                </>
+              )}
+              <Fila signo="−" label="Compras proveedor" valor={eCompras}
+                hint={`${r.n_facturas} facturas recibidas en el período`} />
+              <Fila signo="−" label="Costos operativos" valor={eGastos}
+                hint={`${data.gastos_por_categoria?.length ?? 0} categorías — el detalle está más abajo`} />
+              <Fila signo="=" label="Margen neto" valor={eMargen} fuerte
+                tono={margenPositivo ? 'success' : 'danger'}
+                hint={r.pct_margen_neto != null
+                  ? `${r.pct_margen_neto}% ${basePct}${r.tiene_costos_fijos ? '' : ' · sin costos fijos cargados'}`
+                  : 'sin ventas en el período'} />
+            </div>
+            {/* La tarifa sin confirmar se avisa igual que las tasas laborales
+                (components/horarios), y SOLO cuando de verdad está separando
+                plata: con impoconsumo en 0 la bandera viene prendida por defecto
+                y el cartel hablaría de una tarifa que no se está aplicando. */}
+            {hayImpo && r.impoconsumo_confirmar_contador && (
+              <p className="text-[11px] text-clay-600 bg-clay-50 border-t border-clay-200 px-4 py-2">
+                La tarifa del impoconsumo (<b className="font-mono">{fmtTasa(r.tasa_impoconsumo)}</b>) está
+                cargada pero <b>todavía sin confirmar con tu contador</b>. Si la que te aplica es otra,
+                se mueven la venta neta, el margen neto y su %.
+              </p>
+            )}
+            {/* El otro estado, dicho con la misma disciplina: acá NO se está
+                restando ningún impuesto, así que el margen neto se mide sobre
+                todo lo cobrado.
+                LAS TRES CONDICIONES SON NECESARIAS Y NINGUNA ES DECORATIVA:
+                · `typeof` — "el backend mandó cero" y "el backend no mandó el
+                  campo" son cosas distintas; con un backend viejo esto se calla,
+                  que es la verdad: nadie dijo nada del impoconsumo.
+                · `!hayImpo` — el estado del que habla la frase.
+                · `r.ventas > 0` — SIN VENTAS el impoconsumo da 0 aunque la
+                  tarifa esté vigente y el precio la lleve adentro (separar(0)
+                  devuelve 0). Sin este guard, un mes sin ventas afirmaría "el
+                  precio de la carta no lleva el impuesto adentro", que es una
+                  conclusión sacada de un cero que solo significa "no se vendió".
+                  Es la misma trampa de siempre leída al revés: el monto en cero
+                  tampoco prueba nada por sí solo. */}
+            {typeof r.impoconsumo === 'number' && !hayImpo && r.ventas > 0 && (
+              <p className="text-[11px] text-gold-700 bg-gold-50 border-t border-gold-200 px-4 py-2">
+                Este período <b>no descuenta impoconsumo</b>: el margen neto y su % se miden
+                sobre todo lo cobrado.{' '}
+                {r.tasa_impoconsumo > 0
+                  ? `La tarifa cargada es ${fmtTasa(r.tasa_impoconsumo)}, pero el parámetro dice que el precio de la carta no la lleva adentro.`
+                  : 'No hay ninguna tarifa cargada.'}
+                {r.impoconsumo_confirmar_contador && ' El parámetro está sin confirmar con tu contador.'}
+              </p>
+            )}
           </div>
 
           {/* ── Fuga de inventario medida por el conteo físico ──────────────── */}
@@ -168,6 +332,17 @@ export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refre
               <p className="text-[11px] font-bold uppercase tracking-wide text-warm-500 mb-2">
                 Fuga de inventario — lo que el conteo midió y nada explica
               </p>
+              {/* Misma base que la tarjeta del COGS —lo COBRADO— y por el mismo
+                  motivo: los dos márgenes de acá salen de `ventas − cogs_teorico`
+                  (+ fuga), no de la venta neta. El residuo del medio no es un
+                  margen: es una valorización de inventario, y por eso NO se lo
+                  nombra en esta advertencia. */}
+              {hayImpo && (
+                <p className="text-[11px] text-gold-700 mb-2">
+                  «Margen sobre lo vendido» y «Queda después del residuo» salen de <b>lo cobrado</b>,
+                  no de la venta neta: todavía tienen el impoconsumo adentro.
+                </p>
+              )}
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div>
                   <p className="text-[10px] uppercase font-bold text-warm-400">Margen sobre lo vendido</p>
@@ -295,6 +470,19 @@ export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refre
               <p className="text-[11px] text-warm-400 mt-2">
                 Brecha positiva = stockeaste (compraste más de lo consumido). Cubre el {r.pct_venta_costeada ?? '—'}% de la venta (productos con costo).
               </p>
+              {/* LA BASE DE ESTA TARJETA NO ES LA DE ARRIBA. El backend calcula
+                  `margen_bruto_real` como ventas − cogs_teorico y su % sobre
+                  `ventas`, o sea sobre lo COBRADO; el margen neto sale de la
+                  venta neta. Son dos números que el dueño va a comparar sí o sí,
+                  así que la diferencia de base se dice acá en vez de dejar que
+                  la descubra restando. */}
+              {hayImpo && (
+                <p className="text-[11px] text-gold-700 mt-1.5">
+                  Este margen y su % se miden sobre <b>lo cobrado</b> ({fmt(r.ventas)}), no sobre la
+                  venta neta: todavía tienen el impoconsumo adentro, así que se ven más altos que
+                  el margen neto de arriba.
+                </p>
+              )}
             </div>
           )}
 
@@ -307,18 +495,30 @@ export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refre
                   <thead>
                     <tr className="text-[11px] uppercase tracking-wide text-warm-400 border-b border-warm-100">
                       <th className="text-left px-4 py-2 font-bold">Mes</th>
-                      <th className="text-right px-3 py-2 font-bold">Ventas</th>
+                      {/* El encabezado dice lo que es: la columna es lo COBRADO,
+                          y debajo de cada monto va la venta neta del mes. */}
+                      <th className="text-right px-3 py-2 font-bold">{hayImpoMes ? 'Ventas (cobrado)' : 'Ventas'}</th>
                       <th className="text-right px-3 py-2 font-bold">Compras</th>
                       <th className="text-right px-3 py-2 font-bold">Gastos</th>
                       <th className="text-right px-4 py-2 font-bold">Margen</th>
-                      <th className="text-right px-4 py-2 font-bold">%</th>
+                      <th className="text-right px-4 py-2 font-bold">{hayImpoMes ? '% s/neta' : '%'}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.por_mes.map(m => (
                       <tr key={m.mes} className="border-b border-warm-100 last:border-0">
                         <td className="px-4 py-2.5 font-semibold text-warm-700">{nombreMes(m.mes)}</td>
-                        <td className="px-3 py-2.5 text-right font-mono text-warm-700 tabular-nums">{fmt(m.ventas)}</td>
+                        {/* Gate POR FILA y por monto: cada mes se cierra con la
+                            tarifa que regía ESE mes, así que un mes sin impuesto
+                            conviviendo con otros que sí lo tienen es un estado
+                            posible y no puede mostrar un "neta" que es el mismo
+                            número de arriba. */}
+                        <td className="px-3 py-2.5 text-right font-mono text-warm-700 tabular-nums">
+                          {fmt(m.ventas)}
+                          {m.impoconsumo > 0 && (
+                            <span className="block text-[11px] text-warm-400">neta {fmt(m.venta_neta)}</span>
+                          )}
+                        </td>
                         <td className="px-3 py-2.5 text-right font-mono text-warm-500 tabular-nums">{fmt(m.compras)}</td>
                         <td className="px-3 py-2.5 text-right font-mono text-warm-500 tabular-nums">{fmt(m.gastos)}</td>
                         <td className={`px-4 py-2.5 text-right font-mono font-bold tabular-nums ${m.margen_neto >= 0 ? 'text-success-600' : 'text-danger-500'}`}>
@@ -332,6 +532,12 @@ export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refre
                   </tbody>
                 </table>
               </div>
+              {hayImpoMes && (
+                <p className="px-4 py-2 text-[11px] text-warm-400 border-t border-warm-100">
+                  «Ventas» es lo cobrado; «neta» le saca el impoconsumo. El margen y el % de cada
+                  mes salen de la venta neta de ESE mes, calculada con la tarifa que regía entonces.
+                </p>
+              )}
             </div>
           )}
 
@@ -343,8 +549,18 @@ export default function PnLView({ onVerMetodologia, onAbrirSinCategorizar, refre
                   <p className="text-sm font-bold text-warm-700 mb-2">{s.tienda}</p>
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <div>
-                      <p className="text-[10px] uppercase font-bold text-warm-400">Ventas</p>
+                      {/* Igual que la tabla por mes: el rótulo dice que es lo
+                          cobrado y la neta va abajo, porque el margen de la
+                          tarjeta de al lado se calculó contra ESA. La fila
+                          "Corporativo" no vende nada, así que su impoconsumo es
+                          0 y el gate por monto la deja limpia sola. */}
+                      <p className="text-[10px] uppercase font-bold text-warm-400">
+                        {s.impoconsumo > 0 ? 'Ventas (cobrado)' : 'Ventas'}
+                      </p>
                       <p className="text-sm font-mono font-bold text-warm-700 mt-0.5 tabular-nums">{fmt(s.ventas)}</p>
+                      {s.impoconsumo > 0 && (
+                        <p className="text-[10px] text-warm-400 font-mono tabular-nums">neta {fmt(s.venta_neta)}</p>
+                      )}
                     </div>
                     <div>
                       <p className="text-[10px] uppercase font-bold text-warm-400">Compras+Gastos</p>

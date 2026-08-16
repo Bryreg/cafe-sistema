@@ -24,7 +24,19 @@ export default function SimuladorSheet({ prodData, productoId, onClose }: {
   const costoBase = prod.costo as number
   const costoNuevo = Math.round(costoBase * (1 - reduccion / 100))
   const ganancia = Math.round((costoBase - costoNuevo) * prod.unidades_30d)
-  const margenNuevo = prod.precio_venta > 0 ? Math.round((1 - costoNuevo / prod.precio_venta) * 100) : 0
+  // ── EL MARGEN SIMULADO SE MIDE CONTRA EL PRECIO NETO ──────────────────────
+  // `prod.pct_margen` viene del backend calculado contra `precio_neto` (el de la
+  // carta menos el impoconsumo). Esta cuenta lo rehacía contra `precio_venta`, o
+  // sea que la flecha "margen 62% → 68%" comparaba dos números con BASES
+  // distintas y el simulado salía inflado ~7 puntos: parecía que bajar el costo
+  // rendía más de lo que rinde. Se usa la misma base que el número de partida.
+  //
+  // El fallback es por MONTO, no por presencia del campo: con la tarifa en 0 (o
+  // contra un backend viejo, donde `precio_neto` llega undefined y `> 0` da
+  // false) la base vuelve a ser el precio de la carta, que ahí es exactamente lo
+  // mismo. Nunca se divide por undefined.
+  const baseMargen = prod.precio_neto > 0 ? prod.precio_neto : prod.precio_venta
+  const margenNuevo = baseMargen > 0 ? Math.round((1 - costoNuevo / baseMargen) * 100) : 0
 
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Simulador de costo">
@@ -71,6 +83,15 @@ export default function SimuladorSheet({ prodData, productoId, onClose }: {
               costo <span className="font-mono">{fmt(costoBase)}</span> → <span className="font-mono">{fmt(costoNuevo)}</span>
               {' · '}margen <span className="font-mono">{prod.pct_margen}%</span> → <span className="font-mono font-bold text-forest">{margenNuevo}%</span>
             </p>
+            {/* La base del %, a la vista: los dos márgenes de arriba salen de
+                este número y no del precio de la carta. */}
+            {prod.impoconsumo_unitario > 0 && (
+              <p className="text-[10px] text-warm-400 mt-1">
+                % sobre el precio neto <span className="font-mono">{fmt(prod.precio_neto)}</span> —
+                la carta (<span className="font-mono">{fmt(prod.precio_venta)}</span>) lleva el
+                impoconsumo adentro.
+              </p>
+            )}
           </div>
         </div>
       </div>

@@ -433,51 +433,71 @@ class SoloElAdminEntraTest(BancoApiBase):
         self.assertEqual(lib["totales"]["entradas"], 0)
 
 
-class LoQueRevENTABA_CON_500Test(BancoApiBase):
-    """Tres entradas que pasaban la validación y explotaban después.
+class ElRechazoTIENE_QUE_SER_LEGIBLETest(BancoApiBase):
+    """Un 500 no dice qué corregir; un 422 mudo tampoco.
 
-    Un 500 no le dice al dueño qué corregir: le dice que el sistema se rompió.
-    Estas tres tienen que salir por 400, con un mensaje que se pueda leer.
+    La primera versión de estos tests verificaba el CÓDIGO DE ESTADO —que está
+    cerca de lo que importa— en vez del mensaje. Y el 422 de Pydantic trae
+    `detail` como LISTA, que el cliente no sabe leer: al dueño le salía
+    «Reintentá», invitándolo a repetir algo que va a fallar siempre igual. Lo
+    que se pincha acá es que el texto LLEGUE.
     """
 
-    def test_una_fecha_absurda_no_llega_a_la_base(self):
-        """9999-12-31 se guardaba, y al releer el libro el loop desbordaba
-        `date.max` con OverflowError: 500 releyendo lo que se acababa de crear."""
-        r = self.mover(date(9999, 12, 31), "entrada", 1000)
-        self.assertEqual(r.status_code, 422, r.text)
+    def _detalle(self, r):
+        """Lo que el cliente puede mostrar: solo sirve si `detail` es un string."""
+        self.assertEqual(r.status_code, 400, r.text)
+        det = r.json().get("detail")
+        self.assertIsInstance(det, str, "un detail que no es texto no llega a la pantalla")
+        return det
 
-    def test_una_fecha_del_año_1_tampoco(self):
-        r = self.mover(date(1, 1, 1), "entrada", 1000)
-        self.assertEqual(r.status_code, 422, r.text)
+    def test_una_fecha_absurda_se_rechaza_diciendo_por_que(self):
+        """9999-12-31 se guardaba y al releer el libro el loop desbordaba
+        `date.max` con OverflowError: 500 sobre lo recién creado."""
+        self.assertIn("2000", self._detalle(self.mover(date(1, 1, 1), "entrada", 1000)))
 
-    def test_el_año_que_viene_SI_se_acepta(self):
-        """Un débito que ya se sabe se tiene que poder anotar."""
+    def test_una_fecha_FUTURA_se_rechaza_y_explica_adonde_va(self):
+        """El libro es plata que YA se movió. Un débito futuro bajaba el saldo
+        del libro y NO bajaba el punto de quiebre, que solo mira la agenda."""
         from app.core.tz import hoy_col
-        r = self.mover(date(hoy_col().year + 1, 3, 15), "salida", 1000)
-        self.assertEqual(r.status_code, 200, r.text)
+        from datetime import timedelta
+        d = self._detalle(self.mover(hoy_col() + timedelta(days=1), "salida", 1000))
+        self.assertIn("Obligaciones", d)
 
-    def test_un_concepto_larguisimo_se_rechaza_con_mensaje(self):
-        """La columna es String(160): sin tope, el INSERT explota en Postgres."""
-        r = self.mover(date(2026, 8, 10), "entrada", 1000, concepto="x" * 500)
-        self.assertEqual(r.status_code, 422, r.text)
+    def test_hoy_SI_entra(self):
+        from app.core.tz import hoy_col
+        self.assertEqual(self.mover(hoy_col(), "entrada", 1000).status_code, 200)
+
+    def test_un_concepto_larguisimo_dice_cual_es_el_tope(self):
+        d = self._detalle(self.mover(date(2026, 8, 10), "entrada", 1000,
+                                     concepto="x" * 500))
+        self.assertIn("160", d)
 
     def test_un_concepto_de_160_entra(self):
         r = self.mover(date(2026, 8, 10), "entrada", 1000, concepto="x" * 160)
         self.assertEqual(r.status_code, 200, r.text)
 
-    def test_una_nota_larguisima_se_rechaza(self):
-        """String(300)."""
-        r = self.mover(date(2026, 8, 10), "entrada", 1000, nota="y" * 900)
-        self.assertEqual(r.status_code, 422, r.text)
+    def test_una_nota_larguisima_dice_cual_es_el_tope(self):
+        self.assertIn("300", self._detalle(
+            self.mover(date(2026, 8, 10), "entrada", 1000, nota="y" * 900)))
 
-    def test_un_400_o_422_no_deja_nada_escrito(self):
+    def test_un_rechazo_no_deja_nada_escrito(self):
         antes = self.client.get("/api/v1/banco/libro",
                                 params={"anio": 2026, "mes": 8}).json()
-        self.mover(date(9999, 12, 31), "entrada", 1000)
+        self.mover(date(1, 1, 1), "entrada", 1000)
         self.mover(date(2026, 8, 10), "entrada", 1000, concepto="x" * 500)
         despues = self.client.get("/api/v1/banco/libro",
                                   params={"anio": 2026, "mes": 8}).json()
         self.assertEqual(antes["totales"], despues["totales"])
+
+    def test_el_ANCLA_tambien_corta_la_fecha_vieja(self):
+        """Donde más pesa: el ancla es la raíz de la cadena. Con una fecha
+        absurdamente vieja, TODOS los días de toda la historia quedaban
+        marcados con saldo confiable y el cartel que explica desde cuándo se
+        conoce el saldo desaparecía."""
+        r = self.client.put("/api/v1/banco/ancla",
+                            json={"saldo": 1000, "fecha": "0026-08-16"})
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertIsInstance(r.json().get("detail"), str)
 
 
 if __name__ == "__main__":

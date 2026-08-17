@@ -23,11 +23,19 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_admin
 from app.core.tz import hoy_col
+
+# Piso de fecha para TODO el libro: el ancla y los movimientos. Una fecha
+# anterior es siempre un tecleo (el año con dos dígitos, un dígito de más), y
+# en el ANCLA pesa más que en cualquier movimiento: es la raíz de la cadena, y
+# con una fecha absurdamente vieja todos los días de toda la historia quedan
+# marcados con saldo confiable y el cartel que explica desde cuándo se conoce
+# el saldo desaparece.
+LIBRO_DESDE = date(2000, 1, 1)
 from app.database import get_db
 from app.models.models import Obligacion, Usuario
 from app.services import banco
@@ -72,37 +80,21 @@ class MovimientoIn(BaseModel):
     significar nada — un movimiento que llega por este endpoint es, por
     definición, tecleado.
     """
-    # ACOTADA. Sin tope, una fecha como 9999-12-31 se guarda y REVIENTA después:
-    # el libro recorre día por día y `d += timedelta(1)` desborda `date.max` con
-    # OverflowError, o sea 500 al releer el movimiento que se acaba de crear.
-    # Y una fecha futura sin tope entra al libro pero es invisible para el punto
-    # de quiebre, que solo mira la ventana del horizonte.
+    # Las cotas de fecha y de largo NO van acá sino en el handler, como
+    # HTTPException(400). Pydantic rechaza con 422 y un `detail` que es una
+    # LISTA de objetos, y el cliente solo sabe leer `detail` cuando es texto
+    # (frontend/.../banco.ts): el mensaje bien escrito no llegaba nunca y el
+    # dueño leía «Reintentá», que lo invita a repetir algo que va a fallar
+    # siempre igual. Cambiar un 500 por un 422 mudo no es arreglarlo.
     fecha: date
     cuenta_id: int
     tipo: str                      # 'entrada' | 'salida' — lo valida el servicio
     monto: float                   # SIEMPRE positivo; el signo lo pone el tipo
-    # ACOTADOS AL LARGO DE LA COLUMNA. `concepto` es String(160) y `nota`
-    # String(300): sin `max_length`, un pegado largo pasa la validación y el
-    # INSERT explota en PostgreSQL con 500 en vez de decirle al dueño que
-    # recorte el texto.
-    concepto: str = Field(min_length=1, max_length=160)
+    concepto: str
     # Si el movimiento paga una obligación ya cargada, se enlaza: así el
     # calendario puede tachar ese vencimiento en vez de mostrarlo pendiente.
     obligacion_id: Optional[int] = None
-    nota: Optional[str] = Field(default=None, max_length=300)
-
-    @field_validator("fecha")
-    @classmethod
-    def _fecha_razonable(cls, v: date) -> date:
-        """Un año de margen hacia adelante alcanza para anotar un débito que ya
-        se sabe, y corta las fechas de tecleo (9999, 0001) antes de que lleguen
-        a la base."""
-        hoy = hoy_col()
-        if v < date(2000, 1, 1) or v > date(hoy.year + 1, 12, 31):
-            raise ValueError(
-                "La fecha tiene que estar entre 2000 y el año que viene. "
-                "Revisá lo que tecleaste.")
-        return v
+    nota: Optional[str] = None
 
 
 class AnclaIn(BaseModel):
@@ -195,6 +187,26 @@ def crear_movimiento(
     # mandarlo a contar ceros.
     if data.monto > MONTO_MAX:
         raise HTTPException(400, "Ese monto es demasiado grande: revisá los ceros.")
+    # LA FECHA, ACOTADA ACÁ Y CON TEXTO. Sin cota, 9999-12-31 se guardaba y
+    # reventaba AL RELEERLA: el libro recorre día por día y `d += timedelta(1)`
+    # desborda `date.max`. Y el tope superior es HOY porque este libro es plata
+    # que YA SE MOVIÓ —es lo que la propia pantalla promete— mientras que un
+    # débito futuro que se sabe va en Obligaciones, que es lo único que el
+    # punto de quiebre mira. Aceptándolo acá, bajaba el saldo del libro y NO
+    # bajaba la proyección: dos números para la misma pregunta, con el
+    # optimista en la pestaña que se mira primero.
+    if data.fecha < LIBRO_DESDE:
+        raise HTTPException(400, "Esa fecha es anterior al año 2000: revisá lo "
+                                 "que tecleaste.")
+    if data.fecha > hoy_col():
+        raise HTTPException(400, "El libro es de plata que YA se movió, así que "
+                                 "no acepta fechas futuras. Un débito que ya "
+                                 "sabés que viene va en Obligaciones, que es lo "
+                                 "que mira la proyección.")
+    if len(data.concepto or "") > 160:
+        raise HTTPException(400, "El concepto no puede pasar de 160 caracteres.")
+    if len(data.nota or "") > 300:
+        raise HTTPException(400, "La nota no puede pasar de 300 caracteres.")
     if data.obligacion_id is not None and db.query(Obligacion).filter(
             Obligacion.id == data.obligacion_id).first() is None:
         raise HTTPException(400, "Esa obligación no existe.")
@@ -256,6 +268,9 @@ def declarar_ancla(
     if data.saldo > costos_svc.SALDO_BANCO_MAX:
         raise HTTPException(400, "El saldo del banco es demasiado grande.")
     fecha = data.fecha or hoy_col()
+    if fecha < LIBRO_DESDE:
+        raise HTTPException(400, "La fecha del extracto es anterior al año 2000: "
+                                     "revisá lo que tecleaste.")
     if fecha > hoy_col():
         raise HTTPException(400, "La fecha del saldo no puede ser futura.")
 

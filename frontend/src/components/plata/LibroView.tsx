@@ -268,6 +268,13 @@ export default function LibroView({
       await api.delete(`/banco/movimientos/${id}`)
       setBorrandoId(null)
       recargar()
+      // TAMBIÉN hacia afuera. Desde que el flujo proyectado arranca del libro y
+      // no del ancla cruda, borrar un movimiento mueve el punto de quiebre — y
+      // «Hoy» solo repide /costos/flujo cuando alguien se lo avisa. Sin esto, la
+      // pestaña que el dueño mira primero seguía proyectando con la plata vieja
+      // y el número correcto aparecía a un toque, en el cajón: dos números para
+      // la misma pregunta, con el optimista adelante.
+      onRefrescar()
     } catch (e) {
       setBorrandoId(null)
       setError(detalleDeError(e, 'No se pudo borrar el movimiento.'))
@@ -703,6 +710,10 @@ export default function LibroView({
             setDiaAbierto(m.fecha)
             setNuevoEn(null)
             recargar()
+            // Mismo motivo que en `borrarMovimiento`: un movimiento nuevo mueve
+            // el saldo del que vive la proyección de «Hoy», y esa pestaña solo
+            // repide /costos/flujo cuando alguien se lo avisa.
+            onRefrescar()
           }} />
       )}
 

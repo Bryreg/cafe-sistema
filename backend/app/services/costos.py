@@ -1094,12 +1094,27 @@ def _saldo_banco_hoy(db: Session, hoy: date) -> dict:
          plata queda contada UNA vez, del lado del banco;
       2. los MovimientoCaja egreso son de la registradora, no del banco: no hay
          intersección con MovimientoBanco, que se teclea contra el extracto;
-      3. las salidas FUTURAS siguen saliendo de la agenda. Un pago ya hecho
-         desde el banco solo desaparece de la agenda cuando se registra el pago
-         de la obligación — igual que antes de este cambio, cuando el dueño
-         refrescaba el ancla después de pagar. Este cambio no agrega un camino
-         nuevo para contar dos veces: adelanta al día de hoy el mismo saldo que
-         el ancla iba a mostrar en la próxima actualización.
+      3. las salidas FUTURAS siguen saliendo de la agenda, no de una copia.
+
+    EL CAMINO QUE SÍ SE ABRE, Y HAY QUE DECIRLO EN VEZ DE NEGARLO. Este
+    docstring afirmaba que el cambio «no agrega un camino nuevo para contar dos
+    veces». Es FALSO y una auditoría lo demostró ejecutándolo. Antes, teclear
+    una salida del banco no movía la proyección —arrancaba del ancla cruda— así
+    que una obligación pagada desde el banco y todavía viva en la agenda se
+    contaba UNA vez. Ahora el saldo baja por el libro Y la agenda la sigue
+    proyectando como salida futura: la misma plata, dos veces, y el punto de
+    quiebre sale antes de lo real.
+
+    Es INHERENTE a que el libro se teclea: el sistema no puede saber que ese
+    movimiento y esa obligación son la misma plata mientras nadie se lo diga.
+    `MovimientoBanco.obligacion_id` existe justamente para decírselo, y hoy no
+    lo consume nadie — o sea que la columna es una promesa sin cumplir, no una
+    guarda. Cerrarlo de verdad es descontar de la agenda lo que ya salió del
+    banco con ese enlace; mientras tanto la pantalla lo advierte y este
+    comentario no finge que el agujero no existe.
+
+    El error va en la dirección PRUDENTE (muestra menos plata de la que hay,
+    no más), que es la única razón por la que esto no bloquea.
     """
     declarado, fecha_ancla = _leer_saldo_banco(db)
     base_libro, _fecha_libro = banco_svc.ancla(db)

@@ -433,5 +433,52 @@ class SoloElAdminEntraTest(BancoApiBase):
         self.assertEqual(lib["totales"]["entradas"], 0)
 
 
+class LoQueRevENTABA_CON_500Test(BancoApiBase):
+    """Tres entradas que pasaban la validación y explotaban después.
+
+    Un 500 no le dice al dueño qué corregir: le dice que el sistema se rompió.
+    Estas tres tienen que salir por 400, con un mensaje que se pueda leer.
+    """
+
+    def test_una_fecha_absurda_no_llega_a_la_base(self):
+        """9999-12-31 se guardaba, y al releer el libro el loop desbordaba
+        `date.max` con OverflowError: 500 releyendo lo que se acababa de crear."""
+        r = self.mover(date(9999, 12, 31), "entrada", 1000)
+        self.assertEqual(r.status_code, 422, r.text)
+
+    def test_una_fecha_del_año_1_tampoco(self):
+        r = self.mover(date(1, 1, 1), "entrada", 1000)
+        self.assertEqual(r.status_code, 422, r.text)
+
+    def test_el_año_que_viene_SI_se_acepta(self):
+        """Un débito que ya se sabe se tiene que poder anotar."""
+        from app.core.tz import hoy_col
+        r = self.mover(date(hoy_col().year + 1, 3, 15), "salida", 1000)
+        self.assertEqual(r.status_code, 200, r.text)
+
+    def test_un_concepto_larguisimo_se_rechaza_con_mensaje(self):
+        """La columna es String(160): sin tope, el INSERT explota en Postgres."""
+        r = self.mover(date(2026, 8, 10), "entrada", 1000, concepto="x" * 500)
+        self.assertEqual(r.status_code, 422, r.text)
+
+    def test_un_concepto_de_160_entra(self):
+        r = self.mover(date(2026, 8, 10), "entrada", 1000, concepto="x" * 160)
+        self.assertEqual(r.status_code, 200, r.text)
+
+    def test_una_nota_larguisima_se_rechaza(self):
+        """String(300)."""
+        r = self.mover(date(2026, 8, 10), "entrada", 1000, nota="y" * 900)
+        self.assertEqual(r.status_code, 422, r.text)
+
+    def test_un_400_o_422_no_deja_nada_escrito(self):
+        antes = self.client.get("/api/v1/banco/libro",
+                                params={"anio": 2026, "mes": 8}).json()
+        self.mover(date(9999, 12, 31), "entrada", 1000)
+        self.mover(date(2026, 8, 10), "entrada", 1000, concepto="x" * 500)
+        despues = self.client.get("/api/v1/banco/libro",
+                                  params={"anio": 2026, "mes": 8}).json()
+        self.assertEqual(antes["totales"], despues["totales"])
+
+
 if __name__ == "__main__":
     unittest.main()

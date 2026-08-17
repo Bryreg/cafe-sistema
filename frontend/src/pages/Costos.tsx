@@ -683,7 +683,11 @@ export default function Costos({ vistas, embebido = false }: {
                       ? `Extracto del ${fecha(flujo.caja_hoy.saldo_banco_fecha)} `
                         + `${flujo.caja_hoy.saldo_banco_movimientos > 0 ? '+' : '−'} `
                         + `${fmt(Math.abs(flujo.caja_hoy.saldo_banco_movimientos))} del libro`
-                      : `Extracto del ${fecha(flujo.caja_hoy.saldo_banco_fecha)}, sin movimientos`}
+                      /* Neto CERO no es «sin movimientos»: una entrada y una
+                         salida iguales dan cero y sí los hubo. El monto derivado
+                         no puede hacer de contador. */
+                      : `Extracto del ${fecha(flujo.caja_hoy.saldo_banco_fecha)}, `
+                        + 'encadenado con el libro'}
                 <Pencil size={10} />
               </p>
               {/* La cuenta es de la empresa: en la vista de una sede se muestra

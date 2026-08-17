@@ -1795,8 +1795,12 @@ class MovimientoBanco(Base):
     # Marca los que el sistema puede sugerir solo (GMF, comisión) para poder
     # distinguirlos de lo que el dueño escribió a mano.
     automatico = Column(Boolean, nullable=False, default=False)
-    # Si el movimiento paga una obligación ya cargada, se enlaza: así el
-    # calendario puede tachar el vencimiento y el libro no lo cuenta dos veces.
+    # Enlace a la obligación que este movimiento paga. HOY NO LO CONSUME NADIE:
+    # la columna existe para poder descontar de la agenda lo que ya salió del
+    # banco —que es el único modo de cerrar el doble conteo de una obligación
+    # pagada y todavía viva ahí— pero ese consumo está sin escribir. Se deja
+    # dicho para que nadie lea la columna como una guarda que ya funciona: una
+    # promesa sin cumplir es peor que un campo ausente, porque parece seguridad.
     obligacion_id = Column(Integer, ForeignKey("obligaciones.id", ondelete="SET NULL"),
                            nullable=True, index=True)
     nota = Column(String(300), nullable=True)

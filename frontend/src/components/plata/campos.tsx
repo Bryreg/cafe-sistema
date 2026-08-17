@@ -69,7 +69,14 @@ export function teclas(
 ) {
   return (e: KeyboardEvent<HTMLDivElement | HTMLFormElement>) => {
     const t = e.target as HTMLElement
-    if (e.key === 'Enter' && t.tagName !== 'TEXTAREA') {
+    // El handler vive en el div que envuelve TODO el formulario, botones
+    // incluidos. Sin esta salida, con el foco en «Cancelar» el Enter hacía
+    // preventDefault —matando la activación por teclado del botón— y guardaba:
+    // el atajo terminaba haciendo lo contrario de lo que el botón enfocado dice.
+    if (t.tagName === 'BUTTON' || t.tagName === 'A') return
+    // `e.repeat` = la tecla quedó apretada. Sin esto, mantener Enter dispara un
+    // guardado por cada repetición del teclado.
+    if (e.key === 'Enter' && t.tagName !== 'TEXTAREA' && !e.repeat) {
       e.preventDefault()
       if (listo) guardar()
     } else if (e.key === 'Escape' && cancelar) {

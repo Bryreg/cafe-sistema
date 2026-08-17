@@ -65,6 +65,8 @@ export default function LaPlataView({
   const [pagando, setPagando] = useState<AgendaItem | null>(null)
   const [facturaObjetivo, setFacturaObjetivo] = useState<number | null>(null)
   const [pedidoAncla, setPedidoAncla] = useState(0)
+  /** Aviso que sube desde el formulario de pago: ahí abajo muere al cerrarse. */
+  const [avisoPago, setAvisoPago] = useState('')
   const refSaldos = useRef<HTMLDivElement>(null)
 
   /** Cambió plata: se repide la página Y el libro. */
@@ -133,12 +135,30 @@ export default function LaPlataView({
         saldo={i.monto}
         cuentas={cuentas}
         onCancelar={() => setPagando(null)}
-        onPagado={() => { setPagando(null); refrescarTodo() }} />
+        onPagado={av => {
+          setPagando(null); refrescarTodo()
+          // El pago quedó pero la salida del banco falló. El mensaje viene de
+          // abajo porque el formulario se desmonta en este mismo render.
+          setAvisoPago(av || '')
+        }} />
     ) : null
   )
 
   return (
     <div className="space-y-3">
+      {/* El pago se guardó pero el libro no se movió: es el único caso donde el
+          dueño tiene que hacer algo a mano, así que va arriba de todo y no se
+          va solo — lo cierra él cuando lo leyó. */}
+      {avisoPago && (
+        <div className="flex items-start gap-2 rounded-2xl border border-gold-200 bg-gold-50 px-3 py-2.5">
+          <p className="flex-1 text-xs text-gold-700 leading-relaxed">{avisoPago}</p>
+          <button onClick={() => setAvisoPago('')}
+            className="shrink-0 text-[11px] font-bold text-gold-700 underline decoration-dotted">
+            Entendido
+          </button>
+        </div>
+      )}
+
       {/* 1 · La venta del día */}
       <BannerVentasHoy ventasHoy={ventasHoy} pulso={pulso} cargando={cargandoVentas} />
 

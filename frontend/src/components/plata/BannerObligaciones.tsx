@@ -116,7 +116,13 @@ export default function BannerObligaciones({
       .then(r => setData(r.data))
       .catch(e => { setData(null); setError(detalleDeError(e, 'No se pudieron cargar los costos.')) })
       .finally(() => setCargando(false))
-  }, [sede, fCategoria, fEstado, desde, hasta])
+    // `refreshKey` sube desde LaPlataView cuando se pagó algo en OTRO banner de
+    // esta misma página. Va adentro de las deps de `cargar` —no solo del
+    // efecto— porque el efecto depende de la identidad de `cargar`: sin esto el
+    // prop queda declarado y muerto, la lista sigue mostrando el saldo entero y
+    // se puede pagar dos veces la misma obligación (`registrar_pago` no valida
+    // contra el saldo).
+  }, [sede, fCategoria, fEstado, desde, hasta, refreshKey])
 
   useEffect(() => { cargar() }, [cargar])
 
@@ -187,23 +193,26 @@ export default function BannerObligaciones({
       <FormObligacion categorias={categorias} tiendas={tiendas} onListo={() => refrescar()} />
 
       {/* ── Los tres números que se leen juntos ───────────────────────────── */}
+      {/* «—», no «$0». Sin lista cargada no hay cifra que mostrar, y un cero acá
+          se lee como «no debés nada»: la dirección tranquilizadora sobre un dato
+          que nadie midió. */}
       <div className="grid grid-cols-3 divide-x divide-warm-100 border-b border-warm-100">
         <div className="px-3 py-2.5">
           <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500">Total causado</p>
           <p className="text-base font-bold font-mono tabular-nums text-warm-700 leading-tight">
-            {plata(data?.totales.monto ?? 0)}
+            {data ? plata(data.totales.monto) : '—'}
           </p>
         </div>
         <div className="px-3 py-2.5">
           <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500">Ya pagado</p>
           <p className="text-base font-bold font-mono tabular-nums text-success-600 leading-tight">
-            {plata(data?.totales.pagado ?? 0)}
+            {data ? plata(data.totales.pagado) : '—'}
           </p>
         </div>
         <div className="px-3 py-2.5">
           <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500">Falta pagar</p>
           <p className="text-base font-bold font-mono tabular-nums text-danger-700 leading-tight">
-            {plata(data?.totales.saldo ?? 0)}
+            {data ? plata(data.totales.saldo) : '—'}
           </p>
         </div>
       </div>
@@ -454,7 +463,12 @@ export default function BannerObligaciones({
                 saldo={o.saldo}
                 cuentas={cuentas}
                 onCancelar={() => setPagando(null)}
-                onPagado={() => { setPagando(null); refrescar() }} />
+                onPagado={av => {
+                  setPagando(null); refrescar()
+                  // El pago se guardó pero la salida del banco falló: el aviso
+                  // llega desde el formulario porque ahí muere al desmontarse.
+                  if (av) setAviso(av)
+                }} />
             )}
             {editando === o.id && (
               <FormObligacion key={`ed-${o.id}`} categorias={categorias} tiendas={tiendas}

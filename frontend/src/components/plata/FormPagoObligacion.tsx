@@ -55,7 +55,12 @@ export default function FormPagoObligacion({
   cuentas: CuentaBanco[]
   onCancelar: () => void
   /** Aviso hacia afuera: cambió la agenda, el resultado y (si se marcó) el libro. */
-  onPagado: () => void
+  /** Se llama SIEMPRE que el pago quedó registrado, con o sin el movimiento del
+   *  banco. El `aviso` viaja hacia arriba porque este formulario se DESMONTA al
+   *  llamarlo: escribir el error acá y cerrar en el mismo render lo hacía
+   *  desaparecer sin que nadie lo leyera, justo en el caso que necesita
+   *  explicación (el pago está, el saldo del banco no bajó). */
+  onPagado: (aviso?: string) => void
 }) {
   const hoy = hoyBogota()
   const [monto, setMonto] = useState(String(Math.round(saldo)))
@@ -85,6 +90,12 @@ export default function FormPagoObligacion({
   const listo = Number(monto) > 0 && !!fecha && (!marcado || !!cuentaId)
 
   const registrar = async () => {
+    // GUARDA DE REENTRADA. Enter y el botón llaman a lo mismo, y entre el
+    // toque y la respuesta hay una ida y vuelta: dos toques ahí adentro
+    // escribían DOS veces. En una tablet con conexión lenta eso duplica un
+    // movimiento, un pago o una obligación, y `registrar_pago` del backend
+    // ni siquiera valida contra el saldo.
+    if (guardando) return
     if (!listo) return
     setGuardando(true); setError('')
     try {
@@ -118,11 +129,11 @@ export default function FormPagoObligacion({
         })
       } catch (e) {
         setGuardando(false)
-        setError(
-          'El pago quedó registrado y el vencimiento ya está tachado. Lo que NO se pudo cargar '
-          + 'es la salida del banco: ' + detalleDeError(e, 'reintentá desde el libro.')
+        // El mensaje sube: acá abajo no sobrevive al desmontaje.
+        onPagado(
+          'El pago quedó registrado y el vencimiento ya está tachado. Lo que NO se pudo '
+          + 'cargar es la salida del banco: ' + detalleDeError(e, 'reintentá desde el libro.')
           + ' Cargala a mano en el libro para que el saldo baje.')
-        onPagado()
         return
       }
     }

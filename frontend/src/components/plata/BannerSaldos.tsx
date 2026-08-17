@@ -89,6 +89,12 @@ export default function BannerSaldos({
 
   const listo = !!fecha && !!saldo
   const guardar = async () => {
+    // GUARDA DE REENTRADA. Enter y el botón llaman a lo mismo, y entre el
+    // toque y la respuesta hay una ida y vuelta: dos toques ahí adentro
+    // escribían DOS veces. En una tablet con conexión lenta eso duplica un
+    // movimiento, un pago o una obligación, y `registrar_pago` del backend
+    // ni siquiera valida contra el saldo.
+    if (guardando) return
     if (!listo) return
     setGuardando(true); setError('')
     try {

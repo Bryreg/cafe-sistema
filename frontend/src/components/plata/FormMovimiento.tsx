@@ -75,6 +75,12 @@ export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuar
   const listo = !!fecha && !!cuentaId && !!tipo && Number(monto) > 0 && !!concepto.trim()
 
   const guardar = async () => {
+    // GUARDA DE REENTRADA. Enter y el botón llaman a lo mismo, y entre el
+    // toque y la respuesta hay una ida y vuelta: dos toques ahí adentro
+    // escribían DOS veces. En una tablet con conexión lenta eso duplica un
+    // movimiento, un pago o una obligación, y `registrar_pago` del backend
+    // ni siquiera valida contra el saldo.
+    if (guardando) return
     if (!listo || !tipo) return
     setGuardando(true); setError('')
     try {

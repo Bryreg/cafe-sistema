@@ -225,7 +225,12 @@ export default function BannerSalud({ prodData, plMes, pendientes, onRefrescarPr
         <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500 mb-1">
           Márgenes sospechosos
         </p>
-        {outliers.length === 0 ? (
+        {/* `prodData` en null NO es «cero outliers»: `computeOutliers([])`
+            devuelve [] por construcción, y ahí el verde afirmaría algo que
+            nadie midió. Es la misma trampa que ya tenía el contador de arriba. */}
+        {!prodData ? (
+          <p className="text-xs text-warm-500">No se pudo medir: no cargaron los productos.</p>
+        ) : outliers.length === 0 ? (
           <p className="text-xs text-success-600 font-semibold">
             Ninguno — todos coherentes con su categoría
           </p>
@@ -251,7 +256,9 @@ export default function BannerSalud({ prodData, plMes, pendientes, onRefrescarPr
         <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500 mb-1">
           Insumos sin costear
         </p>
-        {insumos.length === 0 ? (
+        {!prodData ? (
+          <p className="text-xs text-warm-500">No se pudo medir: no cargaron los productos.</p>
+        ) : insumos.length === 0 ? (
           <p className="text-xs text-success-600 font-semibold">Todo costeado</p>
         ) : (<>
           {insumos.map(i => (

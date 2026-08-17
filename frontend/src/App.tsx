@@ -220,12 +220,12 @@ function AppRoutes() {
       <Route path="/cumplimiento"     element={<RequireAdmin><Layout><CumplimientoAdmin /></Layout></RequireAdmin>} />
       <Route path="/config-ticket"   element={<RequireAdmin><Layout><ConfigTicketPage /></Layout></RequireAdmin>} />
       {/* «Plata» = la fusión de /rentabilidad y /costos. Las dos rutas viejas
-          redirigen a la pestaña que respondía su pregunta: /rentabilidad al Hoy
-          (cómo vamos) y /costos a La plata (qué hay, qué se movió y qué hay que
+          redirigen a la pestaña que responde su pregunta: /rentabilidad al
+          Resultado (¿gano?) y /costos a La plata (qué hay, qué se movió y qué hay que
           pagar). Ningún bookmark ni ningún link viejo se rompe: la pestaña
           «calendario» tampoco, que Plata resuelve como alias de «plata». */}
       <Route path="/plata"           element={<RequireAdmin><Layout><Plata /></Layout></RequireAdmin>} />
-      <Route path="/rentabilidad"    element={<Navigate to="/plata" replace />} />
+      <Route path="/rentabilidad"    element={<Navigate to="/plata#resultado" replace />} />
       <Route path="/costos"          element={<Navigate to="/plata#plata" replace />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />

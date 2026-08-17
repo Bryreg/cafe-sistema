@@ -238,5 +238,117 @@ class CorregirArreglaTodoAguasAbajoTest(BancoBase):
         self.assertFalse(banco.borrar(self.db, 9999))
 
 
+class ElAnclaAMitadDeMesTest(BancoBase):
+    """EL CASO NORMAL, y el que rompía el mes entero.
+
+    El editor propone HOY como fecha del extracto y el sistema pide
+    actualizarlo cada 7 días, así que el ancla cae a mitad de mes casi siempre.
+    Con una sola bandera para todo el rango —calculada mirando el día 1— el mes
+    en curso quedaba marcado «sin saldos» aunque del ancla en adelante el saldo
+    sea exacto, y la pantalla le pedía al dueño cargar lo que acababa de
+    cargar. La cadena se decide POR DÍA.
+    """
+
+    def test_los_dias_desde_el_ancla_SI_tienen_saldo(self):
+        self.anclar(1_000_000, date(2026, 8, 16))
+        self.entrada(date(2026, 8, 17), 500_000)
+        lib = banco.libro(self.db, date(2026, 8, 1), date(2026, 8, 31))
+        d16 = self.dia(lib, date(2026, 8, 16))
+        d17 = self.dia(lib, date(2026, 8, 17))
+        self.assertTrue(d16["cadena"])
+        self.assertAlmostEqual(d16["inicial"], 1_000_000)
+        self.assertTrue(d17["cadena"])
+        self.assertAlmostEqual(d17["final"], 1_500_000)
+
+    def test_los_dias_ANTES_del_ancla_van_en_null_y_no_se_inventan(self):
+        self.anclar(1_000_000, date(2026, 8, 16))
+        lib = banco.libro(self.db, date(2026, 8, 1), date(2026, 8, 31))
+        d1 = self.dia(lib, date(2026, 8, 1))
+        self.assertFalse(d1["cadena"])
+        self.assertIsNone(d1["inicial"])
+        self.assertIsNone(d1["final"])
+        self.assertFalse(d1["en_rojo"])      # sin saldo no hay rojo posible
+
+    def test_el_mes_dice_DESDE_CUANDO_hay_saldo_en_vez_de_apagarse(self):
+        self.anclar(1_000_000, date(2026, 8, 16))
+        lib = banco.libro(self.db, date(2026, 8, 1), date(2026, 8, 31))
+        self.assertFalse(lib["cadena_completa"])          # el mes no está entero
+        self.assertEqual(lib["dias_con_saldo"], 16)       # del 16 al 31
+        self.assertEqual(lib["primer_dia_con_saldo"], "2026-08-16")
+
+    def test_el_dia_mas_bajo_ignora_los_dias_sin_saldo(self):
+        """Un mínimo sobre una lista con nulos no significa nada."""
+        self.anclar(1_000_000, date(2026, 8, 16))
+        self.salida(date(2026, 8, 20), 900_000)
+        lib = banco.libro(self.db, date(2026, 8, 1), date(2026, 8, 31))
+        self.assertAlmostEqual(lib["totales"]["dia_mas_bajo"], 100_000)
+        self.assertEqual(lib["totales"]["fecha_dia_mas_bajo"], "2026-08-20")
+
+    def test_mirar_solo_la_segunda_quincena_da_lo_mismo(self):
+        """El saldo de un día no puede depender del rango que se pida."""
+        self.anclar(1_000_000, date(2026, 8, 16))
+        self.entrada(date(2026, 8, 17), 500_000)
+        mes = self.dia(banco.libro(self.db, date(2026, 8, 1), date(2026, 8, 31)),
+                       date(2026, 8, 20))
+        quincena = self.dia(banco.libro(self.db, date(2026, 8, 17), date(2026, 8, 31)),
+                            date(2026, 8, 20))
+        self.assertAlmostEqual(mes["final"], quincena["final"])
+        self.assertTrue(quincena["cadena"])
+
+    def test_con_el_ancla_el_dia_1_el_mes_entero_tiene_saldo(self):
+        self.anclar(1_000_000, date(2026, 8, 1))
+        lib = banco.libro(self.db, date(2026, 8, 1), date(2026, 8, 31))
+        self.assertTrue(lib["cadena_completa"])
+        self.assertEqual(lib["dias_con_saldo"], 31)
+
+
+class ElAnclaSeSaneaTest(BancoBase):
+    """`configuracion` es texto libre: un `inf` ahí adentro reventaba la pestaña.
+
+    El valor viajaba dentro de los saldos del libro y FastAPI serializa con
+    allow_nan=False, así que /banco/libro devolvía 500 y no cargaba nada. El
+    flujo proyectado tenía su propia red; el libro no tenía ninguna.
+    """
+
+    def _anclar_crudo(self, valor):
+        self.db.add(Configuracion(clave=banco.CLAVE_SALDO, valor=valor))
+        self.db.add(Configuracion(clave=banco.CLAVE_SALDO_FECHA,
+                                  valor="2026-08-01"))
+        self.db.commit()
+
+    def test_un_infinito_no_llega_al_libro(self):
+        self._anclar_crudo("inf")
+        lib = banco.libro(self.db, date(2026, 8, 1), date(2026, 8, 3))
+        for d in lib["dias"]:
+            self.assertTrue(d["inicial"] is None or abs(d["inicial"]) < 1e13)
+            self.assertTrue(d["final"] is None or abs(d["final"]) < 1e13)
+
+    def test_un_ancla_podrida_es_NO_TENER_ancla_no_un_ancla_de_cero(self):
+        """Saneando solo el monto y conservando la fecha, la cadena arrancaba
+        desde un cero inventado y el libro afirmaba «ese día tenías $0» sobre
+        un dato que nadie cargó."""
+        for basura in ("inf", "nan", "hola", "-999999", "999999999999999"):
+            with self.subTest(basura=basura):
+                self.db.query(Configuracion).delete()
+                self.db.commit()
+                self._anclar_crudo(basura)
+                saldo, fecha = banco.ancla(self.db)
+                self.assertEqual(saldo, 0.0)
+                self.assertIsNone(fecha, f"«{basura}» dejó una fecha usable")
+
+    def test_con_ancla_podrida_ningun_dia_tiene_saldo(self):
+        self._anclar_crudo("inf")
+        lib = banco.libro(self.db, date(2026, 8, 1), date(2026, 8, 3))
+        self.assertEqual(lib["dias_con_saldo"], 0)
+        self.assertFalse(any(d["cadena"] for d in lib["dias"]))
+
+    def test_un_ancla_en_CERO_de_verdad_si_sirve(self):
+        """Cero es un saldo posible; basura no. No se pueden confundir."""
+        self._anclar_crudo("0")
+        saldo, fecha = banco.ancla(self.db)
+        self.assertEqual(saldo, 0.0)
+        self.assertEqual(fecha, date(2026, 8, 1))
+
+
 if __name__ == "__main__":
     unittest.main()

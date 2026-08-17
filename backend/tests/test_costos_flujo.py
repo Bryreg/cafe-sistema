@@ -17,8 +17,13 @@ Reglas que prueban estos tests, y por qué cada una importa:
   descontados dentro del efectivo esperado de la registradora;
 - lo VENCIDO cae ENTERO en hoy+1, no se reparte ni se ignora: se debe AHORA, y
   sin esta regla la mora desaparecería silenciosamente de la proyección;
-- el saldo del banco es un INPUT DEL DUEÑO (el sistema registra consignaciones,
-  nunca un saldo bancario): si está viejo, la respuesta lo dice en vez de mentir;
+- el saldo del banco ARRANCA en un input del dueño (el sistema registra
+  consignaciones, nunca un saldo bancario) y de ahí en adelante lo mueve el
+  LIBRO: la proyección lee `banco.saldo_al_cierre(hoy)`, no el ancla cruda, así
+  que una salida ya tecleada baja las dos pantallas y no solo una;
+- si el ancla está vieja, la respuesta lo dice en vez de mentir: lo que envejece
+  es la conciliación contra el extracto, y los movimientos posteriores no la
+  reemplazan;
 - el saldo del banco se valida EN EL HANDLER, no con restricciones de pydantic:
   un `inf` en un 422 de pydantic arrastra el valor ofensivo al cuerpo del error y
   revienta al serializarlo a JSON.
@@ -39,10 +44,10 @@ from app.core.deps import get_current_user
 from app.core.tz import hoy_col, inicio_dia_col_utc
 from app.database import Base, get_db
 from app.models.models import (CajaTurno, Configuracion, Consignacion,
-                               CostoCategoria, EntregaTurno,
+                               CostoCategoria, CuentaBancaria, EntregaTurno,
                                EstadoConsignacionEnum, EstadoTurnoEnum,
-                               FacturaCompra, MovimientoCaja, RolEnum, Ticket,
-                               Tienda, TipoPagoEnum, Usuario)
+                               FacturaCompra, MovimientoBanco, MovimientoCaja,
+                               RolEnum, Ticket, Tienda, TipoPagoEnum, Usuario)
 from app.routers import costos as costos_router
 
 
@@ -196,6 +201,29 @@ class CostosFlujoTest(unittest.TestCase):
         return self.client.post("/api/v1/costos/saldo-banco",
                                 content=json.dumps(body),
                                 headers={"content-type": "application/json"})
+
+    def cuenta_banco(self) -> CuentaBancaria:
+        """La cuenta del libro. Se crea acá y no con `banco.sembrar_cuentas` para
+        que el test no se ate al catálogo real de MEDIUM CAFÉ (Occidente/Bold):
+        lo que se está probando es la cadena del saldo, no el catálogo."""
+        cuenta = self.db.query(CuentaBancaria).first()
+        if cuenta is None:
+            cuenta = CuentaBancaria(nombre="Occidente", orden=1)
+            self.db.add(cuenta)
+            self.db.commit()
+            self.db.refresh(cuenta)
+        return cuenta
+
+    def mov_banco(self, tipo: str, monto: float, fecha=None) -> MovimientoBanco:
+        """Un movimiento TECLEADO del libro (services/banco.py). El monto va
+        siempre positivo: el signo lo pone el tipo."""
+        mov = MovimientoBanco(fecha=fecha or self.hoy, cuenta_id=self.cuenta_banco().id,
+                              tipo=tipo, monto=monto, concepto=f"Movimiento {tipo}",
+                              usuario_id=self.admin.id)
+        self.db.add(mov)
+        self.db.commit()
+        self.db.refresh(mov)
+        return mov
 
     def ultimos_dias_de_semana(self, weekday: int) -> list:
         """Los 8 días `weekday` que caen dentro de la ventana de historia
@@ -583,6 +611,125 @@ class CostosFlujoTest(unittest.TestCase):
         self.assertFalse(adv["sin_salidas_cargadas"])
         self.assertFalse(adv["sin_historia_ventas"])
         self.assertFalse(adv["saldo_banco_desactualizado"])
+
+    # ── 15. La proyección arranca del LIBRO, no del ancla cruda ──────────────
+    #
+    # El ancla es el saldo que el dueño copió del extracto ESE DÍA, y el sistema
+    # le pide actualizarlo cada 7 días. Entre una carga y la siguiente él sí
+    # teclea los movimientos en el libro («La plata»), que está a UN TOQUE de
+    # esta pantalla. Con el ancla cruda pasaba esto: cargaba una salida de
+    # 3.000.000, el libro le decía que le quedaban 2.000.000, y el flujo seguía
+    # proyectando desde 5.000.000 y calculaba el punto de quiebre con plata que
+    # ya no estaba. El saldo del banco tiene UNA sola matemática y vive en
+    # services/banco.py: acá se lee, no se recalcula.
+
+    def test_una_salida_ya_tecleada_en_el_libro_baja_la_plata_de_la_proyeccion(self):
+        self.assertEqual(self.declarar_banco(5000000, fecha=self.dia(-1)).status_code, 200)
+        self.mov_banco("salida", 3000000)
+
+        caja = self.flujo()["caja_hoy"]
+        self.assertEqual(caja["saldo_banco"], 2000000)      # no 5.000.000
+        self.assertEqual(caja["total"], 2000000)
+        # El número se puede explicar: de dónde sale y qué lo movió.
+        self.assertEqual(caja["saldo_banco_origen"], "libro")
+        self.assertEqual(caja["saldo_banco_declarado"], 5000000)
+        self.assertEqual(caja["saldo_banco_movimientos"], -3000000)
+        self.assertEqual(self.flujo()["serie"][0]["saldo"], 2000000)
+
+    def test_una_entrada_ya_tecleada_en_el_libro_sube_la_plata_de_la_proyeccion(self):
+        self.assertEqual(self.declarar_banco(5000000, fecha=self.dia(-1)).status_code, 200)
+        self.mov_banco("entrada", 800000)
+        caja = self.flujo()["caja_hoy"]
+        self.assertEqual(caja["saldo_banco"], 5800000)
+        self.assertEqual(caja["saldo_banco_movimientos"], 800000)
+
+    def test_el_punto_de_quiebre_se_calcula_con_la_plata_que_de_verdad_queda(self):
+        """El caso del reporte, entero: sin esto el quiebre se corría hacia el
+        futuro —el sentido que tranquiliza— con plata que ya salió."""
+        self.assertEqual(self.declarar_banco(5000000, fecha=self.dia(-1)).status_code, 200)
+        self.obligacion(concepto="Nómina", monto=4000000, vencimiento=self.dia(3))
+        self.assertIsNone(self.flujo()["punto_de_quiebre"])   # 5M − 4M: alcanza
+
+        self.mov_banco("salida", 3000000)                     # ya salió del banco
+        data = self.flujo()
+        self.assertEqual(data["punto_de_quiebre"], str(self.dia(3)))
+        self.assertEqual(self.por_fecha(data)[str(self.dia(3))]["saldo"], -2000000)
+
+    def test_los_movimientos_ANTERIORES_al_ancla_no_se_restan_otra_vez(self):
+        """Un movimiento previo al extracto YA está adentro del saldo que el
+        banco emitió. Volver a restarlo sería contar el mismo gasto dos veces —
+        la misma familia de error que las consignaciones y los egresos de caja."""
+        self.assertEqual(self.declarar_banco(5000000, fecha=self.dia(-1)).status_code, 200)
+        self.mov_banco("salida", 1000000, fecha=self.dia(-5))
+        self.assertEqual(self.flujo()["caja_hoy"]["saldo_banco"], 5000000)
+
+    def test_sin_ancla_los_movimientos_sueltos_no_inventan_un_saldo(self):
+        """Un neto de movimientos NO es un saldo: sin extracto no se sabe sobre
+        cuánta plata se movieron. Se cae al ancla (0) y se marca desactualizado,
+        que es el comportamiento honesto de siempre."""
+        self.mov_banco("entrada", 900000)
+        caja = self.flujo()["caja_hoy"]
+        self.assertEqual(caja["saldo_banco"], 0)
+        self.assertEqual(caja["saldo_banco_origen"], "ancla")
+        self.assertTrue(caja["saldo_banco_desactualizado"])
+
+    def test_el_ancla_vieja_se_sigue_avisando_aunque_el_libro_este_al_dia(self):
+        """Lo que envejece es la CONCILIACIÓN contra el extracto. Un libro lleno
+        de movimientos sobre un ancla de hace un mes puede estar al día o puede
+        tener un débito automático que nadie tecleó, y el sistema no sabe cuál de
+        las dos: por eso la vigencia se mide contra la fecha del extracto."""
+        self.assertEqual(self.declarar_banco(500000, fecha=self.dia(-8)).status_code, 200)
+        self.mov_banco("entrada", 100000)
+        caja = self.flujo()["caja_hoy"]
+        self.assertEqual(caja["saldo_banco"], 600000)
+        self.assertTrue(caja["saldo_banco_desactualizado"])
+        self.assertEqual(caja["saldo_banco_fecha"], str(self.dia(-8)))
+
+    def test_la_consignacion_sigue_contando_una_sola_vez_con_el_libro(self):
+        """La regla 1 del anti-doble-conteo, ahora con el libro en el medio: los
+        300.000 consignados salen del cajón (la registradora los descuenta) y
+        entran al banco cuando el dueño los teclea. Una vez, no dos."""
+        turno = self.turno(abierto=True, base=0, efectivo_ventas=500000)
+        self.db.add(Consignacion(tienda_id=self.tienda_1.id, caja_turno_id=turno.id,
+                                 valor=300000, usuario_id=self.admin.id,
+                                 estado=EstadoConsignacionEnum.realizada,
+                                 fecha=self.mediodia(self.hoy)))
+        self.db.commit()
+        self.assertEqual(self.declarar_banco(1000000, fecha=self.dia(-1)).status_code, 200)
+        self.mov_banco("entrada", 300000)      # el depósito, ya en el extracto
+
+        caja = self.flujo()["caja_hoy"]
+        self.assertEqual(caja["efectivo_registradora"], 200000)
+        self.assertEqual(caja["saldo_banco"], 1300000)
+        self.assertEqual(caja["total"], 1500000)   # no 1.800.000
+
+    def test_filtrando_por_sede_el_libro_del_banco_sigue_afuera(self):
+        """La cuenta es de la EMPRESA. Que el saldo ahora venga del libro no la
+        vuelve de la sede: sumarla completa contra solo una parte de las salidas
+        es lo que convertía un quiebre real en un verde tranquilizador."""
+        self.turno(tienda=self.tienda_1, abierto=True, base=50000)
+        self.assertEqual(self.declarar_banco(1000000, fecha=self.dia(-1)).status_code, 200)
+        self.mov_banco("entrada", 2000000)
+
+        sede = self.flujo(tienda_id=self.tienda_1.id)["caja_hoy"]
+        self.assertFalse(sede["saldo_banco_incluido"])
+        self.assertEqual(sede["total"], 50000)
+
+    def test_el_ancla_podrida_no_entra_a_la_proyeccion_por_la_puerta_del_libro(self):
+        """Defensa en profundidad: `_leer_saldo_banco` sanea la fila de
+        `configuracion` (inf/NaN/negativo/absurdo → 0) y el libro encadena sobre
+        la CRUDA. Si las dos lecturas no coinciden, la fila está podrida y el
+        saldo del libro estaría encadenado sobre basura: se cae al valor saneado
+        en vez de propagar un `inf` al total del dueño."""
+        self.db.add(Configuracion(clave="saldo_banco", valor="inf"))
+        self.db.add(Configuracion(clave="saldo_banco_fecha", valor=str(self.hoy)))
+        self.db.commit()
+        self.mov_banco("entrada", 100000)
+
+        caja = self.flujo()["caja_hoy"]
+        self.assertEqual(caja["saldo_banco"], 0)
+        self.assertEqual(caja["saldo_banco_origen"], "ancla")
+        self.assertTrue(math.isfinite(caja["total"]))
 
 
 if __name__ == "__main__":

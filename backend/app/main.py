@@ -17,6 +17,7 @@ from app.routers import rentabilidad
 from app.routers import combos
 from app.routers import costos
 from app.routers import horarios
+from app.routers import banco
 from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -1063,6 +1064,7 @@ app.include_router(rentabilidad.router,      prefix="/api/v1")
 app.include_router(combos.router,            prefix="/api/v1")
 app.include_router(costos.router,            prefix="/api/v1")
 app.include_router(horarios.router,          prefix="/api/v1")
+app.include_router(banco.router,             prefix="/api/v1")
 
 # ─── Servir frontend React (solo en producción) ────────────────────────────────
 _frontend_dist = os.path.abspath(

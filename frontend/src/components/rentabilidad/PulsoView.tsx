@@ -56,12 +56,12 @@ function Sparkline({ dias }: { dias: { dia: string; ventas: number }[] }) {
  * menú y los combos: ahí «qué se vende junto con qué» termina en armar un combo.
  */
 export default function PulsoView({
-  pulso, plMes, prodData, onIrACalendario, slotCompromisos,
+  pulso, plMes, prodData, onIrALaPlata, slotCompromisos,
 }: {
   pulso: PulsoData | null
   plMes: RentabilidadData | null
   prodData: PorProductoData | null
-  onIrACalendario: () => void
+  onIrALaPlata: () => void
   slotCompromisos?: ReactNode
 }) {
   // Las 3 subas de costo más grandes. prodData ya llegaba a esta vista como prop
@@ -160,8 +160,8 @@ export default function PulsoView({
                 : 'Sin ventas en el período') : (
                 <>
                   Faltan los costos fijos del mes —{' '}
-                  <button onClick={onIrACalendario} className="font-bold text-forest underline decoration-dotted">
-                    cargalos en Calendario
+                  <button onClick={onIrALaPlata} className="font-bold text-forest underline decoration-dotted">
+                    cargalos en La plata
                   </button>
                 </>
               )}
@@ -169,7 +169,7 @@ export default function PulsoView({
           </div>
           {estado && (
             estado === 'sinFijos' ? (
-              <button onClick={onIrACalendario}
+              <button onClick={onIrALaPlata}
                 className={`px-2.5 py-1 rounded-full border text-xs font-bold ${estadoUi.sinFijos.cls}`}>
                 {estadoUi.sinFijos.label}
               </button>

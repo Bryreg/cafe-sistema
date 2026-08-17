@@ -200,7 +200,7 @@ function AppRoutes() {
       {/* Pagos a proveedores se mudó adentro del módulo de la plata (fase 5, y de
           nuevo con la fusión). La ruta vieja se conserva como redirect: nadie con
           un bookmark se queda colgado. */}
-      <Route path="/pagos-proveedores" element={<Navigate to="/plata#calendario" replace />} />
+      <Route path="/pagos-proveedores" element={<Navigate to="/plata#plata" replace />} />
       <Route path="/conciliacion-inventario" element={<RequireAdmin><Layout><ConciliacionInventario /></Layout></RequireAdmin>} />
       <Route path="/conteos-admin"    element={<RequireAdmin><Layout><ConteosAdmin /></Layout></RequireAdmin>} />
       <Route path="/lotes"            element={<RequireAdmin><Layout><LotesTrazabilidad /></Layout></RequireAdmin>} />
@@ -221,11 +221,12 @@ function AppRoutes() {
       <Route path="/config-ticket"   element={<RequireAdmin><Layout><ConfigTicketPage /></Layout></RequireAdmin>} />
       {/* «Plata» = la fusión de /rentabilidad y /costos. Las dos rutas viejas
           redirigen a la pestaña que respondía su pregunta: /rentabilidad al Hoy
-          (cómo vamos) y /costos al Calendario (qué hay que pagar). Ningún
-          bookmark ni ningún link viejo se rompe. */}
+          (cómo vamos) y /costos a La plata (qué hay, qué se movió y qué hay que
+          pagar). Ningún bookmark ni ningún link viejo se rompe: la pestaña
+          «calendario» tampoco, que Plata resuelve como alias de «plata». */}
       <Route path="/plata"           element={<RequireAdmin><Layout><Plata /></Layout></RequireAdmin>} />
       <Route path="/rentabilidad"    element={<Navigate to="/plata" replace />} />
-      <Route path="/costos"          element={<Navigate to="/plata#calendario" replace />} />
+      <Route path="/costos"          element={<Navigate to="/plata#plata" replace />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

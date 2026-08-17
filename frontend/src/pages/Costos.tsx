@@ -88,8 +88,22 @@ export interface PuntoFlujo {
 export interface CajaHoy {
   efectivo_registradora: number
   por_tienda: { tienda_id: number; tienda_nombre: string; efectivo: number; origen: string }[]
-  // Dato del DUEÑO, no del sistema: acá se registran consignaciones, nunca un saldo bancario.
+  // La plata que hay HOY en el banco: el ancla que declaró el dueño MÁS los
+  // movimientos que tecleó en el libro («La plata»). Es el número que entra al
+  // total, y el mismo que muestra esa pantalla: el saldo del banco tiene una
+  // sola matemática y vive en services/banco.py.
   saldo_banco: number
+  // El ancla sola —lo que copió del extracto— y lo que se movió después. Sirven
+  // para explicar el número, y `declarado` es lo que precarga el editor: el
+  // editor escribe el ancla, no el saldo de hoy.
+  saldo_banco_declarado: number
+  saldo_banco_movimientos: number
+  // 'libro' = ancla + movimientos; 'ancla' = sin extracto cargado (o la fila de
+  // configuración está podrida), así que el libro no encadena y no se usa.
+  saldo_banco_origen: 'libro' | 'ancla'
+  // Cuándo se copió el extracto. Lo que envejece es la CONCILIACIÓN: los
+  // movimientos posteriores mantienen el saldo al día pero no lo comparan
+  // contra el banco.
   saldo_banco_fecha: string | null
   saldo_banco_desactualizado: boolean
   // false filtrando por sede: la cuenta es de la empresa, no de la sede.
@@ -144,11 +158,12 @@ const CORPORATIVO = 'corp'
 // de Costos se apagan mientras esté activa — dos juegos de filtros compitiendo por
 // la misma pantalla es peor que ninguno.
 //
-// 'agenda' ya NO existe: la lista por semanas que vivía acá la reemplazó la grilla
-// de mes de Plata·Calendario (components/plata/CalendarioView), que es la pantalla
-// que el dueño pidió. Con Costos convertido en panel, Plata lo monta siempre con
-// `vistas={[cajon]}` y ningún cajón vale 'agenda', así que esa vista quedó
-// inalcanzable: se borró en vez de dejarla como segunda verdad de los mismos datos.
+// 'agenda' ya NO existe: la lista por semanas que vivía acá la reemplazó la
+// pestaña «La plata» (components/plata/LibroView), donde cada vencimiento cae en
+// la fila del día que le toca, al lado de la plata que de verdad se movió. Con
+// Costos convertido en panel, Plata lo monta siempre con `vistas={[cajon]}` y
+// ningún cajón vale 'agenda', así que esa vista quedó inalcanzable: se borró en
+// vez de dejarla como segunda verdad de los mismos datos.
 export type Vista = 'obligaciones' | 'sinCategorizar' | 'flujo' | 'proveedores'
 
 const VISTAS: { v: Vista; l: string; Icon: typeof CalendarDays }[] = [
@@ -339,11 +354,12 @@ export default function Costos({ vistas, embebido = false }: {
     })
     if (a.saldo_banco_desactualizado) items.push({
       titulo: flujo.caja_hoy.saldo_banco_fecha
-        ? `El saldo del banco es del ${fecha(flujo.caja_hoy.saldo_banco_fecha)}`
+        ? `El último extracto que cargaste es del ${fecha(flujo.caja_hoy.saldo_banco_fecha)}`
         : 'Todavía no cargaste el saldo del banco',
       detalle: 'El sistema registra las consignaciones pero nunca el saldo de la cuenta: ese '
-        + 'número lo tenés que mirar vos. Mientras esté viejo, la proyección arranca de una plata '
-        + 'que puede no ser la que hay.',
+        + 'número lo tenés que mirar vos. El libro le suma los movimientos que vas tecleando, '
+        + 'pero eso no es haberlo comparado contra el banco: lo que no tecleaste —un débito '
+        + 'automático, una comisión— no está en ninguna parte.',
       banco: true,
     })
     return items
@@ -409,8 +425,21 @@ export default function Costos({ vistas, embebido = false }: {
   }
 
   const abrirEditorBanco = () => {
-    setBSaldo(String(Math.round(flujo?.caja_hoy.saldo_banco ?? 0)))
-    setBFecha(hoyISO())
+    // El editor escribe EL ANCLA, así que se precarga con lo DECLARADO, nunca
+    // con `saldo_banco` (que ya es ancla + los movimientos del libro). Guardar
+    // ese número como ancla de hoy contaría los movimientos de hoy dos veces:
+    // el ancla es un saldo de APERTURA y los movimientos del día se suman
+    // encima (services/banco.py).
+    // Y LA FECHA VA CON SU MONTO. Precargar el saldo viejo con la fecha de HOY
+    // arma un par que nunca fue verdad: guardarlo sin tocar nada —un toque
+    // desde el cartel «Actualizar»— re-ancla hoy con el número del extracto
+    // viejo, deja fuera de la cadena todos los movimientos tecleados en el
+    // medio, SUBE la plata y apaga el propio aviso que trajo al dueño hasta
+    // acá. Medido: 2.000.000 pasaban a 5.000.000 y la salida de 3.000.000
+    // desaparecía. Precargado así, guardar sin cambios no hace nada, que es lo
+    // que un formulario tiene que hacer cuando no se tocó.
+    setBSaldo(String(Math.round(flujo?.caja_hoy.saldo_banco_declarado ?? 0)))
+    setBFecha(flujo?.caja_hoy.saldo_banco_fecha || hoyISO())
     setBError('')
     setBancoAbierto(true)
   }
@@ -634,10 +663,27 @@ export default function Costos({ vistas, embebido = false }: {
                   : !flujo.caja_hoy.saldo_banco_incluido ? 'text-gray-400' : 'text-gray-800'}`}>
                 {fmt(flujo.caja_hoy.saldo_banco)}
               </p>
+              {/* El rótulo dice DE DÓNDE sale el número. Cuando el libro tiene
+                  movimientos posteriores al extracto, este saldo ya no es "lo
+                  declarado": llamarlo así dejaría al dueño buscando en el banco
+                  una cifra que él mismo movió acá. */}
               <p className="text-xs text-gray-400 flex items-center gap-1">
-                {flujo.caja_hoy.saldo_banco_fecha
-                  ? `Declarado el ${fecha(flujo.caja_hoy.saldo_banco_fecha)}`
-                  : 'Sin declarar'}
+                {/* POR `saldo_banco_origen`, que es la bandera que el backend
+                    manda ya resuelta, y no por un monto derivado. En la rama de
+                    fallback el backend fuerza `movimientos = 0`, así que
+                    decidir por ese cero pintaba «Declarado el X» sobre una
+                    cifra que el dueño nunca declaró — el centinela usado como
+                    bandera, otra vez. */}
+                {!flujo.caja_hoy.saldo_banco_fecha
+                  ? 'Sin declarar'
+                  : flujo.caja_hoy.saldo_banco_origen !== 'libro'
+                    ? `Extracto del ${fecha(flujo.caja_hoy.saldo_banco_fecha)} `
+                      + '(no se pudo encadenar el libro)'
+                    : flujo.caja_hoy.saldo_banco_movimientos !== 0
+                      ? `Extracto del ${fecha(flujo.caja_hoy.saldo_banco_fecha)} `
+                        + `${flujo.caja_hoy.saldo_banco_movimientos > 0 ? '+' : '−'} `
+                        + `${fmt(Math.abs(flujo.caja_hoy.saldo_banco_movimientos))} del libro`
+                      : `Extracto del ${fecha(flujo.caja_hoy.saldo_banco_fecha)}, sin movimientos`}
                 <Pencil size={10} />
               </p>
               {/* La cuenta es de la empresa: en la vista de una sede se muestra

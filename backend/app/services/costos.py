@@ -27,6 +27,12 @@ from app.models.models import (CajaTurno, Configuracion, Consignacion,
                                FacturaCompra, MovimientoCaja, Obligacion, Pago,
                                Ticket, Tienda, TipoMovCajaEnum)
 from app.services import audit
+# El LIBRO del banco (ancla + movimientos tecleados) es la única verdad del
+# saldo bancario. El flujo lo LEE, no lo recalcula: dos matemáticas para el mismo
+# saldo darían dos respuestas según por qué pantalla se entró, y son dos
+# pantallas que están a un toque una de la otra. No hay ciclo de importación:
+# `services/banco.py` solo depende de los modelos.
+from app.services import banco as banco_svc
 # La lista de conceptos reservados que services/facturas.py escribe para los pagos
 # a proveedor vive en rentabilidad.py y se REUSA, no se copia: si allá cambia, acá
 # tiene que cambiar en el mismo commit o el anti-doble-conteo se abre un agujero.
@@ -948,6 +954,15 @@ def listar_pagos(db: Session, *, obligacion_id: int | None = None,
 #      — son pasado y ya están descontados dentro del efectivo de la registradora;
 #   3. la deuda con proveedores se lee de la agenda (unión de dos consultas) y
 #      nunca de una copia: FacturaCompra sigue siendo su única verdad.
+#
+# Y una cuarta, del mismo tipo, para la plata que YA está en el banco:
+#
+#   4. el saldo bancario se lee del LIBRO (services/banco.py: ancla + los
+#      movimientos que el dueño teclea), nunca del ancla cruda de `configuracion`
+#      ni de una suma propia. El libro es la única matemática del saldo, y estas
+#      dos pantallas están a un toque una de la otra: con el ancla sola, una
+#      salida de 3.000.000 ya tecleada bajaba el libro y no bajaba la proyección,
+#      así que el punto de quiebre se calculaba con plata que ya no estaba.
 
 HORIZONTE_DEFAULT = 30
 HORIZONTE_MAX = 180
@@ -1052,15 +1067,78 @@ def _leer_saldo_banco(db: Session) -> tuple:
     return round(saldo, 2), fecha
 
 
+def _saldo_banco_hoy(db: Session, hoy: date) -> dict:
+    """Cuánta plata hay HOY en el banco, según el LIBRO — no según el ancla cruda.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    POR QUÉ NO ALCANZA EL ANCLA SOLA
+    ═══════════════════════════════════════════════════════════════════════════
+    El ancla (`saldo_banco` en `configuracion`) es el saldo que el dueño copió
+    del extracto ESE DÍA, y el sistema le pide actualizarlo cada 7 días. Entre
+    una carga y la siguiente él sí teclea los movimientos en el libro. Con el
+    ancla sola pasaba esto: cargaba una salida de 3.000.000, el libro le decía
+    que le quedaban 2.000.000, y el flujo —que está a un toque de ahí— seguía
+    proyectando desde 5.000.000 y calculaba el punto de quiebre con plata que ya
+    no está. Dos números para la misma pregunta, y el optimista era el que
+    decidía si hay que salir a conseguir plata.
+
+    `saldo_al_cierre` es exactamente ancla + Σ(entradas − salidas) hasta hoy, y
+    devuelve además si la cadena llega: sin ancla no se conoce el saldo y los
+    movimientos sueltos NO lo inventan (un neto de movimientos no es un saldo).
+    Ahí se cae al ancla saneada, que es el comportamiento de siempre.
+
+    ANTI-DOBLE-CONTEO (las tres reglas del bloque de arriba siguen en pie):
+      1. las consignaciones no se suman acá: la plata depositada ya salió del
+         efectivo de la registradora (`_efectivo_en_registradora` la descuenta) y
+         entra al banco solo cuando el dueño la teclea como movimiento — la misma
+         plata queda contada UNA vez, del lado del banco;
+      2. los MovimientoCaja egreso son de la registradora, no del banco: no hay
+         intersección con MovimientoBanco, que se teclea contra el extracto;
+      3. las salidas FUTURAS siguen saliendo de la agenda. Un pago ya hecho
+         desde el banco solo desaparece de la agenda cuando se registra el pago
+         de la obligación — igual que antes de este cambio, cuando el dueño
+         refrescaba el ancla después de pagar. Este cambio no agrega un camino
+         nuevo para contar dos veces: adelanta al día de hoy el mismo saldo que
+         el ancla iba a mostrar en la próxima actualización.
+    """
+    declarado, fecha_ancla = _leer_saldo_banco(db)
+    base_libro, _fecha_libro = banco_svc.ancla(db)
+    saldo_libro, hay_cadena = banco_svc.saldo_al_cierre(db, hoy)
+
+    # El libro encadena sobre el ancla CRUDA; `_leer_saldo_banco` la sanea
+    # (inf/NaN/negativo/absurdo → 0). Si las dos lecturas no coinciden, la fila de
+    # `configuracion` está podrida y el saldo del libro estaría encadenado sobre
+    # basura: se cae al valor saneado en vez de propagar el veneno a la
+    # proyección. Con datos sanos son idénticas y el número del flujo es, al
+    # peso, el mismo que muestra «La plata».
+    usa_libro = (hay_cadena
+                 and base_libro == declarado
+                 and math.isfinite(saldo_libro)
+                 and abs(saldo_libro) <= SALDO_BANCO_MAX)
+    saldo = round(saldo_libro, 2) if usa_libro else declarado
+    return {
+        "saldo": saldo,
+        "declarado": declarado,
+        "fecha": fecha_ancla,
+        # Lo que se movió en el banco DESPUÉS del extracto. Es la distancia entre
+        # los dos números, y sirve para que la pantalla pueda decir de dónde sale
+        # el saldo en vez de mostrar uno que no coincide con lo declarado.
+        "movimientos": round(saldo - declarado, 2) if usa_libro else 0.0,
+        "origen": "libro" if usa_libro else "ancla",
+    }
+
+
 def _caja_hoy(db: Session, hoy: date, tienda_id: int | None) -> dict:
     """Con cuánta plata arranca la proyección. Dos sumandos, porque el sistema
     solo conoce uno:
 
     - el efectivo de cada registradora, que SÍ se deriva de los datos;
-    - el saldo del banco, que es un INPUT DEL DUEÑO. El sistema registra
+    - el saldo del banco, que arranca en un INPUT DEL DUEÑO. El sistema registra
       Consignacion (depósitos) pero jamás un saldo bancario: no hay de dónde
-      derivarlo. Si la declaración tiene más de una semana, la respuesta lo dice
-      en vez de mentir.
+      derivarlo. Sobre ese ancla el libro suma los movimientos que él teclea
+      (`_saldo_banco_hoy`). Si el ancla tiene más de una semana, la respuesta lo
+      dice en vez de mentir: los movimientos posteriores mantienen el saldo al
+      día, pero NO son una conciliación contra el extracto.
 
     DECISIÓN (opción a de la revisión): con `tienda_id` el saldo del banco NO
     entra al total. La cuenta es de la EMPRESA — una sede no "tiene" el banco— y
@@ -1091,14 +1169,29 @@ def _caja_hoy(db: Session, hoy: date, tienda_id: int | None) -> dict:
         detalle.append({"tienda_id": t.id, "tienda_nombre": t.nombre,
                         "efectivo": monto, "origen": origen})
 
-    saldo_banco, fecha_banco = _leer_saldo_banco(db)
+    del_banco = _saldo_banco_hoy(db, hoy)
+    saldo_banco = del_banco["saldo"]
+    fecha_banco = del_banco["fecha"]
+    # La vigencia se sigue midiendo contra la FECHA DEL EXTRACTO, no contra el
+    # último movimiento tecleado: lo que envejece es la CONCILIACIÓN. Un libro
+    # lleno de movimientos sobre un ancla de hace un mes puede estar al día o
+    # puede tener un débito automático que nadie tecleó, y nada del sistema
+    # sabe cuál de las dos. Mover este criterio al último movimiento apagaría
+    # el aviso justo cuando el saldo se está alejando del extracto.
     desactualizado = (fecha_banco is None
                       or (hoy - fecha_banco).days > DIAS_SALDO_BANCO_VIGENTE)
     incluye_banco = tienda_id is None
     return {
         "efectivo_registradora": round(efectivo, 2),
         "por_tienda": detalle,
+        # El saldo que de verdad entra al total: ancla + movimientos del libro.
         "saldo_banco": saldo_banco,
+        # Lo que el dueño copió del extracto, y lo que se movió después. Los dos
+        # se devuelven para que la pantalla pueda explicar el número en vez de
+        # rotularlo "declarado" cuando ya no lo es.
+        "saldo_banco_declarado": del_banco["declarado"],
+        "saldo_banco_movimientos": del_banco["movimientos"],
+        "saldo_banco_origen": del_banco["origen"],   # 'libro' | 'ancla'
         "saldo_banco_fecha": fecha_banco,
         "saldo_banco_desactualizado": desactualizado,
         "saldo_banco_incluido": incluye_banco,

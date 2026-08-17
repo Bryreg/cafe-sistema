@@ -23,7 +23,8 @@ export interface ObligacionAPagar {
 /**
  * Registrar el pago de una obligación — UNA sola implementación.
  *
- * Vivía copiado en `pages/Costos.tsx` y en `components/plata/CalendarioView.tsx`:
+ * Vivía copiado en `pages/Costos.tsx` y en la vista de calendario (hoy
+ * `components/plata/LibroView.tsx`):
  * mismo formulario, mismo `POST /costos/pagos`, mismas validaciones. Dos copias de
  * un modal que mueve plata son dos lugares donde arreglar el próximo bug, y en la
  * práctica ya habían empezado a separarse (una tomaba "hoy" del reloj del

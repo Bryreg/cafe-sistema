@@ -21,10 +21,10 @@ const fechaCorta = (s: string) =>
  * el margen del mes y la plata que se va la semana que viene nunca se leían
  * juntos, que es la única forma en que sirven para decidir algo.
  */
-export default function CompromisosCard({ agenda, flujo, onVerCalendario }: {
+export default function CompromisosCard({ agenda, flujo, onVerLaPlata }: {
   agenda: Agenda | null
   flujo: Flujo | null
-  onVerCalendario: () => void
+  onVerLaPlata: () => void
 }) {
   const hoy = flujo?.hoy ?? hoyBogota()
   const tope7 = sumarDias(hoy, 7)
@@ -45,7 +45,7 @@ export default function CompromisosCard({ agenda, flujo, onVerCalendario }: {
 
   return (
     <div className="bg-white rounded-2xl border border-warm-200 shadow-sm overflow-hidden">
-      <button onClick={onVerCalendario}
+      <button onClick={onVerLaPlata}
         className="w-full flex items-center gap-2 px-4 py-3 border-b border-warm-100 text-left">
         <CalendarDays size={15} className="text-forest shrink-0" />
         <span className="min-w-0 flex-1">
@@ -72,7 +72,7 @@ export default function CompromisosCard({ agenda, flujo, onVerCalendario }: {
 
       {/* Lo vencido va aparte y en rojo: no es "lo que viene", es lo que ya pasó. */}
       {vencido > 0 && (
-        <button onClick={onVerCalendario}
+        <button onClick={onVerLaPlata}
           className="w-full flex items-center gap-2 px-4 py-2.5 border-t border-warm-100 bg-danger-50 text-left">
           <AlertCircle size={14} className="text-danger-600 shrink-0" />
           <span className="text-xs font-bold text-danger-700 flex-1">Vencido — pagalo ya</span>
@@ -91,7 +91,7 @@ export default function CompromisosCard({ agenda, flujo, onVerCalendario }: {
         </div>
       )}
       {!quiebre && proyeccionCiega && (
-        <button onClick={onVerCalendario}
+        <button onClick={onVerLaPlata}
           className="w-full flex items-start gap-2 px-4 py-2.5 border-t border-warm-100 bg-gold-50 text-left">
           <AlertCircle size={14} className="text-gold-700 mt-0.5 shrink-0" />
           <span className="text-[11px] text-gold-700 leading-relaxed">

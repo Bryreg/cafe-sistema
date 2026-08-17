@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, CalendarDays, Database, Wallet } from 'lucide-react'
+import { Activity, Database, Landmark, Wallet } from 'lucide-react'
 import api from '../api/client'
 import {
   RentabilidadData, PorProductoData, PulsoData,
@@ -8,7 +8,7 @@ import {
 import PulsoView from '../components/rentabilidad/PulsoView'
 import PnLView from '../components/rentabilidad/PnLView'
 import DatosSheet from '../components/rentabilidad/DatosSheet'
-import CalendarioView from '../components/plata/CalendarioView'
+import LibroView from '../components/plata/LibroView'
 import CompromisosCard from '../components/plata/CompromisosCard'
 import Drawer from '../components/plata/Drawer'
 import Costos, { Agenda, Flujo } from './Costos'
@@ -25,9 +25,17 @@ import { hoyBogota } from '../utils/fechaLocal'
 // y «no veo nómina ni arriendo» (Costos tenía las categorías y no el resultado).
 //
 // Tres pantallas, tres preguntas:
-//   Hoy        → ¿cómo vamos este mes y qué se me viene encima?
-//   Calendario → ¿qué pago, qué día, y con qué plata lo pago?
-//   Resultado  → ¿cuánto quedó de verdad y en qué se fue lo que no quedó?
+//   Hoy       → ¿cómo vamos este mes y qué se me viene encima?
+//   La plata  → ¿cuánta hay, qué se movió, qué hay que pagar y con qué quedo?
+//   Resultado → ¿cuánto quedó de verdad y en qué se fue lo que no quedó?
+//
+// «La plata» reemplazó a «Calendario». No fue un cambio de nombre: la grilla de
+// mes y el detalle del flujo eran la misma vista dibujada dos veces y ninguna
+// estaba completa (una tenía el detalle del vencimiento y el botón de pagar pero
+// no el saldo ni las entradas; la otra tenía el saldo y las entradas pero su
+// lista de días no tenía ni conceptos ni acciones). Ahora hay UNA sola vista, con
+// el libro del banco de eje — plata real, conciliable contra el extracto — y la
+// agenda de vencimientos fusionada adentro del día que le toca a cada uno.
 //
 // Lo que NO es una de esas tres preguntas (Obligaciones, Pagos a proveedores, el
 // detalle del flujo, los egresos sin categorizar) sigue existiendo entero, pero
@@ -35,16 +43,21 @@ import { hoyBogota } from '../utils/fechaLocal'
 // martes. Volver a subirlas a pestañas es exactamente lo que hacía que el dueño
 // no encontrara nada.
 
-type Tab = 'hoy' | 'calendario' | 'resultado'
+type Tab = 'hoy' | 'plata' | 'resultado'
 const TABS: { id: Tab; label: string; Icon: typeof Activity }[] = [
   { id: 'hoy', label: 'Hoy', Icon: Activity },
-  { id: 'calendario', label: 'Calendario', Icon: CalendarDays },
+  { id: 'plata', label: 'La plata', Icon: Landmark },
   { id: 'resultado', label: 'Resultado', Icon: Wallet },
 ]
 const IDS = TABS.map(t => t.id)
+// Los links viejos (`/plata#calendario`) siguen entrando donde corresponde: el
+// dueño tiene esa URL en el navegador de la tablet y romperla lo dejaría en «Hoy»
+// sin explicación.
+const ALIAS: Record<string, Tab> = { calendario: 'plata' }
 const tabFromHash = (): Tab => {
   const h = window.location.hash.replace('#', '')
-  return IDS.includes(h as Tab) ? (h as Tab) : 'hoy'
+  if (IDS.includes(h as Tab)) return h as Tab
+  return ALIAS[h] ?? 'hoy'
 }
 
 // "Hoy"/inicio de mes según el reloj de Colombia (no el del navegador).
@@ -60,7 +73,7 @@ type Cajon = null | 'obligaciones' | 'proveedores' | 'flujo' | 'sinCategorizar'
 const CAJONES: Record<Exclude<Cajon, null>, { titulo: string; subtitulo: string }> = {
   obligaciones: {
     titulo: 'Obligaciones',
-    subtitulo: 'Cargar, repetir y anular los costos fijos que después caen en el calendario',
+    subtitulo: 'Cargar, repetir y anular los costos fijos que después caen en el día que les toca',
   },
   proveedores: {
     titulo: 'Pagos a proveedores',
@@ -68,7 +81,7 @@ const CAJONES: Record<Exclude<Cajon, null>, { titulo: string; subtitulo: string 
   },
   flujo: {
     titulo: 'Flujo proyectado',
-    subtitulo: 'Con cuánta plata arrancás, qué falta cargar y el saldo día a día',
+    subtitulo: 'La ESTIMACIÓN de las próximas semanas: la venta esperada y el día en que te quedarías sin plata. Lo que ya se movió está en «La plata»',
   },
   sinCategorizar: {
     titulo: 'Egresos sin categorizar',
@@ -94,9 +107,16 @@ export default function Plata() {
     api.get<PorProductoData>('/rentabilidad/por-producto')
       .then(r => setProdData(r.data)).catch(() => setProdData(null))
 
-  // Agenda SIN rango: el calendario navega meses hacia adelante y hacia atrás, y
-  // pedirla por rango obligaría a un fetch por cada flechita. El flujo, en cambio,
-  // tiene horizonte fijo por definición ("de hoy en adelante").
+  // Agenda SIN rango: «La plata» navega meses hacia adelante y hacia atrás, y
+  // pedirla por rango obligaría a un fetch por cada flechita.
+  //
+  // El flujo se pide con horizonte fijo de 30 días porque es lo único que se
+  // muestra de él acá: «lo que se viene» en 7 y 30 días y el punto de quiebre, los
+  // dos en la pestaña Hoy. Antes ese mismo `dias: 30` alimentaba también el saldo
+  // que se pintaba sobre el calendario, que navegaba doce meses: pasado el día 30
+  // la celda mostraba el vencimiento y dejaba de mostrar saldo sin decir por qué.
+  // Ese overlay ya no existe — el saldo de «La plata» sale del libro del banco,
+  // que no tiene horizonte porque no proyecta nada.
   const fetchPagos = useCallback(() => {
     setCargandoPagos(true)
     return Promise.all([
@@ -126,11 +146,11 @@ export default function Plata() {
     setTab(t)
     window.scrollTo({ top: 0 })
   }, [])
-  const irACalendario = useCallback(() => goTab('calendario'), [goTab])
+  const irALaPlata = useCallback(() => goTab('plata'), [goTab])
 
   // Los cajones mutan datos (crear obligación, pagar, adoptar un egreso) con su
-  // propio estado interno. Al cerrarlos se repide lo de Plata: si no, el
-  // calendario seguiría mostrando el mundo de antes de haber cargado el arriendo.
+  // propio estado interno. Al cerrarlos se repide lo de Plata: si no, la agenda
+  // seguiría mostrando el mundo de antes de haber cargado el arriendo.
   //
   // `refresco` es la otra mitad: Resultado (PnLView) no lee de estos estados sino
   // del suyo, y sin avisarle el dueño adoptaba un egreso desde el cajón y volvía a
@@ -187,16 +207,17 @@ export default function Plata() {
 
       {tab === 'hoy' && (
         <PulsoView pulso={pulso} plMes={plMes} prodData={prodData}
-          onIrACalendario={irACalendario}
+          onIrALaPlata={irALaPlata}
           slotCompromisos={
-            <CompromisosCard agenda={agenda} flujo={flujo} onVerCalendario={irACalendario} />
+            <CompromisosCard agenda={agenda} flujo={flujo} onVerLaPlata={irALaPlata} />
           }
         />
       )}
 
-      {tab === 'calendario' && (
-        <CalendarioView
-          agenda={agenda} flujo={flujo} loading={cargandoPagos} onRefresh={fetchPagos}
+      {tab === 'plata' && (
+        <LibroView
+          agenda={agenda} cargandoAgenda={cargandoPagos} onRefrescar={fetchPagos}
+          refreshKey={refresco}
           onAbrirObligaciones={() => setCajon('obligaciones')}
           onAbrirProveedores={() => setCajon('proveedores')}
           onAbrirFlujo={() => setCajon('flujo')}
@@ -211,7 +232,7 @@ export default function Plata() {
 
       <DatosSheet open={datosOpen} prodData={prodData} plMes={plMes}
         onClose={() => setDatosOpen(false)} onRefresh={fetchProductos}
-        onIrACalendario={irACalendario} />
+        onIrALaPlata={irALaPlata} />
 
       {/* Los cajones: las herramientas de Costos, enteras y sin reescribir. */}
       <Drawer open={cajon !== null} onClose={cerrarCajon}

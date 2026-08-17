@@ -20,7 +20,7 @@ interface AliasRow {
 /** Bottom-sheet "Salud de datos": todo el mantenimiento de la calidad del
  *  costeo en un solo lugar — cobertura, márgenes atípicos, insumos sin costo,
  *  backfill OCR y metodología. Un margen falso lleva a decisiones falsas. */
-export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh, onIrACalendario }: {
+export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh, onIrALaPlata }: {
   open: boolean
   prodData: PorProductoData | null
   plMes: RentabilidadData | null
@@ -28,8 +28,8 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh, 
   onRefresh: () => void
   // Navegación por CALLBACK y no por <Link>: la pestaña de Plata vive en el hash
   // y react-router hace pushState sin disparar `hashchange`, así que un link a
-  // /plata#calendario cambiaría la URL sin cambiar la pantalla.
-  onIrACalendario: () => void
+  // /plata#plata cambiaría la URL sin cambiar la pantalla.
+  onIrALaPlata: () => void
 }) {
   const [leyendo, setLeyendo] = useState(false)
   const [msg, setMsg] = useState('')
@@ -199,9 +199,9 @@ export default function DatosSheet({ open, prodData, plMes, onClose, onRefresh, 
                 No hay arriendo, nómina ni servicios devengados este mes. Mientras falten, el
                 margen neto se ve MÁS ALTO de lo que es y el semáforo no puede decir si el
                 negocio va bien.{' '}
-                <button onClick={() => { onClose(); onIrACalendario() }}
+                <button onClick={() => { onClose(); onIrALaPlata() }}
                   className="font-bold text-gold-700 underline decoration-dotted">
-                  Cargalos en Calendario
+                  Cargalos en La plata
                 </button>.
               </p>
             ) : (

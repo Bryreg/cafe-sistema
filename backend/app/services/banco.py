@@ -24,6 +24,7 @@ EL ANCLA. La cadena tiene que empezar en algún lado: `saldo_banco` y
 extracto ese día. Todo lo anterior al ancla no se conoce y no se inventa: la
 serie arranca ahí y lo dice.
 """
+import math
 from datetime import date, timedelta
 
 from sqlalchemy import func
@@ -33,6 +34,10 @@ from app.models.models import CuentaBancaria, Configuracion, MovimientoBanco
 
 CLAVE_SALDO = "saldo_banco"
 CLAVE_SALDO_FECHA = "saldo_banco_fecha"
+
+# Mismo tope que usa `costos._leer_saldo_banco`: un saldo más grande que esto
+# es un typo, no plata.
+SALDO_MAX = 1e12
 
 ENTRADA = "entrada"
 SALIDA = "salida"
@@ -79,10 +84,25 @@ def ancla(db: Session) -> tuple[float, date | None]:
     """
     filas = {c.clave: c.valor for c in db.query(Configuracion).filter(
         Configuracion.clave.in_((CLAVE_SALDO, CLAVE_SALDO_FECHA))).all()}
+    # SE SANEA ACÁ, no aguas abajo. `configuracion` es texto libre y un `inf`
+    # o un NaN metido ahí viajaba adentro de `dias[].inicial/final`: FastAPI
+    # serializa con allow_nan=False, así que /banco/libro y /banco/serie
+    # devolvían 500 y la pestaña entera no cargaba. El flujo proyectado tenía
+    # su propia red; el libro no tenía ninguna.
+    #
+    # Y UN ANCLA PODRIDA NO ES UN ANCLA DE $0: ES NO TENER ANCLA. Saneando solo
+    # el monto pero conservando la fecha, la cadena arrancaba desde un cero
+    # inventado y el libro afirmaba «ese día tenías $0» sobre un dato que nadie
+    # cargó. Sin fecha, `cadena` queda en false en todos los días y la pantalla
+    # pide el saldo del extracto, que es exactamente lo que falta.
+    crudo_saldo = filas.get(CLAVE_SALDO)
     try:
-        saldo = round(float(filas.get(CLAVE_SALDO) or 0), 2)
+        saldo = round(float(crudo_saldo if crudo_saldo not in (None, "") else 0), 2)
+        usable = math.isfinite(saldo) and 0 <= saldo <= SALDO_MAX
     except (TypeError, ValueError):
-        saldo = 0.0
+        saldo, usable = 0.0, False
+    if not usable:
+        return 0.0, None
     crudo = (filas.get(CLAVE_SALDO_FECHA) or "").strip()
     try:
         fecha = date.fromisoformat(crudo) if crudo else None
@@ -164,10 +184,19 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
     for m in movs:
         por_dia.setdefault(m.fecha, []).append(m)
 
-    # Con cuánto arranca el PRIMER día del rango. `apertura` ya resuelve el caso
-    # del día del ancla y declara si la cadena llega hasta ahí.
-    saldo, hay_cadena = apertura(db, desde)
-
+    # ── LA CADENA SE DECIDE POR DÍA, NO POR MES ───────────────────────────────
+    # Antes había UNA bandera para todo el rango, calculada mirando solo el
+    # primer día. Con el ancla a mitad de mes —que es el caso NORMAL, porque el
+    # editor propone hoy y el sistema pide actualizar el extracto cada 7 días—
+    # el mes entero quedaba marcado «sin saldos» aunque del ancla en adelante
+    # el saldo sea exacto, y la pantalla le pedía al dueño que cargara lo que
+    # acababa de cargar. Es la misma familia de siempre: la bandera se prendía
+    # por la FORMA (dónde cae el día 1 respecto del ancla) y no por la pregunta
+    # real, que es «¿se conoce el saldo de ESTE día?».
+    #
+    # Cada fila trae ahora su propio `cadena`. Antes del ancla no se sabe cuánta
+    # plata había y los saldos van en null: un número ahí sería inventado.
+    saldo = None
     filas = []
     d = desde
     while d <= hasta:
@@ -181,22 +210,37 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
             destino[nom] = round(destino.get(nom, 0.0) + float(m.monto or 0.0), 2)
         tot_e = round(sum(entradas.values()), 2)
         tot_s = round(sum(salidas.values()), 2)
-        inicial = round(saldo, 2)
-        final = round(inicial + tot_e - tot_s, 2)
+
+        if fecha_ancla is not None and d == fecha_ancla:
+            # El ancla es una APERTURA: este día arranca con ella.
+            saldo = base
+        elif saldo is None and fecha_ancla is not None and desde > fecha_ancla:
+            # El rango arranca DESPUÉS del ancla: el saldo del primer día se
+            # trae encadenando desde el ancla hacia acá.
+            saldo, _ok = apertura(db, d)
+
+        con_cadena = saldo is not None
+        inicial = round(saldo, 2) if con_cadena else None
+        final = round(inicial + tot_e - tot_s, 2) if con_cadena else None
         filas.append({
             "fecha": d.isoformat(),
+            "cadena": con_cadena,
             "inicial": inicial,
             "entradas": entradas,
             "total_entradas": tot_e,
             "salidas": salidas,
             "total_salidas": tot_s,
             "final": final,
-            # Para que la pantalla pueda pintar en rojo sin recalcular nada.
-            "en_rojo": final < 0,
+            # Para pintar en rojo sin recalcular. Sin cadena no hay rojo posible:
+            # un saldo que no se conoce no puede estar en negativo.
+            "en_rojo": bool(con_cadena and final < 0),
             "movimientos": [_a_dict(m, nombres) for m in del_dia],
         })
         saldo = final
         d += delta
+
+    con_saldo = [f for f in filas if f["cadena"]]
+    hay_cadena = len(con_saldo) == len(filas) and bool(filas)
 
     return {
         "desde": desde.isoformat(),
@@ -205,19 +249,27 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
                      "nota": c.nota} for c in cta],
         "ancla": {"saldo": base,
                   "fecha": fecha_ancla.isoformat() if fecha_ancla else None},
-        # Si es False, los saldos de la serie no se pueden creer: la cadena no
-        # llega hasta acá porque falta el saldo del extracto. Se declara en vez
-        # de mostrar números que parecen buenos.
+        # True solo si TODOS los días del rango tienen saldo. La pantalla no
+        # debería decidir con esto: cada fila trae su `cadena` y los días
+        # posteriores al ancla son exactos aunque el mes arranque antes.
         "cadena_completa": hay_cadena,
+        # Los días del rango que sí tienen saldo. Con el ancla a mitad de mes
+        # esto es lo que deja decir «los saldos arrancan el 16» en vez de
+        # apagar el mes entero.
+        "dias_con_saldo": len(con_saldo),
+        "primer_dia_con_saldo": con_saldo[0]["fecha"] if con_saldo else None,
         "dias": filas,
         "totales": {
             "entradas": round(sum(f["total_entradas"] for f in filas), 2),
             "salidas": round(sum(f["total_salidas"] for f in filas), 2),
-            "final": filas[-1]["final"] if filas else round(saldo, 2),
+            "final": filas[-1]["final"] if filas else None,
             "dias_en_rojo": sum(1 for f in filas if f["en_rojo"]),
-            # Los días que cerraron con poco: es el número que hace ver que el
-            # colchón se adelgaza antes de que llegue a cero.
-            "dia_mas_bajo": min((f["final"] for f in filas), default=None),
+            # Solo entre los días CON saldo: el mínimo de una lista que incluye
+            # nulos no significa nada, y el día más bajo es justo el número que
+            # hace ver que el colchón se adelgaza antes de llegar a cero.
+            "dia_mas_bajo": min((f["final"] for f in con_saldo), default=None),
+            "fecha_dia_mas_bajo": (
+                min(con_saldo, key=lambda f: f["final"])["fecha"] if con_saldo else None),
         },
     }
 

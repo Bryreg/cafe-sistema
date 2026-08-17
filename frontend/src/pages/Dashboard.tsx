@@ -782,8 +782,11 @@ export default function Dashboard() {
               label={`hasta quedarte sin plata · ${new Date(quiebre!.fecha + 'T00:00:00')
                 .toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}`}
               severity="danger"
-              ctaLabel="Ver flujo"
-              to="/plata#calendario"
+              /* «Ver» y no «Ver flujo»: cae en La plata (el libro y la agenda),
+                 que es donde se mueve la aguja. La proyección entera está a un
+                 toque desde ahí, pero prometerla en el botón sería mentir. */
+              ctaLabel="Ver"
+              to="/plata#plata"
             />
           )}
           {/* El silencio no es un all-clear: si a la proyección le faltan datos, se
@@ -795,7 +798,7 @@ export default function Dashboard() {
               label={`para proyectar la plata: ${faltaFlujo.join(' · ')}`}
               severity="warning"
               ctaLabel="Completar"
-              to="/plata#calendario"
+              to="/plata#plata"
             />
           )}
           {hayStock && (
@@ -828,7 +831,7 @@ export default function Dashboard() {
               label="pagos a proveedores"
               severity="warning"
               ctaLabel="Pagar"
-              to="/plata#calendario"
+              to="/plata#plata"
             />
           )}
           {haySolicitudes && (

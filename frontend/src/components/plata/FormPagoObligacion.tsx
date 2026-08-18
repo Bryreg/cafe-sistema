@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Landmark, Wallet } from 'lucide-react'
 import api from '../../api/client'
 import { conMiles, soloDigitos } from '../../utils/plata'
 import { hoyBogota } from '../../utils/fechaLocal'
+import type { Fuente } from '../../api/useDato'
+import { SegunDato, NoSeSabe } from '../ui'
 import { CuentaBanco, detalleDeError, plata } from './banco'
 import { METODOS_DE_BANCO, METODOS_PAGO } from './tipos'
 import {
@@ -43,6 +45,22 @@ import {
  *  - EL PAGO Y EL MOVIMIENTO SON DOS ESCRITURAS. Si la segunda falla, la
  *    primera YA pasó: el mensaje lo dice con esas palabras en vez de un «no se
  *    pudo registrar el pago» que mandaría a cargarlo de nuevo y lo duplicaría.
+ *
+ * ═════════════════════════════════════════════════════════════════════════════
+ * LA CUARTA GUARDA QUE NO ERA UNA GUARDA, ERA UNA MENTIRA
+ * ═════════════════════════════════════════════════════════════════════════════
+ * La condición vieja era `cuentas.length > 0`, con `cuentas` cayendo a `[]`
+ * cuando el catálogo no volvía. O sea que un fetch caído ESCONDÍA el checkbox
+ * «Y descontalo del banco» y en su lugar afirmaba «No hay cuentas de banco
+ * cargadas»: dos cosas falsas de una vez. El dueño pagaba, el vencimiento
+ * quedaba tachado, el saldo del banco no bajaba, y la pantalla le había dicho
+ * que era porque no tenía cuentas — con dos cuentas cargadas en la base.
+ *
+ * Ahora la opción se OFRECE (depende del método y de la fecha, que no dependen
+ * de ningún fetch) y lo que falta se dice donde iba el select, con su botón de
+ * reintentar. Marcarla sin poder elegir cuenta deja el «Confirmar» apagado a
+ * propósito: es la única forma de que el dueño elija a sabiendas entre esperar
+ * al catálogo o destildar y cargar la salida a mano.
  */
 export default function FormPagoObligacion({
   obligacionId, concepto, detalle, saldo, cuentas, onCancelar, onPagado,
@@ -52,7 +70,7 @@ export default function FormPagoObligacion({
   /** Línea de contexto ya armada por quien abre (categoría · sede · beneficiario). */
   detalle?: string
   saldo: number
-  cuentas: CuentaBanco[]
+  cuentas: Fuente<CuentaBanco[]>
   onCancelar: () => void
   /** Aviso hacia afuera: cambió la agenda, el resultado y (si se marcó) el libro. */
   /** Se llama SIEMPRE que el pago quedó registrado, con o sin el movimiento del
@@ -63,6 +81,9 @@ export default function FormPagoObligacion({
   onPagado: (aviso?: string) => void
 }) {
   const hoy = hoyBogota()
+  /** El catálogo LEÍDO. `null` = no se sabe, NO «no hay cuentas». */
+  const cs = cuentas.dato.estado === 'listo' ? cuentas.dato.valor : null
+
   const [monto, setMonto] = useState(String(Math.round(saldo)))
   const [fecha, setFecha] = useState(hoy)
   const [metodo, setMetodo] = useState('transferencia')
@@ -80,13 +101,25 @@ export default function FormPagoObligacion({
    * y el libro no se toca), y eso está dicho en el propio rótulo.
    */
   const [alBanco, setAlBanco] = useState(false)
-  const [cuentaId, setCuentaId] = useState(cuentas[0] ? String(cuentas[0].id) : '')
+  const [cuentaId, setCuentaId] = useState(cs?.[0] ? String(cs[0].id) : '')
   const [error, setError] = useState('')
   const [guardando, setGuardando] = useState(false)
 
-  // La opción existe solo cuando las tres condiciones se dan a la vez.
-  const puedeIrAlBanco = METODOS_DE_BANCO.includes(metodo) && fecha <= hoy && cuentas.length > 0
-  const marcado = alBanco && puedeIrAlBanco
+  // EL DEFAULT SE SINCRONIZA CUANDO LLEGA EL CATÁLOGO. Este formulario se monta
+  // a demanda, así que el caso normal es tenerlo ya cargado — pero no siempre:
+  // abrirlo mientras el catálogo viaja dejaba `cuentaId` en '' para siempre (el
+  // componente no remonta) y el select se veía CON una cuenta elegida (React
+  // marca la primera cuando el value controlado no matchea ninguna) mientras
+  // «Pagar y descontar del banco» quedaba gris sin explicación.
+  useEffect(() => {
+    if (!cuentaId && cs && cs.length > 0) setCuentaId(String(cs[0].id))
+  }, [cs, cuentaId])
+
+  // Las DOS condiciones que no dependen de ningún fetch: qué método es y qué día
+  // salió. El catálogo de cuentas NO entra acá — que no se pueda leer no cambia
+  // si esta plata salió del banco o del cajón.
+  const ofreceBanco = METODOS_DE_BANCO.includes(metodo) && fecha <= hoy
+  const marcado = alBanco && ofreceBanco
   const listo = Number(monto) > 0 && !!fecha && (!marcado || !!cuentaId)
 
   const registrar = async () => {
@@ -176,8 +209,9 @@ export default function FormPagoObligacion({
         </Campo>
       </div>
 
-      {/* «Y descontalo del banco»: el gesto que evita cargar lo mismo dos veces. */}
-      {puedeIrAlBanco && (
+      {/* «Y descontalo del banco»: el gesto que evita cargar lo mismo dos veces.
+          Se ofrece por MÉTODO y FECHA, nunca por el estado de un fetch. */}
+      {ofreceBanco && (
         <div className="rounded-xl border border-warm-200 bg-white px-3 py-2.5">
           <label className="flex items-start gap-2 cursor-pointer">
             <input type="checkbox" checked={alBanco} onChange={e => setAlBanco(e.target.checked)}
@@ -195,25 +229,45 @@ export default function FormPagoObligacion({
             </span>
           </label>
           {alBanco && (
-            <div className="mt-2 max-w-[16rem]">
-              <Campo label="¿De qué cuenta salió?">
-                <select value={cuentaId} onChange={e => setCuentaId(e.target.value)} className={CLS_INPUT}>
-                  {cuentas.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                </select>
-              </Campo>
+            <div className="mt-2 max-w-[22rem]">
+              <SegunDato
+                dato={cuentas.dato}
+                cargando={
+                  <p className="text-[11px] text-warm-500 bg-warm-100 rounded-xl px-3 py-3">
+                    Cargando las cuentas…
+                  </p>
+                }
+                falla={m => (
+                  <NoSeSabe onReintentar={cuentas.recargar}
+                    mensaje={`${m} — sin saber de qué cuenta salió no se puede cargar la salida `
+                      + 'del banco. Destildá el cuadrito para registrar el pago igual y cargar '
+                      + 'la salida a mano en el libro.'} />
+                )}
+                listo={lista => lista.length === 0 ? (
+                  <NoSeSabe mensaje={'No hay ninguna cuenta de banco cargada, así que la salida '
+                    + 'del libro hay que cargarla aparte. Destildá el cuadrito para registrar el '
+                    + 'pago igual.'} />
+                ) : (
+                  <div className="max-w-[16rem]">
+                    <Campo label="¿De qué cuenta salió?">
+                      <select value={cuentaId} onChange={e => setCuentaId(e.target.value)} className={CLS_INPUT}>
+                        {lista.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                      </select>
+                    </Campo>
+                  </div>
+                )}
+              />
             </div>
           )}
         </div>
       )}
-      {!puedeIrAlBanco && (
+      {!ofreceBanco && (
         <p className="text-[11px] text-warm-400 leading-snug">
           {metodo === 'efectivo'
             ? 'En efectivo la plata sale del cajón, no de la cuenta: el libro del banco no se toca.'
             : fecha > hoy
               ? 'Con fecha futura no se puede cargar la salida del banco: el libro es plata que ya se movió.'
-              : cuentas.length === 0
-                ? 'No hay cuentas de banco cargadas, así que la salida del libro hay que cargarla aparte.'
-                : 'Con este método la salida del banco se carga aparte, en el libro.'}
+              : 'Con este método la salida del banco se carga aparte, en el libro.'}
         </p>
       )}
 

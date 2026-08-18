@@ -2,8 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowDownLeft, ArrowUpRight, Plus } from 'lucide-react'
 import api from '../../api/client'
 import { conMiles, soloDigitos } from '../../utils/plata'
+import type { Fuente } from '../../api/useDato'
+import { SegunDato, NoSeSabe } from '../ui'
 import { CuentaBanco, MovimientoBanco, detalleDeError } from './banco'
 import { Campo, CLS_INPUT, CLS_INPUT_PLATA, CLS_BOTON_GUARDAR, ErrorCampo, teclas } from './campos'
+
+/** El lugar del select mientras el catálogo no está: gris y mudo, sin afirmar
+ *  que no haya cuentas. Misma caja para no descuadrar la grilla. */
+const CajaCuentas = ({ texto }: { texto: string }) => (
+  <p className="text-[11px] text-warm-500 bg-warm-100 rounded-xl px-3 py-3 min-h-[44px] flex items-center">
+    {texto}
+  </p>
+)
 
 /**
  * Cargar un movimiento del banco — LA FILA, no un modal.
@@ -36,18 +46,27 @@ import { Campo, CLS_INPUT, CLS_INPUT_PLATA, CLS_BOTON_GUARDAR, ErrorCampo, tecla
  *    (lo hace quien monta esta fila, con la fecha que devuelve el backend): la
  *    fecha es editable, y guardar algo de otro mes sin ver ningún cambio en
  *    pantalla se lee como que no se guardó.
+ *  - «CARGANDO» Y «NO HAY NINGUNA» NO SON LA MISMA CAJA. Antes las dos decían
+ *    «Cargando las cuentas…» porque el catálogo llegaba como `CuentaBanco[]` y
+ *    una lista vacía no se distinguía de una que no volvió. Con el catálogo
+ *    caído esa caja se quedaba puesta para siempre y el dueño esperaba un fetch
+ *    que ya había fallado.
  */
 export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuardado }: {
   /** Con qué día arranca. El libro precarga hoy, o el día de la fila que lo abrió. */
   fechaInicial: string
-  cuentas: CuentaBanco[]
+  cuentas: Fuente<CuentaBanco[]>
   /** Hoy en Colombia: el backend RECHAZA fechas futuras (el libro es plata que ya
    *  se movió), así que el campo no las ofrece en vez de ofrecerlas y fallar. */
   maxFecha: string
   onGuardado: (movimiento: MovimientoBanco) => void
 }) {
+  /** El catálogo LEÍDO, o `null` mientras no esté en la mano. `null` no es «no
+   *  hay cuentas»: es «no se sabe». Solo alimenta el default del efecto. */
+  const cs = cuentas.dato.estado === 'listo' ? cuentas.dato.valor : null
+
   const [fecha, setFecha] = useState(fechaInicial)
-  const [cuentaId, setCuentaId] = useState(cuentas[0] ? String(cuentas[0].id) : '')
+  const [cuentaId, setCuentaId] = useState(cs?.[0] ? String(cs[0].id) : '')
   const [tipo, setTipo] = useState<'entrada' | 'salida' | null>(null)
   const [monto, setMonto] = useState('')
   const [concepto, setConcepto] = useState('')
@@ -60,18 +79,17 @@ export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuar
   const refMonto = useRef<HTMLInputElement>(null)
 
   // EL DEFAULT SE SINCRONIZA CUANDO LLEGA EL CATÁLOGO. El useState corre en el
-  // PRIMER render, cuando la lista todavía está vacía porque el fetch va en un
-  // useEffect del padre. Sin esto el estado quedaba en '' para siempre —el
-  // componente no remonta— y el resultado era el peor posible: el select se ve
-  // CON una opción elegida (React marca la primera cuando el value controlado
-  // no matchea ninguna) y el botón «Guardar» gris, sin explicación. El dueño
-  // tecleaba todo y no podía guardar. No pisa lo que ya eligió: solo llena el
-  // hueco.
+  // PRIMER render, cuando la lista todavía no llegó porque el fetch va en un
+  // hook del padre. Sin esto el estado quedaba en '' para siempre —el componente
+  // no remonta— y el resultado era el peor posible: el select se ve CON una
+  // opción elegida (React marca la primera cuando el value controlado no matchea
+  // ninguna) y el botón «Guardar» gris, sin explicación. El dueño tecleaba todo
+  // y no podía guardar. No pisa lo que ya eligió: solo llena el hueco.
   useEffect(() => {
-    if (!cuentaId && cuentas.length) setCuentaId(String(cuentas[0].id))
-  }, [cuentas, cuentaId])
+    if (!cuentaId && cs && cs.length > 0) setCuentaId(String(cs[0].id))
+  }, [cs, cuentaId])
 
-  const cuenta = cuentas.find(c => String(c.id) === cuentaId)
+  const cuenta = cs?.find(c => String(c.id) === cuentaId)
   const listo = !!fecha && !!cuentaId && !!tipo && Number(monto) > 0 && !!concepto.trim()
 
   const guardar = async () => {
@@ -111,6 +129,23 @@ export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuar
           Cargar un movimiento del banco
         </p>
       </div>
+
+      {/* EL AVISO VA ARRIBA DEL SELECT y el formulario se queda montado: sin
+          cuenta el backend no acepta el movimiento, así que decirlo acá —con el
+          botón de reintentar— es lo único que evita que el dueño teclee todo
+          contra un «Guardar» gris que no explica nada. */}
+      <SegunDato
+        dato={cuentas.dato}
+        cargando={null}
+        falla={m => (
+          <NoSeSabe onReintentar={cuentas.recargar}
+            mensaje={`${m} — sin la cuenta no se puede guardar el movimiento. Podés ir tecleando `
+              + 'el resto: el día, el monto y el concepto no dependen del catálogo.'} />
+        )}
+        listo={lista => lista.length === 0 ? (
+          <NoSeSabe mensaje="No hay ninguna cuenta de banco cargada, así que todavía no se puede cargar un movimiento." />
+        ) : null}
+      />
 
       {/* Mobile-first: una columna en celular, la fila entera en tablet. El
           monto va PRIMERO en la grilla ancha porque es el campo que se toca
@@ -153,18 +188,21 @@ export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuar
         </Campo>
 
         <Campo label="Cuenta">
-          {cuentas.length > 0 ? (
-            <select value={cuentaId} onChange={e => setCuentaId(e.target.value)} className={CLS_INPUT}>
-              {cuentas.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-            </select>
-          ) : (
-            /* «Vacío» y «todavía no llegó» NO son lo mismo: mientras el fetch
-               está en camino la lista también viene vacía, y afirmar que no hay
-               cuentas cargadas es decidir por la FORMA del dato. */
-            <p className="text-[11px] text-warm-500 bg-warm-100 rounded-xl px-3 py-3">
-              Cargando las cuentas…
-            </p>
-          )}
+          {/* «Vacío», «todavía no llegó» y «no volvió» son TRES cosas distintas y
+              cada una se dibuja distinta: antes las tres decían «Cargando las
+              cuentas…», y con el catálogo caído esa caja no se iba nunca. */}
+          <SegunDato
+            dato={cuentas.dato}
+            cargando={<CajaCuentas texto="Cargando las cuentas…" />}
+            falla={() => <CajaCuentas texto="Sin cuentas para elegir" />}
+            listo={lista => lista.length === 0
+              ? <CajaCuentas texto="No hay cuentas cargadas" />
+              : (
+                <select value={cuentaId} onChange={e => setCuentaId(e.target.value)} className={CLS_INPUT}>
+                  {lista.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                </select>
+              )}
+          />
         </Campo>
 
         <Campo label="Concepto" ancho="col-span-2 sm:col-span-1">

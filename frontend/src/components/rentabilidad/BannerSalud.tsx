@@ -1,10 +1,13 @@
-import { useRef, useState } from 'react'
+import { ReactNode, useRef, useState } from 'react'
 import { Database, Loader2, ScanLine, Trash2 } from 'lucide-react'
 import api from '../../api/client'
+import type { Dato } from '../../api/dato'
+import type { Fuente } from '../../api/useDato'
+import { NoSeSabe, SegunDato } from '../ui'
 import { detalleDeError } from '../plata/banco'
 import { Banner, ComoSeCalcula, ErrorCampo } from '../plata/campos'
 import {
-  PorProductoData, RentabilidadData,
+  InsumoSinCosto, Outlier, PorProductoData, RentabilidadData,
   computeInsumosSinCosto, computeOutliers, fmt, fmtTasa,
 } from './helpers'
 
@@ -39,16 +42,24 @@ interface AliasRow {
  *  · La nota del impoconsumo se muestra solo si de verdad está separando plata
  *    (`impoconsumo > 0`): con la tarifa en 0 la bandera de «sin confirmar» viene
  *    prendida por defecto y el cartel hablaría de una tarifa que no se aplica.
+ *
+ * ── ESTE BANNER ES EL QUE INVENTÓ LA CALMA, Y ACÁ SE ARREGLÓ ───────────────
+ * Los dos verdes de abajo («Ninguno — todos coherentes con su categoría» y «Todo
+ * costeado») preguntaban por el CONTENEDOR (`!prodData`) y no por el CONTENIDO:
+ * con cien productos en pantalla pero ninguna categoría que junte los cuatro
+ * costeados que el algoritmo necesita, `computeOutliers` devolvía `[]` y el
+ * verde se emitía sobre una medición que nunca corrió. Ahora las dos funciones
+ * devuelven `Dato`, y su rama `sinBase` trae escrito por qué no se comparó nada.
  */
 export default function BannerSalud({ prodData, plMes, pendientes, onRefrescarProductos, onIrALaPlata }: {
-  prodData: PorProductoData | null
+  prodData: Fuente<PorProductoData>
   /** El P&L del MES EN CURSO. No sigue al filtro de período: la cobertura de
    *  costos fijos que califica al semáforo es la del mes, no la del rango. */
-  plMes: RentabilidadData | null
-  /** El mismo contador que se muestra arriba, calculado una sola vez. */
-  /** `null` = no se pudo medir (falta `prodData`). NO es lo mismo que 0: cero
-   *  afirma que está todo cubierto, y eso hay que haberlo verificado. */
-  pendientes: number | null
+  plMes: Fuente<RentabilidadData>
+  /** El mismo contador que se muestra arriba, calculado una sola vez.
+   *  `Dato`, no `number | null`: «no se pudo medir» y «no falta nada» son
+   *  veredictos opuestos, y cero afirma que está todo cubierto. */
+  pendientes: Dato<number>
   onRefrescarProductos: () => void
   onIrALaPlata: () => void
 }) {
@@ -60,19 +71,30 @@ export default function BannerSalud({ prodData, plMes, pendientes, onRefrescarPr
   const [aliases, setAliases] = useState<AliasRow[] | null>(null)
   const [aliasMsg, setAliasMsg] = useState('')
 
-  const all = prodData?.productos ?? []
+  const dProd = prodData.dato
+  const dPl = plMes.dato
+  // Para lo que es INFORMATIVO (las notas de metodología, la lista de aliases):
+  // si no está, no se dice. Ninguna de esas piezas emite veredicto.
+  const prod = dProd.estado === 'listo' ? dProd.valor : null
+  const pl = dPl.estado === 'listo' ? dPl.valor : null
+
+  // Las dos derivaciones de dominio HEREDAN el estado del contenedor y le suman
+  // el propio: con los productos en la mano, `computeOutliers` puede igual
+  // devolver `sinBase` porque no tuvo con qué comparar. Son dos ausencias
+  // distintas y las dos tienen que llegar hasta la pantalla.
+  const dOutliers: Dato<Outlier[]> = dProd.estado === 'listo'
+    ? computeOutliers(dProd.valor.productos) : dProd
+  const dInsumos: Dato<InsumoSinCosto[]> = dProd.estado === 'listo'
+    ? computeInsumosSinCosto(dProd.valor.productos) : dProd
+
   // Por MONTO, no por presencia del campo: sin un peso de impuesto separado, el
   // precio neto es el de la carta y nombrar la base sería ruido.
-  const hayImpoProd = all.some(p => p.impoconsumo_unitario > 0)
-  const hayImpoPL = (plMes?.resumen.impoconsumo ?? 0) > 0
-  const outliers = computeOutliers(all)
-  const insumos = computeInsumosSinCosto(all)
-  const completos = all.filter(p => p.costo_completo).length
-  const cobertura = all.length ? Math.round((completos / all.length) * 100) : 0
-  const facturasSinLeer = prodData?.facturas_pendientes_de_costos ?? 0
-  const nFijos = plMes?.resumen.n_costos_fijos ?? 0
-  const montoFijos = plMes?.resumen.costos_fijos_devengados ?? 0
-  const sinFijos = montoFijos <= 0
+  const hayImpoProd = prod?.productos.some(p => p.impoconsumo_unitario > 0) ?? false
+  const hayImpoPL = (pl?.resumen.impoconsumo ?? 0) > 0
+  // `null` = el backend no manda el campo (o los productos no llegaron): el
+  // bloque de aliases no se dibuja. Cero aliases conocidos es otra cosa y sí se
+  // dibuja, porque es una lectura buena.
+  const aliasesConocidos = typeof prod?.aliases_conocidos === 'number' ? prod.aliases_conocidos : null
 
   const toggleAliases = async () => {
     const abrir = !verAliases
@@ -98,12 +120,12 @@ export default function BannerSalud({ prodData, plMes, pendientes, onRefrescarPr
   }
 
   /** Lee las facturas guardadas de a dos, con corte: sin el botón «Parar» el
-   *  dueño queda mirando un spinner sin salida. */
-  const leerFacturas = async () => {
-    if (!prodData) return
+   *  dueño queda mirando un spinner sin salida. El contador de arranque llega
+   *  por parámetro porque solo existe con los productos en la mano. */
+  const leerFacturas = async (pendientesFacturas: number) => {
     setLeyendo(true)
     pararRef.current = false
-    let quedan = prodData.facturas_pendientes_de_costos
+    let quedan = pendientesFacturas
     try {
       while (quedan > 0 && !pararRef.current) {
         setMsg(`Leyendo facturas guardadas… quedan ${quedan}`)
@@ -125,77 +147,131 @@ export default function BannerSalud({ prodData, plMes, pendientes, onRefrescarPr
     }
   }
 
+  // ── La cabecera: TRES estados no alcanzaban, son CUATRO ───────────────────
+  // «No se pudo medir» no es «está todo bien»: es la misma trampa que el ámbar
+  // de la proyección («que no haya alarma no significa que estés bien»), acá al
+  // revés. Y el primer segundo de la pantalla tampoco es un fallo.
+  const sub = pendientes.estado === 'cargando' ? 'Midiendo…'
+    : pendientes.estado === 'falla' ? `No se pudo medir: ${pendientes.mensaje}`
+    : pendientes.estado === 'sinBase' ? `No se pudo medir: ${pendientes.porque}`
+    : pendientes.valor > 0
+      ? `${pendientes.valor} ${pendientes.valor === 1 ? 'cosa' : 'cosas'} por arreglar para que el margen sea real`
+      : 'Sin pendientes: el costeo y los costos fijos están cubiertos'
+
+  /* La chapa verde «Datos sanos» es un VEREDICTO y solo se emite con la
+     medición en la mano. Sin ella va gris: no sabemos. */
+  const chapa = pendientes.estado !== 'listo'
+    ? { txt: pendientes.estado === 'cargando' ? '…' : 'Sin medir',
+        cls: 'bg-warm-100 text-warm-500 border-warm-200' }
+    : pendientes.valor > 0
+      ? { txt: `${pendientes.valor} pendientes`, cls: 'bg-gold-50 text-gold-700 border-gold-200' }
+      : { txt: 'Datos sanos', cls: 'bg-success-50 text-success-600 border-success-200' }
+
+  /** La cobertura de costeo: el número grande, la barra y el pie. La barra solo
+   *  se PINTA con un porcentaje medido — una barra dorada en 0% sobre un fetch
+   *  caído dice «ningún producto tiene costo», que es una acusación inventada. */
+  const bloqueCobertura = (numero: string, barra: ReactNode, pie: ReactNode) => (<>
+    <div className="flex items-baseline justify-between gap-2">
+      <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500">Cobertura de costeo</p>
+      <p className="text-base font-mono font-extrabold tabular-nums text-warm-700">{numero}</p>
+    </div>
+    <div className="h-2 rounded-full bg-warm-100 overflow-hidden mt-1.5">{barra}</div>
+    <div className="mt-1">{pie}</div>
+  </>)
+
+  /** Los costos fijos del mes. El fondo dorado y el botón «Cargalos en La plata»
+   *  son una INSTRUCCIÓN DE TRABAJO: mandarlo a cargar un arriendo que ya está
+   *  cargado, porque el P&L no volvió, es peor que no decir nada. */
+  const bloqueFijos = (numero: string, pie: ReactNode, dorado: boolean) => (
+    <div className={`px-4 py-3 border-b ${dorado ? 'border-gold-200 bg-gold-50' : 'border-warm-100'}`}>
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500">
+          Costos fijos del mes en curso
+        </p>
+        <p className="text-base font-mono font-extrabold tabular-nums text-warm-700">{numero}</p>
+      </div>
+      <div className="mt-1">{pie}</div>
+    </div>
+  )
+
   return (
     <Banner
       id="salud-de-datos"
       titulo="¿Le puedo creer a estos números?"
-      /* TRES estados, no dos. «No se pudo medir» no es «está todo bien»: es la
-         misma trampa que el ámbar de la proyección («que no haya alarma no
-         significa que estés bien»), acá al revés. */
-      sub={pendientes === null
-        ? 'No se pudo medir: no cargaron los datos de producto'
-        : pendientes > 0
-          ? `${pendientes} ${pendientes === 1 ? 'cosa' : 'cosas'} por arreglar para que el margen sea real`
-          : 'Sin pendientes: el costeo y los costos fijos están cubiertos'}
+      sub={sub}
       accion={
-        /* La chapa verde «Datos sanos» es un VEREDICTO y solo se emite con la
-           medición en la mano. Sin ella va gris: no sabemos. */
-        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-bold ${
-          pendientes === null ? 'bg-warm-100 text-warm-500 border-warm-200'
-            : pendientes > 0 ? 'bg-gold-50 text-gold-700 border-gold-200'
-              : 'bg-success-50 text-success-600 border-success-200'}`}>
-          <Database size={12} /> {pendientes === null ? 'Sin medir'
-            : pendientes > 0 ? `${pendientes} pendientes` : 'Datos sanos'}
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-bold ${chapa.cls}`}>
+          <Database size={12} /> {chapa.txt}
         </span>
       }
     >
       {/* ── Cobertura de costeo ────────────────────────────────────────────── */}
       <div className="px-4 py-3 border-b border-warm-100">
-        <div className="flex items-baseline justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500">Cobertura de costeo</p>
-          <p className="text-base font-mono font-extrabold tabular-nums text-warm-700">
-            {completos}/{all.length}
-          </p>
-        </div>
-        <div className="h-2 rounded-full bg-warm-100 overflow-hidden mt-1.5">
-          <div className={`h-full rounded-full ${cobertura >= 90 ? 'bg-success-500' : 'bg-gold-500'}`}
-            style={{ width: `${cobertura}%` }} />
-        </div>
-        <p className="text-[11px] text-warm-500 mt-1">
-          {cobertura}% de los productos tienen el costo completo. Un producto sin costo tiene
-          margen falso, y ese margen falso está sumado en los números de arriba.
-        </p>
+        <SegunDato dato={dProd}
+          cargando={bloqueCobertura('…', null,
+            <p className="text-[11px] text-warm-400">Leyendo los productos…</p>)}
+          falla={m => bloqueCobertura('—', null,
+            <NoSeSabe mensaje={m} onReintentar={prodData.recargar} />)}
+          listo={v => {
+            const all = v.productos
+            const completos = all.filter(p => p.costo_completo).length
+            // 0 de 0 NO es 0%: sin ningún producto cargado no hay costeo que
+            // medir, y una barra en cero acusaría a una lista que está vacía.
+            const pct = all.length ? Math.round((completos / all.length) * 100) : null
+            return bloqueCobertura(
+              `${completos}/${all.length}`,
+              pct != null && (
+                <div className={`h-full rounded-full ${pct >= 90 ? 'bg-success-500' : 'bg-gold-500'}`}
+                  style={{ width: `${pct}%` }} />
+              ),
+              <p className="text-[11px] text-warm-500">
+                {pct == null
+                  ? 'No hay ningún producto cargado, así que no hay costeo que medir.'
+                  : <>{pct}% de los productos tienen el costo completo. Un producto sin costo tiene
+                      margen falso, y ese margen falso está sumado en los números de arriba.</>}
+              </p>,
+            )
+          }} />
       </div>
 
       {/* ── Costos fijos del mes ───────────────────────────────────────────── */}
-      <div className={`px-4 py-3 border-b ${sinFijos ? 'border-gold-200 bg-gold-50' : 'border-warm-100'}`}>
-        <div className="flex items-baseline justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500">
-            Costos fijos del mes en curso
-          </p>
-          <p className="text-base font-mono font-extrabold tabular-nums text-warm-700">{fmt(montoFijos)}</p>
-        </div>
-        {sinFijos ? (
-          <p className="text-[11px] text-warm-600 mt-1 leading-relaxed">
-            No hay arriendo, nómina ni servicios devengados este mes. Mientras falten, el margen
-            neto se ve <b>más alto de lo que es</b> y el semáforo no puede decir si el negocio va
-            bien.{' '}
-            <button onClick={onIrALaPlata} className="font-bold text-gold-700 underline decoration-dotted">
-              Cargalos en La plata
-            </button>.
-          </p>
-        ) : (
-          <p className="text-[11px] text-warm-500 mt-1">
-            {nFijos} {nFijos === 1 ? 'obligación fija devengada' : 'obligaciones fijas devengadas'} —
-            el margen neto ya las descuenta.
-          </p>
-        )}
-      </div>
+      <SegunDato dato={dPl}
+        cargando={bloqueFijos('…',
+          <p className="text-[11px] text-warm-400">Leyendo el resultado del mes…</p>, false)}
+        falla={m => bloqueFijos('—',
+          <NoSeSabe mensaje={m} onReintentar={plMes.recargar} />, false)}
+        listo={v => {
+          // Por MONTO: una obligación cargada en $0 apagaría el aviso para
+          // siempre si esto contara filas. Y el campo ausente cae del lado de
+          // avisar, que es el lado que no tranquiliza de gratis.
+          const monto = v.resumen.costos_fijos_devengados ?? 0
+          const nFijos = v.resumen.n_costos_fijos ?? 0
+          const sinFijos = monto <= 0
+          return bloqueFijos(fmt(monto), sinFijos ? (
+            <p className="text-[11px] text-warm-600 leading-relaxed">
+              No hay arriendo, nómina ni servicios devengados este mes. Mientras falten, el margen
+              neto se ve <b>más alto de lo que es</b> y el semáforo no puede decir si el negocio va
+              bien.{' '}
+              <button onClick={onIrALaPlata} className="font-bold text-gold-700 underline decoration-dotted">
+                Cargalos en La plata
+              </button>.
+            </p>
+          ) : (
+            <p className="text-[11px] text-warm-500">
+              {nFijos} {nFijos === 1 ? 'obligación fija devengada' : 'obligaciones fijas devengadas'} —
+              el margen neto ya las descuenta.
+            </p>
+          ), sinFijos)
+        }} />
 
-      {/* ── Backfill OCR: la acción que sube la cobertura ──────────────────── */}
-      {facturasSinLeer > 0 && (
+      {/* ── Backfill OCR: la acción que sube la cobertura ────────────────────
+          Cuelga de los productos: sin ellos no se sabe cuántas facturas hay sin
+          leer, y el renglón de arriba ya dice que no se pudieron leer. */}
+      {prod && prod.facturas_pendientes_de_costos > 0 && (
         <div className="px-4 py-3 border-b border-warm-100 bg-clay-50">
-          <p className="text-sm font-bold text-warm-700">{facturasSinLeer} facturas guardadas sin leer</p>
+          <p className="text-sm font-bold text-warm-700">
+            {prod.facturas_pendientes_de_costos} facturas guardadas sin leer
+          </p>
           <p className="text-[11px] text-warm-500 mt-0.5">
             Leerlas completa los costos automáticamente desde las fotos: es lo que arregla el
             margen sin teclear nada.
@@ -210,9 +286,9 @@ export default function BannerSalud({ prodData, plMes, pendientes, onRefrescarPr
                 Parar
               </button>
             </>) : (
-              <button onClick={leerFacturas}
+              <button onClick={() => leerFacturas(prod.facturas_pendientes_de_costos)}
                 className="flex items-center gap-1.5 min-h-[44px] px-4 rounded-lg text-xs font-bold text-white bg-clay-500 active:scale-[0.98] transition-transform">
-                <ScanLine size={14} /> Leer los costos de {facturasSinLeer} facturas
+                <ScanLine size={14} /> Leer los costos de {prod.facturas_pendientes_de_costos} facturas
               </button>
             )}
           </div>
@@ -225,25 +301,29 @@ export default function BannerSalud({ prodData, plMes, pendientes, onRefrescarPr
         <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500 mb-1">
           Márgenes sospechosos
         </p>
-        {/* `prodData` en null NO es «cero outliers»: `computeOutliers([])`
-            devuelve [] por construcción, y ahí el verde afirmaría algo que
-            nadie midió. Es la misma trampa que ya tenía el contador de arriba. */}
-        {!prodData ? (
-          <p className="text-xs text-warm-500">No se pudo medir: no cargaron los productos.</p>
-        ) : outliers.length === 0 ? (
-          <p className="text-xs text-success-600 font-semibold">
-            Ninguno — todos coherentes con su categoría
-          </p>
-        ) : outliers.map(o => (
-          <div key={o.p.producto_id} className="flex items-center gap-2 py-1.5 border-b border-warm-100 last:border-0">
-            <span className="flex-1 min-w-0 text-xs text-warm-700 truncate">{o.p.nombre}</span>
-            <span className={`text-[11px] font-mono font-bold tabular-nums ${
-              o.alto ? 'text-danger-600' : 'text-gold-700'}`}>{o.p.pct_margen}%</span>
-            <span className="text-[10px] text-warm-400 w-24 text-right capitalize truncate">
-              {o.p.categoria} ~{o.mean}%
-            </span>
-          </div>
-        ))}
+        {/* ESTE es el bug que motivó todo. `computeOutliers` devuelve `[]` tanto
+            cuando ningún producto está desviado como cuando NINGUNA CATEGORÍA
+            juntó los cuatro productos costeados que el algoritmo necesita para
+            comparar. El verde se emitía sobre cero comparaciones hechas. La rama
+            `sinBase` trae escrito, desde la función, por qué no se comparó nada. */}
+        <SegunDato dato={dOutliers}
+          cargando={<p className="text-xs text-warm-400">…</p>}
+          falla={m => <NoSeSabe mensaje={m} onReintentar={prodData.recargar} />}
+          sinBase={porque => <p className="text-xs text-warm-500">{porque}</p>}
+          listo={outliers => outliers.length === 0 ? (
+            <p className="text-xs text-success-600 font-semibold">
+              Ninguno — todos coherentes con su categoría
+            </p>
+          ) : outliers.map(o => (
+            <div key={o.p.producto_id} className="flex items-center gap-2 py-1.5 border-b border-warm-100 last:border-0">
+              <span className="flex-1 min-w-0 text-xs text-warm-700 truncate">{o.p.nombre}</span>
+              <span className={`text-[11px] font-mono font-bold tabular-nums ${
+                o.alto ? 'text-danger-600' : 'text-gold-700'}`}>{o.p.pct_margen}%</span>
+              <span className="text-[10px] text-warm-400 w-24 text-right capitalize truncate">
+                {o.p.categoria} ~{o.mean}%
+              </span>
+            </div>
+          ))} />
         <p className="text-[11px] text-warm-400 mt-1.5 leading-relaxed">
           {hayImpoProd && <>Los % son margen sobre el precio neto (la carta sin impoconsumo). </>}
           Un margen muy desviado del promedio de su categoría casi siempre es un costo mal cargado
@@ -256,33 +336,35 @@ export default function BannerSalud({ prodData, plMes, pendientes, onRefrescarPr
         <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500 mb-1">
           Insumos sin costear
         </p>
-        {!prodData ? (
-          <p className="text-xs text-warm-500">No se pudo medir: no cargaron los productos.</p>
-        ) : insumos.length === 0 ? (
-          <p className="text-xs text-success-600 font-semibold">Todo costeado</p>
-        ) : (<>
-          {insumos.map(i => (
-            <div key={i.nombre} className="flex items-center gap-2 py-1.5 border-b border-warm-100 last:border-0">
-              <span className="flex-1 min-w-0 text-xs text-warm-700 truncate">{i.nombre}</span>
-              <span className="text-[10px] text-warm-400 shrink-0">
-                {i.n} {i.n === 1 ? 'producto' : 'productos'}
-              </span>
-              <span className="text-[11px] font-mono tabular-nums text-gold-700 w-20 text-right shrink-0">
-                {fmt(i.venta)}
-              </span>
-            </div>
-          ))}
-          <p className="text-[11px] text-warm-400 mt-1.5 leading-relaxed">
-            Ordenados por la venta que arrastran: el de arriba es el que más margen está
-            ensuciando. El costo se carga desde el catálogo del insumo o leyendo la factura donde
-            aparece.
-          </p>
-        </>)}
+        <SegunDato dato={dInsumos}
+          cargando={<p className="text-xs text-warm-400">…</p>}
+          falla={m => <NoSeSabe mensaje={m} onReintentar={prodData.recargar} />}
+          sinBase={porque => <p className="text-xs text-warm-500">{porque}</p>}
+          listo={insumos => insumos.length === 0 ? (
+            <p className="text-xs text-success-600 font-semibold">Todo costeado</p>
+          ) : (<>
+            {insumos.map(i => (
+              <div key={i.nombre} className="flex items-center gap-2 py-1.5 border-b border-warm-100 last:border-0">
+                <span className="flex-1 min-w-0 text-xs text-warm-700 truncate">{i.nombre}</span>
+                <span className="text-[10px] text-warm-400 shrink-0">
+                  {i.n} {i.n === 1 ? 'producto' : 'productos'}
+                </span>
+                <span className="text-[11px] font-mono tabular-nums text-gold-700 w-20 text-right shrink-0">
+                  {fmt(i.venta)}
+                </span>
+              </div>
+            ))}
+            <p className="text-[11px] text-warm-400 mt-1.5 leading-relaxed">
+              Ordenados por la venta que arrastran: el de arriba es el que más margen está
+              ensuciando. El costo se carga desde el catálogo del insumo o leyendo la factura donde
+              aparece.
+            </p>
+          </>)} />
       </div>
 
       {/* ── Lo que el sistema aprendió de las facturas ─────────────────────── */}
-      {typeof prodData?.aliases_conocidos === 'number' && (() => {
-        const n = aliases !== null ? aliases.length : prodData.aliases_conocidos
+      {aliasesConocidos != null && (() => {
+        const n = aliases !== null ? aliases.length : aliasesConocidos
         return (
           <div className="px-4 py-3 border-b border-warm-100">
             <p className="text-[11px] text-warm-500 leading-relaxed">
@@ -331,22 +413,22 @@ export default function BannerSalud({ prodData, plMes, pendientes, onRefrescarPr
 
       {/* ── Metodología ────────────────────────────────────────────────────── */}
       <ComoSeCalcula>
-        {plMes?.nota && <p>{plMes.nota}</p>}
-        {prodData?.nota && <p>{prodData.nota}</p>}
+        {pl?.nota && <p>{pl.nota}</p>}
+        {prod?.nota && <p>{prod.nota}</p>}
         {/* La corrección que cambió TODOS los márgenes del sistema. Va acá porque
             es la respuesta a «¿por qué mi margen bajó?», y se muestra con los
             montos del mes en curso, no como una afirmación general. */}
-        {hayImpoPL && plMes && (
+        {hayImpoPL && pl && (
           <p>
             El precio de la carta lleva el impoconsumo adentro
-            ({fmtTasa(plMes.resumen.tasa_impoconsumo)} sobre la venta neta). De los{' '}
-            {fmt(plMes.resumen.ventas)} cobrados este mes, {fmt(plMes.resumen.impoconsumo)} se le
+            ({fmtTasa(pl.resumen.tasa_impoconsumo)} sobre la venta neta). De los{' '}
+            {fmt(pl.resumen.ventas)} cobrados este mes, {fmt(pl.resumen.impoconsumo)} se le
             giran a la DIAN y nunca fueron del negocio: el margen neto y su % se miden contra la
-            venta neta ({fmt(plMes.resumen.venta_neta)}) y no contra lo cobrado, y el margen de
+            venta neta ({fmt(pl.resumen.venta_neta)}) y no contra lo cobrado, y el margen de
             cada producto contra su precio neto. La excepción es el margen sobre lo vendido (COGS
             teórico y fuga de inventario): ese sí se compara contra lo cobrado, así que se ve más
             alto.
-            {plMes.resumen.impoconsumo_confirmar_contador
+            {pl.resumen.impoconsumo_confirmar_contador
               && ' La tarifa está cargada pero todavía sin confirmar con tu contador.'}
           </p>
         )}

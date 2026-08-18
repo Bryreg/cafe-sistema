@@ -1,5 +1,7 @@
 // Shared types and derived-data helpers for the Rentabilidad cockpit views.
 
+import { Dato, datoListo, datoSinBase } from '../../api/dato'
+
 export interface Bucket {
   /** Lo COBRADO: Σ Ticket.total. Es lo que entró al cajón y lo que cuadra contra
    *  caja — pero NO es todo plata del negocio (ver `impoconsumo`). */
@@ -253,9 +255,25 @@ export function buildMatrix(all: ProdMargen[]): MatrixInfo {
 }
 
 // ── Data-health (detector de datos truchos) ──────────────────────────────────
+//
+// Estas dos devuelven `Dato<...>` y no un array pelado, y la razón es el bug que
+// llegó a producción: un array vacío significaba a la vez «miré y está todo
+// bien» y «no llegué a mirar nada», así que el banner pintaba el verde «todos
+// coherentes con su categoría» sobre una medición que nunca corrió.
+//
+// En `computeOutliers` el caso es peor que «no llegaron productos». El algoritmo
+// necesita CUATRO productos costeados en una misma categoría para comparar, y
+// una desviación de al menos 4 puntos para que un z-score signifique algo. Con
+// cien productos en pantalla repartidos en categorías de a dos, no se compara
+// nada — y el resultado era `[]`, indistinguible del verde. Por eso la guarda no
+// cuenta productos: cuenta CATEGORÍAS EFECTIVAMENTE COMPARADAS.
 export interface Outlier { p: ProdMargen; mean: number; alto: boolean }
-export function computeOutliers(all: ProdMargen[]): Outlier[] {
+export function computeOutliers(all: ProdMargen[]): Dato<Outlier[]> {
   const sold = all.filter(p => p.unidades_30d > 0 && p.pct_margen != null && p.costo_completo)
+  if (all.length === 0) return datoSinBase('No llegó ningún producto: no se comparó nada.')
+  if (sold.length === 0) {
+    return datoSinBase('Ningún producto tiene venta y costo completo: no hay con qué comparar.')
+  }
   const byCat = new Map<string, ProdMargen[]>()
   for (const p of sold) {
     const k = p.categoria || 'otros'
@@ -263,22 +281,32 @@ export function computeOutliers(all: ProdMargen[]): Outlier[] {
     if (arr) arr.push(p); else byCat.set(k, [p])
   }
   const flags: Outlier[] = []
+  let categoriasComparadas = 0
   byCat.forEach(arr => {
     if (arr.length < 4) return
     const ms = arr.map(p => p.pct_margen as number)
     const mean = ms.reduce((a, b) => a + b, 0) / ms.length
     const sd = Math.sqrt(ms.reduce((a, b) => a + (b - mean) ** 2, 0) / ms.length)
     if (sd < 4) return
+    categoriasComparadas += 1
     for (const p of arr) {
       const z = ((p.pct_margen as number) - mean) / sd
       if (Math.abs(z) >= 2) flags.push({ p, mean: Math.round(mean), alto: z > 0 })
     }
   })
-  return flags.sort((a, b) => Math.abs(b.p.pct_margen! - b.mean) - Math.abs(a.p.pct_margen! - a.mean)).slice(0, 8)
+  if (categoriasComparadas === 0) {
+    return datoSinBase(
+      'Ninguna categoría junta 4 productos costeados con márgenes distintos: no se comparó nada.')
+  }
+  return datoListo(
+    flags.sort((a, b) => Math.abs(b.p.pct_margen! - b.mean) - Math.abs(a.p.pct_margen! - a.mean)).slice(0, 8))
 }
 
 export interface InsumoSinCosto { nombre: string; n: number; venta: number }
-export function computeInsumosSinCosto(all: ProdMargen[]): InsumoSinCosto[] {
+export function computeInsumosSinCosto(all: ProdMargen[]): Dato<InsumoSinCosto[]> {
+  // Acá alcanza con el largo: la función no tiene umbrales adentro, así que con
+  // al menos un producto mirado el `[]` sí quiere decir «no falta ninguno».
+  if (all.length === 0) return datoSinBase('No llegó ningún producto: no se revisó el costeo.')
   const m = new Map<string, { n: number; venta: number }>()
   for (const p of all) {
     for (const nm of (p.insumos_sin_costo ?? [])) {
@@ -287,8 +315,8 @@ export function computeInsumosSinCosto(all: ProdMargen[]): InsumoSinCosto[] {
       e.n += 1; e.venta += p.venta_30d || 0; m.set(nm, e)
     }
   }
-  return [...m.entries()].map(([nombre, v]) => ({ nombre, ...v }))
-    .sort((a, b) => b.venta - a.venta).slice(0, 12)
+  return datoListo([...m.entries()].map(([nombre, v]) => ({ nombre, ...v }))
+    .sort((a, b) => b.venta - a.venta).slice(0, 12))
 }
 
 // ── Jugadas: single ranked list of actions (costo → combos → add-ons → daypart → precio) ──

@@ -1,5 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { AlertCircle } from 'lucide-react'
+import { mapDato } from '../../api/dato'
+import type { Fuente } from '../../api/useDato'
+import { SegunDato, NoSeSabe } from '../ui'
 import { CuentaBanco, plata } from './banco'
 import { Agenda, AgendaItem, Categoria, Flujo, Tienda } from './tipos'
 import { PulsoData, RentabilidadData } from '../rentabilidad/helpers'
@@ -40,20 +43,23 @@ import FormPagoObligacion from './FormPagoObligacion'
  * mes. Por eso las mutaciones llaman a `onCambio`, que repide lo de la página, y
  * el libro se recarga con su propia llave. Sin eso quedaban dos números para la
  * misma pregunta, con el optimista adelante.
+ *
+ * ── CADA BANNER RECIBE LA `Fuente` ENTERA ──────────────────────────────────
+ * No un `T | null`: el sobre completo, con su estado, su nombre en castellano y
+ * su `recargar`. Así cada banner tiene su propio «Reintentar» sin cablear un
+ * callback por recurso desde acá, y el dueño no pierde lo que estaba tecleando
+ * para volver a pedir lo único que falló. El detalle está en `src/api/dato.ts`.
  */
 export default function LaPlataView({
-  agenda, flujo, pulso, ventasHoy, categorias, tiendas, cuentas,
-  cargandoPagos, cargandoVentas, onCambio,
+  agenda, flujo, pulso, ventasHoy, categorias, tiendas, cuentas, onCambio,
 }: {
-  agenda: Agenda | null
-  flujo: Flujo | null
-  pulso: PulsoData | null
-  ventasHoy: RentabilidadData | null
-  categorias: Categoria[]
-  tiendas: Tienda[]
-  cuentas: CuentaBanco[]
-  cargandoPagos: boolean
-  cargandoVentas: boolean
+  agenda: Fuente<Agenda>
+  flujo: Fuente<Flujo>
+  pulso: Fuente<PulsoData>
+  ventasHoy: Fuente<RentabilidadData>
+  categorias: Fuente<Categoria[]>
+  tiendas: Fuente<Tienda[]>
+  cuentas: Fuente<CuentaBanco[]>
   /** Repide agenda, flujo y lo que cuelga de ellos. */
   onCambio: () => void
 }) {
@@ -97,30 +103,17 @@ export default function LaPlataView({
   // un efecto, y una función nueva en cada render lo haría correr de más.
   const objetivoAtendido = useCallback(() => setFacturaObjetivo(null), [])
 
-  const items = agenda?.items ?? []
-  // Lo vencido, ordenado por fecha: lo más viejo arriba.
-  const vencidos = useMemo(
-    () => items.filter(i => i.vencida).sort((a, b) => a.fecha.localeCompare(b.fecha)), [items])
-  // La agenda indexada por día para fusionarla adentro del libro. Los
-  // vencimientos NO están en el libro (son compromisos, no plata movida).
-  //
-  // LO VENCIDO NO ENTRA ACÁ: ya tiene su banner rojo arriba. Indexándolo
-  // también por día, un vencimiento atrasado cuya fecha cae en el mes que se
-  // está mirando aparecía en las DOS listas, y con el día desplegado tocar
-  // «Pagar» abría el formulario arriba y abajo: dos «Confirmar pago» vivos con
-  // el saldo entero precargado. La primera respuesta desmonta los dos, así que
-  // hace falta tocar dos veces antes de que vuelva — en tablet con conexión
-  // lenta es un camino real, y toca plata. Es la misma decisión que ya tomó el
-  // banner rojo: lo atrasado se paga en un solo lugar.
-  const vencePorDia = useMemo(() => {
-    const m = new Map<string, AgendaItem[]>()
-    for (const i of items) {
-      if (i.vencida) continue
-      const arr = m.get(i.fecha)
-      if (arr) arr.push(i); else m.set(i.fecha, [i])
-    }
-    return m
-  }, [items])
+  /**
+   * Lo vencido, ordenado por fecha: lo más viejo arriba, con su total.
+   *
+   * Va junto porque el rótulo («N pagos con la fecha pasada») y la cifra de la
+   * derecha son la misma afirmación dicha dos veces: si una se puede escribir,
+   * la otra también, y si no, ninguna.
+   */
+  const loVencido = useMemo(() => mapDato(agenda.dato, a => ({
+    items: a.items.filter(i => i.vencida).sort((x, y) => x.fecha.localeCompare(y.fecha)),
+    total: a.totales.vencido,
+  })), [agenda.dato])
 
   const clavePagando = pagando ? `${pagando.tipo}-${pagando.id}` : null
 
@@ -160,47 +153,63 @@ export default function LaPlataView({
       )}
 
       {/* 1 · La venta del día */}
-      <BannerVentasHoy ventasHoy={ventasHoy} pulso={pulso} cargando={cargandoVentas} />
+      <BannerVentasHoy ventasHoy={ventasHoy} pulso={pulso} />
 
       {/* 2 · Cuánta plata hay, y el extracto editable en la misma tarjeta */}
       <div ref={refSaldos}>
-        <BannerSaldos libro={libro.libroConHoy} filaHoy={libro.filaHoy} hoy={libro.hoy}
-          caja={flujo?.caja_hoy ?? null} cuentas={cuentas}
+        <BannerSaldos libro={libro.libroConHoy} hoy={libro.hoy}
+          flujo={flujo} cuentas={cuentas}
           pedidoApertura={pedidoAncla}
-          onAnclaGuardada={refrescarTodo} />
+          onAnclaGuardada={refrescarTodo}
+          onRecargarLibro={libro.recargar} />
       </div>
 
       {/* 3 · Vencido: arriba, aparte y primero. No es «el pasado»: es lo que se
-             debe HOY, y no depende del mes que se esté mirando en el libro. */}
-      {vencidos.length > 0 && (
-        <section className="rounded-2xl border border-danger-200 bg-danger-50 overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-danger-200/60">
-            <AlertCircle size={16} className="text-danger-600 shrink-0" />
-            <div className="min-w-0 flex-1">
-              <h2 className="text-sm font-bold text-danger-700">Vencido — pagalo ya</h2>
-              <p className="text-[11px] text-danger-700/90">
-                {vencidos.length} {vencidos.length === 1 ? 'pago' : 'pagos'} con la fecha pasada
-              </p>
-            </div>
-            <span className="font-mono font-bold text-sm text-danger-700 tabular-nums shrink-0">
-              {plata(agenda?.totales.vencido ?? 0)}
-            </span>
-          </div>
-          <div className="divide-y divide-danger-200/40 bg-white/60">
-            {vencidos.map(i => (
-              <div key={`v-${i.tipo}-${i.id}`}>
-                <FilaVencimiento item={i} onPagar={pedirPago}
-                  activo={clavePagando === `${i.tipo}-${i.id}`} />
-                {formularioPago(i)}
+             debe HOY, y no depende del mes que se esté mirando en el libro.
+
+             EL HUECO OCUPA LUGAR A PROPÓSITO. La sección estaba condicionada a
+             `vencidos.length > 0` con `vencidos` saliendo de `agenda?.items ?? []`:
+             con la agenda caída el banner rojo NO APARECÍA, y una pantalla sin
+             banner rojo dice «no hay nada atrasado» tan claro como si lo
+             escribiera. Es la mentira más cara de la página, así que en su lugar
+             va una caja del mismo peso visual. */}
+      <SegunDato
+        dato={loVencido}
+        cargando={null}
+        falla={m => (
+          <NoSeSabe bloque onReintentar={agenda.recargar}
+            mensaje={`${m} — no se sabe si hay pagos atrasados. Que no aparezca el bloque rojo `
+              + 'de siempre no quiere decir que estés al día.'} />
+        )}
+        listo={v => v.items.length === 0 ? null : (
+          <section className="rounded-2xl border border-danger-200 bg-danger-50 overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-danger-200/60">
+              <AlertCircle size={16} className="text-danger-600 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <h2 className="text-sm font-bold text-danger-700">Vencido — pagalo ya</h2>
+                <p className="text-[11px] text-danger-700/90">
+                  {v.items.length} {v.items.length === 1 ? 'pago' : 'pagos'} con la fecha pasada
+                </p>
               </div>
-            ))}
-          </div>
-        </section>
-      )}
+              <span className="font-mono font-bold text-sm text-danger-700 tabular-nums shrink-0">
+                {plata(v.total)}
+              </span>
+            </div>
+            <div className="divide-y divide-danger-200/40 bg-white/60">
+              {v.items.map(i => (
+                <div key={`v-${i.tipo}-${i.id}`}>
+                  <FilaVencimiento item={i} onPagar={pedirPago}
+                    activo={clavePagando === `${i.tipo}-${i.id}`} />
+                  {formularioPago(i)}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      />
 
       {/* 4 · La proyección */}
-      <BannerFlujo agenda={agenda} flujo={flujo} cargando={cargandoPagos}
-        onActualizarExtracto={irAlAncla} />
+      <BannerFlujo agenda={agenda} flujo={flujo} onActualizarExtracto={irAlAncla} />
 
       {/* 5 · Obligaciones, con la carga a la vista */}
       {/* `llaveLibro` viaja TAMBIÉN acá. Los banners conviven en una sola
@@ -222,25 +231,35 @@ export default function LaPlataView({
       <BannerLibro
         libro={libro.libro} serie={libro.serie} anio={libro.anio} mes={libro.mes}
         hoy={libro.hoy} viendoElMesDeHoy={libro.viendoElMesDeHoy}
-        cargando={libro.cargando} errorLibro={libro.error}
-        cuentas={cuentas} vencimientos={vencePorDia}
+        cuentas={cuentas} agenda={agenda}
         itemPagando={clavePagando}
         onIrAlMes={libro.irAlMes} onIrAHoy={libro.irAHoy} onVerMes={libro.setMes}
         onCambiarAnio={d => libro.setAnio(a => a + d)}
         onGuardado={m => { libro.irALaFechaDe(m.fecha); refrescarTodo() }}
         onBorrado={refrescarTodo}
+        onRecargarLibro={libro.recargar}
         onIrAlAncla={irAlAncla}
         onPagar={pedirPago}
         renderPago={formularioPago} />
 
-      {/* Con la agenda vacía la pantalla explicaría poco: se dice qué la llena. */}
-      {!cargandoPagos && items.length === 0 && (agenda?.sin_fecha.length ?? 0) === 0 && (
-        <p className="text-[11px] text-warm-500 px-1 leading-relaxed">
-          No hay nada agendado todavía. El arriendo, la nómina y los servicios se cargan en el
-          banner de <b>Obligaciones</b>; las facturas de proveedor traen su plazo desde el banner
-          de <b>proveedores</b>. Sin nada agendado, la proyección solo sabe de la plata que entra.
-        </p>
-      )}
+      {/* Con la agenda vacía la pantalla explicaría poco: se dice qué la llena.
+          VIVE ADENTRO DE `listo` porque es una AFIRMACIÓN sobre la base de datos
+          («no hay nada agendado»), no una descripción de la pantalla. Antes salía
+          con `!cargandoPagos && items.length === 0`, y ese `items` era
+          `agenda?.items ?? []`: con la agenda caída el párrafo aparecía y le
+          explicaba al dueño cómo llenar una agenda que quizás estaba llena. */}
+      <SegunDato
+        dato={agenda.dato}
+        cargando={null}
+        falla={() => null}
+        listo={a => a.items.length > 0 || a.sin_fecha.length > 0 ? null : (
+          <p className="text-[11px] text-warm-500 px-1 leading-relaxed">
+            No hay nada agendado todavía. El arriendo, la nómina y los servicios se cargan en el
+            banner de <b>Obligaciones</b>; las facturas de proveedor traen su plazo desde el banner
+            de <b>proveedores</b>. Sin nada agendado, la proyección solo sabe de la plata que entra.
+          </p>
+        )}
+      />
     </div>
   )
 }

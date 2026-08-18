@@ -1,5 +1,3 @@
-import axios from 'axios'
-
 // ─── El libro del banco, del lado del cliente ────────────────────────────────
 //
 // Los tipos de acá son la forma EXACTA que devuelve `routers/banco.py` (que a su
@@ -207,18 +205,8 @@ export const plata = (v: number) =>
 // coincide) en vez de preguntarle al backend cuál es.
 
 /**
- * El mensaje de error del backend, TAL CUAL.
- *
- * Los `detail` de `routers/banco.py` están escritos para que el dueño sepa qué
- * corregir ("El monto va en positivo: el signo lo decide si es entrada o
- * salida"). Reemplazarlos por un "hubo un error" genérico es tirar la única
- * parte del error que sirve. El fallback es solo para cuando no hay respuesta
- * (se cayó la red, se cayó el server).
+ * `detalleDeError` se mudó a `src/api/errores.ts`: la necesita `useDato`, y la
+ * capa de datos no puede importar de `components/`. Se re-exporta acá para que
+ * los diez archivos que ya la importan desde este módulo sigan igual.
  */
-export function detalleDeError(e: unknown, fallback: string): string {
-  if (axios.isAxiosError(e)) {
-    const data = e.response?.data as { detail?: unknown } | undefined
-    if (typeof data?.detail === 'string' && data.detail.trim()) return data.detail
-  }
-  return fallback
-}
+export { detalleDeError } from '../../api/errores'

@@ -130,3 +130,76 @@ Aviso transitorio inline (banner) con ícono por tono.
 | `onDismiss` | `() => void`                      | —        | llamado al expirar `duration`          |
 
 El padre controla el unmount; `Toast` solo dispara `onDismiss` al expirar.
+
+---
+
+## Carga · vacío · error — la convención de la casa
+
+Un dato del backend NO se representa con `T | null`. Se representa con
+`Dato<T>` (`src/api/dato.ts`), que tiene cuatro ramas:
+
+```ts
+type Dato<T> =
+  | { estado: 'cargando' }
+  | { estado: 'falla';   mensaje: string }
+  | { estado: 'sinBase'; porque: string }
+  | { estado: 'listo';   valor: T }       // ← `valor` SOLO existe acá
+```
+
+### Por qué
+
+`T | null` hace que tres cosas distintas compartan un valor: *todavía no llegó*,
+*llegó vacío* y *no volvió*. Y como el código no las puede separar, cada `?? 0` y
+cada `?? []` río abajo convierte «no se pudo preguntar» en «la respuesta es
+cero». No fue un descuido de nadie: fue el único camino que el tipo dejaba
+abierto. `computeOutliers([])` devolvía `[]`, así que **«ningún producto está
+mal» y «no miré ningún producto» eran el mismo valor**, y el banner pintaba el
+verde «todos coherentes con su categoría» sobre una medición que nunca corrió.
+
+Que `valor` viva solo en la rama `listo` es todo el diseño: `d.valor` no compila
+sin estrechar primero, y sin `.valor` no hay nada a la izquierda de un `?? 0`. El
+candado es el compilador, no la disciplina de quien edite dentro de seis meses.
+
+El precedente en este repo es `DiaLibro` (`components/plata/banco.ts`), que ya
+usaba el truco para que un día sin cadena no pueda dibujar un saldo. `Dato<T>` es
+lo mismo un nivel más arriba: allá es la fila del libro, acá es el sobre entero.
+
+### `sinBase` — el estado que no emite la red
+
+Lo emiten las **derivaciones de dominio**, no el fetch. El caso que lo hizo
+necesario: `computeOutliers` necesita 4 productos costeados en una misma
+categoría para comparar. Con cien productos repartidos de a dos, no compara nada
+y devuelve `[]` — indistinguible del verde. `sinBase` lleva el `porque` en
+castellano y el banner lo muestra tal cual.
+
+### Las piezas
+
+| Pieza | Dónde | Para qué |
+| --- | --- | --- |
+| `Dato<T>` | `api/dato.ts` | el tipo y sus constructores `dato*` |
+| `ambos(a, b)` | `api/dato.ts` | dos datos que solo sirven juntos; la falla gana sobre el cargando |
+| `useDato(pedir, nombre, fallback, deps)` | `api/useDato.ts` | devuelve `Fuente<T>` = dato + nombre + última lectura buena + `recargar()` |
+| `SegunDato` | `ui/SegunDato.tsx` | obliga a escribir las tres ramas; `switch` sin `default` |
+| `NoSeSabe` | `ui/SegunDato.tsx` | el hueco honesto, con Reintentar. `bloque` para reemplazar una sección entera |
+| `FranjaDeConfianza` | `ui/FranjaDeConfianza.tsx` | «¿le puedo creer a esta pantalla?» en un renglón; invisible si no hay nada roto |
+
+### Las reglas
+
+1. Nunca `?? 0` ni `|| 0` sobre algo derivado de un `Dato`. Si no está `listo`, va
+   `—` (o `…` si está `cargando`), nunca una cifra.
+2. Nunca `?? []` para después sacar una conclusión de `.length === 0`.
+3. Nunca un verde, un «ninguno» o un «al día» fuera de la rama `listo`.
+4. Una sección que hoy **desaparece** cuando su dato falta tiene que dibujar un
+   `<NoSeSabe bloque>`. Un «Vencido — pagalo ya» que se evapora se lee como «no
+   debés nada»: el hueco ocupa lugar a propósito.
+5. **Ningún formulario adentro de un gate por estado.** Si el catálogo no cargó, el
+   formulario queda montado con su aviso arriba del select y deja teclear lo que
+   no dependa de él. Esconderlo le rompe el trabajo de las 7am al dueño.
+6. `cargando` no es `falla`: en carga va un placeholder mudo, no un mensaje de error.
+
+### Lo que todavía usa el molde viejo
+
+`Dashboard.tsx` y otros ~49 archivos. Los dos peores están en Dashboard y son
+*peores* que los de Plata, porque no colapsan a `null` sino que fabrican un objeto
+plausible adentro del `catch`: `.catch(() => ({ id: s.id, abierto: false }))`
+afirma que una sede está **cerrada** cuando no se pudo preguntar.

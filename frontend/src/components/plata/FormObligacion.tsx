@@ -3,12 +3,22 @@ import { AlertCircle, Building2, Plus, Save } from 'lucide-react'
 import api from '../../api/client'
 import { conMiles, soloDigitos } from '../../utils/plata'
 import { hoyBogota } from '../../utils/fechaLocal'
+import type { Fuente } from '../../api/useDato'
+import { SegunDato, NoSeSabe } from '../ui'
 import { detalleDeError } from './banco'
 import { Categoria, CORPORATIVO, Obligacion, Tienda } from './tipos'
 import {
   Campo, CLS_INPUT, CLS_INPUT_PLATA, CLS_BOTON_GUARDAR, CLS_BOTON_SUAVE,
   ErrorCampo, teclas,
 } from './campos'
+
+/** El lugar del select mientras el catálogo no está: gris y mudo, sin afirmar
+ *  que la lista esté vacía. Misma caja para no descuadrar la grilla. */
+const CajaCatalogo = ({ texto }: { texto: string }) => (
+  <p className="text-[11px] text-warm-500 bg-warm-100 rounded-xl px-3 py-3 min-h-[44px] flex items-center">
+    {texto}
+  </p>
+)
 
 /**
  * Cargar o corregir una obligación — LA FILA, no un modal.
@@ -30,6 +40,11 @@ import {
  * ═════════════════════════════════════════════════════════════════════════════
  * LO QUE NO SE PUEDE PERDER
  * ═════════════════════════════════════════════════════════════════════════════
+ *  - EL FORMULARIO NO SE ESCONDE CUANDO UN CATÁLOGO NO VUELVE. Con las sedes
+ *    caídas el alta sigue siendo posible entera (Corporativo no necesita
+ *    catálogo, y es el caso del arriendo y la nómina); con las categorías caídas
+ *    no se puede guardar —el backend las exige— y eso se DICE, con su botón de
+ *    reintentar, en vez de dejar un «Guardar» gris sin explicación.
  *  - EL AVISO DE «VENCE» VACÍO, EN VIVO. Sin fecha la obligación se guarda igual
  *    y cuenta en el resultado del mes, pero NO entra a la agenda ni a la
  *    proyección. Enterarse después —viendo la agenda vacía— es exactamente lo
@@ -48,8 +63,8 @@ import {
 export default function FormObligacion({
   categorias, tiendas, editando, onListo, onCancelar,
 }: {
-  categorias: Categoria[]
-  tiendas: Tienda[]
+  categorias: Fuente<Categoria[]>
+  tiendas: Fuente<Tienda[]>
   /** null = alta. Con valor = corrección de esa obligación. */
   editando?: Obligacion | null
   /** Guardó: quien monta recarga. Recibe true si fue un alta (para el aviso). */
@@ -60,9 +75,17 @@ export default function FormObligacion({
   const hoy = hoyBogota()
   const e = editando ?? null
 
+  /**
+   * El catálogo LEÍDO, o `null` si todavía no está en la mano.
+   *
+   * `null` acá NO significa «no hay categorías»: significa que no se sabe. Se
+   * usa solo para el default imperativo del efecto de abajo; lo que se AFIRMA en
+   * pantalla se decide adentro de cada rama de `SegunDato`.
+   */
+  const cats = categorias.dato.estado === 'listo' ? categorias.dato.valor : null
+
   const [concepto, setConcepto] = useState(e?.concepto ?? '')
-  const [categoriaId, setCategoriaId] = useState(
-    String(e?.categoria_id ?? categorias[0]?.id ?? ''))
+  const [categoriaId, setCategoriaId] = useState(String(e?.categoria_id ?? cats?.[0]?.id ?? ''))
   const [monto, setMonto] = useState(e ? String(Math.round(e.monto)) : '')
   const [devengo, setDevengo] = useState(e?.fecha_devengo ?? hoy)
   const [vence, setVence] = useState(e?.fecha_vencimiento ?? '')
@@ -76,16 +99,15 @@ export default function FormObligacion({
   const refConcepto = useRef<HTMLInputElement>(null)
 
   // EL DEFAULT SE SINCRONIZA CUANDO LLEGA EL CATÁLOGO. El useState corre en el
-  // PRIMER render, cuando la lista todavía está vacía porque el fetch va en un
-  // useEffect del padre. Sin esto el estado quedaba en '' para siempre —el
-  // componente no remonta— y el resultado era el peor posible: el select se ve
-  // CON una opción elegida (React marca la primera cuando el value controlado
-  // no matchea ninguna) y el botón «Guardar» gris, sin explicación. El dueño
-  // tecleaba todo y no podía guardar. No pisa lo que ya eligió: solo llena el
-  // hueco.
+  // PRIMER render, cuando la lista todavía no llegó porque el fetch va en un
+  // hook del padre. Sin esto el estado quedaba en '' para siempre —el componente
+  // no remonta— y el resultado era el peor posible: el select se ve CON una
+  // opción elegida (React marca la primera cuando el value controlado no matchea
+  // ninguna) y el botón «Guardar» gris, sin explicación. El dueño tecleaba todo
+  // y no podía guardar. No pisa lo que ya eligió: solo llena el hueco.
   useEffect(() => {
-    if (!categoriaId && categorias.length) setCategoriaId(String(categorias[0].id))
-  }, [categorias, categoriaId])
+    if (!categoriaId && cats && cats.length > 0) setCategoriaId(String(cats[0].id))
+  }, [cats, categoriaId])
 
   const listo = !!concepto.trim() && Number(monto) > 0 && !!devengo && !!categoriaId
 
@@ -139,15 +161,50 @@ export default function FormObligacion({
         </p>
       </div>
 
+      {/* LOS AVISOS DE CATÁLOGO VAN ARRIBA DE LOS CAMPOS, y el formulario sigue
+          montado. Esconderlo le rompe el trabajo de las 7 de la mañana; dejarlo
+          mudo lo deja tecleando contra un «Guardar» gris que no explica nada. */}
+      <SegunDato
+        dato={categorias.dato}
+        cargando={null}
+        falla={m => (
+          <NoSeSabe onReintentar={categorias.recargar}
+            mensaje={`${m} — sin la categoría no se puede guardar la obligación. Lo demás se `
+              + 'puede ir tecleando igual.'} />
+        )}
+        listo={cs => cs.length === 0 ? (
+          <NoSeSabe mensaje="No hay ninguna categoría de gasto cargada, así que todavía no se puede guardar una obligación." />
+        ) : null}
+      />
+      <SegunDato
+        dato={tiendas.dato}
+        cargando={null}
+        falla={m => (
+          <NoSeSabe onReintentar={tiendas.recargar}
+            mensaje={`${m} — no se pueden elegir sedes. Se puede guardar igual como Corporativo, `
+              + 'que es lo que corresponde al arriendo y a la nómina.'} />
+        )}
+        listo={() => null}
+      />
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
         <Campo label="Concepto" ancho="col-span-2">
           <input ref={refConcepto} value={concepto} onChange={ev => setConcepto(ev.target.value)}
             placeholder="Arriendo agosto, energía, nómina quincena…" className={CLS_INPUT} />
         </Campo>
         <Campo label="Categoría">
-          <select value={categoriaId} onChange={ev => setCategoriaId(ev.target.value)} className={CLS_INPUT}>
-            {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-          </select>
+          <SegunDato
+            dato={categorias.dato}
+            cargando={<CajaCatalogo texto="Cargando las categorías…" />}
+            falla={() => <CajaCatalogo texto="Sin categorías para elegir" />}
+            listo={cs => cs.length === 0
+              ? <CajaCatalogo texto="No hay categorías cargadas" />
+              : (
+                <select value={categoriaId} onChange={ev => setCategoriaId(ev.target.value)} className={CLS_INPUT}>
+                  {cs.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                </select>
+              )}
+          />
         </Campo>
         <Campo label="Monto">
           <input type="text" inputMode="numeric" value={conMiles(monto)}
@@ -168,9 +225,12 @@ export default function FormObligacion({
             placeholder="A quién se le paga" className={CLS_INPUT} />
         </Campo>
         <Campo label="Sede">
+          {/* «Corporativo» va SIEMPRE, con catálogo o sin él: no sale de la lista
+              de sedes, es la ausencia de sede — y es el caso del arriendo. */}
           <select value={sede} onChange={ev => setSede(ev.target.value)} className={CLS_INPUT}>
             <option value={CORPORATIVO}>Corporativo / todas</option>
-            {tiendas.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+            {tiendas.dato.estado === 'listo'
+              && tiendas.dato.valor.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
           </select>
         </Campo>
 

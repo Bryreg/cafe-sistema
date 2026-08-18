@@ -5,6 +5,9 @@ import {
 } from 'lucide-react'
 import api from '../../api/client'
 import { conMiles, soloDigitos } from '../../utils/plata'
+import { Dato, datoCargando, datoFalla, datoListo, mapDato } from '../../api/dato'
+import type { Fuente } from '../../api/useDato'
+import { SegunDato, NoSeSabe } from '../ui'
 import { detalleDeError, fechaCorta, plata } from './banco'
 import { DashboardFacturas, Factura, Tienda } from './tipos'
 import {
@@ -41,9 +44,15 @@ const dia = (s: string | null) => (s ? s.slice(0, 10) : null)
  * Es el único camino que mueve `FacturaCompra.valor_pagado`. Registrar el pago
  * de una factura por la puerta de las obligaciones lo guardaría sin mover el
  * saldo: el pago se vería como si no hubiera pasado.
+ *
+ * ── «NO LE DEBÉS NADA» ES UNA AFIRMACIÓN, NO UN VACÍO ──────────────────────
+ * Con el filtro por defecto en «Sin pagar», la lista vacía es una BUENA noticia
+ * y se escribe como tal — pero solo puede escribirse cuando el backend contestó.
+ * Con el dashboard caído la lista también queda vacía, y ahí esa misma frase
+ * sería la mentira más cara de la página.
  */
 export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivoAtendido, onCambio }: {
-  tiendas: Tienda[]
+  tiendas: Fuente<Tienda[]>
   /** Id que llegó desde el banner de vencidos: abre esa factura y baja hasta ella. */
   facturaObjetivo: number | null
   onObjetivoAtendido: () => void
@@ -52,8 +61,8 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
   const [tiendaId, setTiendaId] = useState<number | null>(null)
   const [desde, setDesde] = useState('')
   const [hasta, setHasta] = useState('')
-  const [data, setData] = useState<DashboardFacturas | null>(null)
-  const [cargando, setCargando] = useState(true)
+  const [datos, setDatos] = useState<Dato<DashboardFacturas>>(datoCargando)
+  /** SOLO errores de MUTACIÓN (eliminar). Lo que falló al LEER vive en `datos`. */
   const [error, setError] = useState('')
 
   // Filtros de cliente sobre lo ya traído.
@@ -67,18 +76,15 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
   const [editando, setEditando] = useState<number | null>(null)
   const [borrando, setBorrando] = useState<number | null>(null)
 
-  const refLista = useRef<HTMLDivElement>(null)
-
   const cargar = useCallback(() => {
-    setCargando(true)
+    setDatos(datoCargando)
     const params: Record<string, string | number> = {}
     if (tiendaId) params.tienda_id = tiendaId
     if (desde) params.desde = desde
     if (hasta) params.hasta = hasta
     return api.get<DashboardFacturas>('/facturas/dashboard', { params })
-      .then(r => { setData(r.data); setError('') })
-      .catch(e => { setData(null); setError(detalleDeError(e, 'No se pudieron cargar las facturas.')) })
-      .finally(() => setCargando(false))
+      .then(r => setDatos(datoListo(r.data)))
+      .catch(e => setDatos(datoFalla(detalleDeError(e, 'No se pudieron leer las facturas.'))))
   }, [tiendaId, desde, hasta])
 
   useEffect(() => { cargar() }, [cargar])
@@ -110,17 +116,14 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
   // El scroll va DESPUÉS de que la lista se repidió: limpiar los filtros de
   // servidor dispara un refetch, y bajar antes lleva a la lista vieja.
   useEffect(() => {
-    if (abierta == null || cargando) return
+    if (abierta == null || datos.estado !== 'listo') return
     const fila = refsFila.current[abierta]
     if (fila) fila.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, [abierta, cargando])
+  }, [abierta, datos])
 
-  const proveedores = useMemo(
-    () => [...new Set((data?.facturas ?? []).map(f => f.proveedor))].sort(), [data])
-
-  const facturas = useMemo(() => {
+  const facturas = useMemo(() => mapDato(datos, d => {
     const q = busqueda.trim().toLowerCase()
-    const filtradas = (data?.facturas ?? []).filter(f =>
+    const filtradas = d.facturas.filter(f =>
       (!fProveedor || f.proveedor === fProveedor)
       && (fEstado === '' || (fEstado === 'deuda' ? f.estado_pago !== 'pagado' : f.estado_pago === fEstado))
       && (!q || f.proveedor.toLowerCase().includes(q)
@@ -133,10 +136,7 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
     const clave = (f: Factura) => dia(f.fecha_programada) ?? dia(f.fecha_vencimiento) ?? '9999-12-31'
     return [...filtradas].sort((a, b) =>
       Number(b.vencida) - Number(a.vencida) || clave(a).localeCompare(clave(b)))
-  }, [data, busqueda, fProveedor, fEstado])
-
-  const t = data?.totales
-  const nVencidas = (data?.facturas ?? []).filter(f => f.vencida).length
+  }), [datos, busqueda, fProveedor, fEstado])
 
   const eliminar = async (f: Factura) => {
     setBorrando(null); setError('')
@@ -144,20 +144,35 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
     catch (e) { setError(detalleDeError(e, 'No se pudo eliminar la factura.')) }
   }
 
+  const hayFiltrosDeCliente = !!busqueda || !!fProveedor
+
+  // La cabecera del banner —el «falta pagar», el conteo de vencidas y el
+  // «% pagado» de la derecha— son VEREDICTOS y por eso viven todos adentro de la
+  // rama `listo`. El «% pagado» en verde era el más caro: con el dashboard caído
+  // `t` venía null y el porcentaje desaparecía en silencio, que es la única
+  // forma de equivocarse peor que mostrar 100%.
   return (
     <Banner
       titulo="Lo que le debo a los proveedores"
-      sub={t
-        ? <>Falta pagar <b className="font-mono tabular-nums">{plata(t.pendiente)}</b> · ya pagaste{' '}
-            <span className="font-mono tabular-nums">{plata(t.pagado)}</span> de{' '}
-            <span className="font-mono tabular-nums">{plata(t.facturado)}</span> en {t.n_facturas}{' '}
-            {t.n_facturas === 1 ? 'factura' : 'facturas'}
-            {nVencidas > 0 && <> · <b className="text-danger-700">{nVencidas} vencida{nVencidas === 1 ? '' : 's'}</b></>}
-          </>
-        : 'Las facturas que entraron y cuánto se les debe'}
-      accion={t && t.facturado > 0 && (
+      sub={datos.estado === 'listo'
+        ? (() => {
+          const t = datos.valor.totales
+          const nVencidas = datos.valor.facturas.filter(f => f.vencida).length
+          return (
+            <>Falta pagar <b className="font-mono tabular-nums">{plata(t.pendiente)}</b> · ya pagaste{' '}
+              <span className="font-mono tabular-nums">{plata(t.pagado)}</span> de{' '}
+              <span className="font-mono tabular-nums">{plata(t.facturado)}</span> en {t.n_facturas}{' '}
+              {t.n_facturas === 1 ? 'factura' : 'facturas'}
+              {nVencidas > 0 && <> · <b className="text-danger-700">{nVencidas} vencida{nVencidas === 1 ? '' : 's'}</b></>}
+            </>
+          )
+        })()
+        : datos.estado === 'cargando'
+          ? 'Leyendo las facturas…'
+          : 'No se pudo leer cuánto les debés — mirá el detalle acá abajo'}
+      accion={datos.estado === 'listo' && datos.valor.totales.facturado > 0 && (
         <span className="text-xs font-mono font-bold tabular-nums text-success-600">
-          {Math.round(t.pagado / t.facturado * 100)}% pagado
+          {Math.round(datos.valor.totales.pagado / datos.valor.totales.facturado * 100)}% pagado
         </span>
       )}
     >
@@ -180,22 +195,46 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
             <option value="parcial">Parcial</option>
             <option value="pagado">Pagada</option>
           </select>
+          {/* La lista de proveedores se DERIVA de las facturas traídas: sin ellas
+              no hay proveedores que ofrecer, y eso no es «no tenés proveedores». */}
           <select value={fProveedor} onChange={e => setFProveedor(e.target.value)}
             aria-label="Proveedor"
             className="min-h-[38px] border border-warm-200 rounded-full px-3 text-[11px] font-bold bg-white text-warm-600">
             <option value="">Todos los proveedores</option>
-            {proveedores.map(p => <option key={p} value={p}>{p}</option>)}
+            {datos.estado === 'listo'
+              && [...new Set(datos.valor.facturas.map(f => f.proveedor))].sort()
+                .map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          {[{ v: null, l: 'Todas las sedes' }, ...tiendas.map(x => ({ v: x.id, l: x.nombre }))].map(op => (
-            <button key={op.v ?? 'todas'} onClick={() => setTiendaId(op.v)}
-              className={`min-h-[38px] px-3 rounded-full text-[11px] font-bold border transition-colors ${
-                tiendaId === op.v ? 'bg-forest text-white border-forest'
-                  : 'bg-white border-warm-200 text-warm-500'}`}>
-              {op.l}
-            </button>
-          ))}
+          <button onClick={() => setTiendaId(null)}
+            className={`min-h-[38px] px-3 rounded-full text-[11px] font-bold border transition-colors ${
+              tiendaId === null ? 'bg-forest text-white border-forest'
+                : 'bg-white border-warm-200 text-warm-500'}`}>
+            Todas las sedes
+          </button>
+          {/* Las sedes son OTRO fetch: sin este renglón el catálogo caído dejaba
+              un solo chip, indistinguible de un negocio de una sola sede. */}
+          <SegunDato
+            dato={tiendas.dato}
+            cargando={null}
+            falla={() => (
+              <button onClick={tiendas.recargar}
+                className="min-h-[38px] px-3 rounded-full text-[11px] font-bold border border-dashed border-warm-300 bg-warm-50 text-warm-500">
+                No se pudieron leer las sedes · Reintentar
+              </button>
+            )}
+            listo={ts => (<>
+              {ts.map(x => (
+                <button key={x.id} onClick={() => setTiendaId(x.id)}
+                  className={`min-h-[38px] px-3 rounded-full text-[11px] font-bold border transition-colors ${
+                    tiendaId === x.id ? 'bg-forest text-white border-forest'
+                      : 'bg-white border-warm-200 text-warm-500'}`}>
+                  {x.nombre}
+                </button>
+              ))}
+            </>)}
+          />
           <label className="flex items-center gap-1 text-[11px] text-warm-500 ml-auto">
             <span className="hidden sm:inline">Recibidas</span>
             <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
@@ -210,177 +249,187 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
       </div>
 
       {error && <div className="px-3 py-2"><ErrorCampo msg={error} /></div>}
-      {cargando && <p className="px-4 py-6 text-center text-sm text-warm-400 animate-pulse">Cargando…</p>}
 
       {/* ── La lista ──────────────────────────────────────────────────────── */}
-      <div ref={refLista} className="divide-y divide-warm-100">
-        {!cargando && facturas.map(f => {
-          const e = ESTADO[f.estado_pago]
-          const vence = dia(f.fecha_programada) ?? dia(f.fecha_vencimiento)
-          return (
-            <div key={f.id} ref={el => { refsFila.current[f.id] = el }}
-              className={f.vencida ? 'bg-danger-50/40' : ''}>
-              <div className="flex items-start gap-2 px-3 py-2.5">
-                {f.imagen_url ? (
-                  <a href={f.imagen_url} target="_blank" rel="noreferrer" className="shrink-0"
-                    title="Ver la foto de la factura">
-                    <img src={f.imagen_url} alt={`Factura de ${f.proveedor}`}
-                      className="h-12 w-12 object-cover rounded-lg border border-warm-200 hover:opacity-80" />
-                  </a>
-                ) : (
-                  <div className="h-12 w-12 shrink-0 rounded-lg border border-dashed border-warm-200 flex items-center justify-center text-[9px] text-warm-400">
-                    sin foto
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-bold text-warm-700 truncate min-w-0 flex-1">{f.proveedor}</p>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 shrink-0 border ${e.cls}`}>
-                      <e.Icon size={11} /> {e.label}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-warm-500 truncate">
-                    {f.numero_factura ? `Fact. ${f.numero_factura} · ` : ''}
-                    {f.tienda_nombre || ''}
-                    {f.fecha_recibido ? ` · recibida ${fechaCorta(dia(f.fecha_recibido)!)}` : ''}
-                  </p>
-                  {/* La línea de cuándo pagarla es la MISMA que alimenta la
-                      agenda: la fecha que vos elegís manda sobre las dos. */}
-                  {(f.fecha_vencimiento || f.fecha_programada || f.plazo_dias != null) && (
-                    <p className={`text-[11px] flex items-center gap-1 ${
-                      f.vencida ? 'text-danger-700 font-bold' : 'text-warm-500'}`}>
-                      <CalendarClock size={11} />
-                      {f.fecha_programada ? `La pagás el ${fechaCorta(dia(f.fecha_programada)!)}`
-                        : f.fecha_vencimiento ? `Vence ${fechaCorta(dia(f.fecha_vencimiento)!)}`
-                        : `Plazo ${f.plazo_dias} días desde que la recibiste`}
-                      {f.vencida && ' · VENCIDA'}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-3 mt-0.5 text-xs flex-wrap font-mono tabular-nums">
-                    <span className="text-warm-500">Total <b className="text-warm-700">{plata(f.valor_total)}</b></span>
-                    <span className="text-warm-500">Pagado <b className="text-success-600">{plata(f.valor_pagado)}</b></span>
-                    {f.saldo > 0 && (
-                      <span className="text-warm-500">Saldo <b className="text-danger-700">{plata(f.saldo)}</b></span>
-                    )}
-                    {f.forma_pago_real && (
-                      <span className="font-sans text-[10px] px-2 py-0.5 rounded-full font-bold bg-forest-50 text-forest border border-forest-100">
-                        Pagada con {f.forma_pago_real}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Acciones: pagar adelante (es la que se busca), el resto detrás
-                  del detalle. */}
-              <div className="flex items-center gap-1.5 px-3 pb-2.5 flex-wrap">
-                {f.estado_pago !== 'pagado' && (
-                  <button onClick={() => { setPagando(p => (p === f.id ? null : f.id)); setEditando(null) }}
-                    className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-forest hover:bg-forest-700 px-3 min-h-[38px] rounded-lg">
-                    <Wallet size={13} /> Registrar pago
-                  </button>
-                )}
-                <button onClick={() => setAbierta(a => (a === f.id ? null : f.id))}
-                  className="flex items-center gap-1 text-[11px] font-bold text-warm-600 bg-warm-100 hover:bg-warm-200 px-3 min-h-[38px] rounded-lg">
-                  {abierta === f.id ? '▾' : '▸'} Detalle
-                  {f.items.length > 0 && ` · ${f.items.length} producto${f.items.length === 1 ? '' : 's'}`}
-                </button>
-                {f.imagen_soporte_url ? (
-                  <a href={f.imagen_soporte_url} download target="_blank" rel="noreferrer"
-                    className="flex items-center gap-1 text-[11px] font-bold text-success-600 border border-success-200 bg-success-50 px-2.5 min-h-[38px] rounded-lg">
-                    <Download size={12} /> Soporte de pago
-                  </a>
-                ) : (
-                  <span className="text-[11px] text-warm-400 px-1">Sin soporte de pago</span>
-                )}
-              </div>
-
-              {pagando === f.id && (
-                <FormPagoFactura key={`pf-${f.id}`} factura={f}
-                  onCancelar={() => setPagando(null)}
-                  onPagado={() => { setPagando(null); refrescar() }} />
-              )}
-
-              {abierta === f.id && (
-                <div className="px-3 pb-3 space-y-2 bg-warm-50/60 border-t border-warm-100 pt-2.5">
-                  {f.items.length > 0 ? (
-                    <div className="rounded-xl border border-warm-200 bg-white divide-y divide-warm-100">
-                      {f.items.map(i => (
-                        <div key={i.id} className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px]">
-                          <span className="min-w-0 truncate text-warm-700">{i.producto_nombre}</span>
-                          <span className="font-mono tabular-nums font-semibold text-warm-700 shrink-0">
-                            {Math.round(i.cantidad)} {i.unidad_medida}
-                            {i.precio_unitario ? ` · ${plata(i.precio_unitario)} c/u` : ''}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-[11px] text-warm-500">
-                      Esta factura no tiene productos cargados: entró como un total sin detalle, así
-                      que no aporta costos de insumo.
-                    </p>
-                  )}
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {f.imagen_url && (
-                      <a href={f.imagen_url} download target="_blank" rel="noreferrer"
-                        className="flex items-center gap-1 text-[11px] font-bold text-warm-600 border border-warm-200 bg-white px-2.5 min-h-[38px] rounded-lg">
-                        <Download size={12} /> Descargar la factura
+      <SegunDato
+        dato={facturas}
+        cargando={<p className="px-4 py-6 text-center text-sm text-warm-400 animate-pulse">Cargando…</p>}
+        falla={m => (
+          <div className="px-4 py-4">
+            <NoSeSabe bloque onReintentar={cargar}
+              mensaje={`${m} — no se sabe cuánto se les debe a los proveedores ni si hay alguna `
+                + 'vencida. Esta lista vacía no quiere decir que no debas nada.'} />
+          </div>
+        )}
+        listo={lista => lista.length === 0 ? (
+          <div className="px-4 py-8 text-center">
+            <Receipt size={24} className="text-warm-300 mx-auto mb-2" />
+            {/* Con el filtro por defecto en «Sin pagar», el vacío es una BUENA
+                noticia y hay que escribirla como tal — y solo se puede escribir
+                acá adentro, que es donde el backend ya contestó. */}
+            <p className="text-sm text-warm-500">
+              {fEstado === 'deuda' && !hayFiltrosDeCliente
+                ? 'No le debés nada a ningún proveedor en este rango.'
+                : 'No hay facturas con esos filtros.'}
+            </p>
+            <p className="text-[11px] text-warm-400 mt-1">
+              Las facturas las cargan las baristas al recibir la mercadería, con la foto del papel.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-warm-100">
+            {lista.map(f => {
+              const e = ESTADO[f.estado_pago]
+              return (
+                <div key={f.id} ref={el => { refsFila.current[f.id] = el }}
+                  className={f.vencida ? 'bg-danger-50/40' : ''}>
+                  <div className="flex items-start gap-2 px-3 py-2.5">
+                    {f.imagen_url ? (
+                      <a href={f.imagen_url} target="_blank" rel="noreferrer" className="shrink-0"
+                        title="Ver la foto de la factura">
+                        <img src={f.imagen_url} alt={`Factura de ${f.proveedor}`}
+                          className="h-12 w-12 object-cover rounded-lg border border-warm-200 hover:opacity-80" />
                       </a>
-                    )}
-                    <button onClick={() => { setEditando(x => (x === f.id ? null : f.id)); setPagando(null) }}
-                      className="flex items-center gap-1 text-[11px] font-bold text-forest bg-forest-50 hover:bg-forest-100 px-3 min-h-[38px] rounded-lg">
-                      <Pencil size={12} /> Corregir la factura
-                    </button>
-                    {/* LA ACCIÓN MÁS DESTRUCTIVA DEL MÓDULO: toca inventario,
-                        lotes y caja. Por eso vive acá adentro y no al lado de
-                        «Registrar pago». */}
-                    {borrando === f.id ? (
-                      <span className="flex flex-wrap items-center gap-2 text-[11px] text-danger-700">
-                        Se revierte TODO: la entrada de inventario, los lotes y el egreso de caja
-                        si se pagó en efectivo.
-                        <button onClick={() => eliminar(f)}
-                          className="min-h-[36px] px-3 rounded-lg font-bold text-white bg-danger-500 hover:bg-danger-600">
-                          Eliminar
-                        </button>
-                        <button onClick={() => setBorrando(null)}
-                          className="min-h-[36px] px-2 rounded-lg font-bold text-warm-500">No</button>
-                      </span>
                     ) : (
-                      <button onClick={() => setBorrando(f.id)}
-                        className="ml-auto flex items-center gap-1 text-[11px] font-bold text-danger-600 border border-danger-200 hover:bg-danger-50 px-2.5 min-h-[38px] rounded-lg">
-                        <Trash2 size={12} /> Eliminar
+                      <div className="h-12 w-12 shrink-0 rounded-lg border border-dashed border-warm-200 flex items-center justify-center text-[9px] text-warm-400">
+                        sin foto
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-bold text-warm-700 truncate min-w-0 flex-1">{f.proveedor}</p>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 shrink-0 border ${e.cls}`}>
+                          <e.Icon size={11} /> {e.label}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-warm-500 truncate">
+                        {f.numero_factura ? `Fact. ${f.numero_factura} · ` : ''}
+                        {f.tienda_nombre || ''}
+                        {f.fecha_recibido ? ` · recibida ${fechaCorta(dia(f.fecha_recibido)!)}` : ''}
+                      </p>
+                      {/* La línea de cuándo pagarla es la MISMA que alimenta la
+                          agenda: la fecha que vos elegís manda sobre las dos. */}
+                      {(f.fecha_vencimiento || f.fecha_programada || f.plazo_dias != null) && (
+                        <p className={`text-[11px] flex items-center gap-1 ${
+                          f.vencida ? 'text-danger-700 font-bold' : 'text-warm-500'}`}>
+                          <CalendarClock size={11} />
+                          {f.fecha_programada ? `La pagás el ${fechaCorta(dia(f.fecha_programada)!)}`
+                            : f.fecha_vencimiento ? `Vence ${fechaCorta(dia(f.fecha_vencimiento)!)}`
+                            : `Plazo ${f.plazo_dias} días desde que la recibiste`}
+                          {f.vencida && ' · VENCIDA'}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-3 mt-0.5 text-xs flex-wrap font-mono tabular-nums">
+                        <span className="text-warm-500">Total <b className="text-warm-700">{plata(f.valor_total)}</b></span>
+                        <span className="text-warm-500">Pagado <b className="text-success-600">{plata(f.valor_pagado)}</b></span>
+                        {f.saldo > 0 && (
+                          <span className="text-warm-500">Saldo <b className="text-danger-700">{plata(f.saldo)}</b></span>
+                        )}
+                        {f.forma_pago_real && (
+                          <span className="font-sans text-[10px] px-2 py-0.5 rounded-full font-bold bg-forest-50 text-forest border border-forest-100">
+                            Pagada con {f.forma_pago_real}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Acciones: pagar adelante (es la que se busca), el resto detrás
+                      del detalle. */}
+                  <div className="flex items-center gap-1.5 px-3 pb-2.5 flex-wrap">
+                    {f.estado_pago !== 'pagado' && (
+                      <button onClick={() => { setPagando(p => (p === f.id ? null : f.id)); setEditando(null) }}
+                        className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-forest hover:bg-forest-700 px-3 min-h-[38px] rounded-lg">
+                        <Wallet size={13} /> Registrar pago
                       </button>
                     )}
+                    <button onClick={() => setAbierta(a => (a === f.id ? null : f.id))}
+                      className="flex items-center gap-1 text-[11px] font-bold text-warm-600 bg-warm-100 hover:bg-warm-200 px-3 min-h-[38px] rounded-lg">
+                      {abierta === f.id ? '▾' : '▸'} Detalle
+                      {f.items.length > 0 && ` · ${f.items.length} producto${f.items.length === 1 ? '' : 's'}`}
+                    </button>
+                    {f.imagen_soporte_url ? (
+                      <a href={f.imagen_soporte_url} download target="_blank" rel="noreferrer"
+                        className="flex items-center gap-1 text-[11px] font-bold text-success-600 border border-success-200 bg-success-50 px-2.5 min-h-[38px] rounded-lg">
+                        <Download size={12} /> Soporte de pago
+                      </a>
+                    ) : (
+                      <span className="text-[11px] text-warm-400 px-1">Sin soporte de pago</span>
+                    )}
                   </div>
+
+                  {pagando === f.id && (
+                    <FormPagoFactura key={`pf-${f.id}`} factura={f}
+                      onCancelar={() => setPagando(null)}
+                      onPagado={() => { setPagando(null); refrescar() }} />
+                  )}
+
+                  {abierta === f.id && (
+                    <div className="px-3 pb-3 space-y-2 bg-warm-50/60 border-t border-warm-100 pt-2.5">
+                      {f.items.length > 0 ? (
+                        <div className="rounded-xl border border-warm-200 bg-white divide-y divide-warm-100">
+                          {f.items.map(i => (
+                            <div key={i.id} className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px]">
+                              <span className="min-w-0 truncate text-warm-700">{i.producto_nombre}</span>
+                              <span className="font-mono tabular-nums font-semibold text-warm-700 shrink-0">
+                                {Math.round(i.cantidad)} {i.unidad_medida}
+                                {i.precio_unitario ? ` · ${plata(i.precio_unitario)} c/u` : ''}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-warm-500">
+                          Esta factura no tiene productos cargados: entró como un total sin detalle, así
+                          que no aporta costos de insumo.
+                        </p>
+                      )}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {f.imagen_url && (
+                          <a href={f.imagen_url} download target="_blank" rel="noreferrer"
+                            className="flex items-center gap-1 text-[11px] font-bold text-warm-600 border border-warm-200 bg-white px-2.5 min-h-[38px] rounded-lg">
+                            <Download size={12} /> Descargar la factura
+                          </a>
+                        )}
+                        <button onClick={() => { setEditando(x => (x === f.id ? null : f.id)); setPagando(null) }}
+                          className="flex items-center gap-1 text-[11px] font-bold text-forest bg-forest-50 hover:bg-forest-100 px-3 min-h-[38px] rounded-lg">
+                          <Pencil size={12} /> Corregir la factura
+                        </button>
+                        {/* LA ACCIÓN MÁS DESTRUCTIVA DEL MÓDULO: toca inventario,
+                            lotes y caja. Por eso vive acá adentro y no al lado de
+                            «Registrar pago». */}
+                        {borrando === f.id ? (
+                          <span className="flex flex-wrap items-center gap-2 text-[11px] text-danger-700">
+                            Se revierte TODO: la entrada de inventario, los lotes y el egreso de caja
+                            si se pagó en efectivo.
+                            <button onClick={() => eliminar(f)}
+                              className="min-h-[36px] px-3 rounded-lg font-bold text-white bg-danger-500 hover:bg-danger-600">
+                              Eliminar
+                            </button>
+                            <button onClick={() => setBorrando(null)}
+                              className="min-h-[36px] px-2 rounded-lg font-bold text-warm-500">No</button>
+                          </span>
+                        ) : (
+                          <button onClick={() => setBorrando(f.id)}
+                            className="ml-auto flex items-center gap-1 text-[11px] font-bold text-danger-600 border border-danger-200 hover:bg-danger-50 px-2.5 min-h-[38px] rounded-lg">
+                            <Trash2 size={12} /> Eliminar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {editando === f.id && (
+                    <FormEditarFactura key={`ef-${f.id}`} factura={f}
+                      onCancelar={() => setEditando(null)}
+                      onGuardado={() => { setEditando(null); refrescar() }} />
+                  )}
                 </div>
-              )}
-
-              {editando === f.id && (
-                <FormEditarFactura key={`ef-${f.id}`} factura={f}
-                  onCancelar={() => setEditando(null)}
-                  onGuardado={() => { setEditando(null); refrescar() }} />
-              )}
-            </div>
-          )
-        })}
-      </div>
-
-      {!cargando && !error && facturas.length === 0 && (
-        <div className="px-4 py-8 text-center">
-          <Receipt size={24} className="text-warm-300 mx-auto mb-2" />
-          {/* Con el filtro por defecto en «Sin pagar», el vacío es una BUENA
-              noticia y hay que escribirla como tal. */}
-          <p className="text-sm text-warm-500">
-            {fEstado === 'deuda' && !busqueda && !fProveedor
-              ? 'No le debés nada a ningún proveedor en este rango.'
-              : 'No hay facturas con esos filtros.'}
-          </p>
-          <p className="text-[11px] text-warm-400 mt-1">
-            Las facturas las cargan las baristas al recibir la mercadería, con la foto del papel.
-          </p>
-        </div>
-      )}
+              )
+            })}
+          </div>
+        )}
+      />
 
       <ComoSeCalcula titulo="¿Cómo se decide cuándo vence una factura?">
         <p>

@@ -26,3 +26,10 @@ export type { SheetProps } from './Sheet'
 
 export { default as Toast } from './Toast'
 export type { ToastProps, ToastTone } from './Toast'
+
+// Carga · vacío · error: la convención de la casa. Ver README.
+export { SegunDato, NoSeSabe } from './SegunDato'
+export type { SegunDatoProps, NoSeSabeProps } from './SegunDato'
+
+export { default as FranjaDeConfianza } from './FranjaDeConfianza'
+export type { FranjaDeConfianzaProps } from './FranjaDeConfianza'

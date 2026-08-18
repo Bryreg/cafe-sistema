@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import api from '../../api/client'
 import { hoyBogota } from '../../utils/fechaLocal'
+import { Dato, datoCargando, datoFalla, datoListo } from '../../api/dato'
 import { DiaConSaldo, LibroMes, SerieAnual, detalleDeError } from './banco'
 
 /**
  * El libro del banco: el mes que se está mirando, los doce meses del año y —lo
- * importante— LA FILA DE HOY.
+ * importante— EL MES DE HOY.
  *
  * ═════════════════════════════════════════════════════════════════════════════
  * POR QUÉ ES UN HOOK Y NO ESTADO DEL BANNER
@@ -18,7 +19,7 @@ import { DiaConSaldo, LibroMes, SerieAnual, detalleDeError } from './banco'
  * arrastrando (dos números para la misma pregunta, con el optimista adelante).
  *
  * ═════════════════════════════════════════════════════════════════════════════
- * LAS DOS REGLAS QUE NO SE PUEDEN TOCAR
+ * LAS TRES REGLAS QUE NO SE PUEDEN TOCAR
  * ═════════════════════════════════════════════════════════════════════════════
  *  1. EL SALDO DE HOY NO DEPENDE DE DÓNDE MIRÓ EL OJO. Cuando el usuario navega
  *     a otro mes, el mes de hoy se pide APARTE. Sin esto, mirar octubre dejaba
@@ -31,7 +32,28 @@ import { DiaConSaldo, LibroMes, SerieAnual, detalleDeError } from './banco'
  *     cargar. La unión discriminada de `DiaLibro` hace que el compilador —y no
  *     la disciplina de quien edite después— impida pintar un saldo que el
  *     backend declaró desconocido.
+ *  3. «NO VOLVIÓ» NO ES «NO HAY». El molde viejo era
+ *     `.catch(() => setLibroDeHoy(null))`, y con ese null la cabecera decía
+ *     «Falta el saldo del extracto para saberlo» sobre un mes que quizás tenía
+ *     el ancla cargada: la pantalla mandaba a cargar de nuevo un dato que ya
+ *     estaba. Ahora cada recurso es un `Dato<T>` y la rama de falla se dibuja
+ *     como falla (ver `src/api/dato.ts`).
  */
+
+/**
+ * La fila de un día SOLO si su cadena existe.
+ *
+ * Vive acá —y no repetida en cada banner— porque es la única puerta a los
+ * saldos: en la rama con cadena `inicial` y `final` son números y no
+ * `number | null`, y eso lo garantiza el tipo. Devolver `null` acá NO es
+ * ausencia de dato: es el backend diciendo que ese día es anterior al ancla y
+ * su saldo no se conoce. Por eso se llama desde adentro de la rama `listo`.
+ */
+export function filaConSaldoDe(libro: LibroMes, iso: string): DiaConSaldo | null {
+  const f = libro.dias.find(d => d.fecha === iso)
+  return f && f.cadena ? f : null
+}
+
 export function useLibro(refreshKey: number) {
   const hoy = hoyBogota()
   const anioDeHoy = Number(hoy.slice(0, 4))
@@ -39,11 +61,9 @@ export function useLibro(refreshKey: number) {
 
   const [anio, setAnio] = useState(anioDeHoy)
   const [mes, setMes] = useState(mesDeHoy)
-  const [libro, setLibro] = useState<LibroMes | null>(null)
-  const [serie, setSerie] = useState<SerieAnual | null>(null)
-  const [libroDeHoy, setLibroDeHoy] = useState<LibroMes | null>(null)
-  const [cargando, setCargando] = useState(true)
-  const [error, setError] = useState('')
+  const [libro, setLibro] = useState<Dato<LibroMes>>(datoCargando)
+  const [serie, setSerie] = useState<Dato<SerieAnual>>(datoCargando)
+  const [libroDeHoy, setLibroDeHoy] = useState<Dato<LibroMes>>(datoCargando)
   const [propio, setPropio] = useState(0)
   const recargar = useCallback(() => setPropio(n => n + 1), [])
 
@@ -51,42 +71,40 @@ export function useLibro(refreshKey: number) {
 
   useEffect(() => {
     let vivo = true
-    setCargando(true); setError('')
+    setLibro(datoCargando); setSerie(datoCargando)
     Promise.all([
       api.get<LibroMes>('/banco/libro', { params: { anio, mes } }),
       api.get<SerieAnual>('/banco/serie', { params: { anio } }),
     ])
-      .then(([l, s]) => { if (!vivo) return; setLibro(l.data); setSerie(s.data) })
+      .then(([l, s]) => { if (!vivo) return; setLibro(datoListo(l.data)); setSerie(datoListo(s.data)) })
       .catch(e => {
         if (!vivo) return
-        setLibro(null); setSerie(null)
-        setError(detalleDeError(e, 'No se pudo cargar el libro del banco.'))
+        // Los dos van en el MISMO `Promise.all`, así que cuando uno se cae no se
+        // sabe cuál fue: los dos quedan en falla con el mismo mensaje. Marcar
+        // solo uno sería afirmar sobre el otro sin haberlo leído.
+        const m = detalleDeError(e, 'No se pudo leer el libro del banco.')
+        setLibro(datoFalla(m)); setSerie(datoFalla(m))
       })
-      .finally(() => { if (vivo) setCargando(false) })
     return () => { vivo = false }
   }, [anio, mes, propio, refreshKey])
 
   // El mes de hoy solo se pide aparte cuando NO es el que se está mirando: en el
   // caso normal se lee del mismo libro y no se gasta una segunda consulta.
   useEffect(() => {
-    if (viendoElMesDeHoy) { setLibroDeHoy(null); return }
+    if (viendoElMesDeHoy) { setLibroDeHoy(datoCargando); return }
     let vivo = true
+    setLibroDeHoy(datoCargando)
     api.get<LibroMes>('/banco/libro', { params: { anio: anioDeHoy, mes: mesDeHoy } })
-      .then(r => { if (vivo) setLibroDeHoy(r.data) })
-      .catch(() => { if (vivo) setLibroDeHoy(null) })
+      .then(r => { if (vivo) setLibroDeHoy(datoListo(r.data)) })
+      .catch(e => {
+        if (vivo) setLibroDeHoy(datoFalla(
+          detalleDeError(e, 'No se pudo leer el libro del mes de hoy.')))
+      })
     return () => { vivo = false }
   }, [viendoElMesDeHoy, anioDeHoy, mesDeHoy, propio, refreshKey])
 
+  /** El libro del mes de HOY, venga del mes que se mira o del pedido aparte. */
   const libroConHoy = viendoElMesDeHoy ? libro : libroDeHoy
-  /** La fila de hoy SOLO si su cadena existe. En la rama con cadena, `inicial` y
-   *  `final` son números y no `number | null`: lo garantiza el tipo. */
-  const filaHoy = useMemo<DiaConSaldo | null>(() => {
-    const f = libroConHoy?.dias.find(d => d.fecha === hoy)
-    return f && f.cadena ? f : null
-  }, [libroConHoy, hoy])
-
-  /** El ancla del mes que se mira; si ese mes no cargó, la del mes de hoy. */
-  const ancla = libro?.ancla ?? libroConHoy?.ancla ?? null
 
   const irAlMes = useCallback((delta: number) => {
     const d = new Date(anio, mes - 1 + delta, 1)
@@ -103,7 +121,7 @@ export function useLibro(refreshKey: number) {
 
   return {
     hoy, anio, mes, anioDeHoy, mesDeHoy, viendoElMesDeHoy,
-    libro, libroConHoy, serie, filaHoy, ancla, cargando, error,
+    libro, libroConHoy, serie,
     setAnio, irAlMes, irAHoy, irALaFechaDe, setMes, recargar,
   }
 }

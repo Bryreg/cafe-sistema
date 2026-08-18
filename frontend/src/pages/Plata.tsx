@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Landmark, Wallet } from 'lucide-react'
 import api from '../api/client'
+import { Dato, ambos, datoListo } from '../api/dato'
+import { useDato } from '../api/useDato'
+import { FranjaDeConfianza } from '../components/ui'
 import {
   RentabilidadData, PorProductoData, PulsoData,
   computeOutliers, computeInsumosSinCosto,
@@ -75,26 +78,36 @@ function mesActualBogota(): { desde: string; hasta: string } {
 export default function Plata() {
   const [tab, setTab] = useState<Tab>(tabFromHash)
 
-  // Datos compartidos por las dos pestañas. Viven acá porque una mutación en un
-  // banner cambia lo que muestran otros: pagar una obligación mueve la agenda,
-  // el punto de quiebre Y el margen del mes.
-  const [pulso, setPulso] = useState<PulsoData | null>(null)
-  const [prodData, setProdData] = useState<PorProductoData | null>(null)
-  const [plMes, setPlMes] = useState<RentabilidadData | null>(null)
-  const [ventasHoy, setVentasHoy] = useState<RentabilidadData | null>(null)
-  const [agenda, setAgenda] = useState<Agenda | null>(null)
-  const [flujo, setFlujo] = useState<Flujo | null>(null)
-  const [categorias, setCategorias] = useState<Categoria[]>([])
-  const [tiendas, setTiendas] = useState<Tienda[]>([])
-  const [cuentas, setCuentas] = useState<CuentaBanco[]>([])
-  const [cargandoPagos, setCargandoPagos] = useState(true)
-  const [cargandoVentas, setCargandoVentas] = useState(true)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LOS NUEVE DATOS DE LA PÁGINA
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Viven acá porque una mutación en un banner cambia lo que muestran otros:
+  // pagar una obligación mueve la agenda, el punto de quiebre Y el margen del mes.
+  //
+  // Cada uno es una `Fuente<T>`, no un `T | null`. El molde viejo era
+  // `.then(r => setX(r.data)).catch(() => setX(null))` ocho veces, y ese `null`
+  // significaba a la vez «no llegó», «llegó vacío» y «no volvió» — que es como
+  // «no se pudo preguntar» terminaba dibujándose de $0 y de verde. El detalle
+  // completo está en `src/api/dato.ts`.
+  //
+  // El segundo argumento de `useDato` es el nombre EN CASTELLANO que ve el dueño
+  // en la franja de arriba cuando ese fetch falla; el tercero, el mensaje para
+  // cuando no hubo respuesta (si el backend contestó con `detail`, gana el detail).
+
   /** Sube con cada mutación: es la señal para las vistas con fetch propio. */
   const [refresco, setRefresco] = useState(0)
 
-  const fetchProductos = useCallback(
-    () => api.get<PorProductoData>('/rentabilidad/por-producto')
-      .then(r => setProdData(r.data)).catch(() => setProdData(null)), [])
+  const pulso = useDato<PulsoData>(
+    () => api.get('/rentabilidad/pulso'), 'el pulso del mes',
+    'No se pudo leer el pulso del mes.')
+
+  const prodData = useDato<PorProductoData>(
+    () => api.get('/rentabilidad/por-producto'), 'los productos',
+    'No se pudieron leer los productos.', [refresco])
+
+  const plMes = useDato<RentabilidadData>(
+    () => { const { desde, hasta } = mesActualBogota(); return api.get('/rentabilidad/', { params: { desde, hasta } }) },
+    'el resultado del mes', 'No se pudo leer el resultado del mes.', [refresco])
 
   /**
    * LA VENTA DEL DÍA, pedida aparte y con el rango de HOY.
@@ -105,13 +118,9 @@ export default function Plata() {
    * nueve rondas. Acá el backend devuelve `ventas` y `n_tickets` del día
    * Colombia, resueltos, y son los que se muestran.
    */
-  const fetchVentasHoy = useCallback(() => {
-    setCargandoVentas(true)
-    const hoy = hoyBogota()
-    return api.get<RentabilidadData>('/rentabilidad/', { params: { desde: hoy, hasta: hoy } })
-      .then(r => setVentasHoy(r.data)).catch(() => setVentasHoy(null))
-      .finally(() => setCargandoVentas(false))
-  }, [])
+  const ventasHoy = useDato<RentabilidadData>(
+    () => { const hoy = hoyBogota(); return api.get('/rentabilidad/', { params: { desde: hoy, hasta: hoy } }) },
+    'la venta de hoy', 'No se pudo leer la venta de hoy.')
 
   /**
    * La agenda va SIN rango: «La plata» navega meses hacia adelante y hacia atrás
@@ -123,43 +132,50 @@ export default function Plata() {
    * y la nómina, que son corporativos. El resultado sería una proyección que no
    * contesta «¿me alcanza?» sino una versión mutilada de la pregunta.
    */
-  const fetchPagos = useCallback(() => {
-    setCargandoPagos(true)
-    return Promise.all([
-      api.get<Agenda>('/costos/agenda').then(r => setAgenda(r.data)).catch(() => setAgenda(null)),
-      api.get<Flujo>('/costos/flujo', { params: { dias: 30 } })
-        .then(r => setFlujo(r.data)).catch(() => setFlujo(null)),
-    ]).finally(() => setCargandoPagos(false))
-  }, [])
+  const agenda = useDato<Agenda>(
+    () => api.get('/costos/agenda'), 'la agenda de pagos',
+    'No se pudo leer la agenda de pagos.', [refresco])
 
-  const fetchPlMes = useCallback(() => {
-    const { desde, hasta } = mesActualBogota()
-    return api.get<RentabilidadData>('/rentabilidad/', { params: { desde, hasta } })
-      .then(r => setPlMes(r.data)).catch(() => setPlMes(null))
-  }, [])
+  const flujo = useDato<Flujo>(
+    () => api.get('/costos/flujo', { params: { dias: 30 } }), 'la proyección a 30 días',
+    'No se pudo leer la proyección.', [refresco])
 
-  useEffect(() => {
-    api.get<PulsoData>('/rentabilidad/pulso').then(r => setPulso(r.data)).catch(() => setPulso(null))
-    api.get<Categoria[]>('/costos/categorias').then(r => setCategorias(r.data)).catch(() => setCategorias([]))
-    api.get<Tienda[]>('/auth/tiendas').then(r => setTiendas(r.data)).catch(() => setTiendas([]))
-    api.get<CuentaBanco[]>('/banco/cuentas').then(r => setCuentas(r.data)).catch(() => setCuentas([]))
-    fetchProductos()
-    fetchPlMes()
-    fetchVentasHoy()
-    fetchPagos()
-  }, [fetchPagos, fetchPlMes, fetchProductos, fetchVentasHoy])
+  // Los tres catálogos. Antes caían a `[]`, que en un `<select>` se dibuja igual
+  // que «no hay ninguna cuenta cargada» — y ahí el dueño concluía que tenía que
+  // ir a crear una cuenta que ya existe.
+  const categorias = useDato<Categoria[]>(
+    () => api.get('/costos/categorias'), 'las categorías de gasto',
+    'No se pudieron leer las categorías.')
+
+  const tiendas = useDato<Tienda[]>(
+    () => api.get('/auth/tiendas'), 'las sedes', 'No se pudieron leer las sedes.')
+
+  const cuentas = useDato<CuentaBanco[]>(
+    () => api.get('/banco/cuentas'), 'las cuentas del banco',
+    'No se pudieron leer las cuentas del banco.')
+
+  /** Lo que mira la franja de confianza: si algo de esto falló, el dueño lo sabe. */
+  const fuentes = useMemo(
+    () => [pulso, prodData, plMes, ventasHoy, agenda, flujo, categorias, tiendas, cuentas],
+    [pulso, prodData, plMes, ventasHoy, agenda, flujo, categorias, tiendas, cuentas])
 
   /**
    * Se tocó plata en algún banner. Sin esto quedaban dos números para la misma
    * pregunta: el dueño adoptaba un egreso o pagaba el arriendo y la proyección
    * seguía mostrando el mundo de antes, con el optimista adelante.
+   *
+   * Sube `refresco`, que además de avisarle a las vistas con fetch propio es la
+   * dependencia de los seis recursos que dependen de la plata. Los tres
+   * catálogos NO se repiden: no cambian al pagar una obligación.
    */
-  const refrescarTodo = useCallback(() => {
-    setRefresco(n => n + 1)
-    fetchPagos()
-    fetchPlMes()
-    fetchProductos()
-  }, [fetchPagos, fetchPlMes, fetchProductos])
+  const refrescarTodo = useCallback(() => setRefresco(n => n + 1), [])
+  //
+  // `pulso` y `ventasHoy` NO llevan `[refresco]`, y es deliberado: los dos son
+  // VENTA, y en esta página no se vende. Pagar el arriendo no cambia lo que se
+  // facturó hoy. Repedirlos sería un ida y vuelta de más por cada guardado —en
+  // una tablet con la señal del local, eso se siente— y además haría parpadear
+  // dos banners que nadie tocó. El set que se repide es exactamente el mismo
+  // que antes del refactor: agenda, flujo, resultado del mes y productos.
 
   // Tab ↔ hash de URL (deep-links y botón atrás del navegador).
   useEffect(() => {
@@ -182,18 +198,25 @@ export default function Plata() {
    * de costos fijos del mes. Sin el último, «Datos sanos» podía afirmarse con el
    * arriendo entero faltando.
    */
-  const pendientesDatos = useMemo(() => {
-    // `null`, no 0. Sin `prodData` no se MIDIÓ nada, y devolver cero convertía
-    // la ausencia de medición en un veredicto positivo: el banner afirmaba «el
-    // costeo y los costos fijos están cubiertos» dos renglones arriba de un
-    // «0/0 · 0% de los productos tienen el costo completo».
-    if (!prodData) return null
-    const faltanFijos = plMes && !plMes.resumen.tiene_costos_fijos ? 1 : 0
-    return computeOutliers(prodData.productos).length
-      + computeInsumosSinCosto(prodData.productos).length
-      + (prodData.facturas_pendientes_de_costos || 0)
-      + faltanFijos
-  }, [prodData, plMes])
+  const pendientesDatos: Dato<number> = useMemo(() => {
+    // Los DOS tienen que estar. El viejo `plMes && !plMes.resumen...` cortaba en
+    // el `&&` y sumaba 0 cuando el P&L no volvía: un resultado del mes muerto
+    // aportaba cero pendientes, exactamente igual que un mes con todo cargado.
+    // «Datos sanos» podía afirmarse con el arriendo entero faltando.
+    const base = ambos(prodData.dato, plMes.dato)
+    if (base.estado !== 'listo') return base
+    const [prod, pl] = base.valor
+    // Y si una derivación no tuvo con qué comparar, el total tampoco la tiene:
+    // contarla como cero pendientes es el veredicto tranquilizador otra vez.
+    const out = computeOutliers(prod.productos)
+    if (out.estado !== 'listo') return out
+    const ins = computeInsumosSinCosto(prod.productos)
+    if (ins.estado !== 'listo') return ins
+    return datoListo(
+      out.valor.length + ins.valor.length
+      + (prod.facturas_pendientes_de_costos || 0)
+      + (pl.resumen.tiene_costos_fijos ? 0 : 1))
+  }, [prodData.dato, plMes.dato])
 
   return (
     <div className="space-y-3">
@@ -201,6 +224,11 @@ export default function Plata() {
         <Wallet size={20} className="text-forest" />
         <h1 className="text-lg font-bold text-warm-700">Plata</h1>
       </div>
+
+      {/* «¿Le puedo creer a esta pantalla?». Solo aparece si algo se rompió:
+          en el día normal no ocupa un píxel. Va arriba de las pestañas porque
+          la respuesta vale para las dos. */}
+      <FranjaDeConfianza fuentes={fuentes} />
 
       {/* Dos pestañas, con la pregunta que contesta cada una debajo del nombre:
           es lo que evita tener que abrirlas para acordarse cuál era cuál. */}
@@ -222,11 +250,14 @@ export default function Plata() {
         </div>
       </div>
 
+      {/* Las vistas reciben la `Fuente` ENTERA, no solo el dato: así cada banner
+          tiene su propio «Reintentar» sin cablear un callback por recurso desde
+          acá, y el dueño no tiene que recargar la página —ni perder lo que
+          estaba tecleando— para volver a pedir lo único que falló. */}
       {tab === 'plata' && (
         <LaPlataView
           agenda={agenda} flujo={flujo} pulso={pulso} ventasHoy={ventasHoy}
           categorias={categorias} tiendas={tiendas} cuentas={cuentas}
-          cargandoPagos={cargandoPagos} cargandoVentas={cargandoVentas}
           onCambio={refrescarTodo} />
       )}
 
@@ -236,7 +267,7 @@ export default function Plata() {
           categorias={categorias} tiendas={tiendas}
           pendientesDatos={pendientesDatos}
           refreshKey={refresco}
-          onRefrescarProductos={fetchProductos}
+          onRefrescarProductos={prodData.recargar}
           onIrALaPlata={irALaPlata}
           onCambio={refrescarTodo} />
       )}

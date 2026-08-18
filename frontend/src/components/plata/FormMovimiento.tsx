@@ -2,18 +2,76 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowDownLeft, ArrowUpRight, Plus } from 'lucide-react'
 import api from '../../api/client'
 import { conMiles, soloDigitos } from '../../utils/plata'
+import { mapDato } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import { SegunDato, NoSeSabe } from '../ui'
-import { CuentaBanco, MovimientoBanco, detalleDeError } from './banco'
+import { CuentaBanco, MovimientoBanco, detalleDeError, fechaCorta, plata } from './banco'
+import type { Agenda, AgendaItem, AgendaSinFecha } from './tipos'
 import { Campo, CLS_INPUT, CLS_INPUT_PLATA, CLS_BOTON_GUARDAR, ErrorCampo, teclas } from './campos'
 
-/** El lugar del select mientras el catálogo no está: gris y mudo, sin afirmar
- *  que no haya cuentas. Misma caja para no descuadrar la grilla. */
-const CajaCuentas = ({ texto }: { texto: string }) => (
+/** El lugar de un select mientras su catálogo no está: gris y mudo, sin afirmar
+ *  que no haya nada. Misma caja para los dos (cuentas y obligaciones) porque las
+ *  dos ocupan una celda de la misma grilla y con alturas distintas se descuadra. */
+const CajaMuda = ({ texto }: { texto: string }) => (
   <p className="text-[11px] text-warm-500 bg-warm-100 rounded-xl px-3 py-3 min-h-[44px] flex items-center">
     {texto}
   </p>
 )
+
+/**
+ * Una obligación que la agenda todavía cuenta como plata por salir.
+ *
+ * Sale de la agenda y no de `/costos/obligaciones` por una razón concreta: la
+ * agenda es la ÚNICA lista que ya descuenta lo que salió del banco enlazado
+ * (`cubierto_de` en services/costos.py), así que es exactamente «lo que la
+ * proyección sigue esperando». Enlazar acá hace desaparecer la opción de la
+ * próxima lectura, y esa es la señal de que el enlace sirvió. El listado de
+ * obligaciones no aplica esa cuenta: seguiría ofreciendo lo ya cubierto y dejaría
+ * enlazar la misma plata dos veces. Además la página ya la tiene pedida y la
+ * repide sola después de guardar, así que esto no agrega un fetch a las 7am.
+ */
+type Pendiente = AgendaItem | AgendaSinFecha
+
+/**
+ * «Arriendo · Vida · $2.400.000 · vence 3 sep».
+ *
+ * El monto NO es opcional: dos sedes tienen dos arriendos con el mismo concepto
+ * y sin la cifra no hay con qué elegir. Y es el SALDO que falta, no el total.
+ *
+ * LA FECHA TAMPOCO ES OPCIONAL, y es la que más caro sale omitir. «Repetir»
+ * copia una obligación al mes siguiente con el mismo concepto Y el mismo monto,
+ * así que el arriendo de agosto y el de septiembre están vivos a la vez y se
+ * escriben IDÉNTICOS. Enlazar el débito de agosto a la fila de septiembre hace
+ * desaparecer de la agenda una deuda que todavía no vence y deja proyectada la
+ * que ya está vencida: la plata cuadra en el total y las dos filas mienten.
+ */
+const etiqueta = (o: Pendiente) => {
+  // `!== null` y no un chequeo de verdad: `AgendaItem.fecha` es `string`, así que
+  // para el compilador podría ser '' y la rama de abajo seguiría incluyendo a los
+  // dos tipos. `null` es el discriminante real de la unión.
+  const cuando = o.fecha !== null
+    ? `vence ${fechaCorta(o.fecha)}`
+    // Las sin fecha se rotulan por su devengo, que es lo único que las ubica en
+    // el tiempo — si no, dos «sin fecha» iguales vuelven al mismo empate.
+    : `sin fecha · de ${fechaCorta(o.fecha_devengo)}`
+  return `${o.concepto}${o.tienda_nombre ? ` · ${o.tienda_nombre}` : ''}`
+    + ` · ${plata(o.monto)} · ${cuando}`
+}
+
+// Las dos grillas anchas, escritas ENTERAS y no armadas por concatenación: el
+// JIT de Tailwind lee clases literales del código fuente y una plantilla
+// interpolada no genera ninguna regla.
+//
+// LA COLUMNA DEL ENLACE ES `1fr` Y NO UN ANCHO FIJO, y esto no es cosmético: los
+// cuatro primeros campos suman 36.5rem inamovibles y el botón otros ~90px, así
+// que en la tablet —con la barra lateral de 15rem comiéndose el ancho a partir de
+// `lg`— al concepto le quedan un par de cientos de píxeles y nada más. Una
+// séptima columna de ancho fijo se los comía enteros y dejaba el concepto en un
+// hilo, o directamente empujaba la fila fuera de la pantalla. Compartiendo el
+// sobrante con el concepto, el ancho MÍNIMO de la fila no cambia (solo se suma un
+// gap) y aparecer el select no puede romper el renglón.
+const GRILLA_SM = 'sm:grid-cols-[7.5rem_11rem_9rem_9rem_1fr_auto]'
+const GRILLA_SM_CON_ENLACE = 'sm:grid-cols-[7.5rem_11rem_9rem_9rem_1fr_1fr_auto]'
 
 /**
  * Cargar un movimiento del banco — LA FILA, no un modal.
@@ -51,11 +109,38 @@ const CajaCuentas = ({ texto }: { texto: string }) => (
  *    una lista vacía no se distinguía de una que no volvió. Con el catálogo
  *    caído esa caja se quedaba puesta para siempre y el dueño esperaba un fetch
  *    que ya había fallado.
+ *
+ * ═════════════════════════════════════════════════════════════════════════════
+ * EL ENLACE A UNA OBLIGACIÓN — la mitad de pantalla del arreglo del doble conteo
+ * ═════════════════════════════════════════════════════════════════════════════
+ * El dueño teclea acá la salida del arriendo contra el extracto y el saldo del
+ * banco baja. Pero la obligación del arriendo sigue viva en la agenda, así que la
+ * proyección la sigue contando como salida FUTURA: la misma plata dos veces, y el
+ * día en que se queda sin plata sale ANTES de lo real.
+ *
+ * El backend ya sabe cerrar eso —`_salidas_banco_por_obligacion` + `cubierto_de`
+ * en services/costos.py descuentan de la agenda lo que salió del banco enlazado—
+ * pero hasta acá NADIE podía escribir ese enlace desde el libro: el único lugar
+ * que llenaba `obligacion_id` era `FormPagoObligacion`, y por ese camino el pago
+ * ya existía. Sin este select, la guarda del backend no la puede usar nadie.
+ *
+ * Tres decisiones, y las tres son sobre no estorbar el trabajo de las 7am:
+ *  - SOLO EN LAS SALIDAS. Una entrada enlazada a una obligación no significa
+ *    nada, y `_salidas_banco_por_obligacion` solo suma salidas: quedaría escrita
+ *    en la base sin efecto, que es peor que no escribirla.
+ *  - OPCIONAL Y SIN GATE. Con la agenda caída el formulario sigue entero: se
+ *    teclea el movimiento igual, sin enlace, con el aviso arriba. Veinte
+ *    movimientos seguidos del extracto no pueden depender de un segundo fetch.
+ *  - NO PRELLENA EL MONTO (sí el concepto, y solo si está vacío). Ver `elegir`.
  */
-export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuardado }: {
+export default function FormMovimiento({ fechaInicial, cuentas, agenda, maxFecha, onGuardado }: {
   /** Con qué día arranca. El libro precarga hoy, o el día de la fila que lo abrió. */
   fechaInicial: string
   cuentas: Fuente<CuentaBanco[]>
+  /** De dónde salen las obligaciones enlazables. Es la MISMA fuente que ya usa el
+   *  libro para las líneas «Vence $X», no un fetch nuevo: la página la pide una
+   *  vez y la repide sola después de cada guardado. */
+  agenda: Fuente<Agenda>
   /** Hoy en Colombia: el backend RECHAZA fechas futuras (el libro es plata que ya
    *  se movió), así que el campo no las ofrece en vez de ofrecerlas y fallar. */
   maxFecha: string
@@ -70,6 +155,8 @@ export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuar
   const [tipo, setTipo] = useState<'entrada' | 'salida' | null>(null)
   const [monto, setMonto] = useState('')
   const [concepto, setConcepto] = useState('')
+  /** '' = sin enlazar, y es un valor legítimo: el enlace es opcional. */
+  const [obligacionId, setObligacionId] = useState('')
   const [error, setError] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [ultimo, setUltimo] = useState('')
@@ -90,7 +177,57 @@ export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuar
   }, [cs, cuentaId])
 
   const cuenta = cs?.find(c => String(c.id) === cuentaId)
+  // El enlace NO entra acá a propósito: es opcional, y meterlo en `listo`
+  // convertiría un campo de ayuda en un requisito para guardar el movimiento.
   const listo = !!fecha && !!cuentaId && !!tipo && Number(monto) > 0 && !!concepto.trim()
+
+  /**
+   * Lo enlazable: las obligaciones con saldo, agendadas y sin fecha.
+   *
+   * Las dos listas van juntas porque `get_agenda` las parte por si tienen o no
+   * fecha de vencimiento —que es un campo OPCIONAL del alta— y no por si se
+   * deben: las de `sin_fecha` también quedan cubiertas por `cubierto_de`. Dejar
+   * afuera las que no tienen fecha sería esconder justo las que nadie fechó.
+   *
+   * El filtro por `tipo` no es defensivo: `items` trae también las facturas de
+   * proveedor, y `obligacion_id` no las acepta (son otra tabla). El orden que
+   * viene del backend se respeta: primero lo agendado de más viejo a más nuevo
+   * —lo más probable que esté pagando—, después lo que no tiene fecha.
+   */
+  const pendientes = mapDato(agenda.dato, a =>
+    [...a.items, ...a.sin_fecha].filter(i => i.tipo === 'obligacion'))
+
+  /** La obligación elegida, o `undefined`. Se resuelve SOLO con la lista en la
+   *  mano (la rama `listo` del Dato, no el `listo` de este formulario): sin ella
+   *  no hay de dónde sacar el concepto que se confirma después de guardar. */
+  const enlazada = pendientes.estado === 'listo'
+    ? pendientes.valor.find(o => String(o.id) === obligacionId)
+    : undefined
+
+  /**
+   * Eligió una obligación: se guarda el id y se PRELLENA EL CONCEPTO SI ESTÁ VACÍO.
+   *
+   * Y el monto NO, aunque la etiqueta lo muestre. Este libro se teclea contra el
+   * extracto —decisión del dueño, fidelidad al banco por encima de la comodidad—
+   * y el monto es el único campo donde eso se juega. Copiar la cifra de la
+   * obligación adentro del movimiento la vuelve circular: `cubierto_de` toma el
+   * máximo entre lo pagado y lo que salió del banco, así que una salida heredada
+   * de la obligación SIEMPRE la cubre exacto. El enlace dejaría de ser evidencia
+   * del banco para ser la obligación confirmándose sola, y un débito que en el
+   * extracto decía $2.395.000 se guardaría en $2.400.000 sin que nadie lo mire.
+   *
+   * El costo de no prellenarlo es cero: el monto es el campo que arranca con el
+   * foco, así que en el orden normal ya está tecleado cuando se toca este select.
+   * El concepto sí se prellena porque es un rótulo para conciliar a ojo contra el
+   * extracto —cualquiera sirve mientras diga qué fue— y es lo que ahorra tipeo.
+   */
+  const elegir = (id: string) => {
+    setObligacionId(id)
+    const o = pendientes.estado === 'listo'
+      ? pendientes.valor.find(x => String(x.id) === id)
+      : undefined
+    if (o && !concepto.trim()) setConcepto(o.concepto)
+  }
 
   const guardar = async () => {
     // GUARDA DE REENTRADA. Enter y el botón llaman a lo mismo, y entre el
@@ -108,11 +245,31 @@ export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuar
         tipo,
         monto: Number(monto),
         concepto: concepto.trim(),
+        // Blindado por tipo además de por el select: el estado del enlace vive
+        // acá arriba y sobrevive a que la celda se desmonte. Sin esta guarda, un
+        // «Salió» enlazado y después cambiado a «Entró» mandaría el enlace igual,
+        // y quedaría escrito en la base sin efecto — `_salidas_banco_por_obligacion`
+        // solo suma salidas. Una fila que dice pagar algo que no paga nada.
+        obligacion_id: tipo === 'salida' && obligacionId ? Number(obligacionId) : null,
       })
       // Confirmación EN LA FILA. Sin el modal que se cerraba, guardar no tenía
       // ningún gesto propio: la grilla de abajo cambia, pero el ojo está acá.
-      setUltimo(`${tipo === 'entrada' ? 'Entró' : 'Salió'} ${conMiles(monto)} · ${concepto.trim()}`)
-      setMonto(''); setConcepto(''); setTipo(null)
+      // Lo del enlace se lee de la RESPUESTA y no de lo que se mandó: el enlace
+      // es lo único de esta fila que no se ve en el libro, así que confirmarlo
+      // con lo que el backend guardó es la única forma de saber que quedó.
+      // El nombre de la obligación es un lujo; DECIR QUE QUEDÓ ENLAZADO no lo es.
+      // Si el enlace volvió y por lo que sea no se puede nombrar, se dice igual:
+      // callarlo se lee como que el enlace no se hizo, y el dueño lo vuelve a
+      // cargar o va a registrar el pago aparte — el doble conteo que vinimos a
+      // cerrar, entrando por la otra puerta.
+      setUltimo(`${tipo === 'entrada' ? 'Entró' : 'Salió'} ${conMiles(monto)} · ${concepto.trim()}`
+        + (r.data.obligacion_id
+          ? ` · enlazado a ${enlazada ? enlazada.concepto : 'una obligación'}`
+          : ''))
+      // El enlace se limpia por la misma razón que el tipo, y con más urgencia:
+      // arrastrarlo al movimiento siguiente cubriría dos veces la misma obligación
+      // y la sacaría de la agenda debiendo plata.
+      setMonto(''); setConcepto(''); setTipo(null); setObligacionId('')
       refMonto.current?.focus()
       onGuardado(r.data)
     } catch (e) {
@@ -147,10 +304,39 @@ export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuar
         ) : null}
       />
 
+      {/* La agenda no volvió y esto ES una salida: el enlace no se puede hacer.
+          El aviso va acá arriba —y no dentro de la celda— porque es el único
+          lugar donde entra el «Reintentar», y sale SOLO en las salidas para no
+          alarmar en un camino donde el enlace ni existe. El libro tiene otro
+          aviso propio para la agenda unas líneas más abajo (BannerLibro): no es
+          un duplicado por descuido, dicen dos cosas distintas —aquel habla de
+          las líneas «Vence» de la grilla, este de que este movimiento se va a
+          guardar sin enlazar. */}
+      {tipo === 'salida' && (
+        <SegunDato
+          dato={agenda.dato}
+          cargando={null}
+          falla={m => (
+            <NoSeSabe onReintentar={agenda.recargar}
+              mensaje={`${m} — no se puede enlazar esta salida a una obligación. Guardala igual: `
+                + 'el movimiento queda bien cargado, pero la proyección va a seguir esperando ese pago.'} />
+          )}
+          listo={() => null}
+        />
+      )}
+
       {/* Mobile-first: una columna en celular, la fila entera en tablet. El
           monto va PRIMERO en la grilla ancha porque es el campo que se toca
-          siempre; la fecha casi nunca se cambia (viene precargada). */}
-      <div className="grid grid-cols-2 sm:grid-cols-[7.5rem_11rem_9rem_9rem_1fr_auto] gap-2 items-end">
+          siempre; la fecha casi nunca se cambia (viene precargada).
+
+          La columna del enlace se agrega al FINAL, entre el concepto y el botón:
+          así los cuatro campos de ancho fijo no se mueven cuando aparece —lo
+          único que cede lugar es el concepto, que reparte su sobrante— y el
+          «Guardar» se queda pegado al borde derecho, donde el dedo lo dejó. En
+          celular cae como una fila entera ARRIBA del botón, que es donde tiene
+          que estar un campo. */}
+      <div className={`grid grid-cols-2 gap-2 items-end ${
+        tipo === 'salida' ? GRILLA_SM_CON_ENLACE : GRILLA_SM}`}>
         <Campo label="Día">
           <input type="date" value={fecha} max={maxFecha}
             onChange={e => setFecha(e.target.value)} className={CLS_INPUT} />
@@ -161,7 +347,10 @@ export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuar
             caro sale equivocar. */}
         <Campo label="¿Entró o salió?">
           <div className="grid grid-cols-2 gap-1.5">
-            <button type="button" onClick={() => setTipo('entrada')}
+            {/* Pasar a «Entró» OLVIDA el enlace, no solo lo esconde: el estado
+                vive en el componente y la celda que lo muestra se desmonta, así
+                que un enlace elegido y después arrepentido seguiría ahí, mudo. */}
+            <button type="button" onClick={() => { setTipo('entrada'); setObligacionId('') }}
               aria-pressed={tipo === 'entrada'}
               className={`flex items-center justify-center gap-1 min-h-[44px] rounded-xl border-2 text-xs font-bold transition-colors ${
                 tipo === 'entrada'
@@ -193,10 +382,10 @@ export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuar
               cuentas…», y con el catálogo caído esa caja no se iba nunca. */}
           <SegunDato
             dato={cuentas.dato}
-            cargando={<CajaCuentas texto="Cargando las cuentas…" />}
-            falla={() => <CajaCuentas texto="Sin cuentas para elegir" />}
+            cargando={<CajaMuda texto="Cargando las cuentas…" />}
+            falla={() => <CajaMuda texto="Sin cuentas para elegir" />}
             listo={lista => lista.length === 0
-              ? <CajaCuentas texto="No hay cuentas cargadas" />
+              ? <CajaMuda texto="No hay cuentas cargadas" />
               : (
                 <select value={cuentaId} onChange={e => setCuentaId(e.target.value)} className={CLS_INPUT}>
                   {lista.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
@@ -212,11 +401,58 @@ export default function FormMovimiento({ fechaInicial, cuentas, maxFecha, onGuar
             className={CLS_INPUT} />
         </Campo>
 
+        {tipo === 'salida' && (
+          <Campo label="¿Paga una obligación?" ancho="col-span-2 sm:col-span-1">
+            {/* «SIN ENLAZAR» ES UNA OPCIÓN DE VERDAD, con su propio `value=""`, y
+                por eso este select NO necesita el efecto de preselección que sí
+                necesita el de cuentas. Es el mismo bug visto del otro lado: cuando
+                el `value` controlado no matchea ninguna opción, el navegador
+                dibuja la PRIMERA como si estuviera elegida. Con el estado en ''
+                y sin esta opción, el select mostraría el arriendo y guardaría un
+                movimiento sin enlace — el error más caro posible acá, porque se
+                ve exactamente igual que el enlace hecho. */}
+            <SegunDato
+              dato={pendientes}
+              cargando={<CajaMuda texto="Cargando la agenda…" />}
+              // «No se pudo leer» y no «no hay ninguna»: la caída de la agenda no
+              // es una afirmación sobre lo que se debe. El «Reintentar» va en el
+              // aviso de arriba, que es donde hay ancho para ponerlo.
+              falla={() => <CajaMuda texto="No se pudo leer la agenda" />}
+              listo={lista => lista.length === 0
+                // Esto SÍ es una afirmación, y por eso vive en `listo`. Dice
+                // «obligaciones» y no «pagos»: las facturas de proveedor pueden
+                // estar pendientes igual y no se pueden enlazar desde acá.
+                ? <CajaMuda texto="No hay obligaciones pendientes" />
+                : (
+                  <select value={obligacionId} onChange={e => elegir(e.target.value)}
+                    className={CLS_INPUT}>
+                    <option value="">Sin enlazar</option>
+                    {lista.map(o => <option key={o.id} value={o.id}>{etiqueta(o)}</option>)}
+                  </select>
+                )}
+            />
+          </Campo>
+        )}
+
         <button type="button" onClick={guardar} disabled={guardando || !listo}
           className={`${CLS_BOTON_GUARDAR} col-span-2 sm:col-span-1`}>
           {guardando ? 'Guardando…' : 'Guardar'}
         </button>
       </div>
+
+      {/* QUÉ HACE ENLAZAR, en el idioma del dueño y sin pedirle que abra nada.
+          Va acá y no como `hint` del campo porque en una columna de 12rem el
+          párrafo sale hecho un gusano de una palabra por renglón. Sin esta línea
+          el select no se usa —nadie enlaza algo que no sabe para qué sirve— y el
+          arreglo del doble conteo queda escrito y muerto. */}
+      {tipo === 'salida' && (
+        <p className="text-[11px] text-warm-500 leading-snug">
+          Si esta salida paga una obligación de la agenda, enlazala: la proyección deja de contarla
+          como pago pendiente. Sin enlazar, el saldo del banco baja igual y la obligación se sigue
+          esperando — <b>la misma plata contada dos veces</b>, y el día en que se acaba la plata
+          aparece antes de lo real.
+        </p>
+      )}
 
       {/* La nota del monto y la de la cuenta van juntas y chiquitas: son las dos
           cosas que hay que saber una sola vez, no en cada carga. */}

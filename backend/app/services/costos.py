@@ -24,7 +24,8 @@ from app.core.tz import dia_col, hoy_col, inicio_dia_col_utc, rango_col_utc
 from app.models.models import (CajaTurno, Configuracion, Consignacion,
                                CostoCategoria, EntregaTurno,
                                EstadoConsignacionEnum, EstadoTurnoEnum,
-                               FacturaCompra, MovimientoCaja, Obligacion, Pago,
+                               FacturaCompra, MovimientoBanco, MovimientoCaja,
+                               Obligacion, Pago,
                                RecogidaEfectivo, Ticket, Tienda,
                                TipoMovCajaEnum)
 from app.services import audit
@@ -94,8 +95,74 @@ def estado_derivado(obligacion: Obligacion, pagado: float) -> str:
     return "pagada"
 
 
-def _serializar(obligacion: Obligacion, pagos: list) -> dict:
+def _salidas_banco_por_obligacion(db: Session, obligacion_ids: list) -> dict:
+    """{obligacion_id: plata que YA SALIÓ del banco por esa obligación}.
+
+    Solo SALIDAS: un movimiento de entrada enlazado sería una devolución, y
+    restarla como si fuera un pago diría que debe menos de lo que debe.
+
+    Existe para cerrar el doble conteo que documenta `_saldo_banco_hoy`: el
+    dueño teclea el débito del arriendo contra el extracto, el saldo del banco
+    baja, y la agenda seguía proyectando ese arriendo como salida futura. La
+    misma plata, contada dos veces, y el punto de quiebre antes de lo real.
+    Cierra solo el tramo ENLAZADO — la salida tecleada sin `obligacion_id` no
+    aparece acá y se sigue contando dos veces (ver `_saldo_banco_hoy`).
+    """
+    if not obligacion_ids:
+        return {}
+    filas = db.query(
+        MovimientoBanco.obligacion_id, func.sum(MovimientoBanco.monto),
+    ).filter(
+        MovimientoBanco.obligacion_id.in_(obligacion_ids),
+        MovimientoBanco.tipo == "salida",
+    ).group_by(MovimientoBanco.obligacion_id).all()
+    return {oid: round(float(total or 0), 2) for oid, total in filas}
+
+
+def cubierto_de(pagado: float, del_banco: float) -> float:
+    """Cuánta plata de esta obligación ya salió, sin contarla dos veces.
+
+    MAX Y NO SUMA, y la razón es que NO HAY ENLACE entre un `Pago` y el
+    `MovimientoBanco` que lo ejecuta. El camino normal —«Registrar pago» con
+    «Y descontalo del banco» tildado— escribe LOS DOS para la misma plata:
+    primero el pago, después el movimiento. Sumarlos restaría el arriendo dos
+    veces y la obligación desaparecería de la agenda debiendo, que es el lado
+    tranquilizador y el peor de los dos errores posibles.
+
+    Con el máximo, cada camino da lo correcto:
+      · pago + movimiento (el normal)      -> max(1M, 1M) = 1M
+      · solo el movimiento tecleado a mano -> max(0, 1M)  = 1M   ← lo que se arregla
+      · solo el pago (pagó en efectivo)    -> max(1M, 0)  = 1M
+      · dos pagos parciales con su débito  -> max(1M, 1M) = 1M
+
+    Queda un caso mixto que el máximo no resuelve: pagó una parte en efectivo
+    (con `Pago`) y otra desde el banco tecleada aparte (sin `Pago`). Ahí muestra
+    MÁS deuda de la real — la dirección prudente, y exactamente lo que muestra
+    hoy, así que no es una regresión. Resolverlo de verdad pide un enlace
+    explícito `Pago.movimiento_banco_id`; identificarlo por la FORMA (un monto
+    que coincide) es el anti-patrón que este módulo ya pagó caro.
+    """
+    return max(round(pagado, 2), round(del_banco, 2))
+
+
+def _serializar(obligacion: Obligacion, pagos: list, del_banco: float = 0.0) -> dict:
+    """El saldo usa la MISMA cuenta que la agenda, y esto no es un detalle.
+
+    `get_agenda` descuenta lo que ya salió del banco con `cubierto_de`. Si esta
+    función no hiciera lo mismo, la MISMA obligación diría dos cosas distintas en
+    la MISMA pantalla: la agenda de arriba dejaría de pedir el arriendo y el
+    banner de Obligaciones seguiría mostrándolo pendiente por $2.400.000, con su
+    botón «Pagar» invitando a pagarlo de nuevo. Dos números para la misma
+    pregunta es justo lo que este módulo viene peleando.
+
+    `pagado` NO se toca: sigue siendo la suma de los `Pago` registrados, que es
+    lo que el historial de la fila puede mostrar. Lo que salió del banco viaja
+    aparte en `salido_del_banco` para que la pantalla pueda explicar por qué el
+    saldo es cero sin que haya un solo pago listado — y para que el dueño sepa
+    que le falta registrar ese pago.
+    """
     pagado = round(sum(float(p.monto or 0) for p in pagos), 2)
+    cubierto = cubierto_de(pagado, del_banco)
     monto = float(obligacion.monto or 0)
     cat = obligacion.categoria
     return {
@@ -110,10 +177,14 @@ def _serializar(obligacion: Obligacion, pagos: list) -> dict:
         "beneficiario": obligacion.beneficiario,
         "monto": round(monto, 2),
         "pagado": pagado,
+        # Lo que ya salió del banco por esta obligación, tecleado en el libro. Va
+        # aparte de `pagado` porque no tiene un `Pago` detrás: es la evidencia del
+        # extracto, no un registro de pago.
+        "salido_del_banco": round(del_banco, 2),
         # Nunca negativo: un pago de más deja la obligación en 'pagada' con saldo 0,
         # no con un saldo negativo que ensuciaría los totales de la lista.
-        "saldo": round(max(monto - pagado, 0), 2),
-        "estado": estado_derivado(obligacion, pagado),
+        "saldo": round(max(monto - cubierto, 0), 2),
+        "estado": estado_derivado(obligacion, cubierto),
         "fecha_devengo": obligacion.fecha_devengo,
         "fecha_vencimiento": obligacion.fecha_vencimiento,
         "recurrencia": obligacion.recurrencia,
@@ -278,7 +349,8 @@ def editar_obligacion(db: Session, obligacion_id: int, data, usuario_id: int) ->
     )
     db.commit()
     db.refresh(obligacion)
-    return _serializar(obligacion, _pagos_vivos(db, [obligacion.id]).get(obligacion.id, []))
+    return _serializar(obligacion, _pagos_vivos(db, [obligacion.id]).get(obligacion.id, []),
+                       _salidas_banco_por_obligacion(db, [obligacion.id]).get(obligacion.id, 0.0))
 
 
 def anular_obligacion(db: Session, obligacion_id: int, usuario_id: int,
@@ -376,7 +448,8 @@ def repetir_obligacion(db: Session, obligacion_id: int, usuario_id: int,
         Obligacion.fecha_devengo <= fin_mes,
     ).order_by(Obligacion.id).first()
     if ya is not None:
-        return {**_serializar(ya, _pagos_vivos(db, [ya.id]).get(ya.id, [])),
+        return {**_serializar(ya, _pagos_vivos(db, [ya.id]).get(ya.id, []),
+                              _salidas_banco_por_obligacion(db, [ya.id]).get(ya.id, 0.0)),
                 "ya_existia": True}
 
     copia = Obligacion(
@@ -454,12 +527,15 @@ def listar_obligaciones(db: Session, *, tienda_id: int | None = None,
     q = q.filter(Obligacion.anulada == (estado == "anulada"))
 
     filas = q.order_by(Obligacion.fecha_devengo.desc(), Obligacion.id.desc()).all()
-    pagos_por_obligacion = _pagos_vivos(db, [o.id for o in filas])
+    ids = [o.id for o in filas]
+    pagos_por_obligacion = _pagos_vivos(db, ids)
+    banco_por_obligacion = _salidas_banco_por_obligacion(db, ids)
 
     obligaciones = []
     total_monto = total_pagado = 0.0
     for o in filas:
-        item = _serializar(o, pagos_por_obligacion.get(o.id, []))
+        item = _serializar(o, pagos_por_obligacion.get(o.id, []),
+                           banco_por_obligacion.get(o.id, 0.0))
         # El estado se DERIVA, así que el filtro por estado se aplica acá y no en SQL.
         if estado is not None and item["estado"] != estado:
             continue
@@ -575,11 +651,19 @@ def get_agenda(db: Session, desde: date | None = None, hasta: date | None = None
     if tienda_id is not None:
         qo = qo.filter(Obligacion.tienda_id == tienda_id)
     filas = qo.all()
-    pagos_por_obligacion = _pagos_vivos(db, [o.id for o in filas])
+    ids = [o.id for o in filas]
+    pagos_por_obligacion = _pagos_vivos(db, ids)
+    # LO QUE YA SALIÓ DEL BANCO TAMBIÉN CUENTA COMO PAGADO, y este es EL lugar
+    # donde importa: `items` es lo único que consume la proyección. Sin esto, el
+    # débito que el dueño teclea contra el extracto baja el saldo y la obligación
+    # sigue proyectada como salida futura — la misma plata dos veces, y el día en
+    # que se queda sin plata sale antes de lo real.
+    banco_por_obligacion = _salidas_banco_por_obligacion(db, ids)
     sin_fecha: list = []
     for o in filas:
         pagado = sum(float(p.monto or 0) for p in pagos_por_obligacion.get(o.id, []))
-        saldo = round(float(o.monto or 0) - pagado, 2)
+        cubierto = cubierto_de(pagado, banco_por_obligacion.get(o.id, 0.0))
+        saldo = round(float(o.monto or 0) - cubierto, 2)
         if saldo <= 0:   # ya pagada: no es algo que pagar
             continue
         fecha = o.fecha_vencimiento
@@ -916,7 +1000,8 @@ def adoptar_egreso(db: Session, movimiento_id: int, categoria_id: int, usuario_i
     db.commit()
     db.refresh(obligacion)
     db.refresh(pago)
-    return _serializar(obligacion, [pago])
+    return _serializar(obligacion, [pago],
+                       _salidas_banco_por_obligacion(db, [obligacion.id]).get(obligacion.id, 0.0))
 
 
 def listar_pagos(db: Session, *, obligacion_id: int | None = None,
@@ -1336,25 +1421,33 @@ def _saldo_banco_hoy(db: Session, hoy: date) -> dict:
          intersección con MovimientoBanco, que se teclea contra el extracto;
       3. las salidas FUTURAS siguen saliendo de la agenda, no de una copia.
 
-    EL CAMINO QUE SÍ SE ABRE, Y HAY QUE DECIRLO EN VEZ DE NEGARLO. Este
-    docstring afirmaba que el cambio «no agrega un camino nuevo para contar dos
-    veces». Es FALSO y una auditoría lo demostró ejecutándolo. Antes, teclear
-    una salida del banco no movía la proyección —arrancaba del ancla cruda— así
-    que una obligación pagada desde el banco y todavía viva en la agenda se
-    contaba UNA vez. Ahora el saldo baja por el libro Y la agenda la sigue
-    proyectando como salida futura: la misma plata, dos veces, y el punto de
-    quiebre sale antes de lo real.
+    EL CAMINO QUE ESTE CAMBIO ABRIÓ, Y CÓMO SE CERRÓ. Este docstring llegó a
+    afirmar que el cambio «no agrega un camino nuevo para contar dos veces»: era
+    FALSO y una auditoría lo demostró ejecutándolo. Antes, teclear una salida del
+    banco no movía la proyección —arrancaba del ancla cruda— así que una
+    obligación pagada desde el banco y todavía viva en la agenda se contaba UNA
+    vez. Al meter el libro adentro, el saldo baja Y la agenda la seguía
+    proyectando como salida futura: la misma plata dos veces, y el punto de
+    quiebre antes de lo real.
 
-    Es INHERENTE a que el libro se teclea: el sistema no puede saber que ese
-    movimiento y esa obligación son la misma plata mientras nadie se lo diga.
-    `MovimientoBanco.obligacion_id` existe justamente para decírselo, y hoy no
-    lo consume nadie — o sea que la columna es una promesa sin cumplir, no una
-    guarda. Cerrarlo de verdad es descontar de la agenda lo que ya salió del
-    banco con ese enlace; mientras tanto la pantalla lo advierte y este
-    comentario no finge que el agujero no existe.
+    Ese agujero HOY ESTÁ CERRADO por el lado del enlace. `get_agenda` descuenta
+    de cada obligación lo que ya salió del banco con su `obligacion_id`
+    (`_salidas_banco_por_obligacion`) y lo combina con los pagos por MÁXIMO, no
+    por suma (`cubierto_de`): el camino normal —«Registrar pago» con «Y
+    descontalo del banco»— escribe el `Pago` y el movimiento para la MISMA
+    plata, y sumarlos sacaría de la agenda una obligación que todavía se debe,
+    que es el error tranquilizador y el peor de los dos.
 
-    El error va en la dirección PRUDENTE (muestra menos plata de la que hay,
-    no más), que es la única razón por la que esto no bloquea.
+    LO QUE SIGUE ABIERTO, dicho en vez de negado: el enlace es OPCIONAL y el
+    libro se teclea. La salida que el dueño escribe a mano SIN elegir la
+    obligación es, para el sistema, indistinguible de un gasto nuevo, y esa
+    obligación se cuenta dos veces igual. Eso es inherente al tecleo y no se
+    arregla desde acá: emparejar por la FORMA (un monto que coincide) es el
+    anti-patrón que este módulo ya pagó caro. Se cierra pidiendo el enlace en el
+    momento de teclear, no adivinándolo después.
+
+    El error que queda va en la dirección PRUDENTE (muestra menos plata de la
+    que hay, no más), que es la única razón por la que esto no bloquea.
     """
     declarado, fecha_ancla = _leer_saldo_banco(db)
     base_libro, _fecha_libro = banco_svc.ancla(db)

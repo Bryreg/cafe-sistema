@@ -161,7 +161,13 @@ export default function BannerLibro({
     >
       {/* ── La carga, SIEMPRE montada ─────────────────────────────────────── */}
       <div ref={refForm}>
-        <FormMovimiento key={fechaCarga} fechaInicial={fechaCarga} cuentas={cuentas} maxFecha={hoy}
+        {/* La agenda baja también al formulario: ahí es de dónde salen las
+            obligaciones que una salida puede tachar. Es LA MISMA fuente que
+            alimenta las líneas «Vence» de la grilla —una sola lectura, y
+            `onGuardado` la repide— así que enlazar una obligación la saca de las
+            opciones en la carga siguiente, que es la señal de que el enlace pegó. */}
+        <FormMovimiento key={fechaCarga} fechaInicial={fechaCarga} cuentas={cuentas}
+          agenda={agenda} maxFecha={hoy}
           onGuardado={m => { setDiaAbierto(m.fecha); onGuardado(m) }} />
       </div>
 

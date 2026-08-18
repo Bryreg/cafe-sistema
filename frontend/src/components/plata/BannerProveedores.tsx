@@ -144,7 +144,10 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
     catch (e) { setError(detalleDeError(e, 'No se pudo eliminar la factura.')) }
   }
 
-  const hayFiltrosDeCliente = !!busqueda || !!fProveedor
+  // `tiendaId` va acá aunque filtre en el SERVIDOR: la frase de abajo dice «a
+  // ningún proveedor», y con una sede elegida eso es más ancho que lo que se
+  // midió. Era la última afirmación tranquilizadora que quedaba en el módulo.
+  const hayFiltrosDeCliente = !!busqueda || !!fProveedor || tiendaId !== null
 
   // La cabecera del banner —el «falta pagar», el conteo de vencidas y el
   // «% pagado» de la derecha— son VEREDICTOS y por eso viven todos adentro de la

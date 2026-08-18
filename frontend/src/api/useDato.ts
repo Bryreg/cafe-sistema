@@ -37,7 +37,20 @@ export function useDato<T>(
   const [dato, setDato] = useState<Dato<T>>(datoCargando)
   const [leido, setLeido] = useState<number | null>(null)
   const [tick, setTick] = useState(0)
-  const recargar = useCallback(() => setTick(n => n + 1), [])
+  /**
+   * Repide este recurso, y lo pone en `cargando` EN EL MISMO BATCH que el toque.
+   *
+   * El `setDato(datoCargando)` de acá parece redundante —el efecto lo hace igual—
+   * pero no lo es: los efectos de los HIJOS corren antes que los del padre, y los
+   * `useDato` viven en la página. Sin esta línea, el hijo que dispara el reintento
+   * ve las fuentes todavía en `falla` y saca sus propias conclusiones un tick
+   * antes de tiempo. Le pasó a `FranjaDeConfianza`: el dueño tocaba «Reintentar»
+   * y la barra se le evaporaba en la mano.
+   */
+  const recargar = useCallback(() => {
+    setDato(datoCargando)
+    setTick(n => n + 1)
+  }, [])
 
   useEffect(() => {
     // Guard anti-carrera con bandera, que es el patrón que este repo ya usa en

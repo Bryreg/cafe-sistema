@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import date
 from app.core.tz import hoy_col
+from app.services.costos import arrastre_al_mover_desde, desde_recogidas
 from app.database import get_db
 from app.core.deps import ensure_tienda_access, get_current_user, require_admin, get_barista_actor
 from app.models.models import Tienda, Usuario
@@ -136,6 +137,24 @@ def registrar_recogida(
         raise HTTPException(400, "No podés registrar una recogida de un día que todavía no llegó.")
     if data.nota is not None and len(data.nota) > 300:
         raise HTTPException(400, "La nota de la recogida no puede pasar de 300 caracteres.")
+
+    # UNA RECOGIDA MÁS VIEJA QUE EL RÉGIMEN CORRE LA VENTANA HACIA ATRÁS, y con
+    # ella entran a la cuenta los pagos y consignaciones de ese tramo. Cargar hoy
+    # la pasada de ayer es normal y no arrastra nada; una fecha mal tecleada meses
+    # atrás arrastra los pagos del MUNDO VIEJO —cuando la barista consignaba y
+    # esta bolsa no existía—. Así que no se mira la fecha: se mira QUÉ ENTRARÍA.
+    # Medido: una recogida de $10.000 fechada seis meses atrás metía un pago de
+    # $2.000.000 y hundía la mano en −$990.000.
+    desde = desde_recogidas(db)
+    if desde is not None and data.fecha < desde:
+        arrastre = arrastre_al_mover_desde(db, data.fecha, desde)
+        if arrastre["n"]:
+            raise HTTPException(
+                400,
+                f"Esa fecha corre el arranque de la cuenta al {data.fecha.isoformat()} "
+                f"(hoy arranca el {desde.isoformat()}) y mete {arrastre['n']} "
+                f"movimiento(s) por ${arrastre['monto']:,.0f} que son de antes de que "
+                "empezaras a recoger. Revisá la fecha.")
 
     tienda = db.query(Tienda).filter(Tienda.id == data.tienda_id).first()
     if tienda is None:

@@ -387,6 +387,13 @@ def registrar_recogida(db: Session, tienda_id: int, fecha: date, monto: float,
     que el dueño terminaba viendo "Reintenta" en vez del motivo real.
     """
     from app.services import audit   # import local, como el resto del módulo
+    from app.services.costos import fijar_desde_recogidas
+
+    # El ancla del régimen se deja puesta con la PRIMERA recogida y no se mueve
+    # más. Va antes del INSERT para que la fecha que se fija sea la de esta misma
+    # fila cuando es la primera. Ver `desde_recogidas` en costos.py: derivar esta
+    # fecha del mínimo de las filas hacía aparecer plata al borrar la más vieja.
+    fijar_desde_recogidas(db, fecha)
 
     r = RecogidaEfectivo(
         tienda_id=tienda_id,

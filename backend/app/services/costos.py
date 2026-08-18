@@ -970,6 +970,7 @@ HORIZONTE_MAX = 180
 SEMANAS_HISTORIA = 8          # 56 días = exactamente 8 muestras de cada día de semana
 DIAS_SALDO_BANCO_VIGENTE = 7  # más viejo que esto y la respuesta se marca desactualizada
 SALDO_BANCO_MAX = 1e12
+CLAVE_RECOGIDAS_DESDE = "recogidas_desde"
 CLAVE_SALDO_BANCO = "saldo_banco"
 CLAVE_SALDO_BANCO_FECHA = "saldo_banco_fecha"
 
@@ -1082,6 +1083,110 @@ def _efectivo_en_registradora(db: Session, tienda_id: int) -> tuple:
     return 0.0, "sin_datos"
 
 
+def desde_recogidas(db: Session) -> date | None:
+    """EL DÍA EN QUE ARRANCÓ EL RÉGIMEN NUEVO, y por qué NO se deriva de las filas.
+
+    La primera versión sacaba esta fecha de `MIN(RecogidaEfectivo.fecha)`, y eso
+    tenía un agujero que dos lectores independientes encontraron por separado:
+    las recogidas se pueden BORRAR. Con la ventana derivada de las filas vivas,
+    borrar la más vieja la corría hacia adelante y los pagos en efectivo que
+    quedaban adentro DEJABAN de restarse. Medido: recogida de $1.000 el 1-ago,
+    pago de $400.000 el 2-ago, recogida de $500.000 el 5-ago. En mano: $101.000.
+    El dueño borra la de $1.000 para corregirla y la pantalla salta a $500.000 —
+    aparecen $399.000 que nunca existieron, hacia el lado tranquilizador.
+
+    El espejo era igual de caro: cargar una recogida retroactiva corría la ventana
+    hacia ATRÁS y arrastraba pagos en efectivo del mundo viejo, cuando la barista
+    consignaba y esta bolsa no existía. Una recogida de $10.000 mal fechada podía
+    hundir la mano un millón en rojo.
+
+    Así que el ancla vive en `configuracion`, igual que el saldo del banco: se
+    escribe UNA vez, con la primera recogida, y no se mueve porque alguien borre
+    o agregue una fila. Es una fecha de RÉGIMEN, no un mínimo.
+
+    Tolera basura guardada por la misma razón que `_leer_saldo_banco`: la fila es
+    TEXTO y un valor de otra versión no puede tumbar la pantalla del dueño.
+
+    Devuelve None cuando el régimen todavía no arrancó — y eso es lo que hace que
+    el bucket entero sea None y no 0.0.
+    """
+    fila = db.query(Configuracion).filter(
+        Configuracion.clave == CLAVE_RECOGIDAS_DESDE).first()
+    if fila is None or not (fila.valor or "").strip():
+        return None
+    try:
+        return date.fromisoformat(fila.valor.strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def fijar_desde_recogidas(db: Session, fecha: date) -> date:
+    """Deja el ancla puesta, y la mueve SOLO HACIA ATRÁS. Devuelve la vigente.
+
+    El ancla es un trinquete de una sola dirección, y cada dirección tiene su
+    razón:
+
+    · HACIA ATRÁS SÍ. Él carga la pasada de hoy y mañana se acuerda de la de
+      ayer: esa recogida es real y el período que se sigue empieza antes. Negarlo
+      dejaría plata suya afuera de la cuenta.
+    · HACIA ADELANTE NUNCA. Ahí estaba el agujero: con la ventana derivada del
+      mínimo de las filas, BORRAR la recogida más vieja la corría hacia adelante
+      y los pagos en efectivo que quedaban adentro dejaban de restarse. Medido:
+      recogida de $1.000 el 1-ago, pago de $400.000 el 2-ago, recogida de
+      $500.000 el 5-ago. En mano $101.000; borra la de $1.000 para corregirla y
+      la pantalla salta a $500.000. Aparecen $399.000 que no existen, hacia el
+      lado tranquilizador.
+
+    Que solo baje corta ese salto de raíz: borrar no puede achicar el período.
+    Lo que sí hay que cuidar del lado de atrás —una recogida mal fechada meses
+    antes, que arrastraría los pagos del mundo viejo— lo mira el handler con
+    `arrastre_al_mover_desde` antes de aceptar.
+    """
+    vigente = desde_recogidas(db)
+    if vigente is not None and vigente <= fecha:
+        return vigente
+
+    arranque = fecha if vigente is None else min(vigente, fecha)
+    fila = db.query(Configuracion).filter(
+        Configuracion.clave == CLAVE_RECOGIDAS_DESDE).first()
+    if fila is None:
+        db.add(Configuracion(clave=CLAVE_RECOGIDAS_DESDE, valor=arranque.isoformat()))
+    else:
+        fila.valor = arranque.isoformat()
+    return arranque
+
+
+def arrastre_al_mover_desde(db: Session, nueva: date, actual: date) -> dict:
+    """Qué se metería en la cuenta si el régimen arrancara en `nueva` y no en `actual`.
+
+    Correr el arranque hacia atrás no es gratis: los pagos en efectivo y las
+    consignaciones que caen en el tramo que se abre pasan a restarse de la mano.
+    Si ese tramo es de unos días, no hay nada — es el olvido normal de cargar la
+    pasada de ayer. Si es de meses, lo que entra son pagos del MUNDO VIEJO, de
+    cuando la barista consignaba y esta bolsa no existía. Medido: una recogida de
+    $10.000 mal fechada seis meses atrás arrastraba un pago de $2.000.000 y
+    hundía la mano en −$990.000.
+
+    Devuelve el conteo y el monto de lo que entraría, para que el handler pueda
+    decirle al dueño CONTRA QUÉ está chocando en vez de un «no se pudo».
+    """
+    pagos = db.query(func.count(Pago.id), func.sum(Pago.monto)).filter(
+        Pago.metodo == "efectivo",
+        Pago.movimiento_caja_id.is_(None),
+        Pago.anulado == False,  # noqa: E712
+        Pago.fecha_pago >= nueva,
+        Pago.fecha_pago < actual,
+    ).first()
+    cons = db.query(func.count(Consignacion.id), func.sum(Consignacion.valor)).filter(
+        Consignacion.estado == EstadoConsignacionEnum.realizada,
+        Consignacion.caja_turno_id.is_(None),
+        Consignacion.fecha >= inicio_dia_col_utc(nueva),
+        Consignacion.fecha < inicio_dia_col_utc(actual),
+    ).first()
+    n = int(pagos[0] or 0) + int(cons[0] or 0)
+    return {"n": n, "monto": round(float(pagos[1] or 0) + float(cons[1] or 0), 2)}
+
+
 def _efectivo_en_mano(db: Session) -> dict:
     """LA TERCERA BOLSA: la plata que el dueño tiene EN LA MANO, ni en el cajón ni
     en el banco. Devuelve {"monto": float|None, "desde": date|None}.
@@ -1128,15 +1233,26 @@ def _efectivo_en_mano(db: Session) -> dict:
     # vuelve como string en SQLite y como `date` en Postgres según cómo el dialecto
     # tipe la función. La primera fila trae un `date` de verdad en los dos motores,
     # que es lo que después se compara contra `Pago.fecha_pago`.
-    primera = db.query(RecogidaEfectivo).order_by(
-        RecogidaEfectivo.fecha.asc(), RecogidaEfectivo.id.asc()).first()
-    if primera is None:
+    desde = desde_recogidas(db)
+    if desde is None:
         return {"monto": None, "desde": None}
-    desde = primera.fecha
 
-    # Sin filtro de fecha a propósito: `desde` ES la primera, así que la suma ya
-    # está acotada por construcción y un `>= desde` sería ruido.
-    recogido = db.query(func.sum(RecogidaEfectivo.monto)).scalar() or 0.0
+    # SIN NINGUNA RECOGIDA VIVA EL BUCKET NO EXISTE, aunque el ancla siga puesta.
+    # El ancla resuelve que la VENTANA no se mueva al borrar una de varias; no
+    # convierte en cero un bolsillo que nadie midió. Si borró la única que había
+    # —un monto mal tecleado, el caso normal— volvemos a «no se sabe», que es la
+    # verdad. Un 0.0 acá diría «pasó y no le quedó nada».
+    if db.query(RecogidaEfectivo.id).first() is None:
+        return {"monto": None, "desde": None}
+
+    # Las TRES sumas se acotan con la MISMA ventana. Antes esta iba sin filtro
+    # —«`desde` es la primera, así que ya está acotada por construcción»— y era
+    # cierto solo mientras `desde` saliera del mínimo de estas mismas filas. Con
+    # el ancla fija, una recogida anterior al régimen entraría acá y no en las
+    # otras dos: sumaría de un lado sin restar del otro, que es la asimetría que
+    # infla la bolsa. El handler igual las rechaza; esto es el cinturón.
+    recogido = db.query(func.sum(RecogidaEfectivo.monto)).filter(
+        RecogidaEfectivo.fecha >= desde).scalar() or 0.0
 
     pagado = db.query(func.sum(Pago.monto)).filter(
         Pago.metodo == "efectivo",

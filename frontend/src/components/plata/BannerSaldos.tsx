@@ -327,18 +327,32 @@ export default function BannerSaldos({
               <Nota>No se pudo leer el efectivo de las registradoras.</Nota>
             </>)}
             listo={c => (<>
-              <Cifra valor={plata(c.efectivo_registradora)} />
+              <Cifra valor={plata(c.efectivo_registradora)} rojo={c.efectivo_registradora < 0} />
               <div className="space-y-0.5 mt-0.5">
                 {c.por_tienda.map(t => (
                   <div key={t.tienda_id} className="flex items-center justify-between gap-2 text-[11px]">
                     <span className="text-warm-500 truncate">{t.tienda_nombre}</span>
-                    <span className="font-mono tabular-nums text-warm-600 shrink-0">
+                    <span className={`font-mono tabular-nums shrink-0 ${
+                      t.efectivo < 0 ? 'text-danger-700 font-bold' : 'text-warm-600'}`}>
                       {plata(t.efectivo)}{' '}
                       <span className="text-warm-400">· {ORIGEN_CAJA[t.origen] ?? t.origen}</span>
                     </span>
                   </div>
                 ))}
               </div>
+              {/* UN CAJÓN EN NEGATIVO ES FÍSICAMENTE IMPOSIBLE, así que no es un
+                  saldo: es un dato mal cargado, y casi siempre una recogida por
+                  más plata de la que había. Sin este aviso la cifra se pintaba
+                  del mismo gris que un cajón sano y el dueño no tenía cómo
+                  distinguirlos. El bucket hermano —«en tu mano»— ya lo explicaba;
+                  esto le da el mismo trato al que la resta de recogidas volvió
+                  alcanzable. */}
+              {c.efectivo_registradora < 0 && (
+                <Nota>
+                  <b>Un cajón no puede tener menos de cero.</b> Revisá si registraste una
+                  recogida por más plata de la que había.
+                </Nota>
+              )}
             </>)}
           />
         </div>

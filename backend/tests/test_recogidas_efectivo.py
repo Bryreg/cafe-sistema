@@ -56,6 +56,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.deps import get_current_user
 from app.core.tz import hoy_col, inicio_dia_col_utc
+from app.services.costos import fijar_desde_recogidas
 from app.database import Base, get_db
 from app.models.models import (CajaTurno, Consignacion, EntregaTurno,
                                EstadoConsignacionEnum, EstadoTurnoEnum, Pago,
@@ -166,8 +167,29 @@ class RecogidasBase(unittest.TestCase):
         if creado_en is not None:
             r.creado_en = creado_en
         self.db.add(r)
+        # El ancla del régimen la deja puesta `registrar_recogida`, y este helper
+        # escribe directo en la DB para poder falsear `creado_en`. Si no la
+        # fijáramos acá, los tests medirían un mundo donde nadie usó el alta real
+        # —y `desde_recogidas` devolvería None— que es justo el estado en que el
+        # bucket entero es None.
+        fijar_desde_recogidas(self.db, r.fecha)
         self.db.commit()
         self.db.refresh(r)
+        return r
+
+    def ids_de_recogidas(self) -> list:
+        return [x.id for x in self.db.query(RecogidaEfectivo).order_by(
+            RecogidaEfectivo.fecha.asc(), RecogidaEfectivo.id.asc()).all()]
+
+    def primera_recogida_id(self, *, excepto=None) -> int:
+        ids = self.ids_de_recogidas()
+        if excepto is not None:
+            ids = [i for i in ids if i != excepto.id]
+        return ids[0]
+
+    def borrar_recogida(self, rid: int):
+        r = self.client.delete(f"/api/v1/consignaciones/recogidas/{rid}")
+        self.assertEqual(r.status_code, 200, r.text)
         return r
 
     def pago_efectivo(self, monto, *, fecha=None, movimiento_caja_id=None,
@@ -521,6 +543,77 @@ class VentanaDesdeLaPrimeraRecogidaTest(RecogidasBase):
                           fecha=inicio_dia_col_utc(desde) - timedelta(hours=1))
 
         self.assertEqual(self.caja_hoy()["efectivo_en_mano"], 900000)
+
+
+class AnclaDelRegimenTest(RecogidasBase):
+    """EL ARRANQUE DEL RÉGIMEN NO SE DERIVA DE LAS FILAS, y esta clase es el porqué.
+
+    La primera versión sacaba `desde` de `MIN(RecogidaEfectivo.fecha)`. Dos
+    lectores independientes encontraron el mismo agujero: las recogidas se pueden
+    BORRAR, así que la ventana se movía sola y con ella la plata.
+
+    Las dos direcciones cuestan, y las dos se prueban acá:
+    · borrar la más vieja corría la ventana hacia ADELANTE y los pagos que
+      quedaban adentro dejaban de restarse — aparecía plata que no existe;
+    · cargar una retroactiva la corría hacia ATRÁS y arrastraba pagos del mundo
+      viejo — una recogida de $10.000 mal fechada podía hundir la mano un millón.
+
+    Ahora el ancla vive en `configuracion`, como el saldo del banco: se escribe
+    una vez y no se mueve porque alguien toque una fila.
+    """
+
+    def test_borrar_la_recogida_mas_vieja_no_hace_aparecer_plata(self):
+        """El escenario exacto del hallazgo, con sus números."""
+        self.recogida(1000, fecha=self.dia(-10))          # la que va a borrar
+        self.pago_efectivo(400000, fecha=self.dia(-9))    # cae DENTRO de la ventana
+        r2 = self.recogida(500000, fecha=self.dia(-5))
+        self.assertEqual(self.caja_hoy()["efectivo_en_mano"], 101000)
+
+        # Borra la primera para corregirla: no hay endpoint de edición, así que
+        # borrar y volver a cargar es el camino natural.
+        primera = self.primera_recogida_id(excepto=r2)
+        self.borrar_recogida(primera)
+
+        # Antes daba 500.000: el pago del día -9 se caía de la ventana y
+        # aparecían $399.000 de la nada. Ahora el ancla no se movió.
+        self.assertEqual(self.caja_hoy()["efectivo_en_mano"], 100000)
+
+    def test_una_recogida_anterior_al_regimen_se_rechaza(self):
+        """El espejo: la retroactiva que arrastra el mundo viejo."""
+        self.recogida(1000000, fecha=self.dia(-5))
+        self.pago_efectivo(2000000, fecha=self.dia(-90))   # marzo: mundo viejo
+
+        r = self.client.post("/api/v1/consignaciones/recogidas", json={
+            "tienda_id": self.vida.id, "fecha": self.dia(-100).isoformat(),
+            "monto": 10000,
+        })
+        self.assertEqual(r.status_code, 400)
+        # `detail` STRING, no lista: el cliente solo sabe renderizar strings.
+        self.assertIsInstance(r.json()["detail"], str)
+        self.assertIn(self.dia(-5).isoformat(), r.json()["detail"])
+        # Y la mano quedó intacta: sin el rechazo caía a -$990.000.
+        self.assertEqual(self.caja_hoy()["efectivo_en_mano"], 1000000)
+
+    def test_el_ancla_la_fija_la_primera_y_las_siguientes_no_la_mueven(self):
+        self.recogida(100000, fecha=self.dia(-5))
+        self.assertEqual(self.caja_hoy()["efectivo_en_mano_desde"], self.dia(-5).isoformat())
+        self.recogida(100000, fecha=self.dia(-2))
+        self.assertEqual(self.caja_hoy()["efectivo_en_mano_desde"], self.dia(-5).isoformat())
+
+    def test_borrar_TODAS_las_recogidas_devuelve_el_bucket_a_None(self):
+        """El ancla arregla la VENTANA, no convierte en cero un bolsillo sin medir.
+
+        Escribí este test al revés la primera vez —esperando una mano en rojo— y
+        los tests que ya estaban me corrigieron: sin ninguna recogida viva no se
+        sabe qué tiene encima, y un número (cualquiera) lo afirmaría. El ancla
+        sigue puesta para que la ventana no se mueva, pero el bucket vuelve a
+        «no se sabe».
+        """
+        self.recogida(500000, fecha=self.dia(-5))
+        self.pago_efectivo(200000, fecha=self.dia(-4))
+        for rid in self.ids_de_recogidas():
+            self.borrar_recogida(rid)
+        self.assertIsNone(self.caja_hoy()["efectivo_en_mano"])
 
 
 class CajonTurnoAbiertoTest(RecogidasBase):

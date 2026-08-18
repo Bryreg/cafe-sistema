@@ -20,12 +20,13 @@ from fastapi import HTTPException
 from sqlalchemy import func, not_, or_
 from sqlalchemy.orm import Session
 
-from app.core.tz import dia_col, hoy_col, rango_col_utc
+from app.core.tz import dia_col, hoy_col, inicio_dia_col_utc, rango_col_utc
 from app.models.models import (CajaTurno, Configuracion, Consignacion,
                                CostoCategoria, EntregaTurno,
                                EstadoConsignacionEnum, EstadoTurnoEnum,
                                FacturaCompra, MovimientoCaja, Obligacion, Pago,
-                               Ticket, Tienda, TipoMovCajaEnum)
+                               RecogidaEfectivo, Ticket, Tienda,
+                               TipoMovCajaEnum)
 from app.services import audit
 # El LIBRO del banco (ancla + movimientos tecleados) es la única verdad del
 # saldo bancario. El flujo lo LEE, no lo recalcula: dos matemáticas para el mismo
@@ -997,6 +998,15 @@ def _efectivo_en_registradora(db: Session, tienda_id: int) -> tuple:
     Ahí no se descuentan consignaciones: el número es un CONTEO FÍSICO y lo que ya
     se depositó no estaba en el cajón cuando se contó. Restarlo otra vez subestima
     la caja, que es el error que fabrica quiebres falsos.
+
+    Y desde agosto hay una TERCERA salida del cajón que no es ni un egreso ni una
+    consignación: el dueño pasa y RECOGE el efectivo (`RecogidaEfectivo`). Esa
+    plata se va a su mano —de ahí sale a pagar proveedores de contado, que nunca
+    tocan el banco— y el cajón seguía contándola como si estuviera. Se resta en
+    las dos ramas que sí tienen un instante contra el cual acotarla, y con el
+    criterio OPUESTO en cada una: en `turno_abierto` desde la apertura (la fórmula
+    del cuadre no sabe nada de la recogida), y en `ultimo_cierre` solo lo POSTERIOR
+    al cierre, porque el conteo físico del cierre ya la refleja.
     """
     turno = db.query(CajaTurno).filter(
         CajaTurno.tienda_id == tienda_id,
@@ -1019,8 +1029,26 @@ def _efectivo_en_registradora(db: Session, tienda_id: int) -> tuple:
             Consignacion.caja_turno_id == turno.id,
             Consignacion.estado == EstadoConsignacionEnum.realizada,
         ).scalar() or 0.0
+        # LO QUE EL DUEÑO YA SE LLEVÓ de este turno. No se pisa con `consignado` y
+        # la razón está en de dónde sale cada plata: la consignación de la BARISTA
+        # cuelga de su `caja_turno_id` y sí salió del cajón; la que hace ÉL sale de
+        # su MANO —ya recogida— y no tiene turno, así que no entra en esa suma. Sin
+        # esta resta el cajón mostraba la venta entera del día aunque la plata ya
+        # se hubiera ido: $1.000.000 en pantalla donde había $600.000.
+        #
+        # Se acota por `creado_en` (instante) y no por `fecha` (día): un turno
+        # abierto de madrugada y una recogida del mismo día calendario anterior a
+        # la apertura pertenecen a la caja de AYER, y `fecha >= ...` no sabe
+        # distinguirlas. `fecha_apertura` la llena el default de la columna en todo
+        # camino de apertura; si aun así llegara NULL el filtro no matchea y no se
+        # resta nada — el único caso en que esto queda del lado optimista.
+        recogido = db.query(func.sum(RecogidaEfectivo.monto)).filter(
+            RecogidaEfectivo.tienda_id == tienda_id,
+            RecogidaEfectivo.creado_en >= turno.fecha_apertura,
+        ).scalar() or 0.0
         esperado = (float(turno.base_real or 0) + float(turno.total_efectivo or 0)
-                    + float(ingresos) - float(egresos) - float(consignado))
+                    + float(ingresos) - float(egresos) - float(consignado)
+                    - float(recogido))
         return round(esperado, 2), "turno_abierto"
 
     # `fecha_cierre.isnot(None)` no es cosmético: SQLite y Postgres ordenan los
@@ -1032,7 +1060,19 @@ def _efectivo_en_registradora(db: Session, tienda_id: int) -> tuple:
         CajaTurno.fecha_cierre.isnot(None),
     ).order_by(CajaTurno.fecha_cierre.desc(), CajaTurno.id.desc()).first()
     if cerrado is not None and cerrado.efectivo_final_real is not None:
-        return round(float(cerrado.efectivo_final_real), 2), "ultimo_cierre"
+        # ESTRICTAMENTE mayor, y no es un detalle de borde: `efectivo_final_real`
+        # es un CONTEO FÍSICO. Lo que el dueño se llevó ANTES de que la barista
+        # contara ya no estaba sobre la mesa cuando ella contó, así que restarlo
+        # otra vez subestima la caja y fabrica el quiebre falso contra el que
+        # advierte el docstring de arriba. Lo único que el conteo no puede saber
+        # es lo que él recogió DESPUÉS de cerrar —sede cerrada, plata quieta, él
+        # pasa a la noche— y eso es exactamente lo que se descuenta acá.
+        # `fecha_cierre` nunca es NULL en esta rama: la consulta ya lo exige.
+        recogido = db.query(func.sum(RecogidaEfectivo.monto)).filter(
+            RecogidaEfectivo.tienda_id == tienda_id,
+            RecogidaEfectivo.creado_en > cerrado.fecha_cierre,
+        ).scalar() or 0.0
+        return round(float(cerrado.efectivo_final_real) - float(recogido), 2), "ultimo_cierre"
 
     ultima = db.query(EntregaTurno).filter(
         EntregaTurno.tienda_id == tienda_id,
@@ -1040,6 +1080,90 @@ def _efectivo_en_registradora(db: Session, tienda_id: int) -> tuple:
     if ultima is not None:
         return round(float(ultima.efectivo_real or 0), 2), "ultimo_cuadre"
     return 0.0, "sin_datos"
+
+
+def _efectivo_en_mano(db: Session) -> dict:
+    """LA TERCERA BOLSA: la plata que el dueño tiene EN LA MANO, ni en el cajón ni
+    en el banco. Devuelve {"monto": float|None, "desde": date|None}.
+
+    Desde agosto él recoge el efectivo de las sedes y desde ahí lo reparte: le paga
+    a los proveedores que aceptan contado (esa plata NUNCA pasa por el banco) y
+    consigna el resto. El sistema conocía las dos puntas del viaje y no el tramo
+    del medio, así que la plata desaparecía de la vista entre que salía del cajón
+    y entraba al banco. Lo que queda en ese tramo es:
+
+        en_mano = Σ recogidas − Σ pagos en efectivo de su mano − Σ consignaciones suyas
+
+    LAS DOS CONDICIONES DE EXCLUSIÓN SON EL CORAZÓN DE LA FÓRMULA:
+
+      · `Pago.movimiento_caja_id IS NULL` — el pago NO salió de la registradora, o
+        sea salió de su mano. Un egreso de caja adoptado ya está descontado dentro
+        del efectivo del turno, y restarlo también acá sería contar la misma salida
+        dos veces. NO ES UN FILTRO PREVENTIVO: `adoptar_egreso` (más arriba, en
+        este mismo archivo) escribe esa columna en cada adopción, y escribe el pago
+        con `metodo="efectivo"` — o sea que cae de lleno en los otros dos filtros.
+        Sacar esta condición deja la mano corta por todo lo adoptado. El índice
+        único parcial `uq_pago_movimiento_caja` existe justamente porque la columna
+        se llena.
+      · `Consignacion.caja_turno_id IS NULL` — la consignación la hizo ÉL desde su
+        mano; la de la barista cuelga de su turno y ya bajó el cajón. Sin esta
+        condición la misma plata se restaría de las dos bolsas.
+
+    `anulado == False` en los pagos por la misma razón de fondo: un pago anulado no
+    sacó plata de ninguna parte, así que ese efectivo sigue en su mano. Sin el
+    filtro el bucket queda subestimado (dirección prudente, pero igual falso).
+
+    `desde` es la fecha de la PRIMERA recogida registrada, y acota los tres
+    términos: los pagos en efectivo y las consignaciones del dueño anteriores a
+    esa fecha pertenecen al mundo viejo —cuando la barista consignaba y la plata
+    iba directo del cajón al banco— y restarlos inventaría una mano en rojo.
+
+    SIN NINGUNA RECOGIDA EL BUCKET NO EXISTE: `monto` vuelve None, NUNCA 0.0. Cero
+    dice "él pasó y no le queda nada"; None dice "todavía no se registró ninguna
+    pasada". Confundirlos es literalmente la familia de error que este módulo viene
+    arrastrando —decidir con un dato que está CERCA del correcto— y acá el que
+    decide es el dueño mirando si le alcanza la plata.
+    """
+    # ORDER BY + LIMIT 1 en vez de func.min(): sobre una columna Date, el mínimo
+    # vuelve como string en SQLite y como `date` en Postgres según cómo el dialecto
+    # tipe la función. La primera fila trae un `date` de verdad en los dos motores,
+    # que es lo que después se compara contra `Pago.fecha_pago`.
+    primera = db.query(RecogidaEfectivo).order_by(
+        RecogidaEfectivo.fecha.asc(), RecogidaEfectivo.id.asc()).first()
+    if primera is None:
+        return {"monto": None, "desde": None}
+    desde = primera.fecha
+
+    # Sin filtro de fecha a propósito: `desde` ES la primera, así que la suma ya
+    # está acotada por construcción y un `>= desde` sería ruido.
+    recogido = db.query(func.sum(RecogidaEfectivo.monto)).scalar() or 0.0
+
+    pagado = db.query(func.sum(Pago.monto)).filter(
+        Pago.metodo == "efectivo",
+        Pago.movimiento_caja_id.is_(None),
+        Pago.anulado == False,  # noqa: E712
+        Pago.fecha_pago >= desde,
+    ).scalar() or 0.0
+
+    # `Consignacion.fecha` es un DateTime UTC y `desde` un día COLOMBIA: se
+    # convierte el día al instante UTC en que empieza, en vez de comparar un
+    # timestamp contra una fecha pelada. Sin esto se perderían (o se colarían) las
+    # consignaciones de las primeras 5 horas del día, que es justo cuando el
+    # sistema graba con el offset a favor.
+    consignado = db.query(func.sum(Consignacion.valor)).filter(
+        Consignacion.estado == EstadoConsignacionEnum.realizada,
+        Consignacion.caja_turno_id.is_(None),
+        Consignacion.fecha >= inicio_dia_col_utc(desde),
+    ).scalar() or 0.0
+
+    # Sin piso en cero: si da negativo es que se registró más salida que recogida
+    # (una consignación suya sin la pasada que la originó, típicamente) y ese
+    # número tiene que verse. Taparlo con un max(0, ..) convertiría un dato mal
+    # cargado en un cero tranquilizador.
+    return {
+        "monto": round(float(recogido) - float(pagado) - float(consignado), 2),
+        "desde": desde,
+    }
 
 
 def _leer_saldo_banco(db: Session) -> tuple:
@@ -1144,8 +1268,8 @@ def _saldo_banco_hoy(db: Session, hoy: date) -> dict:
 
 
 def _caja_hoy(db: Session, hoy: date, tienda_id: int | None) -> dict:
-    """Con cuánta plata arranca la proyección. Dos sumandos, porque el sistema
-    solo conoce uno:
+    """Con cuánta plata arranca la proyección. TRES sumandos, y el sistema solo
+    derivaba uno:
 
     - el efectivo de cada registradora, que SÍ se deriva de los datos;
     - el saldo del banco, que arranca en un INPUT DEL DUEÑO. El sistema registra
@@ -1154,6 +1278,10 @@ def _caja_hoy(db: Session, hoy: date, tienda_id: int | None) -> dict:
       (`_saldo_banco_hoy`). Si el ancla tiene más de una semana, la respuesta lo
       dice en vez de mentir: los movimientos posteriores mantienen el saldo al
       día, pero NO son una conciliación contra el extracto.
+    - el efectivo EN MANO del dueño (`_efectivo_en_mano`), que desde agosto es un
+      lugar real donde vive la plata del negocio: él recoge de las sedes, paga
+      proveedores de contado y consigna el resto. Antes ese tramo no existía y la
+      plata recogida se contaba igual en el cajón, de donde ya se había ido.
 
     DECISIÓN (opción a de la revisión): con `tienda_id` el saldo del banco NO
     entra al total. La cuenta es de la EMPRESA — una sede no "tiene" el banco— y
@@ -1162,6 +1290,18 @@ def _caja_hoy(db: Session, hoy: date, tienda_id: int | None) -> dict:
     sede SISTEMÁTICAMENTE OPTIMISTA: toda la plata del negocio contra solo una
     parte de sus salidas, o sea un quiebre real convertido en verde tranquilizador
     con solo mover el filtro.
+
+    EL EFECTIVO EN MANO SIGUE LA MISMA REGLA, y por el mismo argumento: la plata
+    en su bolsillo es de la EMPRESA. `RecogidaEfectivo` sí sabe de qué sede salió
+    cada billete, pero los pagos y las consignaciones que la consumen NO se pueden
+    repartir por sede —él le paga al proveedor con la plata junta—, así que una
+    vista por sede solo podría sumar el lado de las ENTRADAS. Eso es exactamente el
+    sesgo optimista descrito arriba, con otro disfraz.
+
+    Y cuando todavía no hay ninguna recogida, `efectivo_en_mano` vale None y no
+    suma nada. None no es 0.0: significa "este bucket todavía no existe", y la
+    pantalla necesita poder callarse en vez de mostrar un cero que se lee como
+    "no le queda plata en la mano".
 
     Se descartó la opción (b) —meter las corporativas en la agenda de cada sede—
     porque no hay forma de repartirlas: sumar las dos sedes contaría el arriendo
@@ -1196,6 +1336,13 @@ def _caja_hoy(db: Session, hoy: date, tienda_id: int | None) -> dict:
     desactualizado = (fecha_banco is None
                       or (hoy - fecha_banco).days > DIAS_SALDO_BANCO_VIGENTE)
     incluye_banco = tienda_id is None
+
+    # Se calcula SIEMPRE, aunque filtrando por sede no sume: es un dato real que el
+    # dueño tiene que poder ver, igual que el saldo del banco. `..._incluido` es el
+    # que dice si entró al total, para que la pantalla no tenga que deducirlo.
+    en_mano = _efectivo_en_mano(db)
+    incluye_en_mano = tienda_id is None and en_mano["monto"] is not None
+
     return {
         "efectivo_registradora": round(efectivo, 2),
         "por_tienda": detalle,
@@ -1210,7 +1357,14 @@ def _caja_hoy(db: Session, hoy: date, tienda_id: int | None) -> dict:
         "saldo_banco_fecha": fecha_banco,
         "saldo_banco_desactualizado": desactualizado,
         "saldo_banco_incluido": incluye_banco,
-        "total": round(efectivo + (saldo_banco if incluye_banco else 0.0), 2),
+        # La tercera bolsa. None = todavía no se registró ninguna recogida, o sea
+        # que el bucket NO EXISTE — distinto de que exista y esté en cero.
+        "efectivo_en_mano": en_mano["monto"],
+        "efectivo_en_mano_desde": en_mano["desde"],
+        "efectivo_en_mano_incluido": incluye_en_mano,
+        "total": round(efectivo
+                       + (saldo_banco if incluye_banco else 0.0)
+                       + (en_mano["monto"] if incluye_en_mano else 0.0), 2),
     }
 
 

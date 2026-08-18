@@ -3,7 +3,8 @@ from sqlalchemy import func
 from datetime import datetime, date, timedelta
 from fastapi import HTTPException
 from app.models.models import (Consignacion, EstadoConsignacionEnum,
-                                CajaTurno, MovimientoCaja, Tienda, EstadoTurnoEnum)
+                                CajaTurno, MovimientoCaja, RecogidaEfectivo,
+                                Tienda, EstadoTurnoEnum)
 
 
 def _saldos_consignacion(db: Session, tienda_id: int) -> list[dict]:
@@ -340,3 +341,114 @@ def eliminar(db: Session, consignacion_id: int, usuario_id: int):
     db.delete(c)
     db.commit()
     return {"ok": True, "id": consignacion_id}
+
+
+# ── Recogidas de efectivo ───────────────────────────────────────────────────
+#
+# Vive acá y no en un módulo aparte porque es la ACCIÓN ESPEJO de la consignación:
+# las dos mueven efectivo fuera del cajón y las dos alimentan el mismo número del
+# dueño. Lo que cambia es a dónde va la plata — la consignación la deja en el
+# banco, la recogida la deja en su MANO, y desde ahí puede salir a pagar
+# proveedores de contado sin pasar nunca por una cuenta.
+#
+# OJO CON `recoger()`, ARRIBA: se llama parecido y NO es lo mismo. Aquella función
+# es el flujo viejo —salda los turnos pendientes creando `Consignacion` con su
+# `caja_turno_id`, o sea afirmando que la plata llegó al banco— y ya descuenta el
+# cajón por su cuenta. Registrar la MISMA pasada por los dos caminos descontaría
+# el cajón dos veces. Son excluyentes: o el dueño usa el flujo viejo, o registra
+# recogidas.
+
+
+def _serializar_recogida(r: RecogidaEfectivo) -> dict:
+    return {
+        "id": r.id,
+        "tienda_id": r.tienda_id,
+        "tienda_nombre": r.tienda.nombre if r.tienda else None,
+        "fecha": r.fecha,
+        "monto": float(r.monto or 0),
+        "nota": r.nota,
+        "usuario_id": r.usuario_id,
+        "usuario_nombre": r.usuario.nombre if r.usuario else None,
+        "creado_en": r.creado_en,
+    }
+
+
+def registrar_recogida(db: Session, tienda_id: int, fecha: date, monto: float,
+                       usuario_id: int, nota: str | None = None) -> dict:
+    """«Recogí $X de la sede Y el día Z». El registro que le faltaba al sistema.
+
+    Sin esto la plata recogida seguía contando en el cajón: el cajón mostraba la
+    venta entera del día aunque el dueño ya se hubiera llevado el efectivo, y el
+    sobrante era exactamente lo que él pagaba de contado a los proveedores.
+
+    Las validaciones (monto positivo, fecha no futura, sede activa, largo de la
+    nota) las hace el HANDLER, no este servicio ni el schema: el `detail` de un
+    422 de pydantic es una LISTA y el cliente solo sabe renderizar strings, así
+    que el dueño terminaba viendo "Reintenta" en vez del motivo real.
+    """
+    from app.services import audit   # import local, como el resto del módulo
+
+    r = RecogidaEfectivo(
+        tienda_id=tienda_id,
+        fecha=fecha,
+        monto=round(float(monto), 2),
+        usuario_id=usuario_id,
+        # "" y "   " se guardan como NULL: una nota vacía no es una nota, y así el
+        # frontend puede preguntar `nota ? ... : ...` sin casos especiales.
+        nota=((nota or "").strip() or None),
+    )
+    db.add(r)
+    db.flush()   # necesita el id para la auditoría, que se escribe en el mismo commit
+    audit.registrar(
+        db, accion="registrar_recogida_efectivo", tabla="recogidas_efectivo",
+        registro_id=r.id, usuario_id=usuario_id, tienda_id=tienda_id,
+        datos_despues={"fecha": str(fecha), "monto": float(r.monto), "nota": r.nota},
+    )
+    db.commit()
+    db.refresh(r)
+    return _serializar_recogida(r)
+
+
+def listar_recogidas(db: Session, desde: date | None = None,
+                     hasta: date | None = None,
+                     tienda_id: int | None = None) -> dict:
+    """Las pasadas del dueño en un rango, con su total.
+
+    Se filtra por `fecha` (el día en que recogió) y no por `creado_en` (el día en
+    que lo tecleó): él registra la pasada de ayer, y un reporte que la ubicara en
+    el día del teclado no cuadraría contra el cierre de esa sede.
+    """
+    q = db.query(RecogidaEfectivo)
+    if tienda_id is not None:
+        q = q.filter(RecogidaEfectivo.tienda_id == tienda_id)
+    if desde is not None:
+        q = q.filter(RecogidaEfectivo.fecha >= desde)
+    if hasta is not None:
+        q = q.filter(RecogidaEfectivo.fecha <= hasta)
+    rows = q.order_by(RecogidaEfectivo.fecha.desc(),
+                      RecogidaEfectivo.id.desc()).all()
+    items = [_serializar_recogida(r) for r in rows]
+    return {"items": items, "total": round(sum(i["monto"] for i in items), 2)}
+
+
+def eliminar_recogida(db: Session, recogida_id: int, usuario_id: int) -> dict:
+    """Revierte una recogida mal registrada (solo admin).
+
+    Se borra la fila en vez de marcarla anulada porque nada cuelga de ella: tanto
+    el efectivo del cajón como el efectivo en mano se DERIVAN de la suma de
+    recogidas vivas, así que sacar la fila alcanza. Los datos quedan en auditoría.
+    """
+    from app.services import audit   # import local, como el resto del módulo
+
+    r = db.query(RecogidaEfectivo).filter(RecogidaEfectivo.id == recogida_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Recogida no encontrada")
+    audit.registrar(
+        db, accion="eliminar_recogida_efectivo", tabla="recogidas_efectivo",
+        registro_id=r.id, usuario_id=usuario_id, tienda_id=r.tienda_id,
+        datos_antes={"fecha": str(r.fecha), "monto": float(r.monto or 0),
+                     "nota": r.nota, "creado_en": str(r.creado_en)},
+    )
+    db.delete(r)
+    db.commit()
+    return {"ok": True, "id": recogida_id}

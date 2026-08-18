@@ -1,13 +1,14 @@
 import { ReactNode, useEffect, useMemo, useState } from 'react'
-import { Landmark, Pencil, Store } from 'lucide-react'
+import { HandCoins, Landmark, Pencil, Store } from 'lucide-react'
 import api from '../../api/client'
 import { conMiles, soloDigitos } from '../../utils/plata'
 import { Dato, mapDato } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import { SegunDato, NoSeSabe } from '../ui'
 import { CuentaBanco, LibroMes, detalleDeError, diasEntre, fechaCorta, plata } from './banco'
-import { CajaHoy, Flujo, ORIGEN_CAJA } from './tipos'
+import { CajaHoy, Flujo, ORIGEN_CAJA, Tienda } from './tipos'
 import { filaConSaldoDe } from './useLibro'
+import FormRecogida from './FormRecogida'
 import { Campo, CLS_INPUT, CLS_INPUT_PLATA, CLS_BOTON_GUARDAR, CLS_BOTON_SUAVE, ComoSeCalcula, ErrorCampo, teclas } from './campos'
 
 /** Un número grande de esta tarjeta. Gris cuando no hay cifra: un «—» del mismo
@@ -57,17 +58,33 @@ const Nota = ({ children }: { children: ReactNode }) => (
  * fetch caído entraba por la misma rama que un mes sin ancla y la pantalla
  * afirmaba «Falta el saldo del extracto para saberlo» sobre una cuenta que sí
  * tenía extracto cargado: mandaba a cargar de nuevo un dato que ya estaba.
+ *
+ * ── LA PLATA VIVE EN TRES LUGARES, NO EN DOS ───────────────────────────────
+ * Hasta julio eran dos —el cajón y el banco— y el sistema los conocía a los dos:
+ * la barista vendía en efectivo y ella misma iba a consignar, así que la plata
+ * salía del cajón y entraba a la cuenta. Desde agosto el DUEÑO pasa y recoge:
+ * con ese efectivo le paga a los proveedores que aceptan efectivo —plata que
+ * nunca toca el banco— y consigna el resto él mismo. El tercer lugar es SU MANO,
+ * y hasta ahora no existía en ninguna pantalla.
+ *
+ * Por eso este banner muestra TRES buckets desglosados y no dos: el dueño tiene
+ * que poder ver de dónde sale cada peso del total. Y por eso el bucket de la
+ * mano puede no existir (`efectivo_en_mano === null`, sin ninguna recogida
+ * registrada): ahí va un «—» y la frase que lo explica, nunca un «$0». Un cero
+ * afirmaría que no tiene plata encima, que es exactamente lo que no se sabe.
  */
 export default function BannerSaldos({
-  libro, hoy, flujo, cuentas, pedidoApertura, onAnclaGuardada, onRecargarLibro,
+  libro, hoy, flujo, cuentas, tiendas, pedidoApertura, onAnclaGuardada, onRecargarLibro,
 }: {
   /** El libro del MES DE HOY (no el que se esté mirando: el saldo de hoy no
    *  puede depender de dónde navegó el ojo). */
   libro: Dato<LibroMes>
   hoy: string
-  /** De acá sale `caja_hoy`: el efectivo de las registradoras y el total. */
+  /** De acá sale `caja_hoy`: los tres buckets de efectivo y el total. */
   flujo: Fuente<Flujo>
   cuentas: Fuente<CuentaBanco[]>
+  /** Para el select de la fila de recogida: de qué sede recogió la plata. */
+  tiendas: Fuente<Tienda[]>
   /**
    * Contador que sube cuando OTRO banner pide abrir este editor.
    *
@@ -96,6 +113,16 @@ export default function BannerSaldos({
   const [fecha, setFecha] = useState(hoy)
   const [error, setError] = useState('')
   const [guardando, setGuardando] = useState(false)
+
+  /**
+   * Sube cuando el tile «En tu mano» invita a registrar la primera recogida.
+   *
+   * Es un CONTADOR y no un booleano por la misma razón que `pedidoApertura`: el
+   * gesto se puede repetir, y con un booleano el segundo toque no dispara nada
+   * porque el estado ya estaba en `true`. El formulario está siempre montado —
+   * esto solo le lleva el foco, no lo hace aparecer.
+   */
+  const [pedidoRecogida, setPedidoRecogida] = useState(0)
 
   const abrir = () => {
     // ABRE EN BLANCO SI NO HAY FECHA. Sin fecha no hay saldo cargado: el 0 que
@@ -275,11 +302,17 @@ export default function BannerSaldos({
         </div>
       )}
 
-      {/* ── El efectivo físico y el total ────────────────────────────────────
+      {/* ── El efectivo físico, la plata de la mano y el total ───────────────
           Es el ÚNICO lugar del módulo donde aparece la plata de las
           registradoras, y cada sede dice DE DÓNDE sale su cifra: un turno
-          abierto es un conteo vivo, un «último cuadre» puede ser de anteayer. */}
-      <div className="grid grid-cols-2 divide-x divide-warm-100">
+          abierto es un conteo vivo, un «último cuadre» puede ser de anteayer.
+
+          TRES COLUMNAS Y NO DOS. Desde que el dueño recoge el efectivo, el total
+          se arma de tres partes y no de dos; mostrar solo la suma dejaría al
+          dueño sin poder ver de dónde sale cada peso, que es justo lo que hay
+          que poder ver mientras el modelo de manejo del efectivo es nuevo. En
+          celular van apiladas (una columna) para que ninguna cifra se corte. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-warm-100">
         <div className="px-4 py-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500 flex items-center gap-1">
             <Store size={11} /> En la registradora
@@ -309,6 +342,58 @@ export default function BannerSaldos({
             </>)}
           />
         </div>
+
+        {/* ── En tu mano ───────────────────────────────────────────────────────
+            El bucket que no existía. Lo que el dueño recogió de las sedes menos
+            lo que ya pagó en efectivo y lo que consignó él: la plata que hoy
+            tiene encima y que ninguna otra pantalla del sistema ve. */}
+        <div className="px-4 py-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500 flex items-center gap-1">
+            <HandCoins size={11} /> En tu mano
+          </p>
+          <SegunDato
+            dato={caja}
+            cargando={<><Cifra valor="…" apagado /><Nota>Leyendo lo que recogiste…</Nota></>}
+            falla={() => (<>
+              <Cifra valor="—" apagado />
+              <Nota>No se pudo leer el efectivo que recogiste de las sedes.</Nota>
+            </>)}
+            listo={c => c.efectivo_en_mano === null ? (<>
+              {/* EL BUCKET NO EXISTE — NO ES CERO. Nunca se registró una
+                  recogida, así que no hay desde cuándo contar. Un «$0» acá
+                  AFIRMARÍA que no tiene plata encima, que es justo lo que no se
+                  sabe, y lo afirmaría hacia el lado tranquilizador: sería el
+                  mismo error que este banner existe para no volver a cometer,
+                  cambiado de lugar. Así que va el «—» y la invitación a llenarlo. */}
+              <Cifra valor="—" apagado />
+              <Nota>
+                Todavía no registraste ninguna recogida, así que <b>no se sabe</b> cuánta plata
+                tenés encima. No es cero.{' '}
+                <button onClick={() => setPedidoRecogida(n => n + 1)}
+                  className="font-bold text-forest underline decoration-dotted">
+                  Registrá la primera
+                </button>
+              </Nota>
+            </>) : (<>
+              <Cifra valor={plata(c.efectivo_en_mano)} rojo={c.efectivo_en_mano < 0} />
+              <Nota>
+                {c.efectivo_en_mano < 0
+                  // EN NEGATIVO NO ES UN SALDO, ES UN AVISO. Salió más plata de
+                  // la mano de la que entró, y como las recogidas se cargan a
+                  // mano y los pagos en efectivo se derivan solos, el que falta
+                  // registrar es casi siempre el lado de acá. Decirlo evita que
+                  // el dueño busque el error en el banco.
+                  ? <>Salió más de lo que aparece recogido: falta registrar alguna recogida.</>
+                  : c.efectivo_en_mano_desde
+                    ? <>Recogido desde el {fechaCorta(c.efectivo_en_mano_desde)}, menos lo que
+                        pagaste en efectivo y lo que consignaste vos.</>
+                    : <>Lo que recogiste, menos lo que pagaste en efectivo y lo que
+                        consignaste vos.</>}
+              </Nota>
+            </>)}
+          />
+        </div>
+
         <div className="px-4 py-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500">
             Con todo, hay
@@ -320,24 +405,59 @@ export default function BannerSaldos({
               <Cifra valor="—" apagado />
               <div className="mt-1">
                 <NoSeSabe onReintentar={flujo.recargar}
-                  mensaje={`${m} — no se sabe cuánta plata hay entre el banco y las registradoras.`} />
+                  mensaje={`${m} — no se sabe cuánta plata hay entre el banco, las registradoras `
+                    + 'y lo que recogiste.'} />
               </div>
             </>)}
             listo={c => (<>
               <Cifra valor={plata(c.total)} />
               {/* El rótulo cuenta las sedes que el backend devolvió, no dice «las
                   dos»: el día que se abra una tercera, la frase seguiría afirmando
-                  un número que ya no es. */}
+                  un número que ya no es.
+
+                  Y ENUMERA LOS SUMANDOS QUE DE VERDAD ENTRARON. Cuando el bucket
+                  de la mano no existe, el total está incompleto por una cantidad
+                  desconocida y la frase lo dice: un «Banco + registradoras» a
+                  secas se leería como «esto es toda la plata», que es la mentira
+                  de siempre con la pintura nueva.
+
+                  Y QUIÉN ENTRÓ AL TOTAL LO DICE EL BACKEND, no una deducción de
+                  acá. `efectivo_en_mano_incluido` es `tienda_id is None and monto
+                  is not None` allá; escribir esa misma condición en esta línea
+                  daría lo mismo HOY y esa es la trampa: el día que allá cambie,
+                  este rótulo seguiría enumerando un sumando que ya no se suma. */}
               <Nota>
-                {c.saldo_banco_incluido
-                  ? `Banco + ${c.por_tienda.length === 1 ? 'la registradora'
-                      : `las ${c.por_tienda.length} registradoras`} — con esto arranca la proyección`
-                  : 'Solo la caja de esta sede: la cuenta del banco es de la empresa, no de la sede'}
+                {c.saldo_banco_incluido ? (<>
+                  Banco + {c.por_tienda.length === 1 ? 'la registradora'
+                    : `las ${c.por_tienda.length} registradoras`}
+                  {c.efectivo_en_mano_incluido
+                    ? <> + lo que tenés en la mano</>
+                    : <> — <b>sin</b> lo que tengas en la mano, que todavía no se registra</>}
+                  {' '}— con esto arranca la proyección
+                </>) : (<>
+                  Solo la caja de esta sede: la cuenta del banco y la plata de tu mano son de la
+                  empresa, no de la sede
+                </>)}
               </Nota>
             </>)}
           />
         </div>
       </div>
+
+      {/* ── La fila que llena el bucket de la mano ───────────────────────────
+          Va PEGADA a los tres números y no en otro banner: es la acción que los
+          mueve, y cada click de distancia es un día más de cajón mintiendo.
+          Siempre montada, como la fila del banco: recoger de las dos sedes son
+          dos cargas seguidas, no dos aperturas.
+
+          REFRESCA `flujo` Y NADA MÁS. Una recogida no toca el banco (esa plata
+          no entró a la cuenta), no toca la agenda y no toca el resultado del mes:
+          lo único que cambia es `caja_hoy` —el cajón baja, la mano sube— y la
+          proyección que arranca de ahí, y las dos cosas viven adentro de este
+          mismo recurso. Repedir la página entera haría parpadear cinco banners
+          que nadie tocó. */}
+      <FormRecogida tiendas={tiendas} hoy={hoy}
+        pedidoFoco={pedidoRecogida} onGuardado={flujo.recargar} />
 
       <ComoSeCalcula titulo="¿De dónde sale el saldo del banco?">
         <p>
@@ -368,6 +488,25 @@ export default function BannerSaldos({
           «En la registradora» es efectivo físico y sale de cada sede por separado: un turno
           abierto es el conteo vivo, «conteo del cierre» es el de la última vez que cerraron y
           «último cuadre» es el respaldo cuando cerraron sin contar.
+        </p>
+        {/* La explicación del bucket nuevo. Vale la pena escribirla entera: el
+            modelo de manejo del efectivo cambió en agosto y la diferencia entre
+            «la consignó la barista» y «la consigné yo» es la que decide de qué
+            bolsillo sale cada peso. Sin esto, el dueño no tiene cómo saber por
+            qué su consignación no bajó el cajón. */}
+        <p>
+          <b>«En tu mano»</b> es la plata que recogiste de las sedes y que todavía no salió. Cada
+          recogida que cargás acá <b>baja el cajón</b> de esa sede y <b>sube tu efectivo en
+          mano</b>: la plata no desaparece, cambia de lugar. De ahí se descuenta solo lo que pagás
+          en efectivo y las consignaciones que hacés <b>vos</b> — las de las baristas no, porque
+          esas salen del cajón y ya se descontaron ahí. Restarlas de nuevo sería restar la misma
+          plata dos veces.
+        </p>
+        <p>
+          Mientras no registres ninguna recogida, ese casillero dice <b>«—» y no «$0»</b>, a
+          propósito: el sistema no tiene forma de saber cuánto llevás encima, y un cero ahí sería
+          afirmar que no llevás nada. Ojo con lo que eso implica para el total: hasta la primera
+          recogida, «con todo, hay» es <b>menos</b> de lo que de verdad hay.
         </p>
         {/* Los nombres de las cuentas solo se enumeran si el catálogo llegó. Con
             el molde viejo (`cuentas.length > 0`) la frase desaparecía igual con

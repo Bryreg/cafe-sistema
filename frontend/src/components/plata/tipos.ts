@@ -132,8 +132,52 @@ export interface CajaHoy {
   saldo_banco_origen: 'libro' | 'ancla'
   saldo_banco_fecha: string | null
   saldo_banco_desactualizado: boolean
-  /** false filtrando por sede: la cuenta es de la empresa, no de la sede. */
+  /**
+   * false filtrando por sede: la cuenta es de la empresa, no de la sede.
+   *
+   * Gobierna DOS buckets, no uno. En el backend es literalmente
+   * `tienda_id is None`, y la plata en mano del dueño se suma al total con esa
+   * misma regla: tampoco pertenece a una sede y tampoco hay dato para repartirla.
+   */
   saldo_banco_incluido: boolean
+  /**
+   * El efectivo que el DUEÑO tiene ENCIMA: lo que recogió de las sedes menos lo
+   * que ya pagó en efectivo y lo que consignó él mismo.
+   *
+   * ── POR QUÉ ESTE CAMPO EXISTE ────────────────────────────────────────────
+   * Hasta julio la barista consignaba: la plata salía del cajón y entraba al
+   * banco, y con dos lugares el sistema los conocía a los dos. Desde agosto el
+   * dueño PASA Y RECOGE: paga proveedores en efectivo (esa plata nunca toca el
+   * banco) y consigna el resto. La plata pasó a vivir en TRES lugares y este es
+   * el tercero.
+   *
+   * ── `null` NO ES CERO ────────────────────────────────────────────────────
+   * `null` significa que el bucket TODAVÍA NO EXISTE: nunca se registró una
+   * recogida, así que no hay desde cuándo contar. Un `$0` ahí AFIRMARÍA que no
+   * tiene plata en la mano, que es justo lo que no se sabe. Es la misma familia
+   * de error que este módulo viene arrastrando —decidir con un dato que está
+   * CERCA del correcto, y siempre hacia el lado tranquilizador—, así que acá el
+   * tipo la deja ver: `number | null` obliga a escribir la rama.
+   */
+  efectivo_en_mano: number | null
+  /**
+   * El día de la PRIMERA recogida registrada: de ahí para adelante se cuenta.
+   * `null` cuando el bucket no existe. No es una fecha de corte que alguien
+   * eligió: es el primer día del que hay algo que sumar.
+   */
+  efectivo_en_mano_desde: string | null
+  /**
+   * Si la plata de la mano ENTRÓ al `total`. En el backend es
+   * `tienda_id is None and monto is not None`: no pertenece a ninguna sede (igual
+   * que la cuenta del banco) y no se puede sumar un bucket que no existe.
+   *
+   * Viene del backend en vez de deducirse acá con
+   * `saldo_banco_incluido && efectivo_en_mano !== null`. Da lo mismo hoy y esa es
+   * exactamente la trampa: el día que allá se agregue una condición, la pantalla
+   * seguiría rotulando el total con la regla vieja y diría que sumó una plata que
+   * no sumó. Una sola matemática, del lado que hace la cuenta.
+   */
+  efectivo_en_mano_incluido: boolean
   total: number
 }
 

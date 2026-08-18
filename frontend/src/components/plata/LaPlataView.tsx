@@ -24,7 +24,8 @@ import FormPagoObligacion from './FormPagoObligacion'
  * urgente a lo que se consulta.
  *
  *   1. Vendido hoy ......... la plata que entra mañana
- *   2. ¿Cuánta plata hay? .. banco + registradoras, con el extracto editable acá
+ *   2. ¿Cuánta plata hay? .. las TRES bolsas (registradoras, tu mano, banco), con
+ *                            el extracto editable y la recogida cargable acá
  *   3. Vencido ............. lo que se debe AHORA, con el botón de pagar al lado
  *   4. ¿Me alcanza? ........ la proyección y el día del quiebre
  *   5. Obligaciones ........ el arriendo y la nómina, con la carga a la vista
@@ -155,10 +156,17 @@ export default function LaPlataView({
       {/* 1 · La venta del día */}
       <BannerVentasHoy ventasHoy={ventasHoy} pulso={pulso} />
 
-      {/* 2 · Cuánta plata hay, y el extracto editable en la misma tarjeta */}
+      {/* 2 · Cuánta plata hay, y el extracto editable en la misma tarjeta.
+
+             `tiendas` viaja acá porque el banner ya no solo MUESTRA plata: adentro
+             vive la fila de «recogí plata de una sede», y sin el catálogo esa fila
+             no tiene de qué sede hablar. Es la misma `Fuente` que ya usan
+             Obligaciones y Proveedores —no un fetch nuevo—: dos catálogos de sedes
+             en la misma página son dos listas que se pueden desincronizar, y el
+             día que se abra una tercera sede una de las dos se enteraría después. */}
       <div ref={refSaldos}>
         <BannerSaldos libro={libro.libroConHoy} hoy={libro.hoy}
-          flujo={flujo} cuentas={cuentas}
+          flujo={flujo} cuentas={cuentas} tiendas={tiendas}
           pedidoApertura={pedidoAncla}
           onAnclaGuardada={refrescarTodo}
           onRecargarLibro={libro.recargar} />

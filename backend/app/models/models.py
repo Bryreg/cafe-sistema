@@ -582,6 +582,56 @@ class Consignacion(Base):
     usuario = relationship("Usuario", back_populates="consignaciones")
 
 
+class RecogidaEfectivo(Base):
+    """El dueño pasó por la sede y SE LLEVÓ el efectivo. La tercera bolsa de plata.
+
+    Hasta julio la plata iba del cajón al banco: la barista consignaba y se
+    conservaba. Desde agosto el dueño recoge el efectivo en persona y con esa
+    misma plata paga a los proveedores que aceptan contado —eso NUNCA toca el
+    banco— y consigna el resto. O sea que la plata vive en TRES lugares y el
+    sistema solo conocía dos: el cajón y el banco. La recogida no quedaba en
+    ninguna parte, así que el cajón seguía afirmando que la plata estaba ahí.
+
+    El error medido, con números: venden $1.000.000 en efectivo, él recoge el
+    $1.000.000 (el cajón sigue diciendo $1.000.000), paga $400.000 a un proveedor
+    de contado (tampoco toca el cajón) y consigna $600.000 (recién ahí el cajón
+    baja a $400.000). La pantalla mostraba $1.000.000 donde había $600.000: sobra
+    exactamente lo pagado en efectivo, y sobra hacia el lado TRANQUILIZADOR, que
+    es la peor dirección posible para el número que el dueño mira antes de abrir.
+
+    POR QUÉ ES TABLA PROPIA Y NO UNA `Consignacion` SIN TURNO. Una consignación
+    afirma que la plata ENTRÓ AL BANCO; recoger no es depositar. Lo recogido queda
+    en la mano y una parte puede no llegar nunca al banco. Además la ausencia de
+    `caja_turno_id` ya significa otra cosa en `Consignacion` (la consignó él y no
+    la barista), y no se pueden colgar dos significados del mismo NULL.
+
+    La crea `create_all` (main.py:282). El loop de ALTERs corre ANTES, así que una
+    tabla NUEVA no lleva entrada allí — solo las columnas nuevas de tablas que ya
+    existen en producción.
+    """
+    __tablename__ = "recogidas_efectivo"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), index=True, nullable=False)
+    # EL DÍA COLOMBIA EN QUE RECOGIÓ, no el día en que lo tecleó. Date nativo por
+    # la misma razón que Pago.fecha_pago: él registra la pasada de ayer o la de
+    # anteayer, y el reporte tiene que ubicarla en su día, no en el del teclado.
+    fecha = Column(Date, index=True, nullable=False)
+    monto = Column(Numeric(12, 2, asdecimal=False), nullable=False)   # siempre positivo
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    # Con max_length explícito: sin él el INSERT explota en Postgres (ya pasó en
+    # este repo con otras columnas de texto libre).
+    nota = Column(String(300), nullable=True)
+    # CUÁNDO SE TECLEÓ (UTC-naive, convención del repo). No es metadata decorativa:
+    # es el campo con el que `_efectivo_en_registradora` decide si una recogida ya
+    # está reflejada en el conteo físico del cierre. `fecha` es un DÍA y no alcanza
+    # para ordenarse contra `CajaTurno.fecha_cierre`, que es un INSTANTE.
+    creado_en = Column(DateTime, default=datetime.utcnow)
+    # Sin back_populates a propósito (mismo patrón que Mantenimiento y Pago): no
+    # hace falta tocar Tienda ni Usuario para agregar una tabla satélite.
+    tienda = relationship("Tienda")
+    usuario = relationship("Usuario")
+
+
 class ChecklistDiario(Base):
     __tablename__ = "checklist_diario"
     id = Column(Integer, primary_key=True)
@@ -1572,8 +1622,9 @@ class Pago(Base):
     # sistema. Date nativo por la misma razón que fecha_devengo.
     fecha_pago = Column(Date, index=True, nullable=False)
     metodo = Column(String(20), nullable=False)   # efectivo|transferencia|tarjeta|cheque|otro
-    # Llave anti-doble-conteo para la fase 3 (adopción de egresos de caja ya registrados).
-    # En ESTA fase la columna se crea pero NADIE la escribe.
+    # Llave anti-doble-conteo de la adopción de egresos de caja ya registrados. La
+    # escribe `costos.adoptar_egreso`, y la LEE `costos._efectivo_en_mano` para no
+    # restar de la mano del dueño una plata que ya salió de la registradora.
     movimiento_caja_id = Column(Integer, nullable=True)
     imagen_soporte_url = Column(String(300), nullable=True)
     nota = Column(String(300), nullable=True)

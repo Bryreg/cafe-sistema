@@ -240,6 +240,17 @@ class CajaFuerteBase(unittest.TestCase):
                                    usuario_id=self.admin.id, fecha=momento))
         self.db.commit()
 
+    def ingreso(self, turno, monto, momento, concepto="Ingreso de caja"):
+        """Plata que ENTRA a la registradora sin ser venta.
+
+        Es uno de los tres caminos por los que la base de la caja fuerte puede
+        colarse al consignable, y el que de verdad usó la barista de Palmetto.
+        """
+        self.db.add(MovimientoCaja(caja_turno_id=turno.id, tipo="ingreso",
+                                   concepto=concepto, valor=monto,
+                                   usuario_id=self.admin.id, fecha=momento))
+        self.db.commit()
+
     def cerrar(self, turno, *, contado, momento, justificacion=None):
         """Cierra el turno de verdad y ancla el cierre en `momento`.
 
@@ -474,6 +485,67 @@ class ElSabadoQueYaHabiaCerradoTest(CajaFuerteBase):
 
         self.traslado(500_000, sentido="saca", momento=self.momento(sabado, 12))
         self.assertEqual(self.consignable(turno), antes)
+
+
+class LaBaseEntroComoIngresoDeCajaTest(CajaFuerteBase):
+    """LA BASE PUEDE ENTRAR POR CUALQUIERA DE LOS TRES CAMINOS, y por poco se nos escapa.
+
+    El dueño confirmó que su fórmula del consignable es
+        ventas + ingresos de caja − egresos + diferencia de cierre + sobrante de apertura
+    o sea que los tres términos que no son venta se quedan. Lo que NO puede pasar
+    es que la base de la caja fuerte se cuele por alguno de ellos.
+
+    La primera versión de `_sobrante_explicado_por_la_base` comparaba solo contra
+    `diferencia_cierre + sobrante_consignable`. Con la base cargada como INGRESO
+    DE CAJA —que es como la registró la barista— no cancelaba nada y el sábado
+    seguía pidiendo $697.900. Ahora se compara contra los tres.
+
+    Las cifras son las de la pantalla real de Palmetto, sábado 15 de agosto.
+    """
+
+    def _sabado_ya_cerrado(self):
+        """El sábado tal como quedó en la base: la base entró como INGRESO y el
+        turno cerró sin que existiera ningún traslado.
+
+        El orden importa y es el real: primero cerró el turno, después nos
+        enteramos. Registrar el traslado ANTES de cerrar sería contarlo dos veces
+        —el ingreso ya está en el conteo y el traslado lo sumaría de nuevo al
+        esperado del cuadre—, y el sistema con razón pediría justificación. De
+        acá en adelante la base se carga COMO TRASLADO y no como ingreso; esta
+        función reproduce cómo se venía haciendo.
+        """
+        sabado = self.dia(-3)
+        turno = self.abrir(base_real=0, momento=self.momento(sabado, 8))
+        self.vender_efectivo(turno, 293_205)
+        self.ingreso(turno, 500_000, self.momento(sabado, 12),
+                     concepto="Base de la caja fuerte")
+        self.egreso(turno, 95_305, self.momento(sabado, 13))
+        self.cerrar(turno, contado=293_205 + 500_000 - 95_305,
+                    momento=self.momento(sabado, 21))
+        return turno, sabado
+
+    def test_sin_el_traslado_pide_los_697900_de_la_pantalla(self):
+        """El estado de HOY, para que se vea que el test mide el caso real."""
+        turno, _ = self._sabado_ya_cerrado()
+        self.assertEqual(self.consignable(turno), 697_900)
+
+    def test_con_el_traslado_pide_los_197900_que_pidio_el_dueno(self):
+        turno, sabado = self._sabado_ya_cerrado()
+        self.traslado(500_000, sentido="saca", momento=self.momento(sabado, 12),
+                      motivo="Para completar el pago a proveedores")
+        self.assertEqual(self.consignable(turno), 197_900)
+
+    def test_el_tope_no_deja_que_se_coma_la_venta(self):
+        """Un traslado más grande que lo que no es venta cancela solo eso.
+
+        Sin el tope, un traslado de $900.000 sobre un día con $500.000 que no son
+        venta se comería $400.000 de venta real y el sistema pediría consignar de
+        menos — el lado tranquilizador, que es el caro.
+        """
+        turno, sabado = self._sabado_ya_cerrado()
+        self.traslado(900_000, sentido="saca", momento=self.momento(sabado, 12))
+        # Cancela los $500.000 que no son venta y ni un peso de los $293.205.
+        self.assertEqual(self.consignable(turno), 293_205 - 95_305)
 
 
 class ElFantasmaNoVuelveAlDiaSiguienteTest(CajaFuerteBase):

@@ -448,9 +448,9 @@ class LaMismaCuentaParaTodosTest(CascadaBase):
     —que es exactamente el bug que se está cerrando— alguna de estas filas se
     tiene que caer.
 
-    En Palmetto el que presta es el SÁBADO y no el domingo, porque le queda saldo
-    y es más viejo. Vale la pena tenerlo escrito: el ejemplo del dueño hace pensar
-    que se descuenta «del día anterior», y no es así.
+    En Palmetto el que presta es el DOMINGO: es el día anterior al del hueco y
+    tiene saldo. El sábado queda intacto aunque también deba, porque su plata ya
+    está separada esperando el viaje al banco.
     """
 
     def setUp(self):
@@ -488,21 +488,24 @@ class LaMismaCuentaParaTodosTest(CascadaBase):
         self.assertTrue(any(f["saldo_pendiente"] > 0 and not f["cubrio"]
                             for f in filas.values()))
 
-    def test_la_cascada_cobra_del_mas_viejo_con_saldo_y_no_del_dia_anterior(self):
-        """EL RIESGO DE LECTURA de todo este cambio. En el caso del dueño paga el
-        domingo porque el sábado ya estaba consignado entero; acá el sábado todavía
-        tiene $200.000 y paga él, aunque el hueco sea del lunes.
+    def test_la_cascada_cobra_del_dia_anterior_y_no_del_mas_viejo(self):
+        """LA REGLA, con el escenario que el dueño corrigió.
 
-        Es la regla de siempre —plata que lleva más días sin ir al banco sale
-        primero— y el contrato pedía explícitamente no tocarla. Pero si el copy de
-        la pantalla dijera «se descuenta del día anterior», mentiría."""
+        El sábado todavía tiene $200.000 sin consignar y aun así NO paga: paga el
+        domingo. La plata con la que se tapó el hueco del lunes es la que estaba
+        en el cajón esa mañana, o sea la venta del día anterior. La del sábado ya
+        está separada esperando el banco.
+
+        La versión original cobraba al más viejo y por eso le pegaba al sábado.
+        Si el copy de la pantalla dijera «se descuenta del día anterior», ahora
+        dice la verdad."""
         filas = self.resumen(self.palmetto)
-        self.assertEqual(filas[self.sab.id]["cubrio_faltante"], 177_700)
-        self.assertEqual(filas[self.sab.id]["saldo_pendiente"], 22_300)
-        self.assertEqual(filas[self.dom.id]["cubrio_faltante"], 0)
-        self.assertEqual(filas[self.dom.id]["saldo_pendiente"], 400_000)
+        self.assertEqual(filas[self.dom.id]["cubrio_faltante"], 177_700)
+        self.assertEqual(filas[self.dom.id]["saldo_pendiente"], 222_300)
+        self.assertEqual(filas[self.sab.id]["cubrio_faltante"], 0)
+        self.assertEqual(filas[self.sab.id]["saldo_pendiente"], 200_000)
         self.assertEqual(self.cruces(filas[self.lun.id], "cubierto_por"),
-                         [(self.sab.id, 177_700)])
+                         [(self.dom.id, 177_700)])
 
     def test_lo_que_se_cobra_al_recoger_es_el_numero_de_la_pantalla(self):
         """El cierre del círculo: el dueño mira la fila, aprieta «Recogí $X» y el
@@ -569,6 +572,57 @@ class LaMismaCuentaParaTodosTest(CascadaBase):
                 self.assertEqual(todas[tid]["cubrio_faltante"], fila["cubrio_faltante"])
 
 
+class LaSemanaDePalmettoTest(CascadaBase):
+    """LA SEMANA REAL QUE HIZO CAMBIAR EL ORDEN, con las cifras de su pantalla.
+
+    El dueño la miró y dijo: «el lunes sin consignación, al domingo 16 hay que
+    quitarle $177.700». Y agregó el dato que rompía la versión anterior: el
+    sábado NO está consignado.
+
+    Con la cascada cobrando del más viejo, esos $177.700 salían del sábado —que
+    tenía saldo de sobra— y el domingo quedaba entero. Al revés de lo que pasó.
+
+    La plata con la que se tapó el hueco del lunes es la que estaba en el cajón
+    esa mañana: la venta del domingo. La del sábado ya estaba separada esperando
+    el viaje al banco.
+    """
+
+    def setUp(self):
+        super().setUp()
+        sab, dom, lun = self.dia(-3), self.dia(-2), self.dia(-1)
+        # Sábado: los $697.900 de su pantalla ya con la base descontada por el
+        # traslado, o sea los $197.900 que hay que bancar.
+        self.sab = self.jornada(sab, en_caja=0, venta=197_900)
+        self.dom = self.jornada(dom, en_caja=197_900, incluye=[self.sab],
+                                venta=334_400)
+        # Lunes: vendió $215.780 en efectivo y pagó $393.480 de la registradora.
+        self.lun = self.jornada(lun, en_caja=532_300, incluye=[self.sab, self.dom],
+                                venta=215_780, pagado=393_480)
+        self.filas = self.resumen(self.palmetto)
+
+    def test_el_lunes_queda_en_cero(self):
+        self.assertEqual(self.filas[self.lun.id]["esperado_consignar"], -177_700)
+        self.assertEqual(self.filas[self.lun.id]["saldo_pendiente"], 0)
+        self.assertEqual(self.filas[self.lun.id]["faltante_sin_cubrir"], 0)
+
+    def test_al_domingo_se_le_quitan_los_177700(self):
+        dom = self.filas[self.dom.id]
+        self.assertEqual(dom["esperado_consignar"], 334_400)
+        self.assertEqual(dom["cubrio_faltante"], 177_700)
+        self.assertEqual(dom["saldo_pendiente"], 156_700)
+        self.assertEqual(self.cruces(dom, "cubrio"), [(self.lun.id, 177_700)])
+
+    def test_el_sabado_queda_intacto_aunque_no_este_consignado(self):
+        """EL PUNTO DEL CAMBIO. Tiene saldo, es más viejo, y aun así no paga."""
+        sab = self.filas[self.sab.id]
+        self.assertEqual(sab["total_consignado"], 0)
+        self.assertEqual(sab["cubrio_faltante"], 0)
+        self.assertEqual(sab["saldo_pendiente"], 197_900)
+
+    def test_la_pantalla_y_la_imputacion_dicen_lo_mismo(self):
+        self.assert_pantalla_e_imputacion_coinciden()
+
+
 class ElRangoNoMueveLaPlataTest(CascadaBase):
     """EL FILTRO DECIDE QUÉ FILAS SE MUESTRAN, JAMÁS A QUIÉN SE LE COBRA.
 
@@ -577,11 +631,12 @@ class ElRangoNoMueveLaPlataTest(CascadaBase):
     contrato más fácil de romper «optimizando»: correrla sobre lo filtrado ahorra
     trabajo y parece inocente.
 
-    No lo es. En este escenario el que presta es el SÁBADO. Si la cascada se
-    acotara al filtro, mirando «domingo y lunes» el hueco se lo cobraría al
-    domingo —que quedaría en $222.300 en vez de $400.000— y mirando todo se lo
-    cobraría al sábado. El mismo día valdría dos cosas según por dónde se entró, y
-    ninguna de las dos coincidiría con lo que `recoger()` cobra de verdad.
+    No lo es. Acá el hueco del lunes es de $500.000 y no alcanza con un solo día:
+    se lleva los $400.000 del domingo y $100.000 del sábado. Si la cascada se
+    acotara al filtro, mirando «sábado y domingo» —sin el lunes a la vista— no
+    habría ningún hueco que cobrar y los dos días volverían a valer lo que
+    vendieron. El mismo día valdría dos cosas según por dónde se entró, y ninguna
+    de las dos coincidiría con lo que `recoger()` cobra de verdad.
     """
 
     def setUp(self):
@@ -593,18 +648,18 @@ class ElRangoNoMueveLaPlataTest(CascadaBase):
         self.dom = self.jornada(self.domingo, en_caja=200_000, incluye=[self.sab],
                                 venta=400_000)
         self.lun = self.jornada(self.lunes, en_caja=600_000, incluye=[self.sab, self.dom],
-                                venta=100_000, pagado=277_700)
-        # Sin filtro: el sábado paga los $177.700 y el domingo queda entero.
+                                venta=100_000, pagado=600_000)
+        # Sin filtro: el domingo pone sus $400.000 y el sábado completa $100.000.
         self.completo = self.resumen(self.palmetto)
 
-    def test_dejar_afuera_al_que_presto_no_le_cambia_el_saldo_al_que_quedo(self):
-        """El rango arranca el domingo: el sábado —que es el que pagó— no aparece.
-        El domingo tiene que seguir valiendo $400.000. Si valiera $222.300, la
-        cascada se estaría cobrando adentro del filtro."""
+    def test_dejar_afuera_a_uno_de_los_que_pago_no_mueve_al_otro(self):
+        """El rango arranca el domingo: el sábado —que puso $100.000— no aparece.
+        El domingo tiene que seguir en cero, con sus $400.000 puestos. Si volviera
+        a valer $400.000, la cascada se estaría cobrando adentro del filtro."""
         filtrado = self.resumen(self.palmetto, desde=self.domingo, hasta=self.lunes)
         self.assertNotIn(self.sab.id, filtrado)
-        self.assertEqual(filtrado[self.dom.id]["saldo_pendiente"], 400_000)
-        self.assertEqual(filtrado[self.dom.id]["cubrio_faltante"], 0)
+        self.assertEqual(filtrado[self.dom.id]["cubrio_faltante"], 400_000)
+        self.assertEqual(filtrado[self.dom.id]["saldo_pendiente"], 0)
 
     def test_el_cruce_sigue_apuntando_al_turno_que_quedo_fuera_del_rango(self):
         """Y el lunes sigue diciendo que el sábado le tapó el hueco, aunque el
@@ -613,18 +668,24 @@ class ElRangoNoMueveLaPlataTest(CascadaBase):
         con los días que sí tiene a mano."""
         filtrado = self.resumen(self.palmetto, desde=self.domingo, hasta=self.lunes)
         self.assertEqual(self.cruces(filtrado[self.lun.id], "cubierto_por"),
-                         [(self.sab.id, 177_700)])
+                         [(self.dom.id, 400_000), (self.sab.id, 100_000)])
 
     def test_dejar_afuera_al_que_debia_no_le_devuelve_la_plata_al_que_presto(self):
-        """El espejo: el rango termina el domingo y el lunes —el del hueco— no
-        aparece. El sábado tiene que seguir en $22.300, con su descuento puesto.
-        Si volviera a $200.000, el dueño vería plata que ya se gastó."""
+        """El espejo, y el caso que más discrimina: el rango termina el domingo y
+        el lunes —el del hueco— no aparece. Los dos tienen que seguir con su
+        descuento puesto. Si volvieran a $200.000 y $400.000, el dueño vería plata
+        que ya se gastó."""
         filtrado = self.resumen(self.palmetto, desde=self.sabado, hasta=self.domingo)
         self.assertNotIn(self.lun.id, filtrado)
-        self.assertEqual(filtrado[self.sab.id]["saldo_pendiente"], 22_300)
-        self.assertEqual(filtrado[self.sab.id]["cubrio_faltante"], 177_700)
+        self.assertEqual(filtrado[self.sab.id]["saldo_pendiente"], 100_000)
+        self.assertEqual(filtrado[self.dom.id]["saldo_pendiente"], 0)
+        self.assertEqual(filtrado[self.sab.id]["cubrio_faltante"], 100_000)
+        self.assertEqual(filtrado[self.dom.id]["cubrio_faltante"], 400_000)
+        # Y cada uno sigue diciendo a quién se lo tapó, aunque el lunes no esté.
         self.assertEqual(self.cruces(filtrado[self.sab.id], "cubrio"),
-                         [(self.lun.id, 177_700)])
+                         [(self.lun.id, 100_000)])
+        self.assertEqual(self.cruces(filtrado[self.dom.id], "cubrio"),
+                         [(self.lun.id, 400_000)])
 
     def test_un_solo_dia_en_pantalla_vale_lo_mismo_que_en_la_lista_entera(self):
         """El caso extremo, que es además el que el dueño usa: entra a mirar UN
@@ -648,10 +709,10 @@ class ElRangoNoMueveLaPlataTest(CascadaBase):
 class CascadaEnCadenaTest(CascadaBase):
     """UN HUECO QUE NO ALCANZA A TAPARSE CON UN SOLO DÍA.
 
-    Tres días sin consignar y un cuarto que cierra $120.000 en contra. El más
-    viejo aporta todo lo que tiene y el siguiente pone SOLO lo que falta — no todo
-    lo suyo, que es el error clásico de una cascada mal escrita (vaciar el segundo
-    turno también deja al dueño con dos días en cero y plata en el cajón que nadie
+    Tres días sin consignar y un cuarto que cierra $120.000 en contra. El día
+    ANTERIOR aporta todo lo que tiene y el de más atrás pone SOLO lo que falta —
+    no todo lo suyo, que es el error clásico de una cascada mal escrita (vaciar
+    los dos deja al dueño con dos días en cero y plata en el cajón que nadie
     reclama).
 
     El escenario cierra contra el cajón físico: al final quedan $30.000 adentro y
@@ -667,22 +728,22 @@ class CascadaEnCadenaTest(CascadaBase):
                                  venta=30_000, pagado=150_000)
         self.filas = self.resumen(self.palmetto)
 
-    def test_el_mas_viejo_se_vacia_primero(self):
-        """MÁS VIEJO PRIMERO, y no se toca: es la plata que lleva más días sin ir
-        al banco. El orden no es un detalle de implementación — decide qué día del
-        calendario aparece con el descuento."""
-        uno = self.filas[self.uno.id]
-        self.assertEqual(uno["esperado_consignar"], 100_000)
-        self.assertEqual(uno["cubrio_faltante"], 100_000)
-        self.assertEqual(uno["saldo_pendiente"], 0)
-
-    def test_el_segundo_pone_solo_lo_que_falta(self):
-        """$20.000 de los $50.000 que tenía. Vaciarlo entero sería cobrar $30.000
-        de más a un día que no los debe."""
+    def test_el_anterior_se_vacia_primero(self):
+        """EL DÍA ANTERIOR PRIMERO: es la plata que estaba en el cajón cuando se
+        hizo el hueco. El orden no es un detalle de implementación — decide qué
+        día del calendario aparece con el descuento."""
         dos = self.filas[self.dos.id]
         self.assertEqual(dos["esperado_consignar"], 50_000)
-        self.assertEqual(dos["cubrio_faltante"], 20_000)
-        self.assertEqual(dos["saldo_pendiente"], 30_000)
+        self.assertEqual(dos["cubrio_faltante"], 50_000)
+        self.assertEqual(dos["saldo_pendiente"], 0)
+
+    def test_el_de_mas_atras_pone_solo_lo_que_falta(self):
+        """$70.000 de los $100.000 que tenía. Vaciarlo entero sería cobrar
+        $30.000 de más a un día que no los debe."""
+        uno = self.filas[self.uno.id]
+        self.assertEqual(uno["esperado_consignar"], 100_000)
+        self.assertEqual(uno["cubrio_faltante"], 70_000)
+        self.assertEqual(uno["saldo_pendiente"], 30_000)
 
     def test_el_dia_del_hueco_lista_a_sus_dos_acreedores_en_orden(self):
         """La explicación completa, en el orden en que se cobró. Con una sola línea
@@ -692,7 +753,7 @@ class CascadaEnCadenaTest(CascadaBase):
         self.assertEqual(tres["esperado_consignar"], -120_000)
         self.assertEqual(tres["saldo_pendiente"], 0)
         self.assertEqual(self.cruces(tres, "cubierto_por"),
-                         [(self.uno.id, 100_000), (self.dos.id, 20_000)])
+                         [(self.dos.id, 50_000), (self.uno.id, 70_000)])
         self.assertEqual(tres["faltante_sin_cubrir"], 0)
 
     def test_lo_que_queda_por_bancar_es_lo_que_quedo_en_el_cajon(self):
@@ -971,22 +1032,25 @@ class TurnoSaldadoNoPrestaTest(CascadaBase):
         sigue en el cajón. Presta ese resto y ni un peso más — lo demás ya está en
         el banco y no se puede gastar dos veces."""
         d1, d2, d3 = self.dia(-3), self.dia(-2), self.dia(-1)
+        # El PARCIAL es el día anterior al del hueco: es el que la cascada toca
+        # primero, así que es donde el tope tiene que probarse.
         uno = self.jornada(d1, en_caja=0, venta=100_000)
-        self.consignar(uno, 60_000, self.momento(d2, 7))
-        dos = self.jornada(d2, en_caja=40_000, incluye=[uno], venta=200_000)
-        tres = self.jornada(d3, en_caja=240_000, incluye=[uno, dos],
+        dos = self.jornada(d2, en_caja=100_000, incluye=[uno], venta=200_000)
+        self.consignar(dos, 160_000, self.momento(d3, 7))
+        tres = self.jornada(d3, en_caja=140_000, incluye=[uno, dos],
                             venta=20_000, pagado=70_000)
 
         filas = self.resumen(self.palmetto)
-        self.assertEqual(filas[uno.id]["esperado_consignar"], 100_000)
-        self.assertEqual(filas[uno.id]["total_consignado"], 60_000)
-        self.assertEqual(filas[uno.id]["cubrio_faltante"], 40_000)   # lo que quedaba
-        self.assertEqual(filas[uno.id]["saldo_pendiente"], 0)
-        self.assertEqual(filas[dos.id]["cubrio_faltante"], 10_000)   # el resto
-        self.assertEqual(filas[dos.id]["saldo_pendiente"], 190_000)
+        self.assertEqual(filas[dos.id]["esperado_consignar"], 200_000)
+        self.assertEqual(filas[dos.id]["total_consignado"], 160_000)
+        self.assertEqual(filas[dos.id]["cubrio_faltante"], 40_000)   # lo que quedaba
+        self.assertEqual(filas[dos.id]["saldo_pendiente"], 0)
+        self.assertEqual(filas[uno.id]["cubrio_faltante"], 10_000)   # el resto
+        self.assertEqual(filas[uno.id]["saldo_pendiente"], 90_000)
         self.assertEqual(self.cruces(filas[tres.id], "cubierto_por"),
-                         [(uno.id, 40_000), (dos.id, 10_000)])
-        self.assertEqual(tres.efectivo_final_real, 190_000)
+                         [(dos.id, 40_000), (uno.id, 10_000)])
+        # El cajón lo confirma: 100.000 + 200.000 − 160.000 + 20.000 − 70.000.
+        self.assertEqual(tres.efectivo_final_real, 90_000)
         self.assert_pantalla_e_imputacion_coinciden()
 
 

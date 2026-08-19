@@ -67,6 +67,13 @@ interface DiaAgrupado {
   total_ingresos_mov: number
   total_egresos: number
   diferencia_cierre: number
+  /** Los sumandos que NO son venta del día, a la vista. `sobrante_apertura` era
+   *  el único de los cinco términos de la fórmula que no se exponía en ninguna
+   *  parte, así que un día que pedía más de lo vendido no tenía cómo explicarse.
+   *  Opcionales por si el backend todavía no los manda (deploy a medias). */
+  sobrante_apertura?: number
+  base_prestada?: number
+  en_cajon_no_es_venta?: number
   esperado_consignar: number
   total_consignado: number
   // NO hay `diferencia` acá a propósito. La había —`consignado − esperado`— y
@@ -988,10 +995,36 @@ export default function ConsignacionesAdmin() {
                       </div>
                     )}
 
+                    {/* EL SOBRANTE DE APERTURA, que hasta acá no se veía en
+                        ninguna parte. La fórmula suma cinco términos y este era
+                        el único invisible: un martes que pedía $416.800 con
+                        $260.115 de venta no tenía cómo explicarse. */}
+                    {(dia.sobrante_apertura ?? 0) !== 0 && (
+                      <div className="flex justify-between text-amber-700">
+                        <span className="text-xs pl-3">+ Sobrante de la apertura</span>
+                        <span className="text-xs font-semibold">{fmt(dia.sobrante_apertura ?? 0)}</span>
+                      </div>
+                    )}
+                    {(dia.base_prestada ?? 0) !== 0 && (
+                      <div className="flex justify-between text-amber-700">
+                        <span className="text-xs pl-3">− Base de la caja fuerte (no se consigna)</span>
+                        <span className="text-xs font-semibold">−{fmt(dia.base_prestada ?? 0)}</span>
+                      </div>
+                    )}
+
                     <div className="border-t border-gray-200 pt-2 flex justify-between font-bold">
                       <span className="text-gray-700">Debe consignarse</span>
                       <span className="text-blue-700">{fmt(dia.esperado_consignar)}</span>
                     </div>
+
+                    {/* La respuesta a la pregunta que aparece al leer el total:
+                        «¿y por qué pide más de lo que vendí?». Si es cero, no
+                        ocupa lugar. */}
+                    {(dia.en_cajon_no_es_venta ?? 0) !== 0 && (
+                      <div className="text-[11px] text-gray-500 pl-3">
+                        De eso, {fmt(dia.en_cajon_no_es_venta ?? 0)} no son venta de este día
+                      </div>
+                    )}
 
                     {/* La cascada, renglón por renglón. Va DEBAJO del esperado
                         crudo y no en lugar de él: el dueño tiene que poder seguir

@@ -115,7 +115,8 @@ def _prestado_hasta(pre: dict, hasta: datetime | None) -> float:
     return round(pre["prestamo_saca"][k] - pre["prestamo_devuelve"][k], 2)
 
 
-def _sobrante_explicado_por_la_base(db: Session, t, prestado: float | None = None) -> float:
+def _sobrante_explicado_por_la_base(db: Session, t, prestado: float | None = None,
+                                    ingresos: float = 0.0) -> float:
     """Cuánto del sobrante YA CONGELADO de un turno lo explica la base prestada.
 
     `diferencia_cierre` y `sobrante_consignable` se escriben AL CERRAR y quedan
@@ -126,10 +127,18 @@ def _sobrante_explicado_por_la_base(db: Session, t, prestado: float | None = Non
     pidiendo $697.900 — o sea, el arreglo serviría para los sábados que vienen y
     no para el que el dueño necesita.
 
+    SE COMPARA CONTRA LOS TRES TÉRMINOS QUE NO SON VENTA, no contra dos. La
+    primera versión miraba solo `diferencia_cierre + sobrante_consignable`, y con
+    eso el sábado de Palmetto seguía pidiendo $697.900: la base había entrado como
+    un INGRESO DE CAJA, que la fórmula suma y esta función no miraba. La plata que
+    entra de la caja fuerte puede aparecer por cualquiera de los tres caminos
+    según cómo la haya cargado la barista, así que se compara contra la suma.
+
     LOS DOS TOPES SON EL DISEÑO, y son lo que hace que esto no reste dos veces:
 
-      · solo cancela sobrante, nunca faltante (`extra <= 0` devuelve 0). Un
-        faltante no lo explica una base que entró;
+      · solo cancela lo que NO es venta y es positivo (`extra <= 0` devuelve 0).
+        Un faltante no lo explica una base que entró, y la venta del día nunca se
+        toca: el tope la deja siempre afuera;
       · nunca cancela más de lo que había prestado al cierre.
 
     De ahí sale que se regule solo: un turno que cierra CON el préstamo ya
@@ -147,7 +156,9 @@ def _sobrante_explicado_por_la_base(db: Session, t, prestado: float | None = Non
     """
     from app.services.caja import prestado_caja_fuerte   # local: evita el ciclo
 
-    extra = float(t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0)
+    extra = (float(ingresos or 0)
+             + float(t.diferencia_cierre or 0)
+             + float(t.sobrante_consignable or 0))
     if extra <= 0 or t.fecha_cierre is None:
         return 0.0
     if prestado is None:
@@ -203,8 +214,17 @@ def _aplicar_cascada(saldos: list[dict]) -> None:
     cascada es lo que hace que el lunes quede en cero y el domingo pida $177.700
     menos, o sea que el sistema diga lo mismo que pasó físicamente.
 
-    MÁS VIEJO PRIMERO, y no se toca: es plata que lleva más días sin ir al banco.
-    Cambiar el orden movería números de toda la historia.
+    MÁS NUEVO PRIMERO, y el orden importa tanto como la aritmética. La versión
+    original cobraba del turno más VIEJO con saldo, y el dueño lo corrigió con la
+    semana en la mano: el lunes 17 la sede tenía el sábado 15 sin consignar y el
+    domingo 16 también, y la plata con la que se tapó el hueco fue la del DOMINGO.
+    No es una preferencia contable: es lo que pasó físicamente. La plata que hay
+    en el cajón un lunes a la mañana es la venta del día anterior; la del sábado
+    ya está separada esperando el viaje al banco.
+
+    Cobrarle al más viejo tenía además un efecto perverso: iba comiendo justo la
+    plata que lleva más días sin ir al banco, o sea que un día en contra podía
+    hacer «desaparecer» una deuda vieja en vez de la que de verdad se usó.
 
     LO QUE ESTE PASO AGREGA ES LA PROCEDENCIA. Antes solo mutaba `saldo`: el
     domingo bajaba $177.700 y no había forma de decir por qué. Un número que baja
@@ -227,7 +247,9 @@ def _aplicar_cascada(saldos: list[dict]) -> None:
         deficit = -saldos[i]["saldo"]
         saldos[i]["saldo"] = 0.0
         nuevo = saldos[i]["turno"]
-        for j in range(i):
+        # De i-1 hacia atrás: el ANTERIOR primero, y solo si no alcanza se sigue
+        # hacia los más viejos. Recorrer `range(i)` cobraba al revés.
+        for j in range(i - 1, -1, -1):
             if deficit <= 0:
                 break
             take = min(saldos[j]["saldo"], deficit)
@@ -304,7 +326,8 @@ def _saldos_consignacion(db: Session, tienda_id: int, pre: dict | None = None) -
             # define cuánta plata había que bancar ese día, recién ahí se decide
             # quién le presta a quién. Invertirlo haría que un día cubriera un
             # hueco con plata que después resulta que no era suya.
-            _sobrante_explicado_por_la_base(db, t, _prestado_hasta(pre, t.fecha_cierre)),
+            _sobrante_explicado_por_la_base(db, t, _prestado_hasta(pre, t.fecha_cierre),
+                                            ingresos),
         )
         consignado = sum(c.valor for c in _consigs_del_turno(db, t, pre))
         saldos.append({
@@ -468,6 +491,12 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
         s = cascada[t.id]
         esperado = s["esperado"]
         diferencia = total_consignado - esperado
+        # Lo que el traslado de la caja fuerte ya canceló de este turno. Se
+        # recalcula con la misma función y la misma precarga que usó `_saldos_
+        # consignacion`: dos formas de obtener el mismo número se desincronizan
+        # en el primer caso raro, y este va a la pantalla al lado del esperado.
+        base_prestada = _sobrante_explicado_por_la_base(
+            db, t, _prestado_hasta(pre, t.fecha_cierre), total_ingresos_mov)
 
         result.append({
             "turno_id": t.id,
@@ -481,6 +510,21 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
             "total_egresos": total_egresos,
             "total_ingresos_mov": total_ingresos_mov,
             "diferencia_cierre": round(float(t.diferencia_cierre or 0), 2),
+            # ── LO QUE NO ES VENTA, desglosado ────────────────────────────────
+            # La fórmula del consignable suma cinco términos y hasta acá SOLO SE
+            # PODÍAN VER CUATRO: `sobrante_consignable` no se exponía en ninguna
+            # parte. El dueño miraba un martes que pedía $416.800 con $260.115 de
+            # venta y no tenía cómo averiguar de dónde salían los $156.685 de
+            # diferencia — ni abriendo la fila. Un número que no se puede auditar
+            # es un número al que no se le puede creer.
+            #
+            # Ninguno de estos campos cambia la cuenta: son los sumandos que ya
+            # estaban adentro, puestos a la vista.
+            "sobrante_apertura": round(float(t.sobrante_consignable or 0), 2),
+            "base_prestada": round(base_prestada, 2),
+            "en_cajon_no_es_venta": round(
+                total_ingresos_mov + float(t.diferencia_cierre or 0)
+                + float(t.sobrante_consignable or 0) - base_prestada, 2),
             # La cuenta CRUDA del día, sin cascada: lo que ese turno generó y
             # tendría que haber ido al banco si nadie le hubiera sacado nada.
             "esperado_consignar": round(esperado, 2),

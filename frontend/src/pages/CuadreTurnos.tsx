@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
+import { useDato } from '../api/useDato'
+import { SegunDato, NoSeSabe } from '../components/ui'
+import PanelCajaFuerte from '../components/caja/PanelCajaFuerte'
 import { conMiles, soloDigitos } from '../utils/plata'
 import {
   ArrowLeft, Camera, TrendingDown, TrendingUp, Users,
@@ -498,6 +501,20 @@ interface DesgloseCuadre {
   ingresos: number
   egresos: number
   caja_fuerte: number
+  /**
+   * Lo que estaba PRESTADO de la caja fuerte al cajón en el momento del cuadre.
+   *
+   * Es el término que le faltaba al esperado: base + ventas + ingresos − egresos
+   * + prestado. Sin él, la plata de la base se leía como sobrante y se mandaba a
+   * consignar (el sábado 15 de agosto, $500.000 de más).
+   *
+   * OPCIONAL A PROPÓSITO, y no para poder escribir un `?? 0`: si el frontend
+   * llega a producción antes que el campo, `undefined` dibuja NADA —lo mismo que
+   * dibuja un cero— y el saldo verdadero sigue estando arriba, en el panel de la
+   * caja fuerte, que sí lo pide a su propio endpoint. Un `?? 0` en cambio
+   * afirmaría «no había nada prestado», que es la mentira que estamos matando.
+   */
+  prestado_caja_fuerte?: number
   efectivo_esperado: number
   efectivo_real: number
   diferencia_efectivo: number
@@ -547,6 +564,14 @@ function CuadreDesglose({ entregaId }: { entregaId: number }) {
       {line('+ Ventas en efectivo', fmt(d.ventas_efectivo), 'oklch(35% 0.13 145)')}
       {d.ingresos > 0 && line('+ Otros ingresos', fmt(d.ingresos), 'oklch(35% 0.13 145)')}
       {line('− Salidas de efectivo', `−${fmt(d.egresos)}`, 'oklch(42% 0.18 30)')}
+      {/* EL TÉRMINO QUE FALTABA, escrito en la cascada y no como una nota al pie:
+          el dueño tiene que poder seguir el renglón hasta el total. Se dibuja
+          solo cuando hay algo prestado —el día normal es cero y no puede volverse
+          más ruidoso— y el `typeof` es lo que impide que un backend viejo (sin el
+          campo) pinte un «$NaN» donde va plata. */}
+      {typeof d.prestado_caja_fuerte === 'number' && Math.round(d.prestado_caja_fuerte) !== 0
+        && line('+ Prestado de la caja fuerte', fmt(d.prestado_caja_fuerte),
+          d.prestado_caja_fuerte < 0 ? 'oklch(42% 0.18 30)' : 'oklch(48% 0.12 65)')}
       {salidas.length > 0 && (
         <div style={{ margin: '2px 0 4px', paddingLeft: 12, borderLeft: '2px solid oklch(92% 0.008 75)' }}>
           {salidas.map((m, i) => (
@@ -568,7 +593,11 @@ function CuadreDesglose({ entregaId }: { entregaId: number }) {
         Math.round(d.diferencia_efectivo) === 0 ? 'oklch(35% 0.13 145)' : 'oklch(42% 0.18 30)', true)}
       {d.caja_fuerte > 0 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, paddingTop: 6, borderTop: '1px dashed oklch(92% 0.008 75)' }}>
-          <span style={{ fontSize: 11.5, color: 'oklch(55% 0.01 60)' }}>Caja fuerte (aparte, no cuenta)</span>
+          {/* Ya no dice «no cuenta» a secas: desde que existe el renglón de
+              «prestado de la caja fuerte», una parte de esta reserva SÍ puede
+              estar adentro del cajón y contarse. Esta cifra es lo declarado al
+              abrir, que es otra cosa. */}
+          <span style={{ fontSize: 11.5, color: 'oklch(55% 0.01 60)' }}>Caja fuerte declarada al abrir (aparte)</span>
           <span style={{ fontSize: 12, fontWeight: 600, color: 'oklch(45% 0.01 60)', fontVariantNumeric: 'tabular-nums' }}>{fmt(d.caja_fuerte)}</span>
         </div>
       )}
@@ -920,7 +949,16 @@ export default function CuadreTurnos() {
 
   // Una sola pantalla: la línea de tiempo de turnos + rango de fechas + panel
   // colapsable de desempeño por barista. (Antes: dos niveles de pestañas confusos.)
-  const [sedes, setSedes] = useState<Sede[]>([])
+  // EL CATÁLOGO DE SEDES ES UN `Dato`, NO UN `Sede[]`. El molde viejo era
+  // `.catch(() => {})` sobre un `useState<Sede[]>([])`, y con eso «todavía no
+  // llegó», «no hay sedes» y «no volvió» eran el mismo `[]`: el selector de sede
+  // desaparecía sin decir nada y el admin se quedaba mirando UNA sede sin saber
+  // que había otra. Migrado porque la fila de la caja fuerte come de esta misma
+  // lista — el resto de la pantalla sigue con su molde, que es otro encargo.
+  const sedes = useDato<Sede[]>(
+    () => api.get('/auth/tiendas'), 'las sedes',
+    'No se pudo leer la lista de sedes.', [])
+  const listaSedes = sedes.dato.estado === 'listo' ? sedes.dato.valor : null
   const [histTiendaId, setHistTiendaId] = useState<number>(tiendaId)
   const [desde, setDesde] = useState(firstOfMonth)
   const [hasta, setHasta]  = useState(today)
@@ -936,14 +974,18 @@ export default function CuadreTurnos() {
       .finally(() => setLoading(false))
   }, [histTiendaId])
 
+  // El default salta a la PRIMERA sede cuando llega el catálogo, y UNA SOLA VEZ.
+  // Sin el flag, cada `sedes.recargar()` —el «Reintentar» del hueco de abajo, o
+  // el que dispara guardar un traslado— le pisaría al admin la sede que acaba de
+  // elegir con el selector, y el saldo de la caja fuerte que está mirando se le
+  // cambiaría abajo del dedo.
+  const yaSaltoALaPrimera = useRef(false)
   useEffect(() => {
-    if (isAdmin) {
-      api.get('/auth/tiendas').then(({ data }) => {
-        setSedes(data)
-        if (data.length > 0) setHistTiendaId(data[0].id)
-      }).catch(() => {})
+    if (!yaSaltoALaPrimera.current && isAdmin && listaSedes && listaSedes.length > 0) {
+      yaSaltoALaPrimera.current = true
+      setHistTiendaId(listaSedes[0].id)
     }
-  }, [isAdmin])
+  }, [isAdmin, listaSedes])
 
   // Turno abierto de un día anterior = huérfano (quedó sin cuadre de salida).
   const esDiaAnterior = (iso: string) => {
@@ -1036,17 +1078,31 @@ export default function CuadreTurnos() {
           <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'oklch(22% 0.02 60)', flex: 1 }}>Cuadres de turno</p>
         </div>
 
-        {/* Sede selector (admin) */}
-        {isAdmin && sedes.length > 1 && (
-          <div style={{ display: 'flex', gap: 6, marginTop: 10, maxWidth: 1100, margin: '10px auto 0', flexWrap: 'wrap' }}>
-            {sedes.map(s => (
-              <button key={s.id} onClick={() => setHistTiendaId(s.id)}
-                style={histTiendaId === s.id
-                  ? { ...btnBase, background: 'oklch(52% 0.14 50)', color: '#fff', padding: '4px 12px', fontSize: 11 }
-                  : { ...btnBase, background: 'oklch(96% 0.005 75)', color: 'oklch(50% 0.01 60)', padding: '4px 12px', fontSize: 11 }}>
-                {s.nombre}
-              </button>
-            ))}
+        {/* Sede selector (admin) — «no volvió» ya no se dibuja como «hay una sola
+            sede». Con el molde viejo esta fila se evaporaba con el fetch caído y
+            el admin miraba Vida creyendo que era todo lo que había. */}
+        {isAdmin && (
+          <div style={{ maxWidth: 1100, margin: '10px auto 0' }}>
+            <SegunDato
+              dato={sedes.dato}
+              cargando={null}
+              falla={m => (
+                <NoSeSabe onReintentar={sedes.recargar}
+                  mensaje={`${m} — no se puede cambiar de sede, así que lo de abajo es de una sola.`} />
+              )}
+              listo={lista => lista.length > 1 ? (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {lista.map(s => (
+                    <button key={s.id} onClick={() => setHistTiendaId(s.id)}
+                      style={histTiendaId === s.id
+                        ? { ...btnBase, background: 'oklch(52% 0.14 50)', color: '#fff', padding: '4px 12px', fontSize: 11 }
+                        : { ...btnBase, background: 'oklch(96% 0.005 75)', color: 'oklch(50% 0.01 60)', padding: '4px 12px', fontSize: 11 }}>
+                      {s.nombre}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            />
           </div>
         )}
 
@@ -1072,6 +1128,23 @@ export default function CuadreTurnos() {
 
       {/* Content: UNA pantalla — línea de tiempo de turnos + desempeño colapsable */}
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: '12px 16px 32px' }}>
+
+        {/* ── La caja fuerte de la sede ─────────────────────────────────────────
+            Va ARRIBA de los turnos y no al final: si hay plata de la base adentro
+            del cajón, ese renglón es la explicación de todos los números que
+            siguen. Solo para admin — los tres endpoints son `require_admin`.
+
+            Un traslado cambia el efectivo que el cuadre espera, así que guardar
+            repide la lista de turnos: sin eso, los cuadres de abajo siguen
+            mostrando el esperado viejo hasta que alguien recargue la página. */}
+        {isAdmin && (
+          <PanelCajaFuerte tiendaId={histTiendaId} sedes={sedes}
+            onGuardado={() => {
+              api.get(`/caja/historial/${histTiendaId}`)
+                .then(r => setTurnos(r.data)).catch(() => null)
+            }} />
+        )}
+
         {loading ? (
           <p style={{ textAlign: 'center', color: 'oklch(60% 0.01 60)', fontSize: 13, marginTop: 40 }}>Cargando...</p>
         ) : visibles.length === 0 ? (

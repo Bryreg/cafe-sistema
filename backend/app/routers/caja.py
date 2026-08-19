@@ -1,13 +1,21 @@
 import json
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+import math
+from datetime import date, datetime, timezone
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Query, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.deps import ensure_tienda_access, ensure_turno_access, get_current_user, get_barista_actor, require_admin
-from app.models.models import Usuario, CajaTurno, TurnoBarista, EntregaTurno
-from app.schemas.caja import AbrirCajaRequest, AjustarAperturaRequest, CerrarAdministrativoRequest, CerrarCajaRequest, MovimientoCajaRequest, TurnoOut, EntregaTurnoOut, FlujoCajaOut, TurnoHistorialItem
+from app.core.tz import dia_col, hoy_col
+from app.models.models import Usuario, CajaTurno, Tienda, TurnoBarista, EntregaTurno
+from app.schemas.caja import AbrirCajaRequest, AjustarAperturaRequest, CerrarAdministrativoRequest, CerrarCajaRequest, MovimientoCajaRequest, PrestamoCajaFuerteCreate, TurnoOut, EntregaTurnoOut, FlujoCajaOut, TurnoHistorialItem
 from app.services import caja as svc
 from app.core.storage import upload_imagen
 from typing import List, Optional
+
+# Tope del monto de un traslado. No es una regla inventada: la base de una sede es
+# de $500.000 y el techo deja tres ceros de margen. Más que eso en efectivo saliendo
+# de la caja fuerte de una cafetería es un cero de más tecleado, no una emergencia.
+MONTO_TRASLADO_MAX = 1e8
 
 router = APIRouter(prefix="/caja", tags=["caja"])
 
@@ -34,6 +42,105 @@ def efectivo_inicio(tienda_id: int, db: Session = Depends(get_db)):
     """Efectivo de inicio esperado (lo que dejó el último cierre, menos consignado).
     Lectura pública para que el kiosco lo muestre al abrir el turno (cuadre unificado)."""
     return svc.get_efectivo_inicio_esperado(db, tienda_id)
+
+# ── Traslados entre la caja fuerte y el cajón ───────────────────────────────
+#
+# Cada sede guarda $500.000 fijos en la caja fuerte y los saca al cajón cuando los
+# pagos a proveedores en efectivo se comen la venta en efectivo del día. Esa plata
+# está en la registradora y no es de nadie: está PRESTADA. Registrarlo es lo que
+# hace que el cuadre dé exacto y que el consignable no reclame la base de la sede
+# (Palmetto, 15-ago: pedía $697.900 donde iban $197.900).
+#
+# TODAS `require_admin`: mover la base es decisión del dueño, no de la barista.
+#
+# Las validaciones van ACÁ y no en el schema. El `detail` de un 422 de pydantic es
+# una LISTA de errores y el cliente solo sabe renderizar strings, así que una regla
+# violada le llegaba al dueño como "Reintenta" en vez del motivo. Con
+# HTTPException(400, "...") el mensaje viaja tal cual y él sabe qué corregir.
+#
+# Declaradas ANTES de las rutas `/{turno_id}/...` a propósito: si una ruta con un
+# path param entero llegara a matchear primero, "prestamos-caja-fuerte" fallaría la
+# validación del int y devolvería un 422 en vez de caer en el handler correcto.
+
+
+def _normalizar_fecha_traslado(fecha: datetime | None) -> datetime | None:
+    """La fecha del traslado, en la convención del repo: UTC-naive.
+
+    Pydantic parsea "2026-08-15T14:30:00-05:00" como datetime CON zona, y guardar
+    eso en una columna que todo el resto del sistema lee como UTC-naive rompe
+    cualquier comparación posterior (`fecha <= hasta` empieza a tirar TypeError
+    entre aware y naive, justo adentro del cálculo del saldo). Se convierte a UTC
+    y se le saca la zona; una fecha sin zona ya viene en la convención y pasa igual.
+    """
+    if fecha is None:
+        return None
+    if fecha.tzinfo is not None:
+        return fecha.astimezone(timezone.utc).replace(tzinfo=None)
+    return fecha
+
+
+@router.post("/prestamos-caja-fuerte", status_code=201)
+def registrar_prestamo_caja_fuerte(
+    data: PrestamoCajaFuerteCreate,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(require_admin),
+):
+    """Registra que la base de la caja fuerte salió al cajón, o que volvió."""
+    sentido = (data.sentido or "").strip().lower()
+    if sentido not in svc.SENTIDOS_PRESTAMO:
+        raise HTTPException(400, "El traslado tiene que decir si la base 'saca' de la caja "
+                                 "fuerte o si se 'devuelve' a ella.")
+    if not math.isfinite(data.monto):
+        raise HTTPException(400, "El monto del traslado debe ser un número válido.")
+    if data.monto <= 0:
+        raise HTTPException(400, "El monto del traslado va en positivo: el sentido dice si "
+                                 "sale o vuelve.")
+    if data.monto > MONTO_TRASLADO_MAX:
+        raise HTTPException(400, "El monto del traslado es demasiado grande.")
+    if data.motivo is not None and len(data.motivo) > 200:
+        raise HTTPException(400, "El motivo del traslado no puede pasar de 200 caracteres.")
+
+    fecha = _normalizar_fecha_traslado(data.fecha)
+    # Contra hoy_col() y no contra datetime.utcnow(): el servidor corre en UTC y en
+    # Colombia son 5 horas menos, así que entre las 19:00 y la medianoche local un
+    # traslado de ESTA tarde ya cae en el "mañana" de UTC y sería rechazado.
+    if fecha is not None and dia_col(fecha) > hoy_col():
+        raise HTTPException(400, "No podés registrar un traslado de un día que todavía no llegó.")
+
+    tienda = db.query(Tienda).filter(Tienda.id == data.tienda_id).first()
+    if tienda is None:
+        raise HTTPException(400, "Esa sede no existe.")
+    if not tienda.activa:
+        raise HTTPException(400, "Esa sede está inactiva.")
+    ensure_tienda_access(user, data.tienda_id)
+
+    return svc.registrar_prestamo_caja_fuerte(db, data.tienda_id, sentido, data.monto,
+                                              user.id, fecha=fecha, motivo=data.motivo)
+
+
+@router.get("/prestamos-caja-fuerte")
+def listar_prestamos_caja_fuerte(
+    tienda_id: int = Query(..., ge=1),
+    desde: date | None = Query(None),
+    hasta: date | None = Query(None),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(require_admin),
+):
+    """Los traslados de una sede en un rango + cuánto de la base sigue en el cajón.
+
+    El saldo que vuelve es el VIGENTE de la sede, no la suma del rango listado."""
+    ensure_tienda_access(user, tienda_id)
+    if desde is not None and hasta is not None and desde > hasta:
+        raise HTTPException(400, "El rango de fechas está al revés: 'desde' es posterior a 'hasta'.")
+    return svc.listar_prestamos_caja_fuerte(db, tienda_id, desde=desde, hasta=hasta)
+
+
+@router.delete("/prestamos-caja-fuerte/{prestamo_id}")
+def eliminar_prestamo_caja_fuerte(prestamo_id: int, db: Session = Depends(get_db),
+                                  user: Usuario = Depends(require_admin)):
+    """Revierte un traslado cargado por error. No recalcula cuadres ya firmados."""
+    return svc.eliminar_prestamo_caja_fuerte(db, prestamo_id, user.id)
+
 
 @router.get("/{turno_id}/flujo", response_model=FlujoCajaOut)
 def get_flujo(turno_id: int, db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):

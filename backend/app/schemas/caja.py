@@ -20,6 +20,25 @@ class AjustarAperturaRequest(BaseModel):
     motivo: Optional[str] = None
 
 
+class PrestamoCajaFuerteCreate(BaseModel):
+    """«Saqué la base de la caja fuerte» / «la volví a guardar».
+
+    A PROPÓSITO SIN `Field(gt=0)`, `max_length` NI VALIDATORS. Todas las reglas se
+    validan en el handler y vuelven como HTTPException(400, "<mensaje en
+    castellano>"). Razón dura ya pagada en este repo: el `detail` de un 422 de
+    pydantic es una LISTA de errores y el cliente solo sabe renderizar strings, así
+    que el dueño veía "Reintenta" en vez de "El monto del traslado va en positivo".
+    Este schema solo se ocupa de la FORMA; el PORQUÉ está en routers/caja.py.
+    """
+    tienda_id: int
+    sentido: str                          # 'saca' (caja fuerte → cajón) | 'devuelve'
+    monto: float                          # SIEMPRE positivo; el signo lo pone el sentido
+    motivo: Optional[str] = None
+    # Momento del traslado. Ausente = ahora. Se acepta con o sin zona horaria: el
+    # handler la normaliza a UTC-naive, que es como guarda fechas todo el repo.
+    fecha: Optional[datetime] = None
+
+
 class CerrarCajaRequest(BaseModel):
     efectivo_final_real: float          # total contado en caja (base + ventas efectivo)
     datafono_real: Optional[float] = None  # total datáfono Bold
@@ -85,6 +104,10 @@ class TurnoOut(BaseModel):
     ingresos_movimientos: float = 0.0
     egresos_movimientos: float = 0.0
     efectivo_esperado_actual: float = 0.0
+    # Saldo VIGENTE de la base de la caja fuerte que está en el cajón. Ya viene
+    # sumado dentro de efectivo_esperado_actual; viaja aparte para que la pantalla
+    # pueda explicar el número en vez de rotularlo.
+    prestado_caja_fuerte: float = 0.0
     efectivo_final_real: Optional[float]
     datafono_real: Optional[float]
     diferencia_cierre: Optional[float]
@@ -159,6 +182,9 @@ class FlujoCajaOut(BaseModel):
     ventas_tarjeta: float
     movimientos: List[MovimientoFlujoItem]
     consignaciones: List[ConsignacionFlujoItem]
+    # Lo que la caja fuerte le prestó al cajón durante ESTE turno (puede ser
+    # negativo si la base se devolvió a mitad de turno). Ya está en efectivo_esperado.
+    prestado_caja_fuerte: float = 0.0
     efectivo_esperado: float
     efectivo_final_real: Optional[float]
     diferencia_cierre: Optional[float]

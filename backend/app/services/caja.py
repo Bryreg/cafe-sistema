@@ -1,11 +1,12 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timedelta, date
 from fastapi import HTTPException
 from app.models.models import (CajaTurno, MovimientoCaja, ChecklistDiario, EstadoTurnoEnum,
                                EntregaTurno, Consignacion, EstadoConsignacionEnum, TurnoBarista,
-                               Usuario, DiaOperativo, EstadoDiaEnum, TipoTurnoEnum)
+                               Usuario, DiaOperativo, EstadoDiaEnum, TipoTurnoEnum,
+                               PrestamoCajaFuerte)
 from app.core.tz import hoy_col, inicio_dia_col_utc, fin_dia_col_utc, dia_col
 
 # Colombia (UTC-5). Fase posterior: configurable por sede (ConfiguracionSede.timezone).
@@ -140,6 +141,85 @@ def _es_operativo(db: Session, turno) -> bool:
     return False
 
 
+# ── La base de la caja fuerte, prestada al cajón ────────────────────────────
+#
+# El cuadre de la registradora afirma una sola cosa: «en el cajón tiene que haber
+# ESTO». La fórmula era base + ventas + ingresos − egresos y le faltaba un
+# sumando: la base de la caja fuerte que la sede saca para completar el día
+# cuando los pagos a proveedores en efectivo se comen la venta en efectivo. Esa
+# plata está FÍSICAMENTE en el cajón y no es de nadie — está PRESTADA. Sin el
+# término, el cuadre la lee como sobrante y la manda al banco: Palmetto, sábado
+# 15-ago, pidió consignar $697.900 donde iban $197.900.
+#
+# HAY DOS LECTURAS DEL MISMO HECHO Y NO SON INTERCAMBIABLES. Confundirlas vuelve
+# a fabricar el fantasma, solo que un día después:
+#
+#   prestado_caja_fuerte(sede, hasta) → el SALDO vigente. Va al esperado del
+#     CUADRE INICIAL, que se arma desde la contabilidad (lo que quedó por
+#     consignar) y por eso nunca supo de la caja fuerte.
+#
+#   prestado_del_turno(turno, hasta) → lo que se movió DESPUÉS de contar
+#     `base_real`. Va a todo cuadre posterior, porque `base_real` es un CONTEO:
+#     lo que ya estaba en el cajón cuando la barista contó ya está adentro de ese
+#     número. Concreto: el sábado sale la base y el cierre suma +$500.000; el
+#     domingo el saldo SIGUE prestado pero nada se movió (delta 0) y los $500.000
+#     viajan dentro de la base contada esa mañana. Sumar el saldo vigente en el
+#     cierre del domingo inventaría un sobrante de $500.000 — el mismo error que
+#     vinimos a matar, con el signo dado vuelta.
+
+
+def prestado_caja_fuerte(db: Session, tienda_id: int, hasta: datetime | None = None) -> float:
+    """Cuánta plata de la caja fuerte está AHORA en el cajón de esta sede.
+
+    Σ('saca') − Σ('devuelve') hasta `hasta` (default: sin tope, o sea ahora). Es
+    un saldo CORRIENTE POR SEDE, no por turno: la base sale el sábado y puede
+    volver el miércoles, cruzando turnos y días.
+
+    NO SE PISA A CERO SI DA NEGATIVO. Un saldo negativo significa que alguien
+    cargó un 'devuelve' que nunca salió, y taparlo con un `max(0, ...)` es
+    exactamente la clase de mentira que este módulo viene matando: el número
+    absurdo se ve en la pantalla, alguien pregunta, y el traslado se corrige.
+    """
+    q = db.query(PrestamoCajaFuerte.sentido, func.sum(PrestamoCajaFuerte.monto)).filter(
+        PrestamoCajaFuerte.tienda_id == tienda_id,
+    )
+    if hasta is not None:
+        q = q.filter(PrestamoCajaFuerte.fecha <= hasta)
+    por_sentido = {s: float(m or 0) for s, m in q.group_by(PrestamoCajaFuerte.sentido).all()}
+    return round(por_sentido.get("saca", 0.0) - por_sentido.get("devuelve", 0.0), 2)
+
+
+def _ts_conteo_base_real(db: Session, turno) -> datetime:
+    """El instante en que se contó `base_real` — el ancla del delta prestado.
+
+    Es la hora del CUADRE de apertura, no la de `fecha_apertura`: entre que el
+    turno abre y la barista cuenta el efectivo pasa el conteo de inventario, y un
+    traslado hecho en esa ventana ya viaja adentro del conteo. Fallback a
+    `fecha_apertura` para turnos legacy que no dejaron cuadre de apertura.
+    """
+    ap = (
+        db.query(EntregaTurno.fecha_hora)
+        .filter(EntregaTurno.turno_id == turno.id, EntregaTurno.tipo == "apertura")
+        .order_by(EntregaTurno.fecha_hora.asc())
+        .first()
+    )
+    if ap and ap[0]:
+        return ap[0]
+    return turno.fecha_apertura or datetime.utcnow()
+
+
+def prestado_del_turno(db: Session, turno, hasta: datetime | None = None) -> float:
+    """Lo que la caja fuerte le prestó al cajón DESPUÉS de contarse `base_real`.
+
+    El sumando que le falta a `base_real + ventas + ingresos − egresos`. Puede ser
+    negativo (devolvieron la base a mitad del turno: el cajón tiene menos y el
+    cuadre lo tiene que esperar), y por eso tampoco se recorta.
+    """
+    ancla = _ts_conteo_base_real(db, turno)
+    return round(prestado_caja_fuerte(db, turno.tienda_id, hasta)
+                 - prestado_caja_fuerte(db, turno.tienda_id, ancla), 2)
+
+
 def get_turno_activo(db: Session, tienda_id: int):
     turno = db.query(CajaTurno).filter(
         CajaTurno.tienda_id == tienda_id,
@@ -166,7 +246,13 @@ def get_turno_activo(db: Session, tienda_id: int):
     turno.ultima_entrega_diferencia_efectivo = ultima.diferencia_efectivo if ultima else None
     turno.ingresos_movimientos = ingresos
     turno.egresos_movimientos = egresos
-    turno.efectivo_esperado_actual = turno.base_real + turno.total_efectivo + ingresos - egresos
+    # El esperado que ve el kiosko en vivo. `prestado_del_turno` y no el saldo
+    # vigente: lo que ya estaba prestado cuando se contó la base viene adentro de
+    # `base_real`. El saldo vigente viaja aparte para que la pantalla pueda decir
+    # "de esto, $500.000 son la base de la caja fuerte" en vez de solo rotularlo.
+    turno.efectivo_esperado_actual = (turno.base_real + turno.total_efectivo + ingresos
+                                      - egresos + prestado_del_turno(db, turno))
+    turno.prestado_caja_fuerte = prestado_caja_fuerte(db, tienda_id)
     turno.consignaciones_turno = consigs_sum
     baristas_db = db.query(TurnoBarista).filter(TurnoBarista.turno_id == turno.id).all()
     turno.baristas = [b.nombre_snapshot for b in baristas_db]
@@ -187,7 +273,9 @@ def get_turno_activo(db: Session, tienda_id: int):
     return turno
 
 
-def _base_desde_ultimo_cierre(ultimo, consigs_deducidas: float) -> float:
+def _base_desde_ultimo_cierre(ultimo, consigs_deducidas: float,
+                              prestado_vigente_al_cierre: float = 0.0,
+                              prestado_movido_en_el_turno: float = 0.0) -> float:
     """Base esperada del turno nuevo según el último cierre. Dos casos:
 
     - RELEVO DEL MISMO DÍA (turno intermedio/cierre tras un cierre de hoy): la caja
@@ -202,14 +290,30 @@ def _base_desde_ultimo_cierre(ultimo, consigs_deducidas: float) -> float:
     El "mismo día" se ancla en el día que el turno OPERÓ (su fecha_apertura), no en
     la fecha del cierre: un turno de ayer cerrado administrativamente esta mañana es
     DÍA NUEVO (caso 3-jul: el cuadre inicial mostraba $2.152.892 en vez de $989.192
-    porque el cierre a las 6am parecía relevo del mismo día)."""
+    porque el cierre a las 6am parecía relevo del mismo día).
+
+    DEVUELVE PLATA PROPIA, SIN LA BASE PRESTADA DE LA CAJA FUERTE. Los dos casos
+    salen de un CONTEO FÍSICO, y un conteo no distingue la plata del negocio de la
+    que la caja fuerte prestó — están mezcladas en el mismo cajón. Acá se saca la
+    prestada y el esperado del cuadre la vuelve a sumar aparte
+    (`base_sistema + prestado_caja_fuerte`), que es lo que deja el número
+    explicable en pantalla y, sobre todo, deja `base_sistema` valiendo EXACTAMENTE
+    lo que hay por consignar de ese turno — la invariante que sostiene toda la
+    fórmula del consignable.
+
+    Cuánto se saca es distinto en cada caso, porque cada figura contiene una cosa
+    distinta: el relevo parte del cajón entero (adentro está TODO lo prestado), y
+    el día nuevo parte del cajón MENOS la base de ayer, que ya se llevó adentro lo
+    que estaba prestado al contarse (por eso ahí va solo lo movido en el turno)."""
     if ultimo is None:
         return 0.0
     dia_operado = dia_col(ultimo.fecha_apertura) if ultimo.fecha_apertura else (
         dia_col(ultimo.fecha_cierre) if ultimo.fecha_cierre else None)
     if dia_operado == _fecha_operativa():
-        return (ultimo.efectivo_final_real or 0.0) - consigs_deducidas
-    return max(0.0, (ultimo.efectivo_final_real or 0.0) - (ultimo.base_real or 0.0))
+        return ((ultimo.efectivo_final_real or 0.0) - consigs_deducidas
+                - prestado_vigente_al_cierre)
+    return max(0.0, (ultimo.efectivo_final_real or 0.0) - (ultimo.base_real or 0.0)
+               - prestado_movido_en_el_turno)
 
 
 def abrir_caja(db: Session, tienda_id: int, base_real: float | None, justificacion: str | None, usuario_id: int, barista_ids: list[int] | None = None, tipo_turno: str | None = None, caja_fuerte: float | None = None):
@@ -253,13 +357,24 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float | None, justificaci
     ).order_by(CajaTurno.fecha_cierre.desc()).first()
 
     consigs_deducidas = 0.0
+    prestado_al_cierre = 0.0
+    prestado_movido = 0.0
     if ultimo:
         consigs_deducidas = db.query(func.sum(Consignacion.valor)).filter(
             Consignacion.caja_turno_id == ultimo.id,
             Consignacion.estado == EstadoConsignacionEnum.realizada,
         ).scalar() or 0.0
-    base_sistema = _base_desde_ultimo_cierre(ultimo, consigs_deducidas)
-    diferencia = (base_real - base_sistema) if cuadre_unificado else 0.0
+        prestado_al_cierre = prestado_caja_fuerte(db, tienda_id, ultimo.fecha_cierre)
+        prestado_movido = prestado_del_turno(db, ultimo, ultimo.fecha_cierre)
+    # `base_sistema` es plata PROPIA (lo que hay por consignar). Lo que la caja
+    # fuerte tenga prestado al cajón se suma aparte para llegar al efectivo que
+    # se va a contar: así el número de la pantalla se puede explicar en dos
+    # renglones en vez de aparecer inflado sin motivo.
+    base_sistema = _base_desde_ultimo_cierre(ultimo, consigs_deducidas,
+                                             prestado_al_cierre, prestado_movido)
+    prestado_vigente = prestado_caja_fuerte(db, tienda_id)
+    esperado_apertura = round(base_sistema + prestado_vigente, 2)
+    diferencia = (base_real - esperado_apertura) if cuadre_unificado else 0.0
 
     if cuadre_unificado and round(diferencia, 2) != 0 and not justificacion:
         raise HTTPException(
@@ -310,7 +425,9 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float | None, justificaci
     if cuadre_unificado:
         db.add(EntregaTurno(
             turno_id=turno.id, tienda_id=tienda_id, usuario_id=usuario_id,
-            efectivo_real=base_real, efectivo_esperado=base_sistema,
+            # esperado = propio + prestado; el snapshot guarda SOLO lo propio para
+            # que el desglose vuelva a armar el número sumando el término aparte.
+            efectivo_real=base_real, efectivo_esperado=esperado_apertura,
             base_snapshot=base_sistema, ventas_efectivo_snapshot=0.0,
             ingresos_snapshot=0.0, egresos_snapshot=0.0,
             ventas_efectivo_siigo=0.0, ventas_tarjeta_bold=0.0,
@@ -334,6 +451,7 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float | None, justificaci
         db, accion="apertura_caja", tabla="caja_turnos",
         registro_id=turno.id, usuario_id=usuario_id, tienda_id=tienda_id,
         datos_despues={"base_real": base_real, "base_sistema": base_sistema,
+                       "prestado_caja_fuerte": prestado_vigente,
                        "diferencia_apertura": diferencia,
                        "consignaciones_deducidas": consigs_deducidas,
                        "barista_ids": barista_ids or []},
@@ -358,6 +476,11 @@ def registrar_cuadre_inicial(db: Session, turno_id: int, usuario_id: int,
       confía la suma del cliente. La selección queda en auditoría.
     - Sin selección (legacy): lo que dejó el último cierre (base_sistema).
 
+    A ese esperado —que es plata PROPIA— se le suma la base que la caja fuerte
+    tenga prestada al cajón: está físicamente ahí y la barista la va a contar. Es
+    el término que faltaba; sin él el conteo daba de más, el sobrante se fijaba en
+    `sobrante_consignable` y terminaba pidiendo bancar la base de la sede.
+
     Fija base_real, marca el cuadre de llegada y desbloquea el POS (junto con el conteo)."""
     turno = db.query(CajaTurno).filter(
         CajaTurno.id == turno_id,
@@ -378,23 +501,27 @@ def registrar_cuadre_inicial(db: Session, turno_id: int, usuario_id: int,
             for s in _saldos_consignacion(db, turno.tienda_id)
             if round(s["saldo"], 2) > 0
         }
-        esperado = 0.0
+        propio = 0.0
         seleccion_detalle = []
         for tid in saldos_incluidos:
             s = pendientes.get(tid)
             if not s:
                 continue    # ese saldo ya no está pendiente (p.ej. se consignó hace un momento)
-            esperado += s["saldo"]
+            propio += s["saldo"]
             seleccion_detalle.append({
                 "turno_id": tid,
                 "fecha": s["turno"].fecha_apertura.isoformat() if s["turno"].fecha_apertura else None,
                 "saldo": round(s["saldo"], 2),
             })
-        esperado = round(esperado, 2)
+        propio = round(propio, 2)
         # El esperado del día queda anclado a la selección (visible en timeline/cuadres)
-        turno.base_sistema = esperado
+        turno.base_sistema = propio
     else:
-        esperado = turno.base_sistema or 0.0
+        propio = turno.base_sistema or 0.0
+    # El saldo VIGENTE, no el delta del turno: acá todavía no hay `base_real` que
+    # pueda contener la plata prestada — es justamente el conteo que la va a ver.
+    prestado = prestado_caja_fuerte(db, turno.tienda_id)
+    esperado = round(propio + prestado, 2)
     diferencia = efectivo_real - esperado
     if round(diferencia, 2) != 0 and not justificacion:
         raise HTTPException(
@@ -412,8 +539,10 @@ def registrar_cuadre_inicial(db: Session, turno_id: int, usuario_id: int,
 
     db.add(EntregaTurno(
         turno_id=turno.id, tienda_id=turno.tienda_id, usuario_id=usuario_id,
+        # El snapshot congela SOLO la plata propia: el desglose vuelve a sumar el
+        # préstamo aparte y así reconstruye el mismo esperado sin duplicarlo.
         efectivo_real=efectivo_real, efectivo_esperado=esperado,
-        base_snapshot=esperado, ventas_efectivo_snapshot=0.0,
+        base_snapshot=propio, ventas_efectivo_snapshot=0.0,
         ingresos_snapshot=0.0, egresos_snapshot=0.0,
         ventas_efectivo_siigo=0.0, ventas_tarjeta_bold=0.0,
         diferencia_efectivo=diferencia, diferencia_tarjeta=0.0,
@@ -424,6 +553,7 @@ def registrar_cuadre_inicial(db: Session, turno_id: int, usuario_id: int,
         db, accion="cuadre_inicial", tabla="caja_turnos",
         registro_id=turno.id, usuario_id=usuario_id, tienda_id=turno.tienda_id,
         datos_despues={"efectivo_real": efectivo_real, "esperado": esperado,
+                       "base_sistema": propio, "prestado_caja_fuerte": prestado,
                        "diferencia": diferencia, "justificacion": justificacion,
                        "saldos_incluidos": seleccion_detalle},
     )
@@ -450,13 +580,18 @@ def ajustar_apertura(db: Session, turno_id: int, base_real: float,
     turno.base_real = base_real
     if caja_fuerte is not None:
         turno.caja_fuerte = caja_fuerte
-    turno.diferencia_apertura = base_real - (turno.base_sistema or 0)
+    # Mismo esperado que armó el cuadre inicial: propio + prestado. El préstamo se
+    # mide en el instante del CONTEO original y no ahora, para que corregir la base
+    # tres días después no arrastre traslados posteriores a ese cuadre.
+    prestado = prestado_caja_fuerte(db, turno.tienda_id, _ts_conteo_base_real(db, turno))
+    turno.diferencia_apertura = base_real - (turno.base_sistema or 0) - prestado
 
     audit.registrar(
         db, accion="ajuste_apertura", tabla="caja_turnos",
         registro_id=turno.id, usuario_id=usuario_id, tienda_id=turno.tienda_id,
         datos_antes=antes,
         datos_despues={"base_real": base_real, "caja_fuerte": caja_fuerte,
+                       "prestado_caja_fuerte": prestado,
                        "diferencia_apertura": turno.diferencia_apertura, "motivo": motivo},
     )
     db.commit()
@@ -499,8 +634,12 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
     ).scalar() or 0.0
 
     # Cuadre efectivo: esperado = base + ventas efectivo (POS) + ingresos - egresos
+    # + la base que la caja fuerte le prestó al cajón DESPUÉS de contarse la base.
+    # Ese último término es el que faltaba el sábado 15-ago en Palmetto: sin él el
+    # cierre veía $500.000 de más, los llamaba sobrante y los mandaba a consignar.
+    prestado = prestado_del_turno(db, turno)
     efectivo_ventas = efectivo_final_real - turno.base_real
-    efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
+    efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos + prestado
     diferencia_cierre = efectivo_final_real - efectivo_esperado
 
     # Cuadre datáfono: total Bold contado vs ventas tarjeta del POS
@@ -544,6 +683,8 @@ def cerrar_caja(db: Session, turno_id: int, efectivo_final_real: float,
         db, accion="cierre_caja", tabla="caja_turnos",
         registro_id=turno_id, usuario_id=usuario_id, tienda_id=turno.tienda_id,
         datos_despues={"efectivo_final_real": efectivo_final_real,
+                       "efectivo_esperado": round(efectivo_esperado, 2),
+                       "prestado_caja_fuerte": prestado,
                        "diferencia_cierre": diferencia_cierre,
                        "diferencia_tarjeta": diferencia_tarjeta,
                        "justificacion": justificacion},
@@ -633,7 +774,11 @@ def cerrar_turno_administrativo(db: Session, turno_id: int, usuario_id: int,
         Consignacion.caja_turno_id == turno_id,
         Consignacion.estado == EstadoConsignacionEnum.realizada,
     ).scalar() or 0.0
-    esperado = turno.base_real + turno.total_efectivo + ingresos - egresos - consignado
+    # Misma fórmula del cuadre (incluido el préstamo de la caja fuerte, que acá
+    # pesa doble: un turno colgado varios días es justo donde la base sale y no
+    # vuelve), menos lo ya consignado.
+    esperado = (turno.base_real + turno.total_efectivo + ingresos - egresos
+                + prestado_del_turno(db, turno) - consignado)
     justificacion = ("Cierre administrativo: el cuadre de salida no se realizó. Se cierra con el "
                      "esperado (diferencia 0); la diferencia real la captura el cuadre inicial siguiente.")
     if sin_conteo:
@@ -733,7 +878,11 @@ def cancelar_turno_vacio(db: Session, turno_id: int, usuario_id: int) -> dict:
 def _msg_pagos_superan_venta(entrada_dia: float, egresos: float) -> str:
     """Cuadre con 'venta de ayer separada' cuando los pagos superan la venta del día:
     la plata que faltó salió físicamente del sobre separado, así que contar 'solo la
-    registradora' ya no representa nada — se cuenta todo junto."""
+    registradora' ya no representa nada — se cuenta todo junto.
+
+    `entrada_dia` incluye lo que la caja fuerte prestó al cajón durante el turno:
+    es plata que entró a la registradora y con la que efectivamente se pagó. Si no
+    entrara, el mensaje reclamaría un faltante que la base ya cubrió."""
     faltante = egresos - entrada_dia
     return (
         f"Los pagos de hoy (${egresos:,.0f}) superan la venta en efectivo del día (${entrada_dia:,.0f}): "
@@ -774,10 +923,14 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
         MovimientoCaja.tipo == "egreso"
     ).scalar() or 0.0
 
-    efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
+    # + la base que la caja fuerte le prestó al cajón después de contarse base_real.
+    prestado = prestado_del_turno(db, turno)
+    efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos + prestado
     if base_separada:
         # Venta de ayer separada y guardada: la barista cuenta SOLO la registradora.
         # El monto separado (la base) queda documentado en base_snapshot sin contarse.
+        # Lo prestado NO se descuenta acá: la base de la caja fuerte sale a trabajar
+        # a la registradora, no al sobre separado.
         efectivo_esperado -= turno.base_real
         if efectivo_esperado < 0:
             # Las salidas superan la venta del día: físicamente tuvieron que tocar la
@@ -786,7 +939,7 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
             # clientes con bundle viejo — con los montos para que se entienda.
             raise HTTPException(
                 status_code=400,
-                detail=_msg_pagos_superan_venta(turno.total_efectivo + ingresos, egresos),
+                detail=_msg_pagos_superan_venta(turno.total_efectivo + ingresos + prestado, egresos),
             )
     diferencia_efectivo = efectivo_real - efectivo_esperado
     diferencia_tarjeta = ventas_tarjeta_bold - turno.total_tarjeta
@@ -819,6 +972,7 @@ def registrar_entrega(db: Session, turno_id: int, usuario_id: int,
         registro_id=None, usuario_id=usuario_id, tienda_id=turno.tienda_id,
         datos_despues={"efectivo_real": efectivo_real,
                        "efectivo_esperado": efectivo_esperado,
+                       "prestado_caja_fuerte": prestado,
                        "diferencia_efectivo": diferencia_efectivo,
                        "diferencia_tarjeta": diferencia_tarjeta},
     )
@@ -941,12 +1095,19 @@ def get_turno_timeline(db: Session, turno_id: int) -> dict:
         for m in movs
     ]
 
+    # La base de la caja fuerte, para que el hub pueda EXPLICAR un esperado alto en
+    # vez de rotularlo: cuánto se movió en este turno y cuánto sigue afuera de la
+    # caja fuerte hoy (que es lo que todavía hay que devolver).
+    prestado_turno = prestado_del_turno(db, turno, turno.fecha_cierre)
+
     return {
         "turno_id": turno.id,
         "estado": turno.estado.value if turno.estado else None,
         "eventos": eventos,
         "resumen_baristas": resumen,
         "movimientos": movimientos,
+        "prestado_caja_fuerte_turno": round(prestado_turno, 2),
+        "prestado_caja_fuerte": prestado_caja_fuerte(db, turno.tienda_id),
     }
 
 
@@ -1021,7 +1182,9 @@ def registrar_cuadre_llegada(db: Session, turno_id: int, usuario_id: int,
         MovimientoCaja.caja_turno_id == turno_id,
         MovimientoCaja.tipo == "egreso"
     ).scalar() or 0.0
-    efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
+    # + lo que la caja fuerte le prestó al cajón después de contarse base_real.
+    prestado = prestado_del_turno(db, turno)
+    efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos + prestado
     diferencia = efectivo_real - efectivo_esperado
 
     entrega = EntregaTurno(
@@ -1049,7 +1212,8 @@ def registrar_cuadre_llegada(db: Session, turno_id: int, usuario_id: int,
         db, accion="cuadre_llegada", tabla="entregas_turno",
         registro_id=None, usuario_id=usuario_id, tienda_id=turno.tienda_id,
         datos_despues={"tipo_turno": tipo_turno, "efectivo_real": efectivo_real,
-                       "efectivo_esperado": efectivo_esperado, "diferencia": diferencia},
+                       "efectivo_esperado": efectivo_esperado,
+                       "prestado_caja_fuerte": prestado, "diferencia": diferencia},
     )
     db.commit()
     db.refresh(entrega)
@@ -1073,6 +1237,12 @@ def get_entrega_desglose(db: Session, entrega_id: int) -> dict | None:
     Para cuadres previos a esta feature (sin snapshot), reconstruye best-effort desde el turno
     y los movimientos hasta la hora del cuadre. Incluye la lista de movimientos de caja
     (ingresos/egresos) registrados hasta ese instante, para que se vea de dónde sale el número.
+
+    El término prestado se recalcula acotado a la hora del cuadre, con la MISMA
+    lectura que usó quien lo armó: saldo vigente en el cuadre de apertura (ahí la
+    base todavía no se contó) y delta del turno en los posteriores (ahí ya viene
+    adentro de `base_real`). Elegir la otra lectura acá duplicaría el préstamo en
+    la pantalla que existe justamente para explicarlo.
     """
     e = db.query(EntregaTurno).filter(EntregaTurno.id == entrega_id).first()
     if not e:
@@ -1086,6 +1256,16 @@ def get_entrega_desglose(db: Session, entrega_id: int) -> dict | None:
     turno = db.query(CajaTurno).filter(CajaTurno.id == e.turno_id).first()
     caja_fuerte = float(turno.caja_fuerte) if turno and turno.caja_fuerte is not None else 0.0
 
+    if turno is None:
+        prestado = 0.0
+        prestado_vigente = 0.0
+    elif e.tipo == "apertura":
+        prestado = prestado_caja_fuerte(db, turno.tienda_id, e.fecha_hora)
+        prestado_vigente = prestado
+    else:
+        prestado = prestado_del_turno(db, turno, e.fecha_hora)
+        prestado_vigente = prestado_caja_fuerte(db, turno.tienda_id, e.fecha_hora)
+
     tiene_snapshot = e.base_snapshot is not None
     if tiene_snapshot:
         base = float(e.base_snapshot or 0)
@@ -1095,12 +1275,14 @@ def get_entrega_desglose(db: Session, entrega_id: int) -> dict | None:
     else:
         # Cuadre viejo: reconstruir lo posible sin romper. base del turno; ingresos/egresos
         # hasta la hora del cuadre; ventas_efectivo se despeja del esperado ya guardado.
+        # El préstamo entra en el despeje para que el esperado reconstruido siga
+        # dando el que quedó guardado (en cuadres viejos vale 0 y no cambia nada).
         base = float(turno.base_real or 0) if turno else 0.0
         ingresos = sum(float(m.valor) for m in movimientos if _mov_tipo(m) == "ingreso")
         egresos = sum(float(m.valor) for m in movimientos if _mov_tipo(m) == "egreso")
-        ventas_efectivo = float(e.efectivo_esperado or 0) - base - ingresos + egresos
+        ventas_efectivo = float(e.efectivo_esperado or 0) - base - ingresos + egresos - prestado
 
-    esperado = base + ventas_efectivo + ingresos - egresos
+    esperado = base + ventas_efectivo + ingresos - egresos + prestado
     base_separada = bool(getattr(e, "base_separada", False))
     if base_separada:
         # La venta de ayer estaba separada: el cuadre se hizo contra la registradora.
@@ -1118,6 +1300,12 @@ def get_entrega_desglose(db: Session, entrega_id: int) -> dict | None:
         "ingresos": round(ingresos, 2),
         "egresos": round(egresos, 2),
         "caja_fuerte": round(caja_fuerte, 2),
+        # El sumando que entró a ESTE esperado (con la lectura del docstring)…
+        "prestado_caja_fuerte": round(prestado, 2),
+        # …y cuánto de la base seguía afuera de la caja fuerte en ese instante, que
+        # es lo que la pantalla necesita para decir "$500.000 son la base prestada"
+        # incluso en un cuadre donde el sumando dio 0 porque nada se movió ese día.
+        "prestado_caja_fuerte_vigente": round(prestado_vigente, 2),
         "efectivo_esperado": round(esperado, 2),
         "efectivo_real": float(e.efectivo_real or 0),
         "diferencia_efectivo": float(e.diferencia_efectivo or 0),
@@ -1138,22 +1326,37 @@ def get_efectivo_inicio_esperado(db: Session, tienda_id: int):
     """Efectivo esperado para el cuadre inicial. Coincide con el base_sistema que calcula
     abrir_caja (_base_desde_ultimo_cierre): en día nuevo = ventas en efectivo del día
     anterior + diferencia del cierre (la plata vieja va a consignación/proveedores); en
-    relevo del mismo día = todo el efectivo del cierre menos lo consignado."""
+    relevo del mismo día = todo el efectivo del cierre menos lo consignado.
+
+    Y, encima de eso, la base que la caja fuerte tenga prestada al cajón: es plata
+    que la barista va a contar. `esperado` es lo que se cuenta; `base_propia` y
+    `prestado_caja_fuerte` viajan aparte para que el kiosko pueda mostrar de dónde
+    sale, en vez de un total inflado que nadie sabe explicar."""
+    prestado = prestado_caja_fuerte(db, tienda_id)
     ultimo = db.query(CajaTurno).filter(
         CajaTurno.tienda_id == tienda_id,
         CajaTurno.estado == EstadoTurnoEnum.cerrado,
     ).order_by(CajaTurno.fecha_cierre.desc()).first()
     if not ultimo:
-        return {"esperado": 0.0, "hay_cierre_previo": False, "fecha_ultimo_cierre": None}
+        return {"esperado": round(prestado, 2), "hay_cierre_previo": False,
+                "fecha_ultimo_cierre": None, "base_propia": 0.0,
+                "prestado_caja_fuerte": round(prestado, 2)}
     consigs = db.query(func.sum(Consignacion.valor)).filter(
         Consignacion.caja_turno_id == ultimo.id,
         Consignacion.estado == EstadoConsignacionEnum.realizada,
     ).scalar() or 0.0
-    esperado = _base_desde_ultimo_cierre(ultimo, consigs)
+    propio = _base_desde_ultimo_cierre(
+        ultimo, consigs,
+        prestado_caja_fuerte(db, tienda_id, ultimo.fecha_cierre),
+        prestado_del_turno(db, ultimo, ultimo.fecha_cierre),
+    )
+    esperado = propio + prestado
     # Anclado en el día que el turno OPERÓ (igual que _base_desde_ultimo_cierre).
     mismo_dia = bool(ultimo.fecha_apertura and dia_col(ultimo.fecha_apertura) == _fecha_operativa())
     return {
         "esperado": round(esperado, 2),
+        "base_propia": round(propio, 2),
+        "prestado_caja_fuerte": round(prestado, 2),
         "hay_cierre_previo": True,
         "fecha_ultimo_cierre": ultimo.fecha_cierre.isoformat() if ultimo.fecha_cierre else None,
         "mismo_dia": mismo_dia,
@@ -1225,7 +1428,11 @@ def get_flujo_turno(db: Session, turno_id: int) -> dict | None:
     ingresos = sum(m.valor for m in movimientos if m.tipo == TipoMovCajaEnum.ingreso)
     egresos  = sum(m.valor for m in movimientos if m.tipo == TipoMovCajaEnum.egreso)
     consigs_sum = sum(c.valor for c in consignaciones)
-    efectivo_esperado = (turno.base_real or 0) + (turno.total_efectivo or 0) + ingresos - egresos - consigs_sum
+    # Acotado al cierre en un turno cerrado y a "ahora" en uno abierto: el flujo
+    # describe el cajón de ESE turno, no el de la sede tres días después.
+    prestado = prestado_del_turno(db, turno, turno.fecha_cierre)
+    efectivo_esperado = ((turno.base_real or 0) + (turno.total_efectivo or 0)
+                         + ingresos - egresos + prestado - consigs_sum)
 
     return {
         "turno_id": turno.id,
@@ -1245,6 +1452,7 @@ def get_flujo_turno(db: Session, turno_id: int) -> dict | None:
             {"id": c.id, "valor": c.valor, "fecha": c.fecha.isoformat()}
             for c in consignaciones
         ],
+        "prestado_caja_fuerte": round(prestado, 2),
         "efectivo_esperado": efectivo_esperado,
         "efectivo_final_real": turno.efectivo_final_real,
         "diferencia_cierre": turno.diferencia_cierre,
@@ -1289,7 +1497,10 @@ def registrar_entrada_barista(
     egresos = db.query(func.sum(MovimientoCaja.valor)).filter(
         MovimientoCaja.caja_turno_id == turno_id, MovimientoCaja.tipo == "egreso"
     ).scalar() or 0.0
-    efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
+    # Mismo término que el resto de los cuadres: el snapshot de entrada tiene que
+    # describir el cajón como está, con la base prestada adentro si salió.
+    efectivo_esperado = (turno.base_real + turno.total_efectivo + ingresos - egresos
+                         + prestado_del_turno(db, turno))
 
     db.add(EntregaTurno(
         turno_id=turno_id, tienda_id=turno.tienda_id, usuario_id=usuario_id,
@@ -1432,7 +1643,9 @@ def cerrar_turno_rapido(
     egresos = db.query(func.sum(MovimientoCaja.valor)).filter(
         MovimientoCaja.caja_turno_id == turno_id, MovimientoCaja.tipo == "egreso"
     ).scalar() or 0.0
-    efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos
+    # + la base que la caja fuerte le prestó al cajón durante el turno.
+    prestado = prestado_del_turno(db, turno)
+    efectivo_esperado = turno.base_real + turno.total_efectivo + ingresos - egresos + prestado
     # Venta de ayer separada: la barista contó SOLO la registradora. El cuadre se
     # evalúa contra el esperado de la registradora, y hacia cerrar_caja viaja el
     # total equivalente (registradora + base separada) para que la base de mañana
@@ -1442,7 +1655,7 @@ def cerrar_turno_rapido(
         # El kiosko oculta la casilla en este caso; backstop para bundles viejos.
         raise HTTPException(
             status_code=400,
-            detail=_msg_pagos_superan_venta(turno.total_efectivo + ingresos, egresos),
+            detail=_msg_pagos_superan_venta(turno.total_efectivo + ingresos + prestado, egresos),
         )
     efectivo_total = efectivo_final_real + turno.base_real if base_separada else efectivo_final_real
 
@@ -1465,6 +1678,172 @@ def cerrar_turno_rapido(
     if base_separada:
         justificacion += " (venta de ayer separada, sin contar)"
     return cerrar_caja(db, turno_id, efectivo_total, justificacion, usuario_id, datafono_real)
+
+
+# ── Traslados entre la caja fuerte y el cajón ───────────────────────────────
+#
+# El registro del HECHO: la plata cambió de lugar. Nada acá ajusta un esperado a
+# mano — de eso se encargan las cuentas de arriba leyendo el saldo.
+#
+# Las validaciones (monto positivo, sentido, fecha no futura, largo del motivo,
+# sede activa) las hace el HANDLER, no estas funciones ni el schema: el `detail`
+# de un 422 de pydantic es una LISTA y el cliente solo sabe renderizar strings,
+# así que el dueño terminaba viendo "Reintenta" en vez del motivo. Mismo criterio
+# que las recogidas de efectivo (routers/consignaciones.py).
+
+SENTIDOS_PRESTAMO = ("saca", "devuelve")
+
+
+def _turno_en(db: Session, tienda_id: int, momento: datetime):
+    """El turno de la sede que estaba corriendo en ese instante (o None).
+
+    Se resuelve por la FECHA DEL TRASLADO y no por "el turno abierto ahora": el
+    dueño carga la salida de ayer con la sede ya cerrada, y colgarla del turno de
+    hoy diría que la base salió de un cajón que en ese momento no existía.
+    """
+    return (
+        db.query(CajaTurno)
+        .filter(
+            CajaTurno.tienda_id == tienda_id,
+            CajaTurno.fecha_apertura <= momento,
+            or_(CajaTurno.fecha_cierre.is_(None), CajaTurno.fecha_cierre >= momento),
+        )
+        .order_by(CajaTurno.fecha_apertura.desc())
+        .first()
+    )
+
+
+def _serializar_prestamo(p: PrestamoCajaFuerte) -> dict:
+    return {
+        "id": p.id,
+        "tienda_id": p.tienda_id,
+        "caja_turno_id": p.caja_turno_id,
+        "fecha": p.fecha,
+        "sentido": p.sentido,
+        "monto": float(p.monto or 0),
+        "motivo": p.motivo,
+        "usuario_id": p.usuario_id,
+        "usuario_nombre": p.usuario.nombre if p.usuario else None,
+        "creado_en": p.creado_en,
+    }
+
+
+def registrar_prestamo_caja_fuerte(db: Session, tienda_id: int, sentido: str, monto: float,
+                                   usuario_id: int, fecha: datetime | None = None,
+                                   motivo: str | None = None) -> dict:
+    """«Saqué la base de la caja fuerte» / «la volví a guardar», en una sede.
+
+    Devuelve el traslado y el saldo vigente después de registrarlo, que es el
+    número que la pantalla necesita mostrar de vuelta: cuánto de la base sigue
+    trabajando en el cajón.
+    """
+    fecha = fecha or datetime.utcnow()
+    turno = _turno_en(db, tienda_id, fecha)
+    p = PrestamoCajaFuerte(
+        tienda_id=tienda_id,
+        caja_turno_id=turno.id if turno else None,
+        fecha=fecha,
+        sentido=sentido,
+        monto=round(float(monto), 2),
+        # "" y "   " se guardan como NULL: un motivo vacío no es un motivo, y así
+        # el frontend puede preguntar `motivo ? ... : ...` sin casos especiales.
+        motivo=((motivo or "").strip() or None),
+        usuario_id=usuario_id,
+    )
+    db.add(p)
+    db.flush()   # necesita el id para la auditoría, que se escribe en el mismo commit
+    audit.registrar(
+        db, accion="prestamo_caja_fuerte", tabla="prestamos_caja_fuerte",
+        registro_id=p.id, usuario_id=usuario_id, tienda_id=tienda_id,
+        datos_despues={"sentido": sentido, "monto": float(p.monto),
+                       "fecha": str(fecha), "motivo": p.motivo,
+                       "caja_turno_id": p.caja_turno_id},
+    )
+    db.commit()
+    db.refresh(p)
+    return {"prestamo": _serializar_prestamo(p),
+            "prestado_caja_fuerte": prestado_caja_fuerte(db, tienda_id)}
+
+
+def listar_prestamos_caja_fuerte(db: Session, tienda_id: int,
+                                 desde: date | None = None,
+                                 hasta: date | None = None) -> dict:
+    """Los traslados de una sede en un rango, con el saldo vigente.
+
+    El saldo NO se suma sobre las filas listadas: es el corriente de la sede hasta
+    hoy. Un rango que arranque después del día en que la base salió listaría cero
+    traslados y, si el saldo saliera de ahí, diría que no hay nada prestado justo
+    cuando sí lo hay — y ese es el número por el que se consulta esta pantalla.
+
+    `desde`/`hasta` son días COLOMBIA y se convierten al rango UTC equivalente,
+    porque `fecha` guarda instantes en UTC (convención del repo).
+    """
+    q = db.query(PrestamoCajaFuerte).filter(PrestamoCajaFuerte.tienda_id == tienda_id)
+    if desde is not None:
+        q = q.filter(PrestamoCajaFuerte.fecha >= inicio_dia_col_utc(desde))
+    if hasta is not None:
+        q = q.filter(PrestamoCajaFuerte.fecha <= fin_dia_col_utc(hasta))
+    rows = q.order_by(PrestamoCajaFuerte.fecha.desc(), PrestamoCajaFuerte.id.desc()).all()
+    return {
+        "traslados": [_serializar_prestamo(p) for p in rows],
+        "prestado_caja_fuerte": prestado_caja_fuerte(db, tienda_id),
+        "prestado_desde": _prestado_desde(db, tienda_id),
+    }
+
+
+def _prestado_desde(db: Session, tienda_id: int) -> datetime | None:
+    """Desde cuándo la base está afuera de la caja fuerte, o None si no lo está.
+
+    NO es la fecha del traslado más viejo de la historia: es la del que abrió la
+    salida VIGENTE. Si la base salió en mayo, volvió en junio y volvió a salir el
+    sábado, lo que el dueño necesita leer es «salieron el sábado» — decirle mayo
+    sería contarle una salida que ya se cerró.
+
+    Se recorre en orden y se marca el instante en que el saldo pasa de cero a
+    positivo; el último de esos es el que sigue abierto.
+    """
+    filas = db.query(PrestamoCajaFuerte).filter(
+        PrestamoCajaFuerte.tienda_id == tienda_id,
+    ).order_by(PrestamoCajaFuerte.fecha.asc(), PrestamoCajaFuerte.id.asc()).all()
+    saldo = 0.0
+    desde: datetime | None = None
+    for f in filas:
+        antes = saldo
+        saldo += float(f.monto) if f.sentido == "saca" else -float(f.monto)
+        if round(antes, 2) <= 0 < round(saldo, 2):
+            desde = f.fecha
+        elif round(saldo, 2) <= 0:
+            desde = None
+    return desde
+
+
+def eliminar_prestamo_caja_fuerte(db: Session, prestamo_id: int, usuario_id: int) -> dict:
+    """Revierte un traslado cargado por error (solo admin).
+
+    Se borra la fila en vez de marcarla anulada porque el saldo se DERIVA de las
+    filas vivas: sacar la fila arregla todo aguas abajo solo. Los datos quedan en
+    auditoría.
+
+    LO QUE ESTO NO DESHACE: los cuadres YA FIRMADOS. Su diferencia quedó escrita
+    en el turno el día que se cerró, y borrar el traslado corrige el saldo de HOY,
+    no el cierre de ese día. Si el traslado mal cargado ya ensució un cuadre, ese
+    cuadre se corrige donde se corrigen los cuadres (`ajustar_apertura`).
+    """
+    p = db.query(PrestamoCajaFuerte).filter(PrestamoCajaFuerte.id == prestamo_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Traslado de caja fuerte no encontrado")
+    tienda_id = p.tienda_id
+    audit.registrar(
+        db, accion="eliminar_prestamo_caja_fuerte", tabla="prestamos_caja_fuerte",
+        registro_id=p.id, usuario_id=usuario_id, tienda_id=tienda_id,
+        datos_antes={"sentido": p.sentido, "monto": float(p.monto or 0),
+                     "fecha": str(p.fecha), "motivo": p.motivo,
+                     "caja_turno_id": p.caja_turno_id, "creado_en": str(p.creado_en)},
+    )
+    db.delete(p)
+    db.commit()
+    return {"ok": True, "id": prestamo_id,
+            "prestado_caja_fuerte": prestado_caja_fuerte(db, tienda_id)}
 
 
 def _tick_checklist(db: Session, tienda_id: int, **kwargs):

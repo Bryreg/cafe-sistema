@@ -7,6 +7,41 @@ from app.models.models import (Consignacion, EstadoConsignacionEnum,
                                 Tienda, EstadoTurnoEnum)
 
 
+def _sobrante_explicado_por_la_base(db: Session, t) -> float:
+    """Cuánto del sobrante YA CONGELADO de un turno lo explica la base prestada.
+
+    `diferencia_cierre` y `sobrante_consignable` se escriben AL CERRAR y quedan
+    quietos. Con el cuadre arreglado ya no se fabrican solos, pero los turnos que
+    cerraron ANTES de que se registrara el préstamo los tienen adentro: Palmetto,
+    sábado 15-ago, cerró con $500.000 de sobrante congelado. Registrar el traslado
+    hoy no reescribe esa columna, así que sin esta función el sábado seguiría
+    pidiendo $697.900 — o sea, el arreglo serviría para los sábados que vienen y
+    no para el que el dueño necesita.
+
+    LOS DOS TOPES SON EL DISEÑO, y son lo que hace que esto no reste dos veces:
+
+      · solo cancela sobrante, nunca faltante (`extra <= 0` devuelve 0). Un
+        faltante no lo explica una base que entró;
+      · nunca cancela más de lo que había prestado al cierre.
+
+    De ahí sale que se regule solo: un turno que cierra CON el préstamo ya
+    registrado no fabrica sobrante —el cuadre lo esperaba— así que `extra` es 0 y
+    esto devuelve 0. La resta ocurre exactamente una vez, en el mundo viejo o en
+    el nuevo, nunca en los dos.
+
+    Se acota contra el saldo VIGENTE al cierre y no contra lo movido en ESE turno:
+    la base puede haber salido el viernes y el sobrante aparecer el sábado, y en
+    ese caso el delta del sábado es cero pero la plata está igual de prestada.
+    """
+    from app.services.caja import prestado_caja_fuerte   # local: evita el ciclo
+
+    extra = float(t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0)
+    if extra <= 0 or t.fecha_cierre is None:
+        return 0.0
+    prestado = prestado_caja_fuerte(db, t.tienda_id, hasta=t.fecha_cierre)
+    return round(min(extra, max(prestado, 0.0)), 2)
+
+
 def _saldos_consignacion(db: Session, tienda_id: int) -> list[dict]:
     """Saldo pendiente por consignar por turno cerrado, con CASCADA hacia días anteriores.
 
@@ -36,8 +71,21 @@ def _saldos_consignacion(db: Session, tienda_id: int) -> list[dict]:
         # extra encontrada al abrir que no pertenece a ningún día anterior — se banca
         # con este turno. Sin este término se absorbía en la base y se arrastraba
         # indefinidamente (Palmetto +$24.600). El faltante NO entra (novedad).
+        #
+        # LA BASE DE LA CAJA FUERTE SE ARREGLA EN EL CUADRE, NO ACÁ. Cuando la sede
+        # saca los $500.000 para completar el día, esa plata entra al cajón pero NO
+        # es venta: no hay nada que bancar. Con el cuadre esperándola
+        # (services/caja.py, `prestado_caja_fuerte`), `diferencia_cierre` vuelve a 0
+        # y `sobrante_consignable` no se fija, así que esta fórmula da bien sola.
+        #
+        # El único término que se resta es `_sobrante_explicado_por_la_base`, y es
+        # para los turnos que YA HABÍAN CERRADO cuando se registró el traslado: esas
+        # dos columnas quedan congeladas al cierre y nadie las reescribe. Está
+        # acotado para que no pueda restar dos veces — leé su docstring antes de
+        # tocarlo. Palmetto, sábado 15-ago: pedía $697.900, ahora $197.900.
         esperado = ((t.total_efectivo or 0) + ingresos - egresos
-                    + (t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0))
+                    + (t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0)
+                    - _sobrante_explicado_por_la_base(db, t))
         consignado = sum(c.valor for c in _consigs_del_turno(db, t))
         saldos.append({"turno": t, "esperado": esperado, "consignado": consignado,
                        "saldo": esperado - consignado})
@@ -159,8 +207,15 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
         # consignarse (= la base del día siguiente). El sobrante es plata extra sin
         # dueño de días anteriores: se banca con este turno — sin él se arrastraba
         # en el cajón (caso Palmetto +$24.600).
+        #
+        # LA BASE DE LA CAJA FUERTE NO ENTRA ACÁ (misma razón que en
+        # `_saldos_consignacion`, arriba): que la sede saque sus $500.000 al cajón no
+        # es venta y no se banca. El arreglo vive en el CUADRE —el esperado de la
+        # registradora suma `prestado_caja_fuerte`— y desde ahí `diferencia_cierre`
+        # deja de inventar el sobrante. Restarla también acá la descontaría dos veces.
         esperado = ((t.total_efectivo or 0) + total_ingresos_mov - total_egresos
-                    + (t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0))
+                    + (t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0)
+                    - _sobrante_explicado_por_la_base(db, t))
         diferencia = total_consignado - esperado
 
         result.append({

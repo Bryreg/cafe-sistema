@@ -586,6 +586,26 @@ def ajustar_apertura(db: Session, turno_id: int, base_real: float,
     prestado = prestado_caja_fuerte(db, turno.tienda_id, _ts_conteo_base_real(db, turno))
     turno.diferencia_apertura = base_real - (turno.base_sistema or 0) - prestado
 
+    # Y EL SOBRANTE TAMBIÉN, que es la mitad que faltaba de esta corrección.
+    #
+    # `sobrante_consignable` sale de la MISMA diferencia (`registrar_cuadre_inicial`
+    # lo fija como `max(0, diferencia)`) pero es una columna aparte, y hasta acá
+    # esta función no la tocaba. El resultado era una corrección que parecía
+    # completa y no lo era: el admin arreglaba la apertura, la pantalla del cuadre
+    # quedaba bien, y Consignaciones seguía pidiendo el sobrante viejo porque su
+    # fórmula lee esta otra columna.
+    #
+    # El caso real: Palmetto, sábado 15-ago. La barista declaró que abrió con la
+    # base MÁS la venta del día anterior, cuando solo tenía que elegir la venta.
+    # Eso dejó $500.000 de sobrante y el día pedía consignar $697.900 en vez de
+    # $197.900. Corregir la apertura tenía que alcanzar; no alcanzaba.
+    #
+    # Solo se toca si YA tenía valor: un turno con NULL es anterior al fix de
+    # jul-2026 y ponerle un número acá le inventaría un sobrante que nunca se le
+    # reclamó (el mismo motivo por el que la columna nació nullable).
+    if turno.sobrante_consignable is not None:
+        turno.sobrante_consignable = max(0.0, round(float(turno.diferencia_apertura), 2))
+
     audit.registrar(
         db, accion="ajuste_apertura", tabla="caja_turnos",
         registro_id=turno.id, usuario_id=usuario_id, tienda_id=turno.tienda_id,

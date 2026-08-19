@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, date, timedelta
 from fastapi import HTTPException
+from app.core.tz import fin_dia_col_utc, inicio_dia_col_utc
 from app.models.models import (Consignacion, EstadoConsignacionEnum,
                                 CajaTurno, MovimientoCaja, PrestamoCajaFuerte,
                                 RecogidaEfectivo, Tienda, EstadoTurnoEnum)
@@ -450,10 +451,20 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
     q = db.query(CajaTurno).filter(CajaTurno.estado == EstadoTurnoEnum.cerrado)
     if tienda_id:
         q = q.filter(CajaTurno.tienda_id == tienda_id)
+    # EL RANGO SE CONVIERTE A UTC, y no es cosmético: `fecha_cierre` guarda
+    # instantes en UTC y Colombia va CINCO HORAS ATRÁS, así que armar el rango con
+    # `datetime(desde.year, ...)` lo comparaba contra medianoche UTC — o sea las
+    # 19:00 del día anterior en Cali.
+    #
+    # Palmetto cierra 19:42. Eso son las 00:42 UTC del día SIGUIENTE, así que
+    # todos sus días caían del lado equivocado: pedir «del 15 al 15» no devolvía
+    # el sábado, y el sábado aparecía al filtrar el domingo. Todo un mes corrido
+    # un día, y el peor caso —un día que no aparece en su propia fecha— es el que
+    # hace pensar que el sistema perdió la información.
     if desde is not None:
-        q = q.filter(CajaTurno.fecha_cierre >= datetime(desde.year, desde.month, desde.day))
+        q = q.filter(CajaTurno.fecha_cierre >= inicio_dia_col_utc(desde))
     if hasta is not None:
-        q = q.filter(CajaTurno.fecha_cierre <= datetime(hasta.year, hasta.month, hasta.day, 23, 59, 59))
+        q = q.filter(CajaTurno.fecha_cierre <= fin_dia_col_utc(hasta))
     # Sin rango explícito mantenemos el tope histórico de 60 turnos; con rango no limitamos.
     q = q.order_by(CajaTurno.fecha_cierre.desc())
     turnos = q.all() if (desde is not None or hasta is not None) else q.limit(60).all()

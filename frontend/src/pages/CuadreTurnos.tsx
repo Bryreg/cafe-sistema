@@ -156,13 +156,35 @@ function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
 
 // ── Ajuste de apertura (admin) ────────────────────────────────────────────────
 
-function AjusteApertura({ turno, onDone }: { turno: TurnoItem; onDone: () => void }) {
+/** Un día que todavía tiene plata sin consignar. Lo sirve `/consignaciones/pendiente`. */
+interface DiaPendiente {
+  turno_id: number
+  fecha_apertura: string | null
+  fecha_cierre: string | null
+  pendiente: number
+}
+
+function AjusteApertura({ turno, tiendaId, onDone }: {
+  turno: TurnoItem; tiendaId: number; onDone: () => void
+}) {
   const [open, setOpen] = useState(false)
   const [baseReal, setBaseReal] = useState('')
   const [cajaFuerte, setCajaFuerte] = useState('')
   const [motivo, setMotivo] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  /** `null` = no se toca la selección. Un array —aunque esté vacío— la REHACE. */
+  const [dias, setDias] = useState<number[] | null>(null)
+
+  // Los días pendientes de la sede, para poder decir de cuál era la plata. Se
+  // piden al abrir el panel y no al montar la fila: esto vive en cada turno de la
+  // lista y pedirlo siempre serían decenas de llamadas para un panel que casi
+  // nunca se abre.
+  const pendientes = useDato<{ items: DiaPendiente[] }>(
+    () => api.get(`/consignaciones/pendiente/${tiendaId}`),
+    'los días pendientes de consignar',
+    'No se pudieron leer los días pendientes.',
+    [open, tiendaId])
 
   const inp: React.CSSProperties = {
     fontSize: 14, padding: '8px 10px', borderRadius: 8,
@@ -177,6 +199,10 @@ function AjusteApertura({ turno, onDone }: { turno: TurnoItem; onDone: () => voi
         base_real: Number(baseReal) || 0,
         caja_fuerte: cajaFuerte.trim() === '' ? null : Number(cajaFuerte) || 0,
         motivo: motivo || null,
+        // `null` deja la selección como está; un array la REHACE, aunque esté
+        // vacío. Por eso el estado arranca en `null` y no en `[]`: guardar una
+        // corrección de la caja fuerte no puede borrar de qué días era la plata.
+        saldos_incluidos: dias,
       })
       onDone()
     } catch (e: any) {
@@ -200,6 +226,60 @@ function AjusteApertura({ turno, onDone }: { turno: TurnoItem; onDone: () => voi
           <input type="text" inputMode="numeric" value={conMiles(baseReal)} onChange={e => setBaseReal(soloDigitos(e.target.value))} placeholder={`Actual: ${fmt(turno.base_real)}`} style={inp} />
           <label style={{ fontSize: 11, color: 'oklch(50% 0.01 60)', fontWeight: 600 }}>Caja fuerte (reserva aparte)</label>
           <input type="text" inputMode="numeric" value={conMiles(cajaFuerte)} onChange={e => setCajaFuerte(soloDigitos(e.target.value))} placeholder="$0" style={inp} />
+          {/* ── DE QUÉ DÍAS ERA LA PLATA ────────────────────────────────────
+              El olvido más caro de la apertura: si no se marca el día anterior,
+              su plata se anota como sobrante del día nuevo y queda pedida DOS
+              veces —una en su día, que sigue pendiente, y otra acá dentro—.
+              Corregirlo es rehacer esta marca, no tocar el conteo. */}
+          <div style={{ borderTop: '1px solid oklch(92% 0.01 75)', paddingTop: 10, marginTop: 2 }}>
+            <label style={{ fontSize: 11, color: 'oklch(50% 0.01 60)', fontWeight: 600 }}>
+              ¿De qué días era la plata que había en el cajón?
+            </label>
+            <p style={{ margin: '4px 0 8px', fontSize: 11, color: 'oklch(55% 0.01 60)' }}>
+              Solo si hay que corregirlo. Sin tocar nada, la marca queda como está.
+            </p>
+            <SegunDato
+              dato={pendientes.dato}
+              cargando={<p style={{ margin: 0, fontSize: 11.5, color: 'oklch(60% 0.01 60)' }}>Buscando los días pendientes…</p>}
+              falla={m => <NoSeSabe mensaje={m} onReintentar={pendientes.recargar} />}
+              listo={d => {
+                // El propio turno y los posteriores no pueden estar adentro: el
+                // backend los rechaza, así que tampoco se ofrecen.
+                const elegibles = d.items.filter(i =>
+                  i.turno_id !== turno.id
+                  && (i.fecha_cierre ?? '') <= turno.fecha_apertura)
+                if (elegibles.length === 0) {
+                  return <p style={{ margin: 0, fontSize: 11.5, color: 'oklch(55% 0.01 60)' }}>
+                    No hay días anteriores con plata sin consignar.
+                  </p>
+                }
+                return (<div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {elegibles.map(i => {
+                    const marcado = (dias ?? []).includes(i.turno_id)
+                    return (
+                      <label key={i.turno_id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, cursor: 'pointer', minHeight: 32 }}>
+                        <input type="checkbox" checked={marcado}
+                          onChange={() => setDias(prev => {
+                            const base = prev ?? []
+                            return marcado ? base.filter(x => x !== i.turno_id)
+                                           : [...base, i.turno_id]
+                          })} />
+                        <span style={{ flex: 1 }}>{i.fecha_apertura ? fmtDate(i.fecha_apertura) : 'sin fecha'}</span>
+                        <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(i.pendiente)}</b>
+                      </label>
+                    )
+                  })}
+                  {dias !== null && (
+                    <p style={{ margin: 0, fontSize: 11.5, color: 'oklch(45% 0.12 50)' }}>
+                      Va a quedar esperando {fmt(elegibles
+                        .filter(i => dias.includes(i.turno_id))
+                        .reduce((a, i) => a + i.pendiente, 0))} de días anteriores.
+                    </p>
+                  )}
+                </div>)
+              }}
+            />
+          </div>
           <input value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="Motivo (opcional)" style={inp} />
           {error && <p style={{ margin: 0, fontSize: 12, color: 'oklch(42% 0.18 30)' }}>{error}</p>}
           <button onClick={guardar} disabled={saving}
@@ -214,7 +294,7 @@ function AjusteApertura({ turno, onDone }: { turno: TurnoItem; onDone: () => voi
 
 // ── Turno detail view ─────────────────────────────────────────────────────────
 
-function TurnoDetalle({ turno, onBack, onFoto, isAdmin, onAdjusted }: { turno: TurnoItem; onBack: () => void; onFoto: (url: string) => void; isAdmin: boolean; onAdjusted: () => void }) {
+function TurnoDetalle({ turno, tiendaId, onBack, onFoto, isAdmin, onAdjusted }: { turno: TurnoItem; tiendaId: number; onBack: () => void; onFoto: (url: string) => void; isAdmin: boolean; onAdjusted: () => void }) {
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [loadingMovs, setLoadingMovs] = useState(true)
   const cerrado = turno.estado === 'cerrado'
@@ -260,7 +340,7 @@ function TurnoDetalle({ turno, onBack, onFoto, isAdmin, onAdjusted }: { turno: T
 
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '12px 16px 40px', display: 'flex', flexDirection: 'column', gap: 10 }}>
 
-        {isAdmin && <AjusteApertura turno={turno} onDone={onAdjusted} />}
+        {isAdmin && <AjusteApertura turno={turno} tiendaId={tiendaId} onDone={onAdjusted} />}
 
         {turno.baristas.length > 0 && (
           <div style={{ background: '#fff', borderRadius: 16, padding: '12px 14px', border: '1px solid oklch(92% 0.008 75)', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1048,7 +1128,7 @@ export default function CuadreTurnos() {
   if (selected) {
     return (
       <>
-        <TurnoDetalle turno={selected} onBack={() => setSelected(null)} onFoto={setFotoUrl}
+        <TurnoDetalle turno={selected} tiendaId={histTiendaId} onBack={() => setSelected(null)} onFoto={setFotoUrl}
           isAdmin={isAdmin}
           onAdjusted={() => {
             setSelected(null)

@@ -462,6 +462,61 @@ def abrir_caja(db: Session, tienda_id: int, base_real: float | None, justificaci
     return get_turno_activo(db, tienda_id)
 
 
+def _resolver_saldos_incluidos(db: Session, tienda_id: int,
+                               saldos_incluidos: list[int],
+                               *, excluir: int | None = None,
+                               abiertos_antes_de: datetime | None = None) -> tuple:
+    """(cuánta plata propia es, el detalle de qué días) para una selección.
+
+    La barista marca QUÉ días con saldo pendiente están físicamente en el cajón.
+    La suma se recalcula ACÁ desde la verdad del servidor — jamás se confía la del
+    cliente— y el detalle queda para la auditoría.
+
+    Está extraída porque la usan DOS caminos: el cuadre inicial y la corrección
+    del admin. Cuando la barista se olvida de marcar el día anterior, el sistema
+    espera $0, ve la plata que hay y la anota como sobrante del día nuevo: esa
+    misma plata queda pedida dos veces, una en su día y otra en el siguiente.
+    Palmetto, martes 18: pedía $416.800 cuando la venta del día fue $260.115 y los
+    otros $156.685 eran del domingo, que seguía pidiéndolos aparte. Corregirlo es
+    rehacer la selección, no inventar otra cuenta.
+    """
+    from app.services.consignaciones import _saldos_consignacion
+    pendientes = {
+        s["turno"].id: s
+        for s in _saldos_consignacion(db, tienda_id)
+        if round(s["saldo"], 2) > 0
+    }
+    # DOS COSAS QUE NO PUEDEN ESTAR EN EL CAJÓN AL ABRIR, y las dos solo aparecen
+    # en el camino de la corrección: cuando la barista abre, su turno todavía no
+    # tiene saldo y no existe ningún día posterior.
+    #   · el turno NO SE INCLUYE A SÍ MISMO. Al corregir un turno ya cerrado, su
+    #     propio saldo está en la lista de pendientes y marcarlo sería decir que
+    #     abrió con la plata que todavía no había vendido;
+    #   · ni un día POSTERIOR. Un martes no puede tener adentro la plata del
+    #     miércoles, y ofrecerlo invita a un ajuste que mueve plata hacia atrás.
+    if excluir is not None:
+        pendientes.pop(excluir, None)
+    if abiertos_antes_de is not None:
+        pendientes = {
+            tid: s for tid, s in pendientes.items()
+            if s["turno"].fecha_cierre is not None
+            and s["turno"].fecha_cierre <= abiertos_antes_de
+        }
+    propio = 0.0
+    detalle = []
+    for tid in saldos_incluidos:
+        s = pendientes.get(tid)
+        if not s:
+            continue    # ese saldo ya no está pendiente (p.ej. se consignó hace un momento)
+        propio += s["saldo"]
+        detalle.append({
+            "turno_id": tid,
+            "fecha": s["turno"].fecha_apertura.isoformat() if s["turno"].fecha_apertura else None,
+            "saldo": round(s["saldo"], 2),
+        })
+    return round(propio, 2), detalle
+
+
 def registrar_cuadre_inicial(db: Session, turno_id: int, usuario_id: int,
                              efectivo_real: float, justificacion: str | None = None,
                              barista_id: int | None = None, barista_nombre: str | None = None,
@@ -495,25 +550,8 @@ def registrar_cuadre_inicial(db: Session, turno_id: int, usuario_id: int,
 
     seleccion_detalle = None
     if saldos_incluidos is not None:
-        from app.services.consignaciones import _saldos_consignacion
-        pendientes = {
-            s["turno"].id: s
-            for s in _saldos_consignacion(db, turno.tienda_id)
-            if round(s["saldo"], 2) > 0
-        }
-        propio = 0.0
-        seleccion_detalle = []
-        for tid in saldos_incluidos:
-            s = pendientes.get(tid)
-            if not s:
-                continue    # ese saldo ya no está pendiente (p.ej. se consignó hace un momento)
-            propio += s["saldo"]
-            seleccion_detalle.append({
-                "turno_id": tid,
-                "fecha": s["turno"].fecha_apertura.isoformat() if s["turno"].fecha_apertura else None,
-                "saldo": round(s["saldo"], 2),
-            })
-        propio = round(propio, 2)
+        propio, seleccion_detalle = _resolver_saldos_incluidos(
+            db, turno.tienda_id, saldos_incluidos)
         # El esperado del día queda anclado a la selección (visible en timeline/cuadres)
         turno.base_sistema = propio
     else:
@@ -562,7 +600,8 @@ def registrar_cuadre_inicial(db: Session, turno_id: int, usuario_id: int,
 
 
 def ajustar_apertura(db: Session, turno_id: int, base_real: float,
-                     caja_fuerte: float | None, usuario_id: int, motivo: str | None = None):
+                     caja_fuerte: float | None, usuario_id: int, motivo: str | None = None,
+                     saldos_incluidos: list[int] | None = None):
     """Corrección admin de la apertura de un turno: ajusta la base real de la registradora
     y la caja fuerte, y recalcula la diferencia de apertura. Con auditoría. Sirve para
     corregir errores como meter la caja fuerte dentro de la base."""
@@ -575,8 +614,40 @@ def ajustar_apertura(db: Session, turno_id: int, base_real: float,
     antes = {
         "base_real": float(turno.base_real or 0),
         "caja_fuerte": float(turno.caja_fuerte or 0),
+        "base_sistema": float(turno.base_sistema or 0),
         "diferencia_apertura": float(turno.diferencia_apertura or 0),
+        "sobrante_consignable": (None if turno.sobrante_consignable is None
+                                 else float(turno.sobrante_consignable)),
     }
+    # REHACER LA SELECCIÓN, que es el otro error de apertura y el más caro.
+    #
+    # La barista marca de qué días es la plata que hay en el cajón. Si se olvida
+    # de marcar el día anterior, el sistema espera $0, ve esa plata y la anota
+    # como sobrante del día nuevo — y esa misma plata queda pedida DOS VECES, una
+    # en su día y otra en el siguiente. Palmetto, martes 18: pedía $416.800
+    # cuando la venta fue $260.115 y los otros $156.685 eran del domingo, que
+    # seguía pidiéndolos aparte.
+    #
+    # Corregirlo es rehacer la selección con la misma función que usa el cuadre
+    # inicial, no inventar otra cuenta. Y `base_real` queda en lo que de verdad
+    # se contó: acá esa plata SÍ estaba en el cajón, así que ponerla en cero
+    # daría el número correcto mintiendo sobre lo que había.
+    seleccion_detalle = None
+    if saldos_incluidos is not None:
+        propio, seleccion_detalle = _resolver_saldos_incluidos(
+            db, turno.tienda_id, saldos_incluidos,
+            excluir=turno.id, abiertos_antes_de=turno.fecha_apertura)
+        # ACÁ NO SE IGNORA EN SILENCIO lo que no se pudo resolver, al revés que en
+        # el cuadre inicial. Allá un saldo que desapareció entre que se pintó la
+        # pantalla y se guardó es una carrera normal; acá el admin está corrigiendo
+        # a mano y si su selección se cae, `base_sistema` queda en cero y el número
+        # empeora sin que nadie lo note.
+        if len(seleccion_detalle) != len(set(saldos_incluidos)):
+            raise HTTPException(
+                400, "Alguno de los días que elegiste ya no tiene saldo pendiente, "
+                     "es del mismo turno o es posterior. Volvé a abrir la lista.")
+        turno.base_sistema = propio
+
     turno.base_real = base_real
     if caja_fuerte is not None:
         turno.caja_fuerte = caja_fuerte
@@ -612,6 +683,10 @@ def ajustar_apertura(db: Session, turno_id: int, base_real: float,
         datos_antes=antes,
         datos_despues={"base_real": base_real, "caja_fuerte": caja_fuerte,
                        "prestado_caja_fuerte": prestado,
+                       "base_sistema": float(turno.base_sistema or 0),
+                       "saldos_incluidos": seleccion_detalle,
+                       "sobrante_consignable": (None if turno.sobrante_consignable is None
+                                                else float(turno.sobrante_consignable)),
                        "diferencia_apertura": turno.diferencia_apertura, "motivo": motivo},
     )
     db.commit()

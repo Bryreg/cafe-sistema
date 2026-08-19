@@ -18,6 +18,11 @@ class AjustarAperturaRequest(BaseModel):
     base_real: float                      # efectivo real de la registradora al abrir
     caja_fuerte: Optional[float] = None   # reserva fija aparte
     motivo: Optional[str] = None
+    # De qué días es la plata que había en el cajón. `None` deja la selección como
+    # está; una lista la REHACE. Es el arreglo del olvido más caro de la apertura:
+    # sin marcar el día anterior, su plata se anota como sobrante del día nuevo y
+    # queda pedida dos veces. Lista vacía = «no había nada pendiente adentro».
+    saldos_incluidos: Optional[list[int]] = None
 
 
 class PrestamoCajaFuerteCreate(BaseModel):

@@ -187,7 +187,8 @@ def reabrir_conteo_cierre(turno_id: int, db: Session = Depends(get_db),
 def ajustar_apertura(turno_id: int, data: AjustarAperturaRequest, db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
     """Corrección admin: ajusta base real de la registradora y caja fuerte de un turno (con auditoría)."""
     ensure_turno_access(db, user, turno_id)
-    return svc.ajustar_apertura(db, turno_id, data.base_real, data.caja_fuerte, user.id, data.motivo)
+    return svc.ajustar_apertura(db, turno_id, data.base_real, data.caja_fuerte, user.id, data.motivo,
+                                saldos_incluidos=data.saldos_incluidos)
 
 @router.post("/{turno_id}/movimiento")
 async def movimiento(

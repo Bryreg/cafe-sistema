@@ -38,10 +38,6 @@ Lo que fija este archivo, y por qué cada regla importa:
   encontró saldo viejo del cual cobrarse: plata que falta y que hasta ahora se
   ignoraba en silencio. Que la aritmética la siga ignorando es defendible; que no
   se pueda mirar, no;
-- EL ORDEN: la base de la caja fuerte se descuenta PRIMERO y la cascada corre
-  DESPUÉS, sobre el esperado ya corregido. Invertirlo haría que un día tape un
-  hueco con plata que no era suya —era la base de emergencia de la sede— y el
-  faltante desaparecería de la pantalla justo cuando existe;
 - POR SEDE: el hueco de Palmetto no se cobra del cajón de Vida. Son dos cajones
   físicos en dos barrios distintos.
 
@@ -83,9 +79,10 @@ class CascadaBase(unittest.TestCase):
     escribe el cierre, así que una fixture que las llenara a mano probaría la
     fixture y no el sistema.
 
-    Se montan los dos routers porque el número que se mide acá se teclea en Caja
-    (el traslado de la caja fuerte) y se lee en Consignaciones: probar cada mitad
-    contra un mock de la otra dejaría pasar justo el desacuerdo que importa.
+    Se montan los dos routers porque el número que se mide acá se arma en Caja
+    —la apertura, el cierre y sus columnas— y se lee en Consignaciones: probar
+    cada mitad contra un mock de la otra dejaría pasar justo el desacuerdo que
+    importa.
     """
 
     def setUp(self):
@@ -149,7 +146,7 @@ class CascadaBase(unittest.TestCase):
     def _anclar_cuadre(self, turno, momento: datetime):
         """Backdatea el CUADRE de apertura, que es cosa distinta de la apertura:
         entre que el turno abre y la barista cuenta el efectivo pasa el conteo de
-        inventario, y el delta de la caja fuerte se ancla en el conteo."""
+        inventario, que son horas."""
         for e in (self.db.query(EntregaTurno)
                   .filter(EntregaTurno.turno_id == turno.id,
                           EntregaTurno.tipo == "apertura").all()):
@@ -211,7 +208,7 @@ class CascadaBase(unittest.TestCase):
         return turno
 
     def jornada(self, d: date, *, en_caja, incluye=(), venta=0.0, pagado=0.0,
-                saca_base=0.0, contado=None, justificacion=None, tienda=None):
+                contado=None, justificacion=None, tienda=None):
         """Un día entero de la sede: cuenta, vende, paga de contado y cierra.
 
         `en_caja` es la plata que hay FÍSICAMENTE en el cajón cuando la barista la
@@ -232,18 +229,13 @@ class CascadaBase(unittest.TestCase):
         self.assertEqual(turno.diferencia_apertura, 0,
                          f"el cuadre inicial del {d} no da exacto: revisá `en_caja`")
 
-        if saca_base:
-            # La base sale DESPUÉS del conteo, así que es un sumando del turno y no
-            # viaja adentro de `base_real`.
-            self.traslado(saca_base, sentido="saca", momento=self.momento(d, 10),
-                          tienda=tienda or self.palmetto)
         if venta:
             self.vender_efectivo(turno, venta)
         if pagado:
             self.egreso(turno, pagado, self.momento(d, 11))
 
         if contado is None:
-            contado = en_caja + saca_base + venta - pagado
+            contado = en_caja + venta - pagado
         self.cerrar(turno, contado=contado, momento=self.momento(d, 18),
                     justificacion=justificacion)
         if justificacion is None:
@@ -263,16 +255,6 @@ class CascadaBase(unittest.TestCase):
             estado=EstadoConsignacionEnum.realizada,
         ))
         self.db.commit()
-
-    def traslado(self, monto, *, sentido="saca", momento, tienda=None):
-        """El traslado de la caja fuerte, por HTTP: es la puerta real del dueño."""
-        tienda = tienda or self.palmetto
-        r = self.client.post("/api/v1/caja/prestamos-caja-fuerte", json={
-            "tienda_id": tienda.id, "sentido": sentido, "monto": monto,
-            "fecha": momento.isoformat(),
-        })
-        self.assertEqual(r.status_code, 201, r.text)
-        return r
 
     # ── Lecturas ─────────────────────────────────────────────────────────────
 
@@ -590,8 +572,9 @@ class LaSemanaDePalmettoTest(CascadaBase):
     def setUp(self):
         super().setUp()
         sab, dom, lun = self.dia(-3), self.dia(-2), self.dia(-1)
-        # Sábado: los $697.900 de su pantalla ya con la base descontada por el
-        # traslado, o sea los $197.900 que hay que bancar.
+        # Sábado: de los $697.900 de su pantalla, $500.000 eran la reserva de la
+        # caja fuerte mal declarada al abrir. Lo que había que bancar de verdad
+        # son los $197.900, y así arranca el escenario.
         self.sab = self.jornada(sab, en_caja=0, venta=197_900)
         self.dom = self.jornada(dom, en_caja=197_900, incluye=[self.sab],
                                 venta=334_400)
@@ -852,15 +835,17 @@ class FaltanteSinCubrirTest(CascadaBase):
         un día anterior, el hueco es de $100.000. Se cobran los $40.000 y los
         $60.000 restantes quedan expuestos.
 
-        La plata para pagar salió de la caja fuerte —$100.000 prestados al cajón—,
-        que es de dónde sale en la vida real cuando la venta no alcanza. Al final
-        quedan $40.000 en el cajón contra $100.000 prestados: la sede le debe
-        $60.000 a su propia caja fuerte, y eso es exactamente `faltante_sin_cubrir`.
+        Los $100.000 con los que se pagó de más salieron de plata que el sistema
+        no conoce —la del cajón de antes del sistema—, igual que en los otros dos
+        casos de esta clase. Al final quedan $40.000 en el cajón contra $100.000
+        pagados de más, y esos $60.000 son `faltante_sin_cubrir`.
         """
         d1, d2 = self.dia(-2), self.dia(-1)
         uno = self.jornada(d1, en_caja=0, venta=40_000)
-        dos = self.jornada(d2, en_caja=40_000, incluye=[uno], saca_base=100_000,
-                           venta=10_000, pagado=110_000)
+        # El segundo día abre con los $40.000 del primero MÁS $100.000 que ninguna
+        # venta registrada explica, y paga $110.000 con los dos juntos.
+        dos = self._turno_viejo_con_plata_de_antes(
+            d2, base=140_000, venta=10_000, pagado=110_000)
 
         filas = self.resumen(self.palmetto)
         self.assertEqual(filas[dos.id]["esperado_consignar"], -100_000)
@@ -871,124 +856,11 @@ class FaltanteSinCubrirTest(CascadaBase):
         self.assertEqual(filas[uno.id]["saldo_pendiente"], 0)
         self.assertEqual(filas[uno.id]["cubrio_faltante"], 40_000)
 
-        # La lectura física del mismo número: en el cajón hay $40.000 y $100.000
-        # son de la caja fuerte.
+        # La lectura física del mismo número: en el cajón quedaron $40.000 y se
+        # pagaron $100.000 que ninguna venta del día respalda.
         self.assertEqual(dos.efectivo_final_real, 40_000)
         self.assertEqual(filas[dos.id]["faltante_sin_cubrir"],
                          100_000 - dos.efectivo_final_real)
-        self.assert_pantalla_e_imputacion_coinciden()
-
-
-class ConLaBaseDeLaCajaFuerteTest(CascadaBase):
-    """EL ORDEN: PRIMERO SE CORRIGE EL ESPERADO, DESPUÉS SE COBRA EL HUECO.
-
-    El sábado 15 Palmetto sacó los $500.000 de la caja fuerte para completar un
-    pago a proveedores, y NADIE lo registró: el turno cerró con $500.000 de
-    sobrante congelado y pidiendo bancar $697.900 —la base de emergencia de la
-    propia sede— en vez de $197.900. El traslado se cargó después, y
-    `_sobrante_explicado_por_la_base` corrige ese turno ya cerrado sin reescribir
-    ninguna columna.
-
-    Encima de eso, el domingo cierra $250.000 en contra. Y acá el orden decide la
-    plata:
-
-        base primero, cascada después (lo correcto):
-            el sábado tiene $197.900 → los da todos → queda en 0
-            y el domingo se queda con $52.100 sin cubrir, que se ven
-        cascada primero, base después (invertido):
-            el sábado tendría $697.900 → daría $250.000 → quedaría en $447.900
-            y el faltante desaparecería
-
-    O sea que invirtiéndolo el sistema taparía el hueco con la base de emergencia
-    de la sede y encima diría que no falta nada. Este es el test que lo fija.
-    """
-
-    def _arco(self, *, con_traslado: bool):
-        """El sábado y el domingo de Palmetto. `con_traslado` es el interruptor
-        entre el sistema que sabe que la base se movió y el que no: la plata
-        física es idéntica en los dos mundos."""
-        sabado, domingo = self.dia(-2), self.dia(-1)
-        # Sábado: vende $697.900, paga $500.000 de contado y saca la base para
-        # poder hacerlo. Como el traslado todavía no está cargado, el cierre ve
-        # $500.000 que no espera y exige justificación.
-        sab = self.jornada(sabado, en_caja=0, venta=697_900, pagado=500_000,
-                           contado=697_900, justificacion="sobró plata, no sé de dónde")
-        self.assertEqual(sab.diferencia_cierre, 500_000)
-
-        if con_traslado:
-            # Hoy, dos días después, el dueño carga el traslado con SU fecha real.
-            self.traslado(500_000, sentido="saca", momento=self.momento(sabado, 11))
-
-        # Domingo: en el cajón están los $697.900 (los $197.900 propios más la base
-        # prestada). Vende poco y paga $300.000 de contado: cierra en contra.
-        dom = self.jornada(domingo, en_caja=697_900, incluye=[sab],
-                           venta=50_000, pagado=300_000)
-        return sab, dom
-
-    def test_la_cascada_se_cobra_del_esperado_YA_corregido_por_la_base(self):
-        """El sábado entra a la cascada valiendo $197.900 y no $697.900, así que
-        alcanza a tapar $197.900 del hueco y no los $250.000 enteros."""
-        sab, dom = self._arco(con_traslado=True)
-        filas = self.resumen(self.palmetto)
-
-        self.assertEqual(filas[sab.id]["esperado_consignar"], 197_900)
-        self.assertEqual(filas[sab.id]["cubrio_faltante"], 197_900)
-        self.assertEqual(filas[sab.id]["saldo_pendiente"], 0)
-
-        self.assertEqual(filas[dom.id]["esperado_consignar"], -250_000)
-        self.assertEqual(self.cruces(filas[dom.id], "cubierto_por"),
-                         [(sab.id, 197_900)])
-        self.assertEqual(filas[dom.id]["faltante_sin_cubrir"], 52_100)
-        self.assert_pantalla_e_imputacion_coinciden()
-
-    def test_con_el_orden_invertido_el_sabado_quedaria_pidiendo_447900(self):
-        """El número que NO tiene que aparecer, escrito para que se vea la
-        distancia: con la cascada corriendo antes de la corrección, el sábado
-        quedaría en $447.900 y el faltante en cero."""
-        sab, dom = self._arco(con_traslado=True)
-        filas = self.resumen(self.palmetto)
-        self.assertNotEqual(filas[sab.id]["saldo_pendiente"], 447_900)
-        self.assertNotEqual(filas[dom.id]["faltante_sin_cubrir"], 0)
-
-    def test_el_faltante_es_lo_que_la_sede_le_debe_a_su_propia_caja_fuerte(self):
-        """La lectura física, que es la que le sirve al dueño: quedaron $447.900 en
-        el cajón y $500.000 son de la caja fuerte. Faltan $52.100 para poder
-        guardarla — y hasta ahora ese agujero no aparecía en ninguna pantalla."""
-        sab, dom = self._arco(con_traslado=True)
-        filas = self.resumen(self.palmetto)
-        self.assertEqual(dom.efectivo_final_real, 447_900)
-        self.assertEqual(filas[dom.id]["faltante_sin_cubrir"],
-                         500_000 - dom.efectivo_final_real)
-
-    def test_sin_el_traslado_el_hueco_se_paga_con_el_sobrante_fantasma(self):
-        """El mundo viejo, con la misma plata física. Sin el traslado registrado el
-        sábado vale $697.900 —incluye la base de emergencia— y el hueco del domingo
-        se cobra de ahí sin que falte nada. Los dos números están mal y ninguno se
-        ve mal: por eso el arreglo tenía que llegar hasta acá."""
-        sab, dom = self._arco(con_traslado=False)
-        filas = self.resumen(self.palmetto)
-        self.assertEqual(filas[sab.id]["esperado_consignar"], 697_900)
-        self.assertEqual(filas[sab.id]["saldo_pendiente"], 447_900)
-        self.assertEqual(filas[dom.id]["faltante_sin_cubrir"], 0)
-
-    def test_cargar_el_traslado_despues_mueve_las_dos_puntas_a_la_vez(self):
-        """El sábado ya estaba cerrado y el domingo también. Cargar el traslado hoy
-        corrige el esperado del sábado Y rehace la cascada del domingo en la misma
-        lectura: no hay estado congelado en el medio que quede a mitad de camino."""
-        sabado, domingo = self.dia(-2), self.dia(-1)
-        sab = self.jornada(sabado, en_caja=0, venta=697_900, pagado=500_000,
-                           contado=697_900, justificacion="sobró plata, no sé de dónde")
-        dom = self.jornada(domingo, en_caja=697_900, incluye=[sab],
-                           venta=50_000, pagado=300_000)
-        antes = self.resumen(self.palmetto)
-        self.assertEqual(antes[sab.id]["saldo_pendiente"], 447_900)
-
-        self.traslado(500_000, sentido="saca", momento=self.momento(sabado, 11))
-
-        despues = self.resumen(self.palmetto)
-        self.assertEqual(despues[sab.id]["saldo_pendiente"], 0)
-        self.assertEqual(despues[sab.id]["cubrio_faltante"], 197_900)
-        self.assertEqual(despues[dom.id]["faltante_sin_cubrir"], 52_100)
         self.assert_pantalla_e_imputacion_coinciden()
 
 

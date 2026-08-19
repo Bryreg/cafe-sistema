@@ -13,11 +13,11 @@ no se lee como un filtro raro — se lee como que el sistema perdió la informac
 """
 import unittest
 
-from tests.test_prestamo_caja_fuerte import CajaFuerteBase
+from tests.base_cuadre import CuadreCajaBase
 from app.services import consignaciones as consig_svc
 
 
-class FiltroEnHoraDeCaliTest(CajaFuerteBase):
+class FiltroEnHoraDeCaliTest(CuadreCajaBase):
 
     def _turno_que_cierra(self, dia, hora, *, base=0, abre=8):
         """`base` es lo que ya había en el cajón: dos turnos del mismo día

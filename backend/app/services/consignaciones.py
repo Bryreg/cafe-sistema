@@ -1,12 +1,10 @@
-from bisect import bisect_right
-
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, date, timedelta
 from fastapi import HTTPException
 from app.core.tz import fin_dia_col_utc, inicio_dia_col_utc
 from app.models.models import (Consignacion, EstadoConsignacionEnum,
-                                CajaTurno, MovimientoCaja, PrestamoCajaFuerte,
+                                CajaTurno, MovimientoCaja,
                                 RecogidaEfectivo, Tienda, EstadoTurnoEnum)
 
 
@@ -14,18 +12,17 @@ from app.models.models import (Consignacion, EstadoConsignacionEnum,
 #
 # ACÁ NO CAMBIA NINGUNA CUENTA, CAMBIA CUÁNTAS VECES SE LE PREGUNTA A LA BASE.
 # `_saldos_consignacion` recorre TODOS los turnos cerrados de la sede y pedía,
-# por cada uno, sus movimientos, sus consignaciones y el saldo prestado de la
-# caja fuerte: tres queries por turno. Se bancaba mientras el único que llamaba
-# era la imputación —una vez por acción del dueño—, pero desde que la pantalla de
-# Consignaciones lee de acá son miles de queries por pintar la tabla en una sede
-# con un año de historia, en cada F5.
+# por cada uno, sus movimientos y sus consignaciones: dos queries por turno. Se
+# bancaba mientras el único que llamaba era la imputación —una vez por acción del
+# dueño—, pero desde que la pantalla de Consignaciones lee de acá son miles de
+# queries por pintar la tabla en una sede con un año de historia, en cada F5.
 #
-# Esto trae lo mismo en cuatro queries por sede y lo agrupa en memoria. Son los
+# Esto trae lo mismo en tres queries por sede y lo agrupa en memoria. Son los
 # mismos registros sumados en el mismo orden: si algo de acá mueve un peso, está
 # mal escrito, no es un ajuste.
 
 def _precargar_sede(db: Session, tienda_id: int) -> dict:
-    """Movimientos, consignaciones y traslados de caja fuerte de una sede, agrupados.
+    """Movimientos y consignaciones de una sede, agrupados por turno.
 
     Se filtra por SEDE y no por una lista de `turno_id`: un `IN (...)` con los
     turnos de un año revienta el tope de variables de SQLite (mismo motivo que
@@ -68,107 +65,14 @@ def _precargar_sede(db: Session, tienda_id: int) -> dict:
         Consignacion.caja_turno_id.is_(None),
     ).all()
 
-    # Prefijos acumulados de la caja fuerte. `prestado_caja_fuerte` es
-    # Σ('saca') − Σ('devuelve') hasta un instante, y preguntarlo turno por turno
-    # era la tercera query por turno. Con las filas ordenadas por fecha ese saldo
-    # sale de un `bisect` sobre dos acumulados.
-    #
-    # LOS DOS SENTIDOS SE ACUMULAN POR SEPARADO y se restan al final, igual que la
-    # query original. Acumular un solo total con el signo ya aplicado daría el
-    # mismo peso por otro camino, y en este módulo el camino es la prueba: la
-    # función de allá también devuelve negativo a propósito cuando alguien cargó
-    # un 'devuelve' que nunca salió, y ese absurdo tiene que seguir viéndose.
-    fechas: list = []
-    acum_saca: list = [0.0]
-    acum_devuelve: list = [0.0]
-    for fecha, sentido, monto in (
-        db.query(PrestamoCajaFuerte.fecha, PrestamoCajaFuerte.sentido,
-                 PrestamoCajaFuerte.monto)
-        .filter(PrestamoCajaFuerte.tienda_id == tienda_id)
-        .order_by(PrestamoCajaFuerte.fecha, PrestamoCajaFuerte.id)
-        .all()
-    ):
-        valor = float(monto or 0)
-        fechas.append(fecha)
-        acum_saca.append(acum_saca[-1] + (valor if sentido == "saca" else 0.0))
-        acum_devuelve.append(acum_devuelve[-1] + (valor if sentido == "devuelve" else 0.0))
-
     return {
         "movs": movs,
         "consigs": consigs,
         "consigs_huerfanas": huerfanas,
-        "prestamo_fechas": fechas,
-        "prestamo_saca": acum_saca,
-        "prestamo_devuelve": acum_devuelve,
     }
 
 
-def _prestado_hasta(pre: dict, hasta: datetime | None) -> float:
-    """El saldo prestado de la caja fuerte a un instante, leído de la precarga.
-
-    Devuelve el MISMO número que `prestado_caja_fuerte(db, tienda_id, hasta=...)`,
-    negativos incluidos. `bisect_right` toma todas las filas con `fecha <= hasta`
-    —también las empatadas en el mismo instante—, que es exactamente lo que hace
-    el `<=` de aquella query.
-    """
-    fechas = pre["prestamo_fechas"]
-    k = len(fechas) if hasta is None else bisect_right(fechas, hasta)
-    return round(pre["prestamo_saca"][k] - pre["prestamo_devuelve"][k], 2)
-
-
-def _sobrante_explicado_por_la_base(db: Session, t, prestado: float | None = None,
-                                    ingresos: float = 0.0) -> float:
-    """Cuánto del sobrante YA CONGELADO de un turno lo explica la base prestada.
-
-    `diferencia_cierre` y `sobrante_consignable` se escriben AL CERRAR y quedan
-    quietos. Con el cuadre arreglado ya no se fabrican solos, pero los turnos que
-    cerraron ANTES de que se registrara el préstamo los tienen adentro: Palmetto,
-    sábado 15-ago, cerró con $500.000 de sobrante congelado. Registrar el traslado
-    hoy no reescribe esa columna, así que sin esta función el sábado seguiría
-    pidiendo $697.900 — o sea, el arreglo serviría para los sábados que vienen y
-    no para el que el dueño necesita.
-
-    SE COMPARA CONTRA LOS TRES TÉRMINOS QUE NO SON VENTA, no contra dos. La
-    primera versión miraba solo `diferencia_cierre + sobrante_consignable`, y con
-    eso el sábado de Palmetto seguía pidiendo $697.900: la base había entrado como
-    un INGRESO DE CAJA, que la fórmula suma y esta función no miraba. La plata que
-    entra de la caja fuerte puede aparecer por cualquiera de los tres caminos
-    según cómo la haya cargado la barista, así que se compara contra la suma.
-
-    LOS DOS TOPES SON EL DISEÑO, y son lo que hace que esto no reste dos veces:
-
-      · solo cancela lo que NO es venta y es positivo (`extra <= 0` devuelve 0).
-        Un faltante no lo explica una base que entró, y la venta del día nunca se
-        toca: el tope la deja siempre afuera;
-      · nunca cancela más de lo que había prestado al cierre.
-
-    De ahí sale que se regule solo: un turno que cierra CON el préstamo ya
-    registrado no fabrica sobrante —el cuadre lo esperaba— así que `extra` es 0 y
-    esto devuelve 0. La resta ocurre exactamente una vez, en el mundo viejo o en
-    el nuevo, nunca en los dos.
-
-    Se acota contra el saldo VIGENTE al cierre y no contra lo movido en ESE turno:
-    la base puede haber salido el viernes y el sobrante aparecer el sábado, y en
-    ese caso el delta del sábado es cero pero la plata está igual de prestada.
-
-    `prestado` es el saldo al cierre YA CALCULADO por el que llama (lo trae la
-    precarga de la sede, para no pedir una query por turno). Cuando no viene se
-    consulta acá, que es el camino que usa cualquier llamador suelto.
-    """
-    from app.services.caja import prestado_caja_fuerte   # local: evita el ciclo
-
-    extra = (float(ingresos or 0)
-             + float(t.diferencia_cierre or 0)
-             + float(t.sobrante_consignable or 0))
-    if extra <= 0 or t.fecha_cierre is None:
-        return 0.0
-    if prestado is None:
-        prestado = prestado_caja_fuerte(db, t.tienda_id, hasta=t.fecha_cierre)
-    return round(min(extra, max(prestado, 0.0)), 2)
-
-
-def _esperado_del_turno(t, ingresos: float, egresos: float,
-                        sobrante_de_la_base: float) -> float:
+def _esperado_del_turno(t, ingresos: float, egresos: float) -> float:
     """La fórmula CRUDA del consignable de un turno, sin cascada. Escrita UNA vez.
 
     Vivía duplicada —acá y adentro de `get_resumen_admin`—, y esa duplicación es
@@ -188,22 +92,22 @@ def _esperado_del_turno(t, ingresos: float, egresos: float,
     con este turno. Sin este término se absorbía en la base y se arrastraba
     indefinidamente (Palmetto +$24.600). El faltante NO entra (novedad).
 
-    LA BASE DE LA CAJA FUERTE SE ARREGLA EN EL CUADRE, NO ACÁ. Cuando la sede
-    saca los $500.000 para completar el día, esa plata entra al cajón pero NO es
-    venta: no hay nada que bancar. Con el cuadre esperándola (services/caja.py,
-    `prestado_caja_fuerte`), `diferencia_cierre` vuelve a 0 y
-    `sobrante_consignable` no se fija, así que esta fórmula da bien sola.
+    LA RESERVA DE LA CAJA FUERTE SE DECLARA AL ABRIR, NO SE ARREGLA ACÁ. Cada
+    sede guarda plata aparte para emergencias, y esa plata NO es venta: no hay
+    nada que bancar. Para que esta fórmula dé bien sola, la barista tiene que
+    declararla en `CajaTurno.caja_fuerte` al abrir el turno — ahí queda afuera del
+    efectivo esperado y del conteo.
 
-    El único término que se resta es `sobrante_de_la_base`
-    (`_sobrante_explicado_por_la_base`), y es para los turnos que YA HABÍAN
-    CERRADO cuando se registró el traslado: esas dos columnas quedan congeladas al
-    cierre y nadie las reescribe. Está acotado para que no pueda restar dos veces
-    — leé su docstring antes de tocarlo. Palmetto, sábado 15-ago: pedía $697.900,
-    ahora $197.900.
+    SI NADIE LA DECLARA, EL SOBRANTE SE FABRICA SOLO, y es un error medido, no
+    una hipótesis: Palmetto, sábado 15-ago. La barista contó la reserva adentro de
+    la base de apertura, el sistema lo leyó como sobrante y el día pasó a pedir
+    $697.900 en vez de $197.900 —la base de emergencia de la propia sede rumbo al
+    banco—. Eso NO se corrige acá: se corrige rehaciendo la apertura con
+    `ajustar_apertura` (services/caja.py), que es la que reescribe
+    `sobrante_consignable`, la columna que esta fórmula lee.
     """
     return ((t.total_efectivo or 0) + ingresos - egresos
-            + (t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0)
-            - sobrante_de_la_base)
+            + (t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0))
 
 
 def _aplicar_cascada(saldos: list[dict]) -> None:
@@ -297,7 +201,7 @@ def _saldos_consignacion(db: Session, tienda_id: int, pre: dict | None = None) -
 
     `pre` es la precarga de la sede; si no viene se arma acá. La recibe quien ya
     la tiene (la pantalla la reusa para pintar los detalles) para no pedir las
-    mismas cuatro queries dos veces.
+    mismas tres queries dos veces.
 
     Devuelve la lista en orden cronológico (asc).
     """
@@ -320,16 +224,7 @@ def _saldos_consignacion(db: Session, tienda_id: int, pre: dict | None = None) -
         movs = pre["movs"].get(t.id, [])
         egresos = sum(m.valor for m in movs if m.tipo == "egreso")
         ingresos = sum(m.valor for m in movs if m.tipo == "ingreso")
-        esperado = _esperado_del_turno(
-            t, ingresos, egresos,
-            # La base de la caja fuerte se descuenta ACÁ, sobre el esperado crudo.
-            # La cascada corre DESPUÉS, sobre el esperado ya corregido: primero se
-            # define cuánta plata había que bancar ese día, recién ahí se decide
-            # quién le presta a quién. Invertirlo haría que un día cubriera un
-            # hueco con plata que después resulta que no era suya.
-            _sobrante_explicado_por_la_base(db, t, _prestado_hasta(pre, t.fecha_cierre),
-                                            ingresos),
-        )
+        esperado = _esperado_del_turno(t, ingresos, egresos)
         consignado = sum(c.valor for c in _consigs_del_turno(db, t, pre))
         saldos.append({
             "turno": t, "esperado": esperado, "consignado": consignado,
@@ -502,12 +397,6 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
         s = cascada[t.id]
         esperado = s["esperado"]
         diferencia = total_consignado - esperado
-        # Lo que el traslado de la caja fuerte ya canceló de este turno. Se
-        # recalcula con la misma función y la misma precarga que usó `_saldos_
-        # consignacion`: dos formas de obtener el mismo número se desincronizan
-        # en el primer caso raro, y este va a la pantalla al lado del esperado.
-        base_prestada = _sobrante_explicado_por_la_base(
-            db, t, _prestado_hasta(pre, t.fecha_cierre), total_ingresos_mov)
 
         result.append({
             "turno_id": t.id,
@@ -532,10 +421,9 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
             # Ninguno de estos campos cambia la cuenta: son los sumandos que ya
             # estaban adentro, puestos a la vista.
             "sobrante_apertura": round(float(t.sobrante_consignable or 0), 2),
-            "base_prestada": round(base_prestada, 2),
             "en_cajon_no_es_venta": round(
                 total_ingresos_mov + float(t.diferencia_cierre or 0)
-                + float(t.sobrante_consignable or 0) - base_prestada, 2),
+                + float(t.sobrante_consignable or 0), 2),
             # La cuenta CRUDA del día, sin cascada: lo que ese turno generó y
             # tendría que haber ido al banco si nadie le hubiera sacado nada.
             "esperado_consignar": round(esperado, 2),

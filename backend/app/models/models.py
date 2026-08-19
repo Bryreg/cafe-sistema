@@ -183,6 +183,14 @@ class CajaTurno(Base):
     # Reserva de caja fuerte: efectivo fijo guardado APARTE de la registradora (por si pasa
     # algo extraordinario). Se registra para control pero NO entra en efectivo_esperado ni en
     # el cuadre de la registradora. La base es SOLO el efectivo operativo de la caja.
+    #
+    # DECLARARLA AL ABRIR ES LO QUE EVITA EL SOBRANTE FANTASMA, y no es teoría:
+    # Palmetto, sábado 15-ago. La barista contó la reserva adentro de `base_real`
+    # en vez de declararla acá; el sistema leyó los $500.000 como sobrante de
+    # apertura y el día pasó a pedir consignar $697.900 en vez de $197.900 — la
+    # plata de emergencia de la propia sede rumbo al banco. Si ya pasó, se arregla
+    # rehaciendo la apertura con `ajustar_apertura`, que reescribe también
+    # `sobrante_consignable`.
     caja_fuerte = Column(Numeric(12, 2, asdecimal=False), nullable=True, default=0.0)
     diferencia_apertura = Column(Numeric(12, 2, asdecimal=False), default=0.0)
     # SOBRANTE de apertura que debe bancarse con este turno (max(0, diferencia)).
@@ -252,70 +260,6 @@ class MovimientoCaja(Base):
     factura_id = Column(Integer, nullable=True)
     turno = relationship("CajaTurno", back_populates="movimientos")
     usuario = relationship("Usuario", back_populates="movimientos_caja")
-
-
-class PrestamoCajaFuerte(Base):
-    """LA BASE DE LA CAJA FUERTE SALIÓ A TRABAJAR AL CAJÓN. Un traslado, no un ajuste.
-
-    Cada sede guarda $500.000 fijos en la caja fuerte para emergencias
-    (`CajaTurno.caja_fuerte`). Cuando los pagos a proveedores EN EFECTIVO se comen
-    la venta en efectivo del día, sacan de ahí para completar —en cualquier momento
-    del día, no al abrir— y cuando la venta vuelve a la normalidad la guardan otra vez.
-
-    EL SISTEMA SABÍA CUÁNTO HAY EN LA CAJA FUERTE Y NO SABÍA QUE SE HABÍA MOVIDO.
-    Sin esta tabla el cuadre veía plata de más en la registradora y concluía lo único
-    que podía concluir: «sobró, hay que bancarla». Palmetto, sábado 15-ago: usaron los
-    $500.000, el sistema pidió consignar $697.900 en vez de $197.900. La plata no
-    sobraba, estaba PRESTADA.
-
-    POR QUÉ UN HECHO Y NO UN AJUSTE DEL ESPERADO. Este módulo ya tiene TRES mecanismos
-    que mueven plata entre días —la cascada FIFO, el `sobrante_consignable` de la
-    apertura y las recogidas— y ninguno sabe de los otros. Un cuarto que "corrige el
-    esperado a mano" hubiera sido el que los descuadra a todos. Acá se REGISTRA que la
-    plata cambió de lugar y las cuentas que ya existen la leen: el cuadre suma el saldo
-    prestado, da exacto, no dispara diferencia, no fija sobrante, y la fórmula del
-    consignable (services/consignaciones.py) no se toca ni una línea.
-
-    EL SALDO NO SE GUARDA, SE DERIVA: Σ('saca') − Σ('devuelve') hasta una fecha, por
-    sede. Misma razón que `MovimientoBanco`: corregir un traslado viejo arregla todo
-    aguas abajo solo, sin reescribir una cadena que puede quedar partida a la mitad.
-
-    Es un saldo CORRIENTE POR SEDE, no por turno: la base sale el sábado y puede volver
-    el miércoles, cruzando turnos y días. `caja_turno_id` queda para trazabilidad (en
-    qué turno pasó), pero la aritmética siempre sale de `fecha`, que es la que el dueño
-    puede corregir si cargó el traslado tarde.
-
-    La crea `create_all` (main.py). El loop de ALTERs corre ANTES, así que una tabla
-    NUEVA no lleva entrada allí — solo las columnas nuevas de tablas que ya existen.
-    """
-    __tablename__ = "prestamos_caja_fuerte"
-    id = Column(Integer, primary_key=True)
-    tienda_id = Column(Integer, ForeignKey("tiendas.id"), index=True, nullable=False)
-    # El turno en que pasó, para poder mostrarlo al lado del cuadre. NULLABLE porque
-    # el dueño puede cargar el traslado de ayer con la sede cerrada, y porque un
-    # traslado no depende de que haya un turno abierto para ser cierto.
-    caja_turno_id = Column(Integer, ForeignKey("caja_turnos.id", ondelete="RESTRICT"),
-                           index=True, nullable=True)
-    # EL MOMENTO DEL TRASLADO (UTC-naive, convención del repo), no el del tecleo:
-    # el cuadre pregunta "¿cuánto había prestado cuando conté?", y esa pregunta se
-    # responde con instantes, no con días — la base sale a media mañana y el cuadre
-    # de llegada de esa misma mañana no la vio.
-    fecha = Column(DateTime, index=True, nullable=False)
-    # 'saca'     = de la CAJA FUERTE al CAJÓN (la base sale a trabajar)
-    # 'devuelve' = del CAJÓN a la CAJA FUERTE (vuelve a guardarse)
-    # El monto va SIEMPRE en positivo y el signo lo pone el sentido: misma convención
-    # que `MovimientoBanco.tipo`, y por el mismo motivo — un monto negativo en una
-    # columna que ya se resta se resta dos veces y nadie lo ve hasta que no cuadra.
-    sentido = Column(String(10), nullable=False)
-    monto = Column(Numeric(12, 2, asdecimal=False), nullable=False)   # siempre positivo
-    # Con max_length explícito: sin él el INSERT explota en Postgres.
-    motivo = Column(String(200), nullable=True)
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
-    creado_en = Column(DateTime, default=datetime.utcnow)
-
-    tienda = relationship("Tienda", foreign_keys=[tienda_id])
-    turno = relationship("CajaTurno", foreign_keys=[caja_turno_id])
-    usuario = relationship("Usuario", foreign_keys=[usuario_id])
 
 
 class Producto(Base):

@@ -72,7 +72,6 @@ interface DiaAgrupado {
    *  parte, así que un día que pedía más de lo vendido no tenía cómo explicarse.
    *  Opcionales por si el backend todavía no los manda (deploy a medias). */
   sobrante_apertura?: number
-  base_prestada?: number
   en_cajon_no_es_venta?: number
   esperado_consignar: number
   total_consignado: number
@@ -1003,12 +1002,6 @@ export default function ConsignacionesAdmin() {
                       <div className="flex justify-between text-amber-700">
                         <span className="text-xs pl-3">+ Sobrante de la apertura</span>
                         <span className="text-xs font-semibold">{fmt(dia.sobrante_apertura ?? 0)}</span>
-                      </div>
-                    )}
-                    {(dia.base_prestada ?? 0) !== 0 && (
-                      <div className="flex justify-between text-amber-700">
-                        <span className="text-xs pl-3">− Base de la caja fuerte (no se consigna)</span>
-                        <span className="text-xs font-semibold">−{fmt(dia.base_prestada ?? 0)}</span>
                       </div>
                     )}
 

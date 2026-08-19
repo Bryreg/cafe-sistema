@@ -19,11 +19,11 @@ corregir.
 """
 import unittest
 
-from tests.test_prestamo_caja_fuerte import CajaFuerteBase
+from tests.base_cuadre import CuadreCajaBase
 from app.services import caja as svc
 
 
-class AjustarAperturaLimpiaElSobranteTest(CajaFuerteBase):
+class AjustarAperturaLimpiaElSobranteTest(CuadreCajaBase):
 
     def _sabado_mal_declarado(self):
         """El sábado tal como quedó: $500.000 de sobrante por la apertura mal

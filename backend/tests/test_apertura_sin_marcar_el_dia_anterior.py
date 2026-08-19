@@ -17,11 +17,11 @@ ponerla en cero daría el número correcto mintiendo sobre lo que había.
 """
 import unittest
 
-from tests.test_prestamo_caja_fuerte import CajaFuerteBase
+from tests.base_cuadre import CuadreCajaBase
 from app.services import caja as svc
 
 
-class LaPlataDelDiaAnteriorTest(CajaFuerteBase):
+class LaPlataDelDiaAnteriorTest(CuadreCajaBase):
 
     def _domingo_y_martes(self):
         """El domingo deja $156.685 sin consignar; el martes abre con esa plata

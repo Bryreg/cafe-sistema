@@ -1064,9 +1064,11 @@ def _efectivo_en_registradora(db: Session, tienda_id: int) -> tuple:
     """(efectivo que hay AHORA en el cajón de la sede, de dónde salió el dato).
 
     Con turno abierto es la fórmula del cuadre —base_real + total_efectivo +
-    ingresos − egresos + lo que la caja fuerte le prestó al cajón, ver
-    `registrar_cuadre_llegada` en services/caja.py— MENOS lo ya consignado, que
-    es plata que salió del cajón y hoy está en el banco. Se replica acá porque
+    ingresos − egresos, ver `registrar_cuadre_llegada` en services/caja.py—
+    MENOS lo ya consignado, que es plata que salió del cajón y hoy está en el
+    banco. La reserva de la caja fuerte NO entra: se declara aparte al abrir el
+    turno (`CajaTurno.caja_fuerte`) justamente para que no se mezcle con el
+    efectivo operativo. Se replica acá porque
     allá vive inline dentro de `registrar_cuadre_llegada` y no hay función que
     extraer sin tocar caja.py: si esa fórmula cambia, esta línea cambia en el
     mismo commit.
@@ -1133,17 +1135,11 @@ def _efectivo_en_registradora(db: Session, tienda_id: int) -> tuple:
             RecogidaEfectivo.tienda_id == tienda_id,
             RecogidaEfectivo.creado_en >= turno.fecha_apertura,
         ).scalar() or 0.0
-        # Y LA BASE DE LA CAJA FUERTE QUE SALIÓ AL CAJÓN. Es plata que está
-        # físicamente en la registradora aunque no sea del día: si no se suma, la
-        # pantalla del dueño muestra medio millón de menos justo en las semanas en
-        # que la sede tuvo que sacar la base —o sea justo cuando él mira. Se usa el
-        # delta del turno y no el saldo vigente por la misma razón que el cuadre:
-        # lo que ya estaba prestado cuando se contó `base_real` viene adentro de ese
-        # número (ver `prestado_del_turno` en services/caja.py).
-        from app.services.caja import prestado_del_turno
-        prestado = prestado_del_turno(db, turno)
+        # La reserva de la caja fuerte NO entra: se declara al abrir
+        # (`CajaTurno.caja_fuerte`) y queda guardada aparte, no pasa por la
+        # registradora. Misma fórmula que el cuadre de services/caja.py.
         esperado = (float(turno.base_real or 0) + float(turno.total_efectivo or 0)
-                    + float(ingresos) - float(egresos) + float(prestado)
+                    + float(ingresos) - float(egresos)
                     - float(consignado) - float(recogido))
         return round(esperado, 2), "turno_abierto"
 

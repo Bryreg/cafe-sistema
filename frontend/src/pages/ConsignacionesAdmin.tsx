@@ -4,8 +4,14 @@ import api from '../api/client'
 import {
   Banknote, User, ImageIcon, Check, X, ZoomIn,
   ChevronDown, ChevronUp, AlertTriangle, CheckCircle2,
-  Download, FileText, TrendingUp, Trash2, Pencil,
+  Download, FileText, TrendingUp, Trash2, Pencil, CornerDownRight,
 } from 'lucide-react'
+import {
+  cascadaDelDia, faltaConsignar, diferenciaEfectiva, diaCuadrado,
+} from '../components/consignaciones/cascada'
+import type {
+  Cascada, CamposCascada, CruceCascada, RotularCruce,
+} from '../components/consignaciones/cascada'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 interface Sede { id: number; nombre: string }
@@ -15,7 +21,10 @@ interface ConsignacionItem {
   id: number; valor: number; estado: string; fecha: string
   imagen_url: string | null; usuario_nombre: string | null
 }
-interface ResumenDia {
+// Hereda `CamposCascada`: los campos de la cascada llegan en el mismo turno del
+// resumen. Ver `components/consignaciones/cascada.ts` — la cuenta de qué día le
+// tapó el hueco a cuál la hace el backend y acá NO se recalcula.
+interface ResumenDia extends CamposCascada {
   turno_id: number
   tienda_id: number
   tienda_nombre: string
@@ -29,6 +38,12 @@ interface ResumenDia {
   diferencia_cierre?: number
   esperado_consignar: number
   total_consignado: number
+  /**
+   * `total_consignado − esperado_consignar` tal cual lo manda el backend, o sea
+   * ANTES de la cascada. No la uses para pintar: en un día que le tapó el hueco
+   * a otro te va a dar un rojo que no corresponde. La buena es
+   * `diferenciaEfectiva(cascada, …)`.
+   */
   diferencia: number
   egresos_detalle: MovDetalle[]
   ingresos_detalle: MovDetalle[]
@@ -42,6 +57,8 @@ interface ResumenDia {
 interface DiaAgrupado {
   key: string
   turno_ids: number[]
+  /** La cascada del día, ya sumada y rotulada. Es lo que decide el número grande. */
+  cascada: Cascada
   tienda_nombre: string
   fecha_apertura: string
   fecha_cierre: string | null
@@ -52,7 +69,11 @@ interface DiaAgrupado {
   diferencia_cierre: number
   esperado_consignar: number
   total_consignado: number
-  diferencia: number
+  // NO hay `diferencia` acá a propósito. La había —`consignado − esperado`— y
+  // era la cuenta PRE-CASCADA: dejarla sumada y guardada es dejar servida la
+  // cifra equivocada para el próximo que agregue una fila a esta tarjeta. La
+  // diferencia del día se saca con `diferenciaEfectiva(cascada, …)`, que sin
+  // cascada da exactamente la misma.
   egresos_detalle: MovDetalle[]
   ingresos_detalle: MovDetalle[]
   consignaciones: ConsignacionItem[]
@@ -115,7 +136,11 @@ async function exportarExcelConsig(dias: ResumenDia[]) {
 
 // ─── Reporte HTML con fotos ────────────────────────────────────────────────────
 
-function descargarReporteHTML(dias: ResumenDia[]) {
+// `rotular` entra por parámetro porque nombrar el otro lado de un cruce necesita
+// los turnos cargados, y eso solo lo sabe la pantalla. El reporte impreso corre
+// la MISMA cuenta que la lista a propósito: un PDF que diga «Diff: $177.700» de
+// un día que la pantalla da por cuadrado reabre las dos cuentas en papel.
+function descargarReporteHTML(dias: ResumenDia[], rotular: RotularCruce) {
   const totalConsignado = dias.reduce((s, d) => s + d.total_consignado, 0)
   const conFoto = dias.flatMap(d => d.consignaciones).filter(c => c.imagen_url).length
   const totalConsig = dias.flatMap(d => d.consignaciones).length
@@ -151,6 +176,8 @@ function descargarReporteHTML(dias: ResumenDia[]) {
     .foto-link  { display: inline-block; margin-top: 8px; font-size: 0.8rem; color: #2563eb; text-decoration: none; }
     .foto-link:hover { text-decoration: underline; }
     .seq { font-size: 0.8rem; color: #d1d5db; font-weight: 700; width: 28px; flex-shrink: 0; padding-top: 2px; }
+    .cascada { font-size: 0.8rem; color: #b45309; margin: -6px 0 12px; }
+    .cascada-rojo { font-size: 0.8rem; color: #dc2626; font-weight: 600; margin: -6px 0 12px; }
     @media print {
       body { background: white; padding: 0; }
       .resumen-cards { break-inside: avoid; }
@@ -180,15 +207,25 @@ function descargarReporteHTML(dias: ResumenDia[]) {
   </div>
 
   ${dias.map(d => {
-    const ok = Math.abs(d.diferencia) <= 0.5
+    const c = cascadaDelDia([d], rotular)
+    const ok = diaCuadrado(c, d.esperado_consignar, d.total_consignado)
+    const dif = diferenciaEfectiva(c, d.esperado_consignar, d.total_consignado)
+    const cruces = !c.legible || !c.hubo ? '' : [
+      ...c.cubrio.map(l => `<p class="cascada">Cubrió el faltante del ${l.dia}: −$${fmtNum(l.monto)}</p>`),
+      ...c.cubiertoPor.map(l => `<p class="cascada">Le faltaron $${fmtNum(l.monto)}; los cubrió la venta del ${l.dia}</p>`),
+      c.faltanteSinCubrir > 0.5
+        ? `<p class="cascada-rojo">Faltaron $${fmtNum(c.faltanteSinCubrir)} que ningún día anterior alcanzó a cubrir</p>`
+        : '',
+    ].join('')
     return `
   <div class="dia-title">
     <span>${fmtFecha(d.fecha_cierre)} — ${d.tienda_nombre}</span>
     <span class="dia-meta" style="color:${ok ? '#16a34a' : '#dc2626'}">
-      ${ok ? '✓ Cuadrado' : `Diff: $${fmtNum(d.diferencia)}`}
+      ${ok ? '✓ Cuadrado' : `Diff: $${fmtNum(dif)}`}
       &nbsp;·&nbsp; $${fmtNum(d.total_consignado)} consignado
     </span>
   </div>
+  ${cruces}
   ${d.consignaciones.length === 0
     ? '<p style="color:#f59e0b;font-size:0.85rem;margin-bottom:12px">⚠ Sin consignaciones registradas</p>'
     : d.consignaciones.map((c, i) => `
@@ -563,26 +600,52 @@ export default function ConsignacionesAdmin() {
     } finally { setRecogiendo(null) }
   }
 
+  // Cómo se nombra el día del OTRO lado de un cruce de la cascada.
+  //
+  // Se rotula por la APERTURA del turno cuando lo tenemos cargado —igual que las
+  // tarjetas de abajo, que agrupan por apertura a propósito— y no por el
+  // `fecha_cierre` que viaja en el cruce: un turno que abre el domingo y cierra
+  // pasada la medianoche se llamaría «lunes» adentro de la explicación y
+  // «domingo» en la lista, y el dueño saldría a buscar un día que no existe.
+  //
+  // La cascada corre sobre la HISTORIA COMPLETA de la sede y esta pantalla
+  // muestra un rango filtrado, así que el otro lado puede no estar cargado.
+  // `fuera: true` es exactamente eso, y se dice en voz alta: una fecha que no
+  // aparece en la lista de abajo, sin aclarar por qué, se lee como un error.
+  const rotularCruce = useMemo<RotularCruce>(() => {
+    const porTurno = new Map(dias.map(d => [d.turno_id, d]))
+    return (ref: CruceCascada) => {
+      const t = porTurno.get(ref.turno_id)
+      return t
+        ? { dia: fmtFecha(t.fecha_apertura), fuera: false }
+        : { dia: fmtFecha(ref.fecha_cierre), fuera: true }
+    }
+  }, [dias])
+
   // Agrupar los turnos por DÍA de calendario (una tarjeta por día). Suma esperado y
   // consignado del día; concatena movimientos y consignaciones de sus turnos. El backend
   // devuelve los turnos en orden de cierre desc, así que el Map conserva ese orden por día.
   const diasAgrupados = useMemo<DiaAgrupado[]>(() => {
-    const map = new Map<string, DiaAgrupado>()
+    // `turnos` no llega a la tarjeta: es el insumo para armar la cascada al
+    // final, cuando ya se sabe cuáles turnos son de este mismo día.
+    type Acum = Omit<DiaAgrupado, 'cascada'> & { turnos: ResumenDia[] }
+    const map = new Map<string, Acum>()
     for (const d of dias) {
       const key = dayKeyOf(d)
       let g = map.get(key)
       if (!g) {
         g = {
-          key, turno_ids: [], tienda_nombre: d.tienda_nombre,
+          key, turno_ids: [], turnos: [], tienda_nombre: d.tienda_nombre,
           fecha_apertura: d.fecha_apertura, fecha_cierre: d.fecha_cierre,
           n_turnos: 0, total_efectivo: 0, total_ingresos_mov: 0, total_egresos: 0,
-          diferencia_cierre: 0, esperado_consignar: 0, total_consignado: 0, diferencia: 0,
+          diferencia_cierre: 0, esperado_consignar: 0, total_consignado: 0,
           egresos_detalle: [], ingresos_detalle: [], consignaciones: [],
         }
         map.set(key, g)
       }
       g.n_turnos += 1
       g.turno_ids.push(d.turno_id)
+      g.turnos.push(d)
       g.total_efectivo += d.total_efectivo
       g.total_ingresos_mov += d.total_ingresos_mov
       g.total_egresos += d.total_egresos
@@ -598,18 +661,36 @@ export default function ConsignacionesAdmin() {
     }
     const arr = [...map.values()]
     for (const g of arr) {
-      g.diferencia = g.total_consignado - g.esperado_consignar
       g.egresos_detalle.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
       g.ingresos_detalle.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
       g.consignaciones.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
     }
-    return arr
-  }, [dias])
+    // La cascada se arma recién acá, con TODOS los turnos del día en la mano:
+    // los cruces entre turnos del mismo día se descartan, y para saber cuáles
+    // son hay que haber terminado de agrupar.
+    return arr.map(({ turnos, ...g }) => ({
+      ...g, cascada: cascadaDelDia(turnos, rotularCruce),
+    }))
+  }, [dias, rotularCruce])
 
   // Totales globales — sobre los días agregados (coincide con lo que muestran las tarjetas).
   const totalEsperado   = diasAgrupados.reduce((s, g) => s + g.esperado_consignar, 0)
   const totalConsignado = diasAgrupados.reduce((s, g) => s + g.total_consignado, 0)
-  const totalPendiente  = diasAgrupados.reduce((s, g) => s + Math.max(0, g.esperado_consignar - g.total_consignado), 0)
+  // Por consignar sale del saldo POST-CASCADA, no de `esperado − consignado`: si
+  // el titular siguiera con la resta cruda volvería a discrepar con las tarjetas
+  // —y con lo que el backend efectivamente cobra— que es el bug que se cierra acá.
+  const totalPendiente  = diasAgrupados.reduce(
+    (s, g) => s + faltaConsignar(g.cascada, g.esperado_consignar, g.total_consignado), 0)
+  // Lo que se fue a tapar huecos de otros días, y lo que faltó y nadie pudo tapar.
+  // Ambos se suman sobre lo que el periodo filtrado muestra, no sobre la historia.
+  const totalCubierto = diasAgrupados.reduce(
+    (s, g) => s + (g.cascada.legible ? g.cascada.cubrioTotal : 0), 0)
+  const totalSinCubrir = diasAgrupados.reduce(
+    (s, g) => s + (g.cascada.legible ? g.cascada.faltanteSinCubrir : 0), 0)
+  // Un backend que todavía no manda la cascada deja el número viejo en pantalla.
+  // Es el mismo que mostraba ayer, pero decirlo es la diferencia entre una cifra
+  // que se puede auditar y una que baja sin que nadie sepa por qué.
+  const cascadaIlegible = diasAgrupados.some(g => !g.cascada.legible)
 
   return (
     <div className="space-y-6">
@@ -633,7 +714,7 @@ export default function ConsignacionesAdmin() {
                 <Download size={14} /> Excel
               </button>
               <button
-                onClick={() => descargarReporteHTML(dias)}
+                onClick={() => descargarReporteHTML(dias, rotularCruce)}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors"
                 title="Reporte HTML con fotos — abre en el navegador, imprimible a PDF"
               >
@@ -724,16 +805,45 @@ export default function ConsignacionesAdmin() {
               <>
                 {/* Resumen global */}
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
-                  {/* Por consignar — fila completa en móvil */}
-                  <div className={`col-span-2 sm:col-span-1 border-2 rounded-2xl p-4 ${totalPendiente > 0 ? 'bg-amber-50 border-amber-300' : 'bg-green-50 border-green-200'}`}>
-                    <p className={`text-xs font-semibold uppercase tracking-wide ${totalPendiente > 0 ? 'text-amber-700' : 'text-green-600'}`}>
+                  {/* Por consignar — fila completa en móvil.
+                      El verde tiene DOS condiciones, no una: sin nada pendiente y
+                      sin plata faltante. Un «al día ✓» arriba de un faltante que
+                      nadie tapó es la mentira más cara que puede decir esta pantalla. */}
+                  <div className={`col-span-2 sm:col-span-1 border-2 rounded-2xl p-4 ${
+                    totalSinCubrir > 0.5 ? 'bg-red-50 border-red-300'
+                      : totalPendiente > 0 ? 'bg-amber-50 border-amber-300'
+                      : 'bg-green-50 border-green-200'
+                  }`}>
+                    <p className={`text-xs font-semibold uppercase tracking-wide ${
+                      totalSinCubrir > 0.5 ? 'text-red-700'
+                        : totalPendiente > 0 ? 'text-amber-700' : 'text-green-600'
+                    }`}>
                       Por consignar
                     </p>
-                    <p className={`text-2xl font-bold mt-1 ${totalPendiente > 0 ? 'text-amber-800' : 'text-green-700'}`}>
+                    <p className={`text-2xl font-bold mt-1 ${
+                      totalSinCubrir > 0.5 ? 'text-red-800'
+                        : totalPendiente > 0 ? 'text-amber-800' : 'text-green-700'
+                    }`}>
                       {fmt(totalPendiente)}
                     </p>
-                    {totalPendiente === 0 && (
+                    {totalPendiente === 0 && totalSinCubrir <= 0.5 && (
                       <p className="text-xs text-green-600 mt-0.5">Al día ✓</p>
+                    )}
+                    {totalCubierto > 0.5 && (
+                      <p className="text-xs text-amber-700 mt-1 leading-snug">
+                        Ya se descontaron {fmt(totalCubierto)} que taparon faltantes de otros días.
+                      </p>
+                    )}
+                    {totalSinCubrir > 0.5 && (
+                      <p className="text-xs text-red-700 font-semibold mt-1 leading-snug">
+                        Faltan {fmt(totalSinCubrir)} que ningún día anterior alcanzó a cubrir.
+                      </p>
+                    )}
+                    {cascadaIlegible && (
+                      <p className="text-xs text-gray-500 mt-1 leading-snug">
+                        Hay días de los que el servidor no informó la cascada: ahí este total
+                        usa la cuenta vieja, sin descontar lo que tapó faltantes.
+                      </p>
                     )}
                   </div>
                   <div className="bg-gray-50 border border-gray-200 rounded-2xl p-3 sm:p-4">
@@ -758,10 +868,15 @@ export default function ConsignacionesAdmin() {
                 {diasAgrupados.map(dia => {
           const abierto = expandido === dia.key
           const pendientes = dia.consignaciones.filter(c => c.estado === 'pendiente')
-          const ok = Math.abs(dia.diferencia) <= 0.5
           const hayEgresos = dia.egresos_detalle.length > 0
           const hayIngresos = dia.ingresos_detalle.length > 0
-          const porConsignar = Math.max(0, dia.esperado_consignar - dia.total_consignado)
+          // Las tres cifras del día salen de la MISMA cuenta con la que el backend
+          // cobra. Cuando la cascada no tocó el día dan idénticas a las de siempre,
+          // así que el día normal —que son casi todos— se dibuja como se dibujaba.
+          const cascada = dia.cascada
+          const porConsignar = faltaConsignar(cascada, dia.esperado_consignar, dia.total_consignado)
+          const dif = diferenciaEfectiva(cascada, dia.esperado_consignar, dia.total_consignado)
+          const ok = diaCuadrado(cascada, dia.esperado_consignar, dia.total_consignado)
 
           return (
             <div key={dia.key}
@@ -797,6 +912,29 @@ export default function ConsignacionesAdmin() {
                   <p className="text-xs text-gray-400 mt-0.5">
                     {dia.n_turnos > 1 && `${dia.n_turnos} turnos · `}Efectivo ventas {fmt(dia.total_efectivo)}
                   </p>
+
+                  {/* La procedencia va en la fila CERRADA, no escondida en el
+                      detalle: el dueño baja la lista de un vistazo, y un número
+                      que bajó sin decir por qué no se distingue de un bug. */}
+                  {cascada.legible && cascada.hubo && (
+                    <div className="mt-1 space-y-0.5">
+                      {cascada.cubrio.map(l => (
+                        <p key={`dio-${l.dia}`} className="text-xs text-amber-700 leading-snug">
+                          Cubrió el faltante del {l.dia}{l.fuera ? ' (fuera del periodo)' : ''} · −{fmt(l.monto)}
+                        </p>
+                      ))}
+                      {cascada.cubiertoPor.map(l => (
+                        <p key={`rec-${l.dia}`} className="text-xs text-amber-700 leading-snug">
+                          Le faltaron {fmt(l.monto)}; los cubrió la venta del {l.dia}{l.fuera ? ' (fuera del periodo)' : ''}
+                        </p>
+                      ))}
+                      {cascada.faltanteSinCubrir > 0.5 && (
+                        <p className="text-xs text-red-600 font-semibold leading-snug">
+                          Faltaron {fmt(cascada.faltanteSinCubrir)} que ningún día anterior alcanzó a cubrir
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Pendiente / cuadrado */}
@@ -808,7 +946,7 @@ export default function ConsignacionesAdmin() {
                     </>
                   ) : (
                     <p className={`text-base font-bold ${ok ? 'text-green-600' : 'text-red-600'}`}>
-                      {ok ? '✓ Al día' : fmt(dia.diferencia)}
+                      {ok ? '✓ Al día' : fmt(dif)}
                     </p>
                   )}
                 </div>
@@ -855,20 +993,80 @@ export default function ConsignacionesAdmin() {
                       <span className="text-blue-700">{fmt(dia.esperado_consignar)}</span>
                     </div>
 
+                    {/* La cascada, renglón por renglón. Va DEBAJO del esperado
+                        crudo y no en lugar de él: el dueño tiene que poder seguir
+                        la cuenta desde la cifra que ya conocía hasta la que le
+                        cobra el sistema, sin saltos. */}
+                    {cascada.legible && cascada.hubo && (<>
+                      {cascada.cubrio.map(l => (
+                        <div key={`dio-${l.dia}`} className="flex justify-between gap-2 text-amber-700">
+                          <span className="text-xs pl-3 flex items-start gap-1">
+                            <CornerDownRight size={12} className="mt-0.5 shrink-0" />
+                            Cubrió el faltante del {l.dia}{l.fuera ? ' (fuera del periodo mostrado)' : ''}
+                          </span>
+                          <span className="text-xs font-semibold whitespace-nowrap">−{fmt(l.monto)}</span>
+                        </div>
+                      ))}
+                      {cascada.cubiertoPor.map(l => (
+                        <div key={`rec-${l.dia}`} className="flex justify-between gap-2 text-amber-700">
+                          <span className="text-xs pl-3 flex items-start gap-1">
+                            <CornerDownRight size={12} className="mt-0.5 shrink-0" />
+                            Lo cubrió la venta del {l.dia}{l.fuera ? ' (fuera del periodo mostrado)' : ''}
+                          </span>
+                          <span className="text-xs font-semibold whitespace-nowrap">+{fmt(l.monto)}</span>
+                        </div>
+                      ))}
+                      {cascada.faltanteSinCubrir > 0.5 && (<>
+                        <div className="flex justify-between gap-2 text-red-600">
+                          <span className="text-xs pl-3 flex items-start gap-1">
+                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                            Faltó plata y ningún día anterior tenía saldo para cubrirla
+                          </span>
+                          <span className="text-xs font-semibold whitespace-nowrap">{fmt(cascada.faltanteSinCubrir)}</span>
+                        </div>
+                        <p className="text-[11px] text-red-600/90 leading-snug pl-6">
+                          El sistema deja este monto fuera del saldo por consignar, así que no
+                          lo va a volver a pedir. Conviene revisar los egresos en efectivo de
+                          ese día contra los soportes.
+                        </p>
+                      </>)}
+                    </>)}
+
                     <div className="flex justify-between">
                       <span className="text-gray-600">Total consignado</span>
                       <span className="font-semibold text-gray-800">{fmt(dia.total_consignado)}</span>
                     </div>
 
-                    <div className={`flex justify-between font-bold pt-1 border-t border-gray-200 ${ok ? 'text-green-600' : 'text-red-600'}`}>
-                      <span>Diferencia</span>
-                      <span className="flex items-center gap-1">
-                        {ok
-                          ? <><CheckCircle2 size={14} /> Sin diferencia</>
-                          : <><AlertTriangle size={14} /> {fmt(dia.diferencia)}</>
-                        }
-                      </span>
-                    </div>
+                    {/* Con cascada el renglón de cierre es «falta consignar» —el
+                        número accionable— y no «diferencia», que ahí abajo ya no
+                        contesta nada. Sin cascada queda tal cual estaba: los tres
+                        términos nuevos valen cero y `dif` da la diferencia vieja. */}
+                    {cascada.legible && cascada.hubo ? (
+                      <div className="flex justify-between font-bold pt-1 border-t border-gray-200">
+                        <span className="text-gray-700">Falta consignar</span>
+                        {porConsignar > 0.5 ? (
+                          <span className="text-amber-700">{fmt(porConsignar)}</span>
+                        ) : ok ? (
+                          <span className="text-green-600 flex items-center gap-1">
+                            <CheckCircle2 size={14} /> Nada pendiente
+                          </span>
+                        ) : (
+                          <span className="text-red-600 flex items-center gap-1 text-right">
+                            <AlertTriangle size={14} className="shrink-0" /> Nada por consignar, pero falta plata
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className={`flex justify-between font-bold pt-1 border-t border-gray-200 ${ok ? 'text-green-600' : 'text-red-600'}`}>
+                        <span>Diferencia</span>
+                        <span className="flex items-center gap-1">
+                          {ok
+                            ? <><CheckCircle2 size={14} /> Sin diferencia</>
+                            : <><AlertTriangle size={14} /> {fmt(dif)}</>
+                          }
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Recogida por el admin — reemplaza la foto del comprobante */}

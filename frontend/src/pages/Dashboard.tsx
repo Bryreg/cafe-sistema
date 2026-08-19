@@ -10,6 +10,7 @@ import {
 // haciendo que el panel consulte un dia futuro y muestre todo en cero.
 import { hoyLocal as today, haceDiasLocal as daysAgo, inicioMesLocal as primerDiaDelMes } from '../utils/fechaLocal'
 import { novedadesParaRol, TipoNovedad } from '../constants/novedades'
+import { cascadaDelDia, faltaConsignar } from '../components/consignaciones/cascada'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -116,6 +117,21 @@ interface ConsignTurno {
   esperado_consignar: number
   total_consignado: number
   diferencia: number
+  /**
+   * LO QUE DE VERDAD FALTA CONSIGNAR de ese día, ya con la cascada aplicada.
+   *
+   * NO es `esperado_consignar − total_consignado`: cuando un día cierra en
+   * contra, su faltante se cobra del saldo de un día anterior, y esa resta —que
+   * el backend ya hace y que la pantalla de Consignaciones muestra— no aparece
+   * en ninguno de los otros dos campos. Restarlos a mano acá daba $400.000 del
+   * domingo mientras Consignaciones mostraba $222.300: dos números para la
+   * misma pregunta, en dos pantallas que el dueño mira seguidas.
+   */
+  saldo_pendiente: number
+  cubrio?: { turno_id: number; fecha_cierre: string | null; monto: number }[]
+  cubierto_por?: { turno_id: number; fecha_cierre: string | null; monto: number }[]
+  cubrio_faltante?: number
+  faltante_sin_cubrir?: number
 }
 
 interface TurnoActivo {
@@ -419,9 +435,18 @@ export default function Dashboard() {
     api.get('/consignaciones/resumen-admin', { params: paramsSede })
       .then(r => {
         const filas: ConsignTurno[] = Array.isArray(r.data) ? r.data : []
-        const pendientes = filas.filter(f => f.total_consignado < f.esperado_consignar)
-        const monto = pendientes.reduce((acc, f) => acc + Math.max(0, f.esperado_consignar - f.total_consignado), 0)
-        setConsignPend({ n: pendientes.length, monto })
+        // El MISMO helper que usa Consignaciones, no una copia de la cuenta: dos
+        // implementaciones de la misma aritmética se desincronizan en el primer
+        // caso raro, y este número se mira en las dos pantallas seguidas.
+        // `faltaConsignar` cae solo a la resta vieja si el backend todavía no
+        // manda los campos de la cascada (durante un deploy a medias).
+        const pendientes = filas
+          // El rótulo del cruce no se usa acá: el Dashboard muestra el TOTAL
+          // pendiente, no de dónde salió cada peso. Eso vive en Consignaciones.
+          .map(f => faltaConsignar(cascadaDelDia([f], () => ({ dia: '', fuera: false })),
+                                   f.esperado_consignar, f.total_consignado))
+          .filter(m => m > 0)
+        setConsignPend({ n: pendientes.length, monto: pendientes.reduce((a, m) => a + m, 0) })
       })
       .catch(() => setConsignPend(null))
 

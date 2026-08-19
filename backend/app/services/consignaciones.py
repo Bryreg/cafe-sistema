@@ -1,13 +1,121 @@
+from bisect import bisect_right
+
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, date, timedelta
 from fastapi import HTTPException
 from app.models.models import (Consignacion, EstadoConsignacionEnum,
-                                CajaTurno, MovimientoCaja, RecogidaEfectivo,
-                                Tienda, EstadoTurnoEnum)
+                                CajaTurno, MovimientoCaja, PrestamoCajaFuerte,
+                                RecogidaEfectivo, Tienda, EstadoTurnoEnum)
 
 
-def _sobrante_explicado_por_la_base(db: Session, t) -> float:
+# ── Precarga por sede ───────────────────────────────────────────────────────
+#
+# ACÁ NO CAMBIA NINGUNA CUENTA, CAMBIA CUÁNTAS VECES SE LE PREGUNTA A LA BASE.
+# `_saldos_consignacion` recorre TODOS los turnos cerrados de la sede y pedía,
+# por cada uno, sus movimientos, sus consignaciones y el saldo prestado de la
+# caja fuerte: tres queries por turno. Se bancaba mientras el único que llamaba
+# era la imputación —una vez por acción del dueño—, pero desde que la pantalla de
+# Consignaciones lee de acá son miles de queries por pintar la tabla en una sede
+# con un año de historia, en cada F5.
+#
+# Esto trae lo mismo en cuatro queries por sede y lo agrupa en memoria. Son los
+# mismos registros sumados en el mismo orden: si algo de acá mueve un peso, está
+# mal escrito, no es un ajuste.
+
+def _precargar_sede(db: Session, tienda_id: int) -> dict:
+    """Movimientos, consignaciones y traslados de caja fuerte de una sede, agrupados.
+
+    Se filtra por SEDE y no por una lista de `turno_id`: un `IN (...)` con los
+    turnos de un año revienta el tope de variables de SQLite (mismo motivo que
+    documenta `_subquery_adoptados` en services/costos.py).
+    """
+    movs: dict[int, list] = {}
+    filas_mov = (
+        db.query(MovimientoCaja)
+        .join(CajaTurno, MovimientoCaja.caja_turno_id == CajaTurno.id)
+        .filter(
+            CajaTurno.tienda_id == tienda_id,
+            CajaTurno.estado == EstadoTurnoEnum.cerrado,
+        )
+        # `id` como desempate: dos movimientos con la misma hora tienen que salir
+        # siempre en el mismo orden o el detalle de la pantalla salta entre cargas.
+        .order_by(MovimientoCaja.fecha, MovimientoCaja.id)
+        .all()
+    )
+    for m in filas_mov:
+        movs.setdefault(m.caja_turno_id, []).append(m)
+
+    consigs: dict[int, list] = {}
+    filas_consig = (
+        db.query(Consignacion)
+        .join(CajaTurno, Consignacion.caja_turno_id == CajaTurno.id)
+        .filter(
+            CajaTurno.tienda_id == tienda_id,
+            CajaTurno.estado == EstadoTurnoEnum.cerrado,
+        )
+        .all()
+    )
+    for c in filas_consig:
+        consigs.setdefault(c.caja_turno_id, []).append(c)
+
+    # Las legacy SIN FK van aparte y sin agrupar: se emparejan por ventana de
+    # fecha, turno por turno (ver `_consigs_del_turno`), así que no hay clave por
+    # la cual indexarlas.
+    huerfanas = db.query(Consignacion).filter(
+        Consignacion.tienda_id == tienda_id,
+        Consignacion.caja_turno_id.is_(None),
+    ).all()
+
+    # Prefijos acumulados de la caja fuerte. `prestado_caja_fuerte` es
+    # Σ('saca') − Σ('devuelve') hasta un instante, y preguntarlo turno por turno
+    # era la tercera query por turno. Con las filas ordenadas por fecha ese saldo
+    # sale de un `bisect` sobre dos acumulados.
+    #
+    # LOS DOS SENTIDOS SE ACUMULAN POR SEPARADO y se restan al final, igual que la
+    # query original. Acumular un solo total con el signo ya aplicado daría el
+    # mismo peso por otro camino, y en este módulo el camino es la prueba: la
+    # función de allá también devuelve negativo a propósito cuando alguien cargó
+    # un 'devuelve' que nunca salió, y ese absurdo tiene que seguir viéndose.
+    fechas: list = []
+    acum_saca: list = [0.0]
+    acum_devuelve: list = [0.0]
+    for fecha, sentido, monto in (
+        db.query(PrestamoCajaFuerte.fecha, PrestamoCajaFuerte.sentido,
+                 PrestamoCajaFuerte.monto)
+        .filter(PrestamoCajaFuerte.tienda_id == tienda_id)
+        .order_by(PrestamoCajaFuerte.fecha, PrestamoCajaFuerte.id)
+        .all()
+    ):
+        valor = float(monto or 0)
+        fechas.append(fecha)
+        acum_saca.append(acum_saca[-1] + (valor if sentido == "saca" else 0.0))
+        acum_devuelve.append(acum_devuelve[-1] + (valor if sentido == "devuelve" else 0.0))
+
+    return {
+        "movs": movs,
+        "consigs": consigs,
+        "consigs_huerfanas": huerfanas,
+        "prestamo_fechas": fechas,
+        "prestamo_saca": acum_saca,
+        "prestamo_devuelve": acum_devuelve,
+    }
+
+
+def _prestado_hasta(pre: dict, hasta: datetime | None) -> float:
+    """El saldo prestado de la caja fuerte a un instante, leído de la precarga.
+
+    Devuelve el MISMO número que `prestado_caja_fuerte(db, tienda_id, hasta=...)`,
+    negativos incluidos. `bisect_right` toma todas las filas con `fecha <= hasta`
+    —también las empatadas en el mismo instante—, que es exactamente lo que hace
+    el `<=` de aquella query.
+    """
+    fechas = pre["prestamo_fechas"]
+    k = len(fechas) if hasta is None else bisect_right(fechas, hasta)
+    return round(pre["prestamo_saca"][k] - pre["prestamo_devuelve"][k], 2)
+
+
+def _sobrante_explicado_por_la_base(db: Session, t, prestado: float | None = None) -> float:
     """Cuánto del sobrante YA CONGELADO de un turno lo explica la base prestada.
 
     `diferencia_cierre` y `sobrante_consignable` se escriben AL CERRAR y quedan
@@ -32,76 +140,181 @@ def _sobrante_explicado_por_la_base(db: Session, t) -> float:
     Se acota contra el saldo VIGENTE al cierre y no contra lo movido en ESE turno:
     la base puede haber salido el viernes y el sobrante aparecer el sábado, y en
     ese caso el delta del sábado es cero pero la plata está igual de prestada.
+
+    `prestado` es el saldo al cierre YA CALCULADO por el que llama (lo trae la
+    precarga de la sede, para no pedir una query por turno). Cuando no viene se
+    consulta acá, que es el camino que usa cualquier llamador suelto.
     """
     from app.services.caja import prestado_caja_fuerte   # local: evita el ciclo
 
     extra = float(t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0)
     if extra <= 0 or t.fecha_cierre is None:
         return 0.0
-    prestado = prestado_caja_fuerte(db, t.tienda_id, hasta=t.fecha_cierre)
+    if prestado is None:
+        prestado = prestado_caja_fuerte(db, t.tienda_id, hasta=t.fecha_cierre)
     return round(min(extra, max(prestado, 0.0)), 2)
 
 
-def _saldos_consignacion(db: Session, tienda_id: int) -> list[dict]:
+def _esperado_del_turno(t, ingresos: float, egresos: float,
+                        sobrante_de_la_base: float) -> float:
+    """La fórmula CRUDA del consignable de un turno, sin cascada. Escrita UNA vez.
+
+    Vivía duplicada —acá y adentro de `get_resumen_admin`—, y esa duplicación es
+    la grieta por la que la pantalla y la imputación empezaron a decir cosas
+    distintas sobre la misma plata. Dos copias idénticas hoy son dos copias
+    distintas el día que alguien toque una sola.
+
+    esperado = ventas en efectivo + ingresos de caja − egresos en efectivo (contado)
+    + diferencia del cierre. Incluir la diferencia hace que "por consignar" del
+    turno sea EXACTAMENTE la base con la que arranca el día siguiente
+    (efectivo_final − base_real): la plata física que queda en el cajón es la que
+    viaja al banco. Solo el efectivo mueve esto: crédito y bancos no crean egreso
+    de caja, así que no entran.
+
+    + SOBRANTE de apertura (sobrante_consignable, solo turnos post-fix): plata
+    extra encontrada al abrir que no pertenece a ningún día anterior — se banca
+    con este turno. Sin este término se absorbía en la base y se arrastraba
+    indefinidamente (Palmetto +$24.600). El faltante NO entra (novedad).
+
+    LA BASE DE LA CAJA FUERTE SE ARREGLA EN EL CUADRE, NO ACÁ. Cuando la sede
+    saca los $500.000 para completar el día, esa plata entra al cajón pero NO es
+    venta: no hay nada que bancar. Con el cuadre esperándola (services/caja.py,
+    `prestado_caja_fuerte`), `diferencia_cierre` vuelve a 0 y
+    `sobrante_consignable` no se fija, así que esta fórmula da bien sola.
+
+    El único término que se resta es `sobrante_de_la_base`
+    (`_sobrante_explicado_por_la_base`), y es para los turnos que YA HABÍAN
+    CERRADO cuando se registró el traslado: esas dos columnas quedan congeladas al
+    cierre y nadie las reescribe. Está acotado para que no pueda restar dos veces
+    — leé su docstring antes de tocarlo. Palmetto, sábado 15-ago: pedía $697.900,
+    ahora $197.900.
+    """
+    return ((t.total_efectivo or 0) + ingresos - egresos
+            + (t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0)
+            - sobrante_de_la_base)
+
+
+def _aplicar_cascada(saldos: list[dict]) -> None:
+    """El déficit de un turno se cobra del saldo de los ANTERIORES, y queda dicho de cuál.
+
+    El caso que la originó: el lunes 17 la sede pagó de la registradora más de lo
+    que entró en efectivo y cerró con $177.700 EN CONTRA. Esa plata no salió del
+    aire — salió de la venta del domingo, que todavía estaba en el cajón. La
+    cascada es lo que hace que el lunes quede en cero y el domingo pida $177.700
+    menos, o sea que el sistema diga lo mismo que pasó físicamente.
+
+    MÁS VIEJO PRIMERO, y no se toca: es plata que lleva más días sin ir al banco.
+    Cambiar el orden movería números de toda la historia.
+
+    LO QUE ESTE PASO AGREGA ES LA PROCEDENCIA. Antes solo mutaba `saldo`: el
+    domingo bajaba $177.700 y no había forma de decir por qué. Un número que baja
+    sin poder explicarse es indistinguible de un bug, y el dueño no le va a creer
+    a una pantalla que no sabe contestarle "¿y esa plata dónde está?". Ahora cada
+    turno registra a quién le tapó el hueco (`cubrio`) y quién le tapó el suyo
+    (`cubierto_por`), con fecha y monto, y esas dos listas son espejo: cada peso
+    que sale de un turno entra en otro.
+
+    `faltante_sin_cubrir` es el resto del déficit cuando ya no queda saldo viejo
+    que consumir. LA ARITMÉTICA NO CAMBIA —se sigue ignorando para el saldo, como
+    siempre—, pero deja de ser invisible: es plata que falta y que nadie estaba
+    viendo. Que se ignore en la cuenta es defendible; que no se pueda mirar, no.
+
+    Muta la lista in-place y no devuelve nada: los llamadores ya tienen la lista.
+    """
+    for i in range(len(saldos)):
+        if saldos[i]["saldo"] >= 0:
+            continue
+        deficit = -saldos[i]["saldo"]
+        saldos[i]["saldo"] = 0.0
+        nuevo = saldos[i]["turno"]
+        for j in range(i):
+            if deficit <= 0:
+                break
+            take = min(saldos[j]["saldo"], deficit)
+            if take <= 0:
+                continue           # ese turno ya no tiene nada que dar
+            viejo = saldos[j]["turno"]
+            saldos[j]["saldo"] -= take
+            saldos[j]["cubrio_faltante"] += take
+            deficit -= take
+            # La FILA de procedencia es para que un humano la lea, así que no se
+            # escribe por menos de un centavo: el saldo ya se movió arriba, esto
+            # solo decide si la explicación merece una línea en la pantalla.
+            monto = round(take, 2)
+            if monto > 0:
+                saldos[j]["cubrio"].append({
+                    "turno_id": nuevo.id, "fecha_cierre": nuevo.fecha_cierre,
+                    "monto": monto,
+                })
+                saldos[i]["cubierto_por"].append({
+                    "turno_id": viejo.id, "fecha_cierre": viejo.fecha_cierre,
+                    "monto": monto,
+                })
+        # Sobrepago histórico: el déficit que no encontró de dónde cobrarse.
+        saldos[i]["faltante_sin_cubrir"] = round(deficit, 2)
+
+
+def _saldos_consignacion(db: Session, tienda_id: int, pre: dict | None = None) -> list[dict]:
     """Saldo pendiente por consignar por turno cerrado, con CASCADA hacia días anteriores.
 
-    Por turno: esperado = ventas en efectivo + ingresos de caja − egresos en efectivo (contado)
-    + diferencia del cierre. Incluir la diferencia hace que "por consignar" del turno sea
-    EXACTAMENTE la base con la que arranca el día siguiente (efectivo_final − base_real):
-    la plata física que queda en caja es la que viaja al banco.
-    saldo = esperado − consignado. Si el saldo de un turno es negativo (p.ej. el pago a
-    proveedor de contado superó las ventas en efectivo del día), ese déficit consume el saldo
-    de los turnos ANTERIORES (más viejos primero). Solo el efectivo mueve esto: crédito y bancos
-    no crean egreso de caja, así que no entran. Devuelve la lista en orden cronológico (asc)."""
+    LA ÚNICA CUENTA DE LA PLATA POR CONSIGNAR. La imputación (`recoger`,
+    `get_pendiente`, `_turno_pendiente_mas_antiguo`, el cuadre de apertura) y la
+    pantalla de admin leen todas de acá; que la pantalla tuviera su propia copia
+    era el bug que hacía que el dueño no viera el descuento del domingo.
+
+    Recorre SIEMPRE la historia completa de la sede, nunca un rango: ver la
+    advertencia larga en `get_resumen_admin`.
+
+    Por turno devuelve:
+      turno, esperado, consignado          — la cuenta cruda (ver `_esperado_del_turno`)
+      saldo                                — lo que de verdad falta consignar, post-cascada
+      cubrio / cubierto_por                — la procedencia (ver `_aplicar_cascada`)
+      cubrio_faltante                      — cuánto de este turno se comió otro día
+      faltante_sin_cubrir                  — el déficit que no encontró de dónde cobrarse
+
+    `pre` es la precarga de la sede; si no viene se arma acá. La recibe quien ya
+    la tiene (la pantalla la reusa para pintar los detalles) para no pedir las
+    mismas cuatro queries dos veces.
+
+    Devuelve la lista en orden cronológico (asc).
+    """
+    pre = pre if pre is not None else _precargar_sede(db, tienda_id)
     turnos = (
         db.query(CajaTurno)
         .filter(
             CajaTurno.tienda_id == tienda_id,
             CajaTurno.estado == EstadoTurnoEnum.cerrado,
         )
-        .order_by(CajaTurno.fecha_cierre.asc())
+        # `id` como desempate de `fecha_cierre`: dos turnos cerrados en el mismo
+        # instante dejaban el orden a criterio del motor, y la cascada cobra al
+        # PRIMERO de la lista. Ahora que este orden decide lo que el dueño ve en
+        # pantalla, no puede depender de con qué base se corra.
+        .order_by(CajaTurno.fecha_cierre.asc(), CajaTurno.id.asc())
         .all()
     )
     saldos = []
     for t in turnos:
-        movs = db.query(MovimientoCaja).filter(MovimientoCaja.caja_turno_id == t.id).all()
+        movs = pre["movs"].get(t.id, [])
         egresos = sum(m.valor for m in movs if m.tipo == "egreso")
         ingresos = sum(m.valor for m in movs if m.tipo == "ingreso")
-        # + SOBRANTE de apertura (sobrante_consignable, solo turnos post-fix): plata
-        # extra encontrada al abrir que no pertenece a ningún día anterior — se banca
-        # con este turno. Sin este término se absorbía en la base y se arrastraba
-        # indefinidamente (Palmetto +$24.600). El faltante NO entra (novedad).
-        #
-        # LA BASE DE LA CAJA FUERTE SE ARREGLA EN EL CUADRE, NO ACÁ. Cuando la sede
-        # saca los $500.000 para completar el día, esa plata entra al cajón pero NO
-        # es venta: no hay nada que bancar. Con el cuadre esperándola
-        # (services/caja.py, `prestado_caja_fuerte`), `diferencia_cierre` vuelve a 0
-        # y `sobrante_consignable` no se fija, así que esta fórmula da bien sola.
-        #
-        # El único término que se resta es `_sobrante_explicado_por_la_base`, y es
-        # para los turnos que YA HABÍAN CERRADO cuando se registró el traslado: esas
-        # dos columnas quedan congeladas al cierre y nadie las reescribe. Está
-        # acotado para que no pueda restar dos veces — leé su docstring antes de
-        # tocarlo. Palmetto, sábado 15-ago: pedía $697.900, ahora $197.900.
-        esperado = ((t.total_efectivo or 0) + ingresos - egresos
-                    + (t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0)
-                    - _sobrante_explicado_por_la_base(db, t))
-        consignado = sum(c.valor for c in _consigs_del_turno(db, t))
-        saldos.append({"turno": t, "esperado": esperado, "consignado": consignado,
-                       "saldo": esperado - consignado})
+        esperado = _esperado_del_turno(
+            t, ingresos, egresos,
+            # La base de la caja fuerte se descuenta ACÁ, sobre el esperado crudo.
+            # La cascada corre DESPUÉS, sobre el esperado ya corregido: primero se
+            # define cuánta plata había que bancar ese día, recién ahí se decide
+            # quién le presta a quién. Invertirlo haría que un día cubriera un
+            # hueco con plata que después resulta que no era suya.
+            _sobrante_explicado_por_la_base(db, t, _prestado_hasta(pre, t.fecha_cierre)),
+        )
+        consignado = sum(c.valor for c in _consigs_del_turno(db, t, pre))
+        saldos.append({
+            "turno": t, "esperado": esperado, "consignado": consignado,
+            "saldo": esperado - consignado,
+            "cubrio": [], "cubierto_por": [],
+            "cubrio_faltante": 0.0, "faltante_sin_cubrir": 0.0,
+        })
 
-    # Cascada: el déficit de un turno (saldo<0) consume el saldo de turnos anteriores (más viejos primero).
-    for i in range(len(saldos)):
-        if saldos[i]["saldo"] < 0:
-            deficit = -saldos[i]["saldo"]
-            saldos[i]["saldo"] = 0.0
-            for j in range(i):
-                if deficit <= 0:
-                    break
-                take = min(saldos[j]["saldo"], deficit)
-                saldos[j]["saldo"] -= take
-                deficit -= take
-            # déficit remanente sin saldo viejo que consumir = sobrepago histórico; se ignora.
+    _aplicar_cascada(saldos)
     return saldos
 
 
@@ -150,8 +363,26 @@ def get_por_tienda(db: Session, tienda_id: int, fecha: date | None = None):
     ]
 
 
-def _consigs_del_turno(db: Session, turno: CajaTurno) -> list:
-    """FK-based matching con fallback a ventana de fecha para registros legacy."""
+def _consigs_del_turno(db: Session, turno: CajaTurno, pre: dict | None = None) -> list:
+    """FK-based matching con fallback a ventana de fecha para registros legacy.
+
+    Con `pre` (la precarga de la sede) no toca la base: las mismas filas ya están
+    en memoria y el emparejamiento es el mismo, incluido el orden de precedencia
+    —si el turno tiene consignaciones con FK, las legacy no se miran—.
+    """
+    if pre is not None:
+        fk = pre["consigs"].get(turno.id, [])
+        if fk:
+            return fk
+        if turno.fecha_cierre is None or turno.fecha_apertura is None:
+            return []
+        ventana_fin = turno.fecha_cierre + timedelta(hours=20)
+        # `c.fecha is None` se descarta igual que en SQL, donde una comparación
+        # contra NULL no matchea: en Python compararla reventaría con TypeError.
+        return [c for c in pre["consigs_huerfanas"]
+                if c.fecha is not None
+                and turno.fecha_apertura <= c.fecha <= ventana_fin]
+
     fk = db.query(Consignacion).filter(Consignacion.caja_turno_id == turno.id).all()
     if fk:
         return fk
@@ -168,10 +399,27 @@ def _consigs_del_turno(db: Session, turno: CajaTurno) -> list:
 
 
 def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, hasta=None):
-    """
-    Por cada turno cerrado, calcula:
-      esperado_consignar = total_efectivo + ingresos_movimientos - egresos_movimientos
-    y cruza con las consignaciones registradas ese día.
+    """Lo que la pantalla de Consignaciones le muestra al dueño, turno por turno.
+
+    LOS NÚMEROS DE PLATA NO SE CALCULAN ACÁ, SE LEEN de `_saldos_consignacion` —
+    la misma función que usa la imputación (`recoger`, `get_pendiente`, el cuadre
+    de apertura). Hasta este cambio esta pantalla tenía su propia copia de la
+    fórmula y NO corría la cascada: el lunes 17, que cerró con $177.700 en
+    contra, aparecía en cero, y al domingo 16 no se le veía el descuento aunque
+    la plata del lunes hubiera salido de su cajón. Dos cuentas distintas sobre la
+    misma plata, y la que el dueño miraba era justamente la que no mandaba.
+
+    LA CASCADA SE CALCULA SOBRE LA HISTORIA COMPLETA DE LA SEDE, NUNCA SOBRE EL
+    RANGO FILTRADO. Esto es lo que un lector futuro va a querer "optimizar" —
+    `_saldos_consignacion` recorre todos los turnos cerrados de la sede aunque la
+    pantalla muestre 60 o una semana— y es lo que volvería a partir la cuenta en
+    dos. Si la cascada corriera sobre lo filtrado, el déficit del lunes se
+    cobraría del turno más viejo QUE HAYA ENTRADO AL FILTRO: mirando "últimos 60"
+    se lo cobraría al domingo y mirando "solo esta semana" al martes. El mismo
+    día valdría dos cosas según por dónde se entró, y encima ninguna de las dos
+    coincidiría con lo que `recoger()` le cobra de verdad. El filtro decide QUÉ
+    FILAS SE MUESTRAN; jamás a quién se le cobra la plata.
+
     Si se pasa tienda_id, filtra por esa sede.
     desde/hasta (date) filtran por fecha de cierre del turno (inclusive).
     """
@@ -187,35 +435,38 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
     q = q.order_by(CajaTurno.fecha_cierre.desc())
     turnos = q.all() if (desde is not None or hasta is not None) else q.limit(60).all()
 
+    # La cascada es POR SEDE —la plata está en el cajón de una sede, no en el de
+    # la cadena—, así que se resuelve una vez por cada sede que aparezca en el
+    # filtro y se indexa por turno. La precarga se guarda porque esta función la
+    # vuelve a usar para pintar los detalles (movimientos y consignaciones) sin
+    # repetir las queries. `sorted` para que el orden sea estable entre cargas.
+    precargas: dict[int, dict] = {}
+    cascada: dict[int, dict] = {}
+    for tid in sorted({t.tienda_id for t in turnos}):
+        precargas[tid] = _precargar_sede(db, tid)
+        for s in _saldos_consignacion(db, tid, precargas[tid]):
+            cascada[s["turno"].id] = s
+
     result = []
     for t in turnos:
-        # Movimientos de caja del turno
-        movs = db.query(MovimientoCaja).filter(
-            MovimientoCaja.caja_turno_id == t.id
-        ).order_by(MovimientoCaja.fecha).all()
+        pre = precargas[t.tienda_id]
+        # Movimientos de caja del turno, ya ordenados por fecha en la precarga.
+        movs = pre["movs"].get(t.id, [])
 
         egresos = [m for m in movs if m.tipo == "egreso"]
         ingresos_mov = [m for m in movs if m.tipo == "ingreso"]
         total_egresos = sum(m.valor for m in egresos)
         total_ingresos_mov = sum(m.valor for m in ingresos_mov)
 
-        consigs = sorted(_consigs_del_turno(db, t), key=lambda c: c.fecha)
+        consigs = sorted(_consigs_del_turno(db, t, pre), key=lambda c: c.fecha)
         total_consignado = sum(c.valor for c in consigs)
 
-        # Fórmula: cash vendido ± movimientos + diferencia del cierre + sobrante de
-        # apertura (sobrante_consignable, solo turnos post-fix) = lo que debe
-        # consignarse (= la base del día siguiente). El sobrante es plata extra sin
-        # dueño de días anteriores: se banca con este turno — sin él se arrastraba
-        # en el cajón (caso Palmetto +$24.600).
-        #
-        # LA BASE DE LA CAJA FUERTE NO ENTRA ACÁ (misma razón que en
-        # `_saldos_consignacion`, arriba): que la sede saque sus $500.000 al cajón no
-        # es venta y no se banca. El arreglo vive en el CUADRE —el esperado de la
-        # registradora suma `prestado_caja_fuerte`— y desde ahí `diferencia_cierre`
-        # deja de inventar el sobrante. Restarla también acá la descontaría dos veces.
-        esperado = ((t.total_efectivo or 0) + total_ingresos_mov - total_egresos
-                    + (t.diferencia_cierre or 0) + float(t.sobrante_consignable or 0)
-                    - _sobrante_explicado_por_la_base(db, t))
+        # Se indexa DIRECTO y sin `.get`: `_saldos_consignacion` recorre todos los
+        # turnos cerrados de la sede y acá solo hay turnos cerrados de esas sedes,
+        # así que una clave faltante sería un invariante roto. Un default silencioso
+        # sería la puerta por la que esta pantalla volvería a calcular por su cuenta.
+        s = cascada[t.id]
+        esperado = s["esperado"]
         diferencia = total_consignado - esperado
 
         result.append({
@@ -230,9 +481,32 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
             "total_egresos": total_egresos,
             "total_ingresos_mov": total_ingresos_mov,
             "diferencia_cierre": round(float(t.diferencia_cierre or 0), 2),
+            # La cuenta CRUDA del día, sin cascada: lo que ese turno generó y
+            # tendría que haber ido al banco si nadie le hubiera sacado nada.
             "esperado_consignar": round(esperado, 2),
             "total_consignado": round(total_consignado, 2),
             "diferencia": round(diferencia, 2),
+            # ── Cascada FIFO: de acá sale por qué el número que se cobra no es
+            # el esperado crudo. Todo viene de `_saldos_consignacion`, o sea de la
+            # MISMA cuenta que usa la imputación — esa es la garantía de que la
+            # pantalla y lo que se cobra dejaron de discrepar.
+            #
+            # cubrio_faltante: cuánto de ESTE turno se comió otro día que cerró
+            #   en contra. Es el descuento que el dueño no veía.
+            # cubrio / cubierto_por: la procedencia con fecha y monto. Sin esto la
+            #   pantalla puede mostrar el descuento pero no explicarlo, y un número
+            #   que baja sin decir por qué se lee como un bug.
+            # faltante_sin_cubrir: el déficit que no encontró saldo viejo del cual
+            #   cobrarse. Se sigue ignorando en la aritmética (como siempre), pero
+            #   deja de ser invisible: es plata que falta.
+            # saldo_pendiente: EL número. Lo que de verdad falta consignar de ese
+            #   día. Vale exactamente el `saldo` post-cascada de
+            #   `_saldos_consignacion`, que es lo que `recoger()` cobra.
+            "cubrio_faltante": round(s["cubrio_faltante"], 2),
+            "cubrio": s["cubrio"],
+            "cubierto_por": s["cubierto_por"],
+            "faltante_sin_cubrir": s["faltante_sin_cubrir"],
+            "saldo_pendiente": round(s["saldo"], 2),
             "egresos_detalle": [
                 {"concepto": m.concepto, "valor": m.valor, "fecha": m.fecha}
                 for m in egresos

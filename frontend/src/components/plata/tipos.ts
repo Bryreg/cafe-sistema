@@ -242,12 +242,29 @@ export interface AdvertenciasFlujo {
   sin_historia_ventas: boolean
   excluye_corporativas: boolean
   corporativas_fuera: number
-  /** Lo que falta, CON NOMBRE Y PLATA. Lista, no booleano: es lo que se puede
-   *  convertir en una acción. Vacía = los conceptos medibles están todos adentro. */
-  conceptos_sin_cargar: ConceptoSinCargar[]
+  /**
+   * Lo que falta, CON NOMBRE Y PLATA. Lista, no booleano: es lo que se puede
+   * convertir en una acción. Vacía = los conceptos medibles están todos adentro.
+   *
+   * OPCIONAL, Y NO ES UN DESCUIDO. El backend la manda siempre, pero «siempre»
+   * quiere decir «el backend de este commit». Esto es una PWA contra un backend
+   * que se despliega APARTE: hay una ventana —minutos, y en la tablet más, por
+   * el service worker— en la que el bundle es nuevo y el server todavía es el
+   * viejo. Ahí el campo no viene, y cuando esto era obligatorio el
+   * `for (const c of ...)` de BloqueFinDeMes reventaba con la lista `undefined`
+   * y se caía el árbol de React entero: PANTALLA BLANCA, no un bloque roto.
+   * Pasó en producción el 2026-08-20 con el deploy de las fases 3 y 4.
+   *
+   * El `?` es el candado: obliga a que quien la lea distinga AUSENTE de VACÍA.
+   * No son lo mismo y la diferencia es la de siempre — vacía es «pregunté y no
+   * falta nada», ausente es «no pude preguntar», y publicar un colchón sobre la
+   * segunda es afirmar justo lo que no se midió.
+   */
+  conceptos_sin_cargar?: ConceptoSinCargar[]
   /** Atajo derivado de la lista, para el que solo necesita saber si puede
-   *  publicar un número. Nunca se prende por su cuenta. */
-  salidas_incompletas: boolean
+   *  publicar un número. Nunca se prende por su cuenta.
+   *  Opcional por lo mismo que la lista de arriba. */
+  salidas_incompletas?: boolean
 }
 
 export interface Flujo {

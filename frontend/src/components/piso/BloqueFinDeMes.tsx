@@ -56,7 +56,24 @@ function bloqueosDe(a: Agenda, f: Flujo, irAlMensual: () => void, irASinFecha: (
   //
   // Una segunda regla local se desincronizaría de la del server en el primer
   // concepto que se agregue, y las dos estarían en la misma pantalla.
-  for (const c of f.advertencias.conceptos_sin_cargar) {
+  // AUSENTE NO ES VACÍA. Si el server no manda la lista —la ventana en que el
+  // bundle ya es nuevo y el backend todavía no— no se puede concluir que no
+  // falte nada: es justo lo que no se pudo preguntar. Se bloquea el colchón y
+  // se dice por qué, que es lo único afirmable. Antes esto era un `for` sobre
+  // la lista sin más, y con el campo `undefined` reventaba el árbol entero:
+  // pantalla blanca en toda La plata, no un bloque roto.
+  const conceptos = f.advertencias.conceptos_sin_cargar
+  if (conceptos === undefined) {
+    out.push({
+      titulo: 'Esta versión del servidor no dice qué falta pagar',
+      detalle: 'No se puede publicar un colchón sin saber si la nómina y la declaración '
+        + 'del impoconsumo están adentro. Suele durar unos minutos, mientras termina de '
+        + 'actualizarse; si sigue después de un rato, recargá la página.',
+    })
+    return out
+  }
+
+  for (const c of conceptos) {
     out.push({
       titulo: `${c.nombre} no está en lo que hay que pagar`,
       detalle: (c.monto === null

@@ -539,41 +539,22 @@ _seed_tareas_limpieza()
 def _seed_categorias_costo():
     """Siembra el catálogo de categorías de costo si aún no está.
 
-    La `clave` es un slug estable: es lo que mata el texto libre al agrupar gastos
-    ('Arriendo local' / 'arriendo' / 'ARRIENDO LOCAL' serían tres filas distintas).
-    El `nombre` se puede editar después sin romper el agrupamiento.
-
     NOTA de migración: costos_categorias, obligaciones y pagos NO llevan ninguna
     entrada en el loop de ALTERs de arriba — ese loop corre ANTES de create_all y
     un ALTER sobre una tabla que todavía no existe falla. Las tres tablas las crea
     create_all() desde el modelo; esta función solo las puebla, después.
 
-    'proveedores' YA NO se siembra: era una trampa de doble conteo. Lo que se le
-    debe al proveedor entra al P&L por FacturaCompra (fecha de recibido) y a la
-    agenda como factura; cargarlo además como obligación contaba la misma
-    mercadería dos veces. services/costos.py rechaza esa clave y no la ofrece en
-    el catálogo, y services/rentabilidad.py la excluye del término de obligaciones
-    para las filas que la versión anterior alcanzó a guardar. La FILA sembrada en
-    las bases viejas se deja donde está: borrarla dejaría esas obligaciones sin
-    categoría.
+    El catálogo y la regla de siembra viven en `services/costos.py`, igual que
+    las tasas y los parámetros de nómina: acá solo se abre la sesión. Importar
+    `app.main` siembra y migra contra la base de verdad, así que todo lo que
+    quede escrito en este archivo es código que ningún test puede correr.
     """
-    from app.models.models import CostoCategoria
-    DEFAULTS = [
-        {"clave": "arriendo",      "nombre": "Arriendo",      "grupo": "fijo"},
-        {"clave": "nomina",        "nombre": "Nómina",        "grupo": "fijo"},
-        {"clave": "servicios",     "nombre": "Servicios",     "grupo": "fijo"},
-        {"clave": "mantenimiento", "nombre": "Mantenimiento", "grupo": "variable"},
-        {"clave": "impuestos",     "nombre": "Impuestos",     "grupo": "fijo"},
-        {"clave": "otros",         "nombre": "Otros",         "grupo": "variable"},
-    ]
+    from app.services import costos as costos_svc
     db = SessionLocal()
     try:
-        existentes = {c.clave for c in db.query(CostoCategoria).all()}
-        for i, c in enumerate(DEFAULTS):
-            if c["clave"] not in existentes:
-                db.add(CostoCategoria(clave=c["clave"], nombre=c["nombre"],
-                                      grupo=c["grupo"], orden=i))
-        db.commit()
+        creadas = costos_svc.sembrar_categorias(db)
+        if creadas:
+            logger.info("Categorías de costo sembradas: %d", creadas)
     except Exception as e:
         db.rollback()
         logger.warning("Seed categorias_costo error: %s", e)
@@ -581,6 +562,29 @@ def _seed_categorias_costo():
         db.close()
 
 _seed_categorias_costo()
+
+
+def _reclasificar_categorias_costo():
+    """Mueve 'mantenimiento' y 'otros' de "variable" a "fijo" donde ya existen.
+
+    Cambiar el catálogo sembrado no alcanza: el seed solo INSERTA lo que falta,
+    y en producción esas dos filas están creadas desde el primer día. Corre una
+    sola vez y no vuelve a tocar nada — el porqué está en la función.
+    """
+    from app.services import costos as costos_svc
+    db = SessionLocal()
+    try:
+        corregidas = costos_svc.reclasificar_grupos_v1(db)
+        if corregidas:
+            logger.info("Reclasificadas %d categorías de costo a grupo 'fijo'",
+                        corregidas)
+    except Exception as e:
+        db.rollback()
+        logger.warning("Reclasificación categorias_costo error: %s", e)
+    finally:
+        db.close()
+
+_reclasificar_categorias_costo()
 
 
 def _seed_config_flujo():

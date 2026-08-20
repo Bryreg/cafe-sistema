@@ -106,10 +106,39 @@ def rango_mes(anio: int, mes: int) -> tuple[date, date]:
     return date(int(anio), int(mes), 1), date(int(anio), int(mes), ultimo)
 
 
-def _es_persona(u: Usuario) -> bool:
-    """El usuario "Kiosk" es un DISPOSITIVO, no alguien a quien pagarle.
-    Mismo filtro canónico que /auth/baristas."""
-    return u.rol == RolEnum.barista and not (u.email or "").startswith("kiosk@")
+def _ids_con_contrato(db: Session) -> set[int]:
+    """Ids de usuario que TIENEN fila de contrato cargada.
+
+    Se resuelve de una sola vez y viaja como conjunto porque `_es_persona` se
+    llama una vez por marcación: preguntando por el contrato adentro del loop
+    serían cientos de queries por resumen. La tabla tiene una fila por persona
+    del negocio —siete hoy—, así que traerla entera no cuesta nada.
+    """
+    return {uid for (uid,) in db.query(ContratoBarista.usuario_id).all()}
+
+
+def _es_persona(u: Usuario, con_contrato: set[int]) -> bool:
+    """Quién entra a la nómina.
+
+    Dos filtros distintos, y la diferencia es la que faltaba:
+
+      · El usuario "Kiosk" es un DISPOSITIVO, no alguien a quien pagarle. Nunca
+        entra, tenga el rol que tenga.
+      · NADIE ENTRA POR TENER ROL ADMIN — ENTRA POR TENER CONTRATO. El rol dice
+        qué puede hacer en el sistema; el contrato dice que se le paga. Son dos
+        preguntas distintas y este módulo venía respondiendo la primera para
+        decidir la segunda: el administrador quedaba fuera de su propia nómina,
+        y su sueldo —el más grande de la planilla— no aparecía en ninguna
+        proyección. Al revés también vale: un admin sin contrato cargado sigue
+        sin entrar, porque nadie declaró que se le pague.
+
+    `con_contrato` es obligatorio a propósito (nada de default vacío): un
+    llamador que se olvide tiene que romper acá y no devolver en silencio la
+    respuesta de antes, que es justo la que este cambio vino a corregir.
+    """
+    if (u.email or "").startswith("kiosk@"):
+        return False
+    return u.rol == RolEnum.barista or u.id in con_contrato
 
 
 def _cero() -> dict[str, float]:
@@ -143,6 +172,7 @@ def _tramos_reales(db: Session, tienda_id: int, desde: date, hasta: date,
     """
     ini_utc = datetime.combine(desde, datetime.min.time()) - timedelta(days=1)
     fin_utc = datetime.combine(hasta, datetime.max.time()) + timedelta(days=1)
+    con_contrato = _ids_con_contrato(db)
 
     # SIN filtro de sede: la jornada máxima del art. 161 CST es un tope por
     # TRABAJADOR y por empleador, no por local. Filtrando la sede acá, quien
@@ -164,7 +194,7 @@ def _tramos_reales(db: Session, tienda_id: int, desde: date, hasta: date,
     personas: dict[int, Usuario] = {}
     otra_sede: dict[int, set[date]] = {}
     for tb, u, sede_id in filas:
-        if not _es_persona(u) or tb.created_at is None:
+        if not _es_persona(u, con_contrato) or tb.created_at is None:
             continue
         entrada = local_col(tb.created_at)
         if not (desde <= entrada.date() <= hasta):
@@ -444,12 +474,19 @@ def resumen_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> dict:
     # los totales: medido, Vida mostraba $13.120.793 de costo cuando lo suyo
     # eran $6.560.396 — la nómina de las dos sedes en el número que la propia
     # pantalla llama «el número para decidir contrataciones».
-    personas: dict[int, Usuario] = {u.id: u for u in hsvc.baristas_de(db, tienda_id)}
+    #
+    # `personas_de_nomina` y no `baristas_de`: a la planilla se entra por TENER
+    # CONTRATO, no por tener rol barista. El administrador cobra sueldo como
+    # cualquiera y quedaba afuera del resumen del mes por una pregunta que no
+    # era la del pago.
+    con_contrato = _ids_con_contrato(db)
+    personas: dict[int, Usuario] = {
+        u.id: u for u in hsvc.personas_de_nomina(db, tienda_id)}
     personas.update(personas_real)
     for uid in list(planeado_por_dia) + [n.usuario_id for n in novedades_de_la_sede]:
         if uid not in personas:
             u = db.query(Usuario).filter(Usuario.id == uid).first()
-            if u is not None and _es_persona(u):
+            if u is not None and _es_persona(u, con_contrato):
                 personas[uid] = u
 
     contratos = {
@@ -886,6 +923,9 @@ def costo_laboral(db: Session, desde: date, hasta: date,
     personas_con_costo: set[int] = set()
     sin_contrato: set[int] = set()
     horas = 0.0
+    # Fuera del loop de sedes: el conjunto no depende de la sede y el P&L
+    # recorre las dos en la misma llamada.
+    con_contrato = _ids_con_contrato(db)
 
     for sede in sedes:
         # Mismas fuentes y mismo orden que el resumen mensual: pausas de almuerzo
@@ -896,13 +936,32 @@ def costo_laboral(db: Session, desde: date, hasta: date,
         reales, _sin_salida, personas_real, _otra = _tramos_reales(
             db, sede, borde_ini, borde_fin, pausas)
         planeados, _plan_dia = _tramos_planeados(db, sede, borde_ini, borde_fin)
-        novedades = nsvc.listar(db, sede, desde, hasta)
+        # NOVEDADES DE TODAS LAS SEDES (tienda_id=None), igual que las pausas de
+        # acá arriba y que el resumen mensual. Era el último insumo del cálculo
+        # que seguía filtrado por sede, y por eso el P&L cobraba MENOS nómina de
+        # la que se paga: una incapacidad se carga en la sede donde el admin la
+        # escribe, pero lo que acredita son las horas que la persona tenía
+        # PROGRAMADAS ese día — y ese turno puede estar publicado en la otra
+        # sede. Leyendo solo las de `sede`, ese día no se acreditaba en NINGUNA
+        # de las dos vueltas del loop: ni en la del turno (que no veía la
+        # novedad) ni en la de la novedad (que no tiene el turno). El día se
+        # evaporaba y la misma persona salía con un costo en la pantalla de
+        # nómina y con otro, más barato, en el margen.
+        novedades = nsvc.listar(db, None, desde, hasta)
+        # Las de ESTA sede son las únicas que suman gente al recorrido. Quién
+        # entra es una pregunta de SEDE; el consolidado de arriba es un insumo
+        # del CÁLCULO de quien ya está adentro, no un criterio de pertenencia.
+        # Con el consolidado acá, la gente de la otra sede entraba a la vuelta
+        # de ésta —hoy sin horas propias, o sea sin costo, pero es exactamente
+        # el descuido que en el resumen mensual llegó a mostrar la nómina de las
+        # dos sedes adentro del número de una.
+        novedades_de_la_sede = nsvc.listar(db, sede, desde, hasta)
 
         personas = dict(personas_real)
-        for uid in list(planeados) + [n.usuario_id for n in novedades]:
+        for uid in list(planeados) + [n.usuario_id for n in novedades_de_la_sede]:
             if uid not in personas:
                 u = db.query(Usuario).filter(Usuario.id == uid).first()
-                if u is not None and _es_persona(u):
+                if u is not None and _es_persona(u, con_contrato):
                     personas[uid] = u
         if not personas:
             continue

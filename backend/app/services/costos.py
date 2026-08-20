@@ -13,6 +13,8 @@ FacturaCompra.valor_pagado — esa columna es justamente la que se puede
 desincronizar de los movimientos que la originaron.
 """
 import math
+import re
+import unicodedata
 from datetime import date, timedelta
 from statistics import median
 
@@ -50,6 +52,266 @@ ESTADOS = {"pendiente", "parcial", "pagada", "anulada"}
 
 
 # ── Catálogo ────────────────────────────────────────────────────────────────
+
+# Los dos grupos, explicados en el idioma del dueño y no en el del contador.
+# La copia vive ACÁ y no en el formulario a propósito: la diferencia entre fijo
+# y variable decide qué entra a `costos_fijos_devengados` —el piso que hay que
+# cubrir para no perder plata— así que la definición y el número tienen que
+# salir del mismo archivo. Escrita en la pantalla, se desincroniza el día que
+# alguien cambie la regla acá adentro.
+GRUPOS: dict[str, dict] = {
+    "fijo": {
+        "label": "Fijo",
+        "que_es": ("Se paga igual venda mucho o poco. Arriendo, sueldos, "
+                   "internet, publicidad, seguros, el contador, el arreglo del "
+                   "molino."),
+        "advertencia": None,
+    },
+    "variable": {
+        "label": "Variable",
+        "que_es": ("Sube y baja con la venta: si vendés el doble, cuesta el "
+                   "doble. La comisión del datáfono, la del domicilio."),
+        "advertencia": (
+            "Ojo: un costo que SUBE CON LA VENTA no es una obligación mensual, "
+            "es una tasa — y va contra el margen de cada venta, no contra el "
+            "piso del mes. Solo los costos FIJOS arman el «cuánto hay que "
+            "vender hoy para no perder»: lo que dejes en variable no entra a "
+            "ese número. Si esto se paga todos los meses por un valor parecido "
+            "—publicidad, internet, domicilios contratados, seguros, el "
+            "contador— es FIJO, aunque el monto cambie un poco."
+        ),
+    },
+}
+GRUPO_DEFAULT = "fijo"
+
+
+def catalogo_grupos() -> list[dict]:
+    """Los grupos con su explicación, para que el formulario no invente la copia."""
+    return [{"clave": clave, **datos} for clave, datos in GRUPOS.items()]
+
+
+# Catálogo con el que arranca una base nueva. La `clave` es un slug estable: es
+# lo que mata el texto libre al agrupar gastos ('Arriendo local' / 'arriendo' /
+# 'ARRIENDO LOCAL' serían tres filas distintas). El `nombre` se puede editar
+# después sin romper el agrupamiento.
+#
+# 'proveedores' NO está y no vuelve: era una trampa de doble conteo. Lo que se le
+# debe al proveedor entra al P&L por FacturaCompra (fecha de recibido) y a la
+# agenda como factura; cargarlo además como obligación contaba la misma
+# mercadería dos veces. `_validar_categoria` rechaza esa clave, `listar_categorias`
+# no la ofrece y rentabilidad.py la excluye del término de obligaciones. La FILA
+# sembrada en las bases viejas se deja donde está: borrarla dejaría sin categoría
+# a las obligaciones que le apuntan.
+#
+# 'mantenimiento' y 'otros' nacieron en "variable" y era un error de
+# clasificación, no una opinión: variable significa que el costo SUBE CON LA
+# VENTA, y arreglar el molino o pagarle al contador no sube porque se venda más.
+# La consecuencia era muda — `costos_fijos_devengados` suma solo el grupo
+# 'fijo', así que esa plata se caía del costo del mes sin que ninguna pantalla
+# avisara, y 'otros' es justo donde hoy caen publicidad, internet, domicilios,
+# seguros y el contador.
+CATEGORIAS_INICIALES: list[dict] = [
+    {"clave": "arriendo",      "nombre": "Arriendo",      "grupo": "fijo"},
+    {"clave": "nomina",        "nombre": "Nómina",        "grupo": "fijo"},
+    {"clave": "servicios",     "nombre": "Servicios",     "grupo": "fijo"},
+    {"clave": "mantenimiento", "nombre": "Mantenimiento", "grupo": "fijo"},
+    {"clave": "impuestos",     "nombre": "Impuestos",     "grupo": "fijo"},
+    {"clave": "otros",         "nombre": "Otros",         "grupo": "fijo"},
+]
+
+# Marca en `configuracion` de que la corrección de grupos ya se aplicó.
+RECLASIFICACION_GRUPOS_V1 = "migracion_grupo_categorias_v1"
+# Las dos que estaban mal clasificadas. Explícitas y no derivadas de
+# CATEGORIAS_INICIALES: la corrección es un hecho puntual del pasado y tiene que
+# quedar congelada, no seguir a un catálogo que se va a editar.
+CLAVES_RECLASIFICADAS_V1 = ("mantenimiento", "otros")
+
+
+def sembrar_categorias(db: Session) -> int:
+    """Inserta las categorías iniciales que falten. Devuelve cuántas creó.
+
+    Idempotente y NO destructivo, como `tasas_laborales.sembrar_tasas`: solo
+    inserta lo que no está. Una categoría que el dueño renombró o reclasificó
+    sobrevive al deploy siguiente.
+    """
+    existentes = {c.clave for c in db.query(CostoCategoria).all()}
+    creadas = 0
+    for i, c in enumerate(CATEGORIAS_INICIALES):
+        if c["clave"] in existentes:
+            continue
+        db.add(CostoCategoria(clave=c["clave"], nombre=c["nombre"],
+                              grupo=c["grupo"], orden=i, activa=True))
+        creadas += 1
+    db.commit()
+    return creadas
+
+
+def reclasificar_grupos_v1(db: Session) -> int:
+    """Corrige a "fijo" las dos categorías que nacieron mal clasificadas.
+
+    Sembrarlas bien no alcanza: `sembrar_categorias` solo INSERTA lo que falta, y
+    en las bases que ya operan esas filas están creadas desde el primer día con
+    el grupo equivocado.
+
+    CORRE UNA SOLA VEZ, marcada en `configuracion`. No es paranoia de migración:
+    desde que el catálogo se edita por API, un "arreglo" que se aplicara en cada
+    arranque le pisaría al dueño su propia decisión cada vez que se reinicia el
+    servidor. Un cambio silencioso y repetido es peor que el error que corrige,
+    porque enseña a no confiar en la pantalla.
+
+    Solo toca las filas que siguen en "variable": si alguien ya las movió a mano,
+    no hay nada que corregir. La marca se escribe igual —el trabajo está hecho—
+    y en la misma transacción que el cambio, o un corte a mitad dejaría las filas
+    corregidas y la migración marcada como pendiente para siempre.
+    """
+    ya = db.query(Configuracion).filter(
+        Configuracion.clave == RECLASIFICACION_GRUPOS_V1).first()
+    if ya is not None:
+        return 0
+    filas = db.query(CostoCategoria).filter(
+        CostoCategoria.clave.in_(CLAVES_RECLASIFICADAS_V1),
+        CostoCategoria.grupo == "variable",
+    ).all()
+    for fila in filas:
+        fila.grupo = "fijo"
+    db.add(Configuracion(clave=RECLASIFICACION_GRUPOS_V1, valor=str(len(filas))))
+    db.commit()
+    return len(filas)
+
+
+def _validar_grupo(grupo) -> str:
+    """`None`/vacío cae en FIJO. El default no es neutral y es a propósito: casi
+    todo lo que el dueño va a cargar acá (publicidad, internet, domicilios,
+    seguros, el contador) es una obligación del mes, y el error caro es al
+    revés — clasificar de más como variable saca esa plata del piso a cubrir y
+    el punto de equilibrio queda más bajo de lo que es."""
+    if grupo is None or grupo == "":
+        return GRUPO_DEFAULT
+    limpio = str(grupo).strip().lower()
+    if limpio not in GRUPOS:
+        raise HTTPException(400, "El grupo tiene que ser «fijo» o «variable»")
+    return limpio
+
+
+def _validar_nombre_categoria(nombre) -> str:
+    limpio = (nombre or "").strip()
+    if not limpio:
+        raise HTTPException(400, "El nombre de la categoría es obligatorio")
+    if len(limpio) > 100:
+        raise HTTPException(400, "El nombre de la categoría es demasiado largo "
+                                 "(máximo 100 caracteres)")
+    return limpio
+
+
+def _slug(nombre: str) -> str:
+    """`nombre` legible → clave estable, sin tildes ni espacios.
+
+    La clave la deriva el sistema y NUNCA se edita después: es lo que agrupa los
+    gastos en el P&L, así que si se moviera al renombrar la categoría, el
+    histórico se partiría en dos filas que el dueño lee como dos costos
+    distintos. Renombrar «Servicios» a «Servicios públicos» tiene que dejar la
+    plata vieja junta con la nueva.
+    """
+    sin_tildes = "".join(
+        c for c in unicodedata.normalize("NFKD", nombre)
+        if not unicodedata.combining(c))
+    slug = re.sub(r"[^a-z0-9]+", "_", sin_tildes.lower()).strip("_")[:40]
+    if not slug:
+        # Un nombre entero de emojis o de signos: sin letras no hay clave estable
+        # posible, y una autogenerada tipo "cat_7" no la reconoce nadie.
+        raise HTTPException(400, "El nombre de la categoría tiene que tener al "
+                                 "menos una letra o un número")
+    return slug
+
+
+def crear_categoria(db: Session, nombre, grupo=None, usuario_id: int | None = None) -> dict:
+    """Crea una categoría de costo. El grupo por defecto es FIJO.
+
+    Existe porque el catálogo eran seis filas quemadas en el arranque, y hoy
+    publicidad, internet, domicilios, seguros y el contador caen todos en
+    «Otros» — cinco costos distintos en una sola línea del P&L, que es lo mismo
+    que no tener desglose.
+    """
+    limpio = _validar_nombre_categoria(nombre)
+    grupo_ok = _validar_grupo(grupo)
+    clave = _slug(limpio)
+    if clave == CLAVE_CATEGORIA_PROVEEDORES:
+        raise HTTPException(
+            400, "Esa categoría está reservada: lo que le debés a un proveedor se "
+                 "carga como FACTURA en Compras, no como costo fijo — acá se "
+                 "contaría dos veces.")
+    # La colisión se AVISA, no se resuelve con un sufijo: «otros_2» al lado de
+    # «Otros» en el desplegable es exactamente el texto libre que la clave vino
+    # a matar. Se nombra la fila que ya está para que el dueño la use o la
+    # renombre, y se dice si está apagada — si no, el mensaje parece un bug.
+    existente = db.query(CostoCategoria).filter(CostoCategoria.clave == clave).first()
+    if existente is not None:
+        estado = "" if existente.activa else " (está desactivada)"
+        raise HTTPException(
+            400, f"Ya existe la categoría «{existente.nombre}»{estado} — usá esa o "
+                 f"cambiale el nombre a la nueva.")
+
+    ultimo = db.query(func.max(CostoCategoria.orden)).scalar()
+    fila = CostoCategoria(clave=clave, nombre=limpio, grupo=grupo_ok,
+                          orden=(ultimo or 0) + 1, activa=True)
+    db.add(fila)
+    db.flush()
+    audit.registrar(
+        db, accion="crear_categoria_costo", tabla="costos_categorias",
+        registro_id=fila.id, usuario_id=usuario_id,
+        datos_despues={"clave": fila.clave, "nombre": fila.nombre, "grupo": fila.grupo},
+    )
+    db.commit()
+    db.refresh(fila)
+    return _serializar_categoria(fila)
+
+
+def editar_categoria(db: Session, categoria_id: int, campos: dict,
+                     usuario_id: int | None = None) -> dict:
+    """Cambia el nombre o el grupo de una categoría. La CLAVE no se toca nunca.
+
+    Mover una categoría de variable a fijo (o al revés) le cambia el piso del
+    mes a TODO el histórico, no solo a lo que se cargue de acá en adelante:
+    `costos_fijos_devengados` se recalcula por grupo cada vez que se abre el
+    P&L. Es lo que se quiere —una mala clasificación vieja se arregla de una—
+    pero por eso queda en auditoría con el antes y el después.
+    """
+    fila = db.query(CostoCategoria).filter(CostoCategoria.id == categoria_id).first()
+    if fila is None:
+        raise HTTPException(404, "Categoría no encontrada")
+    if fila.clave == CLAVE_CATEGORIA_PROVEEDORES:
+        raise HTTPException(
+            400, "Esa categoría está reservada y no se edita: la deuda con "
+                 "proveedores vive en Compras.")
+
+    antes = {"nombre": fila.nombre, "grupo": fila.grupo}
+    if "nombre" in campos and campos["nombre"] is not None:
+        # El nombre se puede editar libremente PORQUE la clave no se recalcula:
+        # es display, no identidad.
+        fila.nombre = _validar_nombre_categoria(campos["nombre"])
+    if "grupo" in campos and campos["grupo"] is not None:
+        fila.grupo = _validar_grupo(campos["grupo"])
+
+    audit.registrar(
+        db, accion="editar_categoria_costo", tabla="costos_categorias",
+        registro_id=fila.id, usuario_id=usuario_id,
+        datos_antes=antes,
+        datos_despues={"nombre": fila.nombre, "grupo": fila.grupo},
+    )
+    db.commit()
+    db.refresh(fila)
+    return _serializar_categoria(fila)
+
+
+def _serializar_categoria(c: CostoCategoria) -> dict:
+    """Misma forma que las filas de `listar_categorias`, más la advertencia del
+    grupo elegido. Viaja en la respuesta y no solo en el catálogo para que la
+    pantalla pueda mostrarla DESPUÉS de guardar, que es cuando el dueño todavía
+    está mirando lo que acaba de hacer."""
+    return {"id": c.id, "clave": c.clave, "nombre": c.nombre,
+            "grupo": c.grupo, "orden": c.orden, "activa": bool(c.activa),
+            "advertencia": GRUPOS.get(c.grupo, {}).get("advertencia")}
+
 
 def listar_categorias(db: Session, incluir_inactivas: bool = False) -> list:
     q = db.query(CostoCategoria)

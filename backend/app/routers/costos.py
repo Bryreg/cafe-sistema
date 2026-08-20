@@ -9,7 +9,8 @@ from app.core.deps import get_barista_actor, require_admin
 from app.core.tz import hoy_col
 from app.database import get_db
 from app.models.models import Usuario
-from app.schemas.costos import (AdopcionEgresoRequest, ObligacionCreate,
+from app.schemas.costos import (AdopcionEgresoRequest, CategoriaCreate,
+                                CategoriaUpdate, ObligacionCreate,
                                 ObligacionUpdate, PagoCreate, SaldoBancoRequest)
 from app.services import costos as svc
 
@@ -21,8 +22,68 @@ def listar_categorias(
     db: Session = Depends(get_db),
     admin: Usuario = Depends(require_admin),
 ):
-    """Catálogo de categorías activas (clave estable + nombre editable)."""
+    """Catálogo de categorías activas (clave estable + nombre editable).
+
+    Devuelve una LISTA pelada y así se queda: es la forma que consume la
+    pantalla de Plata. Lo que hacía falta agregar —la explicación de los
+    grupos— vive en `/categorias/grupos` justamente para no cambiarla.
+    """
     return svc.listar_categorias(db)
+
+
+# Declarado ANTES del PATCH de `/categorias/{categoria_id}` por prolijidad de
+# lectura; no compiten (uno es GET y el otro PATCH), pero la regla del router es
+# que la ruta literal va arriba de la paramétrica.
+@router.get("/categorias/grupos")
+def listar_grupos_categoria(
+    admin: Usuario = Depends(require_admin),
+):
+    """Qué significa «fijo» y qué significa «variable», en el idioma del dueño.
+
+    La copia sale del backend y no del formulario porque es la MISMA regla que
+    decide `costos_fijos_devengados`: el grupo fijo es el que arma el piso de
+    venta del mes. Definición y número tienen que salir del mismo archivo o se
+    separan sin que nadie lo note. `advertencia` viene con texto solo en
+    «variable», que es la elección que hay que explicar.
+    """
+    return svc.catalogo_grupos()
+
+
+@router.post("/categorias")
+def crear_categoria(
+    data: CategoriaCreate,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Crea una categoría de costo. Sin `grupo`, queda FIJA.
+
+    Hasta acá el catálogo eran seis filas sembradas al arrancar, así que
+    publicidad, internet, domicilios, seguros y el contador terminaban todos en
+    «Otros»: cinco costos distintos en una sola línea del P&L.
+
+    La respuesta trae `advertencia` con texto cuando la categoría quedó
+    variable, para que la pantalla pueda decir por qué eso cambia el piso del
+    mes en vez de guardar en silencio.
+    """
+    return svc.crear_categoria(db, data.nombre, data.grupo, admin.id)
+
+
+@router.patch("/categorias/{categoria_id}")
+def editar_categoria(
+    categoria_id: int,
+    data: CategoriaUpdate,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Corrige el nombre o el grupo de una categoría. La clave no se toca.
+
+    Mover una categoría de variable a fijo le cambia el piso a TODO el
+    histórico, no solo a lo que venga: el P&L agrupa por grupo cada vez que se
+    abre. Es lo que se busca —así se arregla una mala clasificación vieja— y por
+    eso queda auditado con el antes y el después.
+    """
+    return svc.editar_categoria(db, categoria_id,
+                                data.model_dump(exclude_unset=True), admin.id)
 
 
 @router.get("/agenda")

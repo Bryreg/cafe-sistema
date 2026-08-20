@@ -15,10 +15,11 @@ import re
 from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.models import (
-    EstadoProgramadoEnum, RolEnum, TurnoProgramado, Usuario,
+    ContratoBarista, EstadoProgramadoEnum, RolEnum, TurnoProgramado, Usuario,
 )
 from app.services import notificaciones, tasas_laborales
 from app.services.horas import lunes_de, restar_pausas as hsvc_restar_pausas
@@ -394,16 +395,51 @@ serializar = _out
 
 
 def baristas_de(db: Session, tienda_id: int) -> list[Usuario]:
-    """Personas de la sede que entran al horario.
+    """Personas de la sede que entran al HORARIO (a quién se le arma turno).
 
     Mismo filtro canónico que `/auth/baristas`: el usuario "Kiosk" es un
     dispositivo, no una persona, y no se le arma horario ni se le paga.
+
+    OJO al alcance: esto responde «a quién le toca turno», que NO es «a quién se
+    le paga». Para lo segundo está `personas_de_nomina`, que es más ancha. El
+    administrador cobra sueldo y no entra a la grilla de turnos, así que las dos
+    listas tienen que existir por separado: unificarlas metería al admin en el
+    horario del mostrador, o —como pasaba— lo dejaría fuera de la planilla.
     """
     return db.query(Usuario).filter(
         Usuario.rol == RolEnum.barista,
         Usuario.activo == True,  # noqa: E712
         Usuario.tienda_id == tienda_id,
         ~Usuario.email.like("kiosk@%"),
+    ).order_by(Usuario.nombre.asc()).all()
+
+
+def personas_de_nomina(db: Session, tienda_id: int) -> list[Usuario]:
+    """A quién se le PAGA en esta sede: las baristas + quien tenga contrato.
+
+    EL CRITERIO: nadie entra a la nómina por tener rol admin — entra por TENER
+    CONTRATO CARGADO. El rol dice qué puede hacer en el sistema; el contrato
+    dice que se le paga. Son dos preguntas distintas, y hasta acá el módulo
+    respondía la primera para decidir la segunda: el administrador, que es el
+    sueldo más grande de la planilla, no aparecía ni en la lista de contratos ni
+    en el resumen del mes, y su costo daba $0 en toda proyección.
+
+    Que el criterio sea el contrato y no el rol tiene la otra mitad: un admin
+    sin contrato sigue sin aparecer. Nadie se mete solo en la planilla por
+    tener permisos; alguien tiene que declarar que se le paga. Por eso esto no
+    le cambia el número a ningún negocio que todavía no cargó ese contrato.
+
+    `activa` del contrato NO se mira: la fila existe = la persona está en la
+    planilla, igual que una barista con contrato marcado inactivo sigue
+    apareciendo. La baja de verdad es `Usuario.activo`.
+    """
+    return db.query(Usuario).outerjoin(
+        ContratoBarista, ContratoBarista.usuario_id == Usuario.id,
+    ).filter(
+        Usuario.activo == True,  # noqa: E712
+        Usuario.tienda_id == tienda_id,
+        ~Usuario.email.like("kiosk@%"),
+        or_(Usuario.rol == RolEnum.barista, ContratoBarista.id.isnot(None)),
     ).order_by(Usuario.nombre.asc()).all()
 
 

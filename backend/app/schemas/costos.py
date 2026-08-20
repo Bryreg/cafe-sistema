@@ -14,6 +14,32 @@ class CategoriaOut(BaseModel):
         from_attributes = True
 
 
+class CategoriaCreate(BaseModel):
+    """Alta de categoría de costo.
+
+    SIN restricciones de pydantic (nada de Field(min_length=..) ni Literal en
+    `grupo`), mismo criterio que SaldoBancoRequest: lo que rechaza el schema
+    vuelve como 422, y el `detail` de un 422 es una LISTA de errores — el
+    cliente solo sabe leer strings, así que el dueño vería «error» pelado en vez
+    de qué escribir. Las tres validaciones (nombre vacío, grupo inválido, clave
+    repetida) viven en el servicio y contestan 400 con un texto.
+
+    `clave` no está y no va a estar: la deriva el sistema del nombre y no se
+    edita nunca, porque es lo que mantiene junto el histórico del P&L.
+    """
+    nombre: str
+    # None = FIJO. El default no es neutral: casi todo lo que falta cargar
+    # (publicidad, internet, domicilios, seguros, el contador) es del mes.
+    grupo: Optional[str] = None
+
+
+class CategoriaUpdate(BaseModel):
+    """PATCH: solo pisa lo que llega. Se editan el nombre y el grupo — la clave
+    es la identidad de la categoría en el P&L y no se toca."""
+    nombre: Optional[str] = None
+    grupo: Optional[str] = None
+
+
 class ObligacionCreate(BaseModel):
     categoria_id: int
     concepto: str

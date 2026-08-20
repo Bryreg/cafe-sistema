@@ -391,7 +391,19 @@ def _fila_contrato(c: Optional[ContratoBarista], u: Usuario,
 @router.get("/contratos")
 def listar_contratos(tienda_id: int = Query(..., ge=1), db: Session = Depends(get_db),
                      admin: Usuario = Depends(require_admin)):
-    personas = hsvc.baristas_de(db, tienda_id)
+    """Los contratos de la sede: las baristas + quien ya tenga contrato cargado.
+
+    `personas_de_nomina` y no `baristas_de`, que es la lista del HORARIO. Acá la
+    pregunta es a quién se le paga, y a eso se responde con el contrato, no con
+    el rol — si no, el sueldo del administrador no tiene dónde vivir y la
+    planilla del negocio arranca incompleta sin decirlo.
+
+    El alta ya estaba abierta: el PUT de acá abajo acepta cualquier `usuario_id`
+    sin mirar el rol, así que un contrato de admin se podía guardar y después no
+    se veía en ningún lado. Lo que estaba cerrado —y es lo que se abre— era la
+    LISTA y, con ella, el conteo del mes.
+    """
+    personas = hsvc.personas_de_nomina(db, tienda_id)
     contratos = {c.usuario_id: c for c in db.query(ContratoBarista).filter(
         ContratoBarista.usuario_id.in_([u.id for u in personas] or [0])).all()}
     params = pnsvc.para(db, hoy_col())
@@ -470,6 +482,11 @@ def ajustar_contratos_al_minimo(body: Optional[AjustarAlMinimoIn] = None,
             detail=("No hay parámetros de nómina cargados, así que no se sabe cuánto "
                     "vale el salario mínimo. Revisá la pantalla de parámetros."))
 
+    # `baristas_de` a propósito, aunque la lista de contratos de arriba ya use
+    # `personas_de_nomina`: esto ESCRIBE sueldos, y el administrador no gana el
+    # mínimo. Barrerlo con el resto le bajaría el sueldo de un botón que dice
+    # «que ganen el mínimo», en silencio y sin que nadie lo haya pedido. Su
+    # contrato se toca de a uno, por el PUT.
     personas = hsvc.baristas_de(db, sede)
     contratos = {c.usuario_id: c for c in db.query(ContratoBarista).filter(
         ContratoBarista.usuario_id.in_([u.id for u in personas] or [0])).all()}

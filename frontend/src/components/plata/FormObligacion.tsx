@@ -98,6 +98,18 @@ export default function FormObligacion({
 
   const refConcepto = useRef<HTMLInputElement>(null)
 
+  /**
+   * `true` = la fila que se está corrigiendo vive en una categoría que el
+   * desplegable NO ofrece; `null` = todavía no se sabe (el catálogo no llegó).
+   *
+   * El `null` no es cosmético: mientras la lista no se leyó no se puede AFIRMAR
+   * que la categoría falte, y afirmarlo pintaría el aviso sobre una pregunta que
+   * nunca se hizo. Es la regla 3 del README de `ui/`.
+   */
+  const fueraDelCatalogo = !e ? false
+    : cats === null ? null
+      : !cats.some(c => c.id === e.categoria_id)
+
   // EL DEFAULT SE SINCRONIZA CUANDO LLEGA EL CATÁLOGO. El useState corre en el
   // PRIMER render, cuando la lista todavía no llegó porque el fetch va en un
   // hook del padre. Sin esto el estado quedaba en '' para siempre —el componente
@@ -105,9 +117,25 @@ export default function FormObligacion({
   // opción elegida (React marca la primera cuando el value controlado no matchea
   // ninguna) y el botón «Guardar» gris, sin explicación. El dueño tecleaba todo
   // y no podía guardar. No pisa lo que ya eligió: solo llena el hueco.
+  //
+  // Y EN EDICIÓN NO ELIGE NADIE POR EL DUEÑO. Corrigiendo una fila cuya categoría
+  // no está en la lista, este efecto le ponía la PRIMERA opción: el select se veía
+  // «arriendo» sobre una fila que era otra cosa, y guardar sin abrir el desplegable
+  // la movía de categoría sin que nadie lo pidiera. Sobre la declaración del
+  // impoconsumo eso valía $12.447.999 de piso inflado y $11.525.925,93 de margen
+  // neto hundido en el mes del devengo — la misma plata contada dos veces. Ahora se
+  // BORRA la elección: el select queda vacío, «Guardar» gris (el `listo` de abajo
+  // exige `categoriaId`) y el aviso de al lado dice qué pasa. Un campo vacío es una
+  // pregunta; un campo con la opción equivocada es una respuesta falsa.
   useEffect(() => {
-    if (!categoriaId && cats && cats.length > 0) setCategoriaId(String(cats[0].id))
-  }, [cats, categoriaId])
+    if (!cats || cats.length === 0) return
+    if (categoriaId && cats.some(c => c.id === Number(categoriaId))) return
+    if (e) {
+      if (categoriaId) setCategoriaId('')
+      return
+    }
+    if (!categoriaId) setCategoriaId(String(cats[0].id))
+  }, [cats, categoriaId, e])
 
   const listo = !!concepto.trim() && Number(monto) > 0 && !!devengo && !!categoriaId
 
@@ -201,6 +229,11 @@ export default function FormObligacion({
               ? <CajaCatalogo texto="No hay categorías cargadas" />
               : (
                 <select value={categoriaId} onChange={ev => setCategoriaId(ev.target.value)} className={CLS_INPUT}>
+                  {/* LA OPCIÓN VACÍA EXISTE Y NO ES DECORACIÓN: es el único valor
+                      que puede representar «la categoría de esta fila no está en
+                      la lista». Sin ella el select tendría que mostrar alguna
+                      opción real, que es justamente la mentira que se sacó. */}
+                  {!categoriaId && <option value="">— elegí una —</option>}
                   {cs.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                 </select>
               )}
@@ -247,6 +280,24 @@ export default function FormObligacion({
           </button>
         </div>
       </div>
+
+      {/* LA CATEGORÍA DE ESTA FILA NO ESTÁ EN EL DESPLEGABLE. Pasa con las
+          desactivadas y con las que maneja el sistema solo. Se dice CUÁL es —el
+          dueño la ve en la lista de arriba— y se dice que guardar la MUEVE, que
+          es la consecuencia que el select vacío no comunica por sí solo.
+          `=== true` y no truthy: `null` es «el catálogo no llegó» y ahí no se
+          afirma nada. */}
+      {fueraDelCatalogo === true && (
+        <p className="text-[11px] text-gold-700 bg-gold-50 border border-gold-200 rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
+          <AlertCircle size={12} className="mt-0.5 shrink-0" />
+          <span>
+            Esta cuenta está en <b>«{e?.categoria_nombre || 'una categoría que ya no se ofrece'}»</b>,
+            que no está entre las que se pueden elegir. El desplegable quedó vacío a propósito:
+            si elegís una y guardás, <b>la cuenta se mueve a esa categoría</b> y el resultado del
+            mes cambia. Si no querías moverla, cancelá.
+          </span>
+        </p>
+      )}
 
       {/* EN VIVO: sin fecha de pago el costo se guarda y cuenta en el resultado,
           pero no se agenda. Decirlo después es lo que hace pensar que no guardó. */}

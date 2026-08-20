@@ -12,7 +12,7 @@ import { useLibro } from '../components/plata/useLibro'
 import BannerLibro from '../components/plata/BannerLibro'
 import BannerProveedores from '../components/plata/BannerProveedores'
 import BannerObligaciones from '../components/plata/BannerObligaciones'
-import type { Piso } from '../components/piso/tipos'
+import type { Impoconsumo, PalancasData, Piso } from '../components/piso/tipos'
 import { armarRevisiones } from '../components/piso/pendientes'
 import BloqueElPiso from '../components/piso/BloqueElPiso'
 import BloqueHoy from '../components/piso/BloqueHoy'
@@ -153,6 +153,36 @@ export default function Plata() {
     () => api.get('/rentabilidad/por-producto'), 'los productos',
     'No se pudieron leer los productos.', [refresco])
 
+  /**
+   * LAS PALANCAS: qué subió, QUIÉN lo subió y cuánto le sube el piso por día.
+   *
+   * Va aparte de `/costos/piso` porque el bloque del año pide ese endpoint DOCE
+   * veces y el reparto del costo por insumo no tiene por qué correr doce veces.
+   * Adentro mide contra el MISMO piso de este mes: no es una segunda cuenta del
+   * número, es una diferencia contra el que ya se publicó.
+   */
+  const palancas = useDato<PalancasData>(
+    () => api.get('/costos/palancas', { params: { anio, mes } }),
+    'las subas de precio', 'No se pudieron leer las subas de precio.',
+    [refresco, anio, mes])
+
+  /**
+   * LA DECLARACIÓN DEL IMPOCONSUMO DEL BIMESTRE CERRADO.
+   *
+   * 7,41% de cada peso facturado es de la DIAN. El sistema ya lo descontaba en
+   * todos lados —la venta neta, el margen, el piso— pero como PLATA A PAGAR EN
+   * UNA FECHA no aparecía en ninguna pantalla: se veía como menos venta todos los
+   * días y después aparecía de golpe cada dos meses.
+   *
+   * SIN parámetros: el bimestre a declarar es siempre el último CERRADO y lo
+   * decide el backend. Mandarle un año/mes desde acá abriría la puerta a que la
+   * pantalla y el server discrepen sobre cuál es. Y no cuesta un P&L cuando no
+   * hay nada que declarar: el backend corta antes.
+   */
+  const impoconsumo = useDato<Impoconsumo>(
+    () => api.get('/costos/impoconsumo'), 'la declaración del impoconsumo',
+    'No se pudo leer la declaración del impoconsumo.', [refresco])
+
   // Los tres catálogos. Antes caían a `[]`, que en un `<select>` se dibuja igual
   // que «no hay ninguna cuenta cargada» — y ahí el dueño concluía que tenía que
   // ir a crear una cuenta que ya existe. No llevan `[refresco]`: no cambian al
@@ -182,9 +212,9 @@ export default function Plata() {
   /** Lo que mira la franja de confianza: si algo de esto falló, el dueño lo sabe. */
   const fuentes = useMemo(
     () => [piso, flujo, agenda, obligaciones, egresos, ventasHoy, pulso, productos,
-      categorias, tiendas, cuentas],
+      palancas, impoconsumo, categorias, tiendas, cuentas],
     [piso, flujo, agenda, obligaciones, egresos, ventasHoy, pulso, productos,
-      categorias, tiendas, cuentas])
+      palancas, impoconsumo, categorias, tiendas, cuentas])
 
   // ── Los anclajes: la página no navega, se mueve sola ──────────────────────
   const refHoy = useRef<HTMLDivElement>(null)
@@ -232,14 +262,30 @@ export default function Plata() {
 
   const revisiones = useMemo(
     () => armarRevisiones({
-      agenda, flujo, obligaciones, egresos, productos,
+      agenda, flujo, obligaciones, egresos, productos, impoconsumo,
       hoy, anioSiguiente: siguiente.anio, mesSiguiente: siguiente.mes,
       irAlExtracto, irAPagar, irASinFecha, irAlDetalleDelMes,
       irAEgresos: irAlDetalleDelMes,
       irANomina: irAlMensual,
       irAArmarElMes: irAlMensual,
+      // El impoconsumo manda al pliegue y no dispara nada solo, porque allá hay
+      // DOS botones que hacen cosas distintas: «ya la declaré» apaga el
+      // recordatorio del TRÁMITE y «meterla en lo que hay que pagar» reserva la
+      // PLATA. Se puede declarar sin haber pagado, así que el primero no puede
+      // hacer el trabajo del segundo.
+      //
+      // Acá decía que agendarla «contaría la misma plata dos veces» y eso dejó
+      // de ser cierto: la declaración SÍ se agenda, en una categoría dedicada
+      // que el P&L excluye POR CLAVE, y está medido que no mueve el piso ni el
+      // margen (delta $0,00 exacto) mientras la agenda y la proyección de caja
+      // sí la ven. Lo que contaba dos veces era cargarla como costo de
+      // 'impuestos', que es grupo fijo y entra al numerador del piso; eso sigue
+      // prohibido y ahora lo rechaza el server. El mismo párrafo, ya corregido,
+      // está en `pendientes.ts` — dos comentarios sobre la misma decisión no
+      // pueden decir cosas opuestas.
+      irAlImpoconsumo: irAlMensual,
     }),
-    [agenda, flujo, obligaciones, egresos, productos, hoy, siguiente,
+    [agenda, flujo, obligaciones, egresos, productos, impoconsumo, hoy, siguiente,
       irAlExtracto, irAPagar, irASinFecha, irAlDetalleDelMes, irAlMensual])
 
   /**
@@ -257,6 +303,7 @@ export default function Plata() {
       <UnaVezAlMes
         piso={piso} flujo={flujo} agenda={agenda}
         obligaciones={obligaciones} categorias={categorias}
+        impoconsumo={impoconsumo}
         anio={anio} mes={mes}
         anioSiguiente={siguiente.anio} mesSiguiente={siguiente.mes}
         arriba={esArranqueDeMes}
@@ -342,7 +389,7 @@ export default function Plata() {
         <BloqueFinDeMes
           flujo={flujo} agenda={agenda} piso={piso} pulso={pulso}
           onCambiarReserva={irAlMensual}
-          onANomina={irAlMensual}
+          onAlMensual={irAlMensual}
           onASinFecha={irAPagar} />
       </div>
 
@@ -371,7 +418,7 @@ export default function Plata() {
              — `POST /costos/pagos` con `factura_id` guarda el pago pero no mueve
              el saldo de la factura). Se mueve entero, no se reescribe. */}
       <BloqueBajaElMargen
-        piso={piso} productos={productos}
+        piso={piso} palancas={palancas}
         onCargarComision={irAlMensual}>
         <div className="border-t border-warm-100">
           <BannerProveedores

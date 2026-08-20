@@ -1592,9 +1592,18 @@ class Obligacion(Base):
     # NO DateTime: es una fecha de negocio, así esquiva el corrimiento UTC-5.
     fecha_devengo = Column(Date, index=True, nullable=False)
     fecha_vencimiento = Column(Date, index=True, nullable=True)  # cuándo hay que pagarla
-    # NULL | 'mensual' | 'quincenal' | 'semanal'. En esta fase es solo metadata:
-    # todavía no genera nada automáticamente.
-    recurrencia = Column(String(20), nullable=True)
+    # NO HAY COLUMNA `recurrencia`, Y NO ES UN OLVIDO. Existió como
+    # NULL | 'mensual' | 'quincenal' | 'semanal', se validaba y se guardaba, y
+    # NADIE la leía: `repetir_obligacion` copia SIEMPRE al mes siguiente. Una
+    # obligación marcada 'quincenal' daba el mes que viene igual, o sea que el
+    # campo afirmaba una periodicidad que el sistema no respetaba. Respetarla no
+    # era cambiar una función: la llave de idempotencia de la serie es (serie,
+    # MES de devengo) y la pantalla decide qué falta copiar con
+    # `fecha_devengo.slice(0,7)`, así que una serie quincenal habría quedado
+    # marcada como «ya está» con la primera copia del mes. Sin formulario que la
+    # pudiera setear y sin una sola obligación quincenal en el negocio, se saca.
+    # En las bases viejas la COLUMNA sigue existiendo con NULL o 'mensual': es
+    # nullable, ningún INSERT la necesita y nada la lee.
     plantilla_id = Column(Integer, nullable=True)   # columna PLANA sin FK (autorreferencia)
     nota = Column(Text, nullable=True)
     imagen_url = Column(String(300), nullable=True)

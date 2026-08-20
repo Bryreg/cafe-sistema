@@ -51,7 +51,8 @@ class ObligacionCreate(BaseModel):
     tienda_id: Optional[int] = None
     beneficiario: Optional[str] = None
     fecha_vencimiento: Optional[date] = None
-    recurrencia: Optional[str] = None   # mensual | quincenal | semanal (metadata en Fase 1)
+    # `recurrencia` se sacó: se validaba, se guardaba y nadie la leía. El porqué
+    # completo está en el modelo `Obligacion`.
     nota: Optional[str] = None
     imagen_url: Optional[str] = None
 
@@ -67,7 +68,6 @@ class ObligacionUpdate(BaseModel):
     tienda_id: Optional[int] = None
     beneficiario: Optional[str] = None
     fecha_vencimiento: Optional[date] = None
-    recurrencia: Optional[str] = None
     nota: Optional[str] = None
     imagen_url: Optional[str] = None
 
@@ -167,6 +167,72 @@ class SaldoBancoRequest(BaseModel):
     fecha: Optional[date] = None
 
 
+class ArmarMesRequest(BaseModel):
+    """Armar todos los costos fijos de un mes de una.
+
+    `confirmar` en False es la VISTA PREVIA: no escribe nada y devuelve la lista
+    exacta de lo que crearia con sus montos. Va como campo del body y no como dos
+    endpoints distintos porque las dos mitades tienen que calcular la misma lista
+    con el mismo codigo — si la previa y el commit fueran dos caminos, el dueno
+    aprobaria una lista y se le crearia otra.
+
+    SIN restricciones de pydantic sobre anio/mes, mismo criterio que
+    `NominaAgendarRequest`: lo que rechaza el schema vuelve como 422 y el
+    `detail` de un 422 es una LISTA de errores — el cliente solo sabe leer
+    strings. Los rangos los valida el handler con un 400 que se puede mostrar.
+    """
+    anio: int
+    mes: int
+    confirmar: bool = False
+    # LAS CUENTAS SUELTAS QUE EL DUENO ELIGIO llevar al mes: ids de las que el
+    # server ofrecio en `candidatas`. Vacio = solo las series ya marcadas como
+    # repetibles, que es el comportamiento de siempre.
+    #
+    # Existe porque el lote nacia inerte en este negocio: los fijos se cargan a
+    # mano todos los meses, nadie apreto nunca «Repetir mes que viene», y sin
+    # una sola serie el lote no encontraba nada que copiar. Que sea una lista
+    # EXPLICITA y no un «copia todo» es deliberado: una reparacion del molino
+    # copiada al mes siguiente inventa un costo y sube el piso de mas.
+    #
+    # Sin restricciones de pydantic, misma razon que anio/mes: lo que rechaza el
+    # schema vuelve como 422 y el `detail` de un 422 es una LISTA de errores, y
+    # el cliente solo sabe leer strings.
+    incluir: List[int] = []
+
+
+class ImpoconsumoDeclaradoRequest(BaseModel):
+    """«Esa ya la declare»: apaga el recordatorio de ese bimestre y los de antes.
+
+    Se manda el bimestre EXPLICITO y no «el ultimo»: el dueno puede tener la
+    pantalla abierta desde ayer, y si el server dedujera cual es por su cuenta
+    podria apagar uno distinto del que el vio. Los rangos y el «todavia no cerro»
+    los valida el servicio con 400.
+    """
+    anio: int
+    bimestre: int
+
+
+class ImpoconsumoAgendarRequest(BaseModel):
+    """Mete la declaracion de un bimestre en la agenda y en el flujo proyectado.
+
+    Se manda el bimestre EXPLICITO por la misma razon que
+    `ImpoconsumoDeclaradoRequest`: el dueno aprieta el boton viendo un monto y un
+    periodo en pantalla, y si el server dedujera cual es por su cuenta podria
+    agendar uno distinto del que el vio.
+
+    SIN restricciones de pydantic, mismo criterio que `NominaAgendarRequest`: lo
+    que rechaza el schema vuelve como 422 y el `detail` de un 422 es una LISTA de
+    errores — el cliente solo sabe leer strings. Los rangos, el «todavia no
+    cerro» y el monto los valida el servicio con 400.
+    """
+    anio: int
+    bimestre: int
+    # None = usar el monto MEDIDO sobre la venta real del bimestre. Con valor,
+    # manda el dueno: lo que el sistema mide es lo COBRADO, y la declaracion que
+    # arma el contador trae exclusiones y correcciones que el sistema no ve.
+    monto: Optional[float] = None
+
+
 class ComisionDatafonoRequest(BaseModel):
     """Lo que cobra el datafono, EN PORCENTAJE — 2.5 quiere decir 2,5%.
 
@@ -234,7 +300,6 @@ class ObligacionOut(BaseModel):
     estado: str            # pendiente | parcial | pagada | anulada
     fecha_devengo: date
     fecha_vencimiento: Optional[date]
-    recurrencia: Optional[str]
     # Llave de la serie mensual (el id del PRIMER eslabón). La escribe `repetir`.
     plantilla_id: Optional[int] = None
     nota: Optional[str]

@@ -27,7 +27,7 @@ from app.services import nomina as svc
 from app.services import novedades_nomina as nsvc
 from app.services import parametros_nomina as pn
 
-from test_nomina_resumen import NominaBase, utc
+from tests.test_nomina_resumen import NominaBase, utc
 
 SMMLV_2026 = 1_750_905.0
 AUXILIO_2026 = 249_095.0

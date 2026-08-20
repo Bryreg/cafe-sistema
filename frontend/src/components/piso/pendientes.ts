@@ -4,11 +4,11 @@
 // POR QUÉ ESTO NO ES UNA LISTA, SINO UNA LISTA DE REVISIONES
 // ═════════════════════════════════════════════════════════════════════════════
 // La forma obvia sería juntar todo en un `Dato<Pendiente[]>` y dibujarlo. Pero
-// las siete cosas salen de SEIS fetches distintos que se caen por separado, y
+// las ocho cosas salen de SEIS fetches distintos que se caen por separado, y
 // con un solo sobre pasan dos cosas malas:
 //
-//   · la falla de uno apaga la lista entera, y seis tareas reales desaparecen
-//     porque un séptimo endpoint no volvió;
+//   · la falla de uno apaga la lista entera, y siete tareas reales desaparecen
+//     porque un octavo endpoint no volvió;
 //   · o peor, se hace `?? []` y la lista queda corta sin decirlo — «no tenés
 //     nada que hacer» dicho sobre una pregunta que nunca se hizo.
 //
@@ -16,7 +16,7 @@
 //
 // Por eso cada revisión trae SU propio `Dato`: las que llegaron se dibujan, las
 // que fallaron dibujan su propio renglón «esto no se pudo mirar» con su
-// Reintentar, y el CONTADOR de arriba solo puede decir «hay 7» cuando las siete
+// Reintentar, y el CONTADOR de arriba solo puede decir «hay 8» cuando las ocho
 // preguntas se pudieron hacer. Si alguna falló dice «al menos 5», que es lo
 // único cierto.
 //
@@ -27,7 +27,9 @@ import { Dato, mapDato } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import type { Agenda, Bandeja, Flujo, Listado } from '../plata/tipos'
 import type { PorProductoData } from '../rentabilidad/helpers'
-import { plata } from '../plata/banco'
+import { MESES, plata } from '../plata/banco'
+import { entraAlPiso } from './calculo'
+import type { Impoconsumo } from './tipos'
 
 export interface Pendiente {
   /** Lo que hay que hacer, en imperativo y con el nombre propio adentro. */
@@ -53,18 +55,22 @@ export interface Revision {
 
 const plural = (n: number, uno: string, varios: string) => (n === 1 ? uno : varios)
 
+/** El mes por su nombre. Fallback y no `MESES[m - 1]!`: un mes fuera de rango
+ *  dibujaría `undefined` en medio de una frase sobre plata. */
+const nombreDelMes = (m: number) => MESES[m - 1] ?? `mes ${m}`
+
 /**
- * Las siete revisiones, cada una con su propio sobre.
+ * Las ocho revisiones, cada una con su propio sobre.
  *
  * El orden no es estético: primero lo que ya venció (plata que se está
  * atrasando), después lo que hace que los números de arriba mientan (el extracto
  * viejo, la plata sin fecha), y al final el trabajo de mantenimiento.
  */
 export function armarRevisiones({
-  agenda, flujo, obligaciones, egresos, productos,
+  agenda, flujo, obligaciones, egresos, productos, impoconsumo,
   hoy, anioSiguiente, mesSiguiente,
   irAlExtracto, irAPagar, irASinFecha, irAlDetalleDelMes, irAEgresos,
-  irANomina, irAArmarElMes,
+  irANomina, irAArmarElMes, irAlImpoconsumo,
 }: {
   agenda: Fuente<Agenda>
   flujo: Fuente<Flujo>
@@ -72,6 +78,7 @@ export function armarRevisiones({
   obligaciones: Fuente<Listado>
   egresos: Fuente<Bandeja>
   productos: Fuente<PorProductoData>
+  impoconsumo: Fuente<Impoconsumo>
   hoy: string
   anioSiguiente: number
   mesSiguiente: number
@@ -82,6 +89,7 @@ export function armarRevisiones({
   irAEgresos: () => void
   irANomina: () => void
   irAArmarElMes: () => void
+  irAlImpoconsumo: () => void
 }): Revision[] {
   const mesQueViene = `${anioSiguiente}-${String(mesSiguiente).padStart(2, '0')}`
 
@@ -110,7 +118,59 @@ export function armarRevisiones({
       }),
     },
 
-    // ── 2 · El extracto atrasado ───────────────────────────────────────────
+    // ── 2 · La declaración del impoconsumo ─────────────────────────────────
+    // EL ÚNICO GASTO GRANDE QUE NO SE VEÍA COMO GASTO. 7,41% de cada peso
+    // facturado es de la DIAN: el sistema ya lo descuenta del margen y del piso,
+    // pero como plata a pagar en una fecha no aparecía en ninguna parte. Se ve
+    // como menos venta todos los días y después aparece de golpe cada dos meses.
+    //
+    // EL MONTO NO SE INVENTA. Viene MEDIDO del backend, o viene `null` con el
+    // porqué escrito —y entonces acá se dice «hay que declararlo» sin cifra. Un
+    // monto inventado en una pantalla de plata es peor que un recordatorio sin
+    // monto, así que no hay un solo `?? 0` en esta rama.
+    //
+    // MANDA AL PLIEGUE DE «UNA VEZ AL MES», QUE ES DONDE ESTÁN LOS DOS BOTONES.
+    // Este comentario decía lo contrario —«no manda a crear una obligación:
+    // contaría la misma plata dos veces»— y dejó de ser cierto: la declaración
+    // SÍ se agenda ahora, en una categoría dedicada que el P&L excluye POR
+    // CLAVE, y está medido que no mueve el piso ni el margen ni un centavo
+    // (delta $0,00 exacto) mientras la agenda y la proyección de caja sí la ven.
+    // Lo que contaba dos veces era cargarla como costo de 'impuestos', que es
+    // grupo fijo y entra al numerador del piso; eso sigue prohibido y ahora lo
+    // rechaza el server.
+    //
+    // Y SON DOS BOTONES DISTINTOS, que es la razón por la que este renglón manda
+    // al pliegue y no dispara nada solo: «ya la declaré» apaga el recordatorio
+    // del TRÁMITE, y «meterla en lo que hay que pagar» reserva la PLATA. Se
+    // puede declarar sin haber pagado, así que el primero no puede hacer el
+    // trabajo del segundo — y este renglón, que sale de `hay_que_declarar`,
+    // habla del trámite. El de la plata lo levanta el flujo con
+    // `conceptos_sin_cargar`, que mira una sola cosa: si la obligación existe.
+    {
+      clave: 'impoconsumo',
+      nombre: 'la declaración del impoconsumo',
+      hacer: irAlImpoconsumo,
+      recargar: impoconsumo.recargar,
+      dato: mapDato(impoconsumo.dato, i => {
+        if (!i.hay_que_declarar) return null
+        const cuanto = i.monto_medido === null
+          ? `el sistema no puede decir cuánto: ${i.sin_monto_porque}`
+          : `${plata(i.monto_medido)} que cobraste y son de la DIAN`
+        return {
+          titulo: `Declarar el impoconsumo de ${i.bimestre.nombre}`,
+          detalle: i.vencido
+            ? `${cuanto} · el plazo era en ${i.declara_en.nombre} y ya pasó`
+            : `${cuanto} · se declara en ${i.declara_en.nombre}`,
+          cta: 'Ver',
+          // Rojo solo cuando pasó el MES ENTERO del plazo: el día exacto lo fija
+          // la DIAN según el NIT y el sistema no lo conoce, así que antes de eso
+          // no se puede afirmar que esté tarde.
+          urgente: i.vencido,
+        }
+      }),
+    },
+
+    // ── 3 · El extracto atrasado ───────────────────────────────────────────
     // `saldo_banco_desactualizado` lo decide el BACKEND (y solo lo prende cuando
     // el banco de verdad entra al total). No se recalcula acá comparando fechas:
     // dos reglas para «¿está viejo?» son dos pantallas que se contradicen.
@@ -133,7 +193,7 @@ export function armarRevisiones({
       }),
     },
 
-    // ── 3 · La plata que se debe y no proyecta ─────────────────────────────
+    // ── 4 · La plata que se debe y no proyecta ─────────────────────────────
     {
       clave: 'sin_fecha',
       nombre: 'la agenda de pagos',
@@ -150,7 +210,7 @@ export function armarRevisiones({
       }),
     },
 
-    // ── 4 · Las facturas sin precio ────────────────────────────────────────
+    // ── 5 · Las facturas sin precio ────────────────────────────────────────
     {
       clave: 'facturas_sin_costo',
       nombre: 'los productos',
@@ -168,7 +228,7 @@ export function armarRevisiones({
       }),
     },
 
-    // ── 5 · Los egresos sin categorizar ────────────────────────────────────
+    // ── 6 · Los egresos sin categorizar ────────────────────────────────────
     {
       clave: 'egresos',
       nombre: 'los egresos sin categorizar',
@@ -185,7 +245,7 @@ export function armarRevisiones({
       }),
     },
 
-    // ── 6 · La nómina sin agendar ──────────────────────────────────────────
+    // ── 7 · La nómina sin agendar ──────────────────────────────────────────
     // Se pregunta a la AGENDA, no a la nómina: la pregunta no es «cuánto cuesta»
     // sino «¿está adentro de lo que hay que pagar?». La nómina puede estar
     // perfectamente calculada y aun así no existir como obligación — que es
@@ -208,10 +268,48 @@ export function armarRevisiones({
       }),
     },
 
-    // ── 7 · El mes que viene sin sus costos ────────────────────────────────
+    // ── 8 · El mes que viene sin sus costos ────────────────────────────────
     // Se mira sobre las obligaciones del mes actual Y el siguiente, que vienen
-    // en la MISMA lectura: las que se repiten (tienen `plantilla_id`) y todavía
-    // no tienen copia con devengo del mes que viene.
+    // en la MISMA lectura.
+    //
+    // ═══════════════════════════════════════════════════════════════════════
+    // LA FRASE QUE ESTE RENGLÓN LLEGÓ A DECIR, Y QUE COSTÓ $27.620.000
+    // ═══════════════════════════════════════════════════════════════════════
+    // «ninguna de las 5 cuentas está marcada para repetirse: el mes que viene
+    // arrancaría sin costos fijos y el piso en cero» — dicho con el mes que
+    // viene YA CARGADO A MANO, con sus $27.620.000 adentro, y saliendo del
+    // MISMO array del que salió la frase. Era una afirmación sobre algo que no
+    // se miró, y sobre lo único que al dueño le da miedo. Tocaba «Elegir
+    // cuáles», tildaba los cinco, y el mes destino pasaba a $55.240.000 con el
+    // piso en $59.659.195,23 contra los $29.829.597,61 que necesita.
+    //
+    // Ahora `enElMesQueViene` se cuenta ANTES de cualquier frase, y ninguna
+    // rama habla del mes destino sin haberlo abierto.
+    //
+    // ═══════════════════════════════════════════════════════════════════════
+    // LOS ESTADOS, TODOS, Y QUÉ DICE CADA UNO
+    // ═══════════════════════════════════════════════════════════════════════
+    //  E0 · la lectura no volvió → no se dibuja acá: el `Dato` de esta revisión
+    //       pinta su propio renglón «esto no se pudo mirar» con su Reintentar.
+    //       Ninguna de las ramas de abajo corre fuera de `listo`.
+    //  E1 · faltan copias de SERIE → «Armar los costos», con lo que el mes
+    //       destino ya tiene dicho al lado para que el número no se lea como
+    //       «el mes está en cero».
+    //  E2 · destino VACÍO, nada marcado, hay cuentas para llevar → EL AVISO
+    //       FUERTE. Es el único estado en el que la frase de arriba es cierta,
+    //       y ahora está condicionada a haberlo contado.
+    //  E3 · destino CON PLATA y nada marcado → SUAVE. El mes está cubierto: no
+    //       urge nada. Pero marcarlas es lo que corta las siete cargas a mano,
+    //       así que se dice sin alarma y sin rojo.
+    //  E4 · destino vacío y no hay NADA que llevar (base sin costos) → `null`.
+    //       No es un «al día» escondido: el bloque del piso ya dice el hueco
+    //       con nombre (`PUERTA_SIN_COSTOS_FIJOS`) y repetirlo acá sería una
+    //       segunda alarma sobre lo mismo.
+    //  E5 · todo marcado y copiado → `null`. Se preguntó y no hay nada que
+    //       hacer, que es lo único que `null` puede significar.
+    //
+    // NUNCA va `urgente`: el rojo está reservado para plata ya vencida, y esto
+    // es trabajo que hay que hacer, no un pago atrasado.
     {
       clave: 'mes_que_viene',
       nombre: 'los costos fijos',
@@ -219,21 +317,76 @@ export function armarRevisiones({
       recargar: obligaciones.recargar,
       dato: mapDato(obligaciones.dato, l => {
         const vivas = l.obligaciones.filter(o => o.estado !== 'anulada')
-        const yaEnElMesQueViene = new Set(
+        // LO QUE EL MES QUE VIENE YA TIENE. Se cuenta primero, y todo lo de
+        // abajo lo usa: es el dato que faltaba mirar.
+        //
+        // SE CUENTAN LOS QUE ENTRAN AL PISO, no todas las obligaciones vivas.
+        // Contar todas daba un número CERCA del correcto y del lado
+        // tranquilizador: una declaración del impoconsumo sola en el mes hacía
+        // que un mes sin un peso de costos fijos se leyera como cubierto, y
+        // apagaba justo el aviso que existe para eso. `entraAlPiso` usa el mismo
+        // filtro que el numerador del backend.
+        const enElMesQueViene = vivas
+          .filter(o => o.fecha_devengo.slice(0, 7) === mesQueViene && entraAlPiso(o))
+        const platEnElMesQueViene = enElMesQueViene.reduce((s, o) => s + o.monto, 0)
+        // Para «¿falta la copia?» se miran TODAS las vivas del mes y no solo las
+        // del piso: una copia ya hecha en una categoría variable igual existe, y
+        // volver a crearla sería duplicarla.
+        const yaCopiadas = new Set(
           vivas.filter(o => o.fecha_devengo.slice(0, 7) === mesQueViene)
-            .map(o => o.plantilla_id)
-            .filter((x): x is number => x !== null))
-        const faltan = vivas.filter(o =>
-          o.fecha_devengo.slice(0, 7) !== mesQueViene
-          && o.plantilla_id !== null
-          && !yaEnElMesQueViene.has(o.plantilla_id))
-        if (faltan.length === 0) return null
-        return {
-          titulo: `Armar los costos del mes que viene`,
-          detalle: `${faltan.length} ${plural(faltan.length, 'cuenta', 'cuentas')} de la serie `
-            + 'mensual todavía sin copia',
-          cta: 'Armar el mes',
+            .map(o => o.plantilla_id).filter((x): x is number => x !== null))
+        const fuera = vivas.filter(o => o.fecha_devengo.slice(0, 7) !== mesQueViene)
+        const faltan = fuera.filter(o =>
+          o.plantilla_id !== null && !yaCopiadas.has(o.plantilla_id))
+        const sueltas = fuera.filter(o => o.plantilla_id === null)
+        const yaTiene = `${nombreDelMes(mesSiguiente)} ya tiene ${enElMesQueViene.length} `
+          + `${plural(enElMesQueViene.length, 'costo fijo', 'costos fijos')} por `
+          + `${plata(platEnElMesQueViene)}`
+
+        // E1 · Faltan copias de serie.
+        if (faltan.length > 0) {
+          return {
+            titulo: 'Armar los costos del mes que viene',
+            detalle: `${faltan.length} ${plural(faltan.length, 'cuenta', 'cuentas')} de la serie `
+              + 'mensual todavía sin copia'
+              // El conteo del destino va PEGADO al número que falta: «3 sin
+              // copia» a secas se lee como un mes en cero.
+              + (enElMesQueViene.length > 0 ? ` · ${yaTiene}` : ''),
+            cta: 'Armar el mes',
+          }
         }
+
+        const nadaMarcado = !vivas.some(o => o.plantilla_id !== null)
+
+        // E2 · El destino está VACÍO y no hay nada marcado: el aviso fuerte, y
+        // recién ahora se puede decir.
+        if (nadaMarcado && sueltas.length > 0 && enElMesQueViene.length === 0) {
+          return {
+            titulo: 'Elegir qué costos van al mes que viene',
+            detalle: (sueltas.length === 1
+              ? 'la única cuenta cargada no está marcada para repetirse'
+              : `ninguna de las ${sueltas.length} cuentas está marcada para repetirse`)
+              + ` y ${nombreDelMes(mesSiguiente)} no tiene todavía un peso de costos fijos: `
+              + 'arrancaría con el piso en cero',
+            cta: 'Elegir cuáles',
+          }
+        }
+
+        // E3 · El destino YA tiene sus costos y nada está marcado. No urge —el
+        // mes está cubierto— pero el dueño los está cargando a mano todos los
+        // meses y nadie se lo dijo nunca. Suave, sin alarma y sin cifra de
+        // miedo: la plata que se nombra es la que YA está, no una que falte.
+        if (nadaMarcado && sueltas.length > 0 && enElMesQueViene.length > 0) {
+          return {
+            titulo: 'Marcar los costos que se repiten todos los meses',
+            detalle: `${yaTiene}, así que esto no urge. Marcarlos una vez es lo que evita `
+              + 'volver a cargarlos a mano el mes que viene',
+            cta: 'Marcarlos',
+          }
+        }
+
+        // E4 y E5 · Se preguntó y no hay nada que hacer por este lado.
+        return null
       }),
     },
   ]

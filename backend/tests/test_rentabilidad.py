@@ -413,8 +413,10 @@ class RentabilidadTest(unittest.TestCase):
         self.db.add_all([leche, latte])
         self.db.flush()
         self.db.add(ProductoInsumo(producto_id=latte.id, insumo_id=leche.id, cantidad=200))
-        # Factura vieja a $2/ml y reciente a $3/ml (+50% sobre el promedio ~2.5 no,
-        # promedio ponderado = (1000*2 + 1000*3)/2000 = 2.5; ultimo 3 = +20%).
+        # Factura vieja a $2/ml y reciente a $3/ml. La alerta se mide contra la
+        # REFERENCIA —lo más barato de los últimos 12 meses, $2— así que la suba
+        # es del 50%. El promedio ponderado ((1000*2 + 1000*3)/2000 = 2,5) es
+        # otro número y sirve para otra cosa: traducir la suba a pesos de piso.
         for dias, precio in ((10, 2.0), (1, 3.0)):
             f = FacturaCompra(tienda_id=self.t1.id, proveedor="L", valor_total=1,
                               tipo_pago=TipoPagoEnum.credito, usuario_id=self.u.id,

@@ -39,3 +39,6 @@ desktop.ini
 
 # Índice local de CodeGraph (por checkout, no se comparte)
 .codegraph/
+
+# Cache de tooling (skill registry), no es del producto
+.atl/

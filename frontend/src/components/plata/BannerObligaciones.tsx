@@ -1,7 +1,7 @@
 import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  AlertCircle, CalendarClock, CalendarDays, CheckCircle, Clock, Pencil, Receipt,
-  Tag, Trash2, Wallet, X,
+  AlertCircle, CalendarClock, CalendarDays, CheckCircle, Clock, Lock, Pencil,
+  Receipt, Tag, Trash2, Wallet, X,
 } from 'lucide-react'
 import api from '../../api/client'
 import { hoyBogota } from '../../utils/fechaLocal'
@@ -421,20 +421,65 @@ export default function BannerObligaciones({
                           <Wallet size={13} /> Registrar pago
                         </button>
                       )}
-                      <button onClick={() => { setEditando(x => (x === o.id ? null : o.id)); setPagando(null) }}
-                        className="flex items-center gap-1.5 text-[11px] font-bold text-forest bg-forest-50 hover:bg-forest-100 px-3 min-h-[38px] rounded-lg">
-                        <Pencil size={12} /> Corregir
-                      </button>
-                      {confirmando === `rep-${o.id}` ? (
-                        <Confirmar tono="verde"
-                          texto={`¿Crear la copia del mes que viene por ${plata(o.monto)}?`} cta="Copiar"
-                          onSi={() => repetir(o)} onNo={() => setConfirmando(null)} />
-                      ) : (
-                        <button onClick={() => setConfirmando(`rep-${o.id}`)}
-                          title="Crea la copia del mes siguiente. Es idempotente: tocarlo dos veces no duplica."
-                          className="flex items-center gap-1.5 text-[11px] font-bold text-warm-600 bg-warm-100 hover:bg-warm-200 px-3 min-h-[38px] rounded-lg">
-                          <CalendarDays size={13} /> Repetir mes que viene
+                      {/* CORREGIR Y REPETIR SOLO SI LA FILA ES DEL DUEÑO.
+                          `editable_a_mano` lo decide el backend con la misma lista
+                          que usa para rechazar la edición, así que acá no hay una
+                          segunda regla que se pueda despegar.
+
+                          Estas dos filas son del SISTEMA: la declaración del
+                          impoconsumo (monto medido sobre la venta real, fecha del
+                          calendario de la DIAN) y las viejas de proveedores. Con
+                          «Corregir» a la vista, dos taps devolvían el doble conteo
+                          —el select ni siquiera podía mostrar la categoría real, así
+                          que abría en blanco y guardaba la primera de la lista— y el
+                          piso del mes del devengo subía $12.447.999. Y el server
+                          ahora contesta 400: dejar el botón sería enseñarle al dueño
+                          que los botones de esta pantalla no significan nada.
+
+                          PAGAR Y ANULAR SIGUEN. Pagar es el punto de toda la fila, y
+                          anular es la salida cuando el número del contador es otro:
+                          se anula y se vuelve a agendar con esa cifra.
+
+                          `!== false` Y NO A SECAS, y la diferencia es una ventana
+                          de deploy entera. Esto es una PWA con service worker: hay
+                          minutos en que la tablet corre el bundle NUEVO contra el
+                          backend VIEJO, y ahí `editable_a_mano` llega `undefined`.
+                          Con la pregunta por verdad, `undefined` es falsy y TODAS
+                          las filas —arriendo, servicios, contador— se dibujaban con
+                          el candado: el dueño no podía corregir nada y la pantalla
+                          no le decía por qué. El default seguro va al revés — el
+                          candado solo cuando el server lo AFIRMA— y no afloja
+                          ninguna guarda: la guarda real es el 400 del server, que
+                          sigue ahí. Y no abre nada nuevo: el backend que no manda
+                          el campo es el MISMO que todavía no trae ni la fila del
+                          impoconsumo ni el 400, o sea que en esa ventana la
+                          pantalla queda exactamente como estaba antes del deploy
+                          en vez de estrenar un candado sobre todo. */}
+                      {o.editable_a_mano !== false ? (<>
+                        <button onClick={() => { setEditando(x => (x === o.id ? null : o.id)); setPagando(null) }}
+                          className="flex items-center gap-1.5 text-[11px] font-bold text-forest bg-forest-50 hover:bg-forest-100 px-3 min-h-[38px] rounded-lg">
+                          <Pencil size={12} /> Corregir
                         </button>
+                        {confirmando === `rep-${o.id}` ? (
+                          <Confirmar tono="verde"
+                            texto={`¿Crear la copia del mes que viene por ${plata(o.monto)}?`} cta="Copiar"
+                            onSi={() => repetir(o)} onNo={() => setConfirmando(null)} />
+                        ) : (
+                          <button onClick={() => setConfirmando(`rep-${o.id}`)}
+                            title="Crea la copia del mes siguiente. Es idempotente: tocarlo dos veces no duplica."
+                            className="flex items-center gap-1.5 text-[11px] font-bold text-warm-600 bg-warm-100 hover:bg-warm-200 px-3 min-h-[38px] rounded-lg">
+                            <CalendarDays size={13} /> Repetir mes que viene
+                          </button>
+                        )}
+                      </>) : (
+                        /* EL HUECO SE DICE, no se deja mudo (regla 4): dos botones
+                           que desaparecen sin explicación se leen como una pantalla
+                           rota. Y dice qué hacer en su lugar. */
+                        <span className="flex items-center gap-1.5 text-[11px] text-warm-400 leading-snug">
+                          <Lock size={11} className="shrink-0" />
+                          La carga el sistema: no se corrige ni se repite a mano. Si el número
+                          es otro, anulala y volvé a agendarla.
+                        </span>
                       )}
                       {confirmando === `anu-${o.id}` ? (
                         <Confirmar

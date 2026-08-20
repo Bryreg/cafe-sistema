@@ -511,6 +511,33 @@ export default function Dashboard() {
         const a = r.data?.advertencias
         const falta: string[] = []
         if (a?.sin_salidas_cargadas) falta.push('no hay pagos cargados')
+        // LO QUE FALTA, CON NOMBRE. `sin_salidas_cargadas` se apaga con una sola
+        // obligación cargada, así que sin esto el panel se quedaba callado —o
+        // sea diciendo «todo bien»— con la declaración de la DIAN afuera de la
+        // proyección. Se nombra cada concepto y no un «faltan datos» genérico.
+        //
+        // Y NO SE APLASTA «no vino el campo» CONTRA «no falta nada» (regla 2 de
+        // components/ui/README.md). Con un `?? []` a secas, un backend que no
+        // publique la lista producía exactamente el silencio que este bloque
+        // existe para evitar: cero renglones, ningún aviso, y el panel diciendo
+        // «todo bien» sobre una pregunta que nunca se contestó. Es la misma
+        // puerta que en esta misma tanda se cerró en `alertas_costo`.
+        // `!a` VA DEL LADO QUE HABLA, y esa era la unica puerta que quedaba
+        // abierta. Con `a && !Array.isArray(...)`, una respuesta sin
+        // `advertencias` caia al `else`, el `?? []` la volvia una lista vacia y
+        // el panel se quedaba mudo — o sea diciendo «todo bien» sobre la misma
+        // pregunta que este bloque existe para no dejar sin contestar (regla 2
+        // de components/ui/README.md). Hoy el backend manda el objeto siempre,
+        // asi que esta rama no se pisa; el punto es que si algun dia deja de
+        // mandarlo, el error caiga del lado que avisa y no del que tranquiliza.
+        const conceptos = a?.conceptos_sin_cargar
+        if (!a || !Array.isArray(conceptos)) {
+          falta.push('no se pudo leer qué gastos grandes quedaron sin agendar')
+        } else {
+          for (const c of conceptos as { nombre: string }[]) {
+            falta.push(`${c.nombre} no está agendado`)
+          }
+        }
         if (a?.sin_historia_ventas) falta.push('no hay ventas para estimar lo que entra')
         if (a?.excluye_corporativas) falta.push('esta sede no incluye los gastos corporativos')
         if (a?.saldo_banco_desactualizado) falta.push(

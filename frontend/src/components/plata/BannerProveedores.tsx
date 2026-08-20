@@ -253,6 +253,65 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
 
       {error && <div className="px-3 py-2"><ErrorCampo msg={error} /></div>}
 
+      {/* ── En qué se está yendo la plata, y cuánto pesa cada uno ──────────
+          «Cuál proveedor es el más solicitado, para negociar precios» era un
+          pedido textual del dueño y no tenía respuesta en esta pantalla: había
+          una lista de facturas, que contesta «cuánto debo», no «con quién me
+          conviene sentarme».
+
+          EL PORCENTAJE ES CONTRA EL TOTAL, no contra el proveedor más grande.
+          «El más grande de la lista» siempre da 100% y no dice nada; «se lleva
+          el 34% de todo lo que compro» es una posición de negociación. La
+          división la hace el BACKEND (`pct_del_total`), del mismo lado que los
+          dos números.
+
+          Y AGRUPA POR NOMBRE NORMALIZADO: «Lácteos Andina» y «LACTEOS ANDINA»
+          eran dos filas de la mitad del tamaño real, que es la peor forma de
+          equivocarse acá — parte al grande en varios chicos y ninguno parece
+          importante. Se muestra la grafía de la factura más reciente porque es
+          la que el dueño reconoce del papel. */}
+      <SegunDato
+        dato={datos}
+        cargando={<div className="px-4 py-3"><div className="h-16 rounded-xl bg-warm-100 animate-pulse" /></div>}
+        falla={() => (
+          <p className="px-4 py-3 text-[11px] text-warm-500 leading-snug border-b border-warm-100">
+            No se pudo leer en qué se está yendo la plata — el detalle del error está acá abajo.
+          </p>
+        )}
+        listo={d => d.por_proveedor.length === 0 ? null : (
+          <div className="px-4 py-3 border-b border-warm-100">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500 mb-2">
+              A quién le compro
+            </p>
+            <div className="space-y-2">
+              {d.por_proveedor.slice(0, 5).map(p => (
+                <div key={p.clave ?? p.proveedor}>
+                  <div className="flex items-baseline justify-between gap-2 text-xs mb-0.5">
+                    <span className="font-semibold text-warm-700 truncate">{p.proveedor}</span>
+                    <span className="font-mono tabular-nums text-warm-600 shrink-0">
+                      {plata(p.facturado)}
+                      {/* Sin base no hay porcentaje: un 0% diría que no pesa. */}
+                      {p.pct_del_total != null && (
+                        <b className="text-warm-700"> · {Math.round(p.pct_del_total)}%</b>
+                      )}
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-warm-100 overflow-hidden">
+                    {p.pct_del_total != null && (
+                      <div className="h-full bg-forest" style={{ width: `${p.pct_del_total}%` }} />
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-warm-400 leading-snug mt-2">
+              De cada $100 que se van en mercadería en este rango, cuánto se lleva cada uno. La
+              barra está medida contra el <b>total</b>, no contra el más grande: es lo que hay que
+              saber antes de pedir un descuento.
+            </p>
+          </div>
+        )} />
+
       {/* ── La lista ──────────────────────────────────────────────────────── */}
       <SegunDato
         dato={facturas}

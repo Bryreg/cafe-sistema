@@ -97,10 +97,14 @@ function Progreso({ hecho, meta }: { hecho: number; meta: number }) {
 /**
  * LA BANDA QUE NOMBRA LOS SESGOS. Es lo que le da sentido al rótulo «al menos».
  *
- * Los cuatro sesgos del backend empujan para el MISMO lado: los tres primeros
- * inflan lo que queda de cada peso (o sea BAJAN el piso), y el cuarto también.
- * Decir «al menos» sin decir POR QUÉ deja al dueño con un número que no sabe si
- * creer; decir para qué lado está corto lo convierte en un piso usable.
+ * Los sesgos del backend empujan TODOS para el mismo lado: inflan lo que queda
+ * de cada peso, o sea BAJAN el piso. Decir «al menos» sin decir POR QUÉ deja al
+ * dueño con un número que no sabe si creer; decir para qué lado está corto lo
+ * convierte en un piso usable.
+ *
+ * CUÁNTOS SON LO DECIDE EL BACKEND, no esta banda: el de los desechables se
+ * apaga cuando toda la venta medida tiene su empaque cargado, y la frase se arma
+ * con los que llegaron activos. Por eso no hay ningún «cuatro» quemado acá.
  *
  * Si no hay ninguno activo la banda no se dibuja — y eso NO es un verde: el
  * rótulo «al menos» del titular sigue estando, porque lo manda el backend.

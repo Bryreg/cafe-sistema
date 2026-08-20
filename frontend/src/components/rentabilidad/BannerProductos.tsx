@@ -4,7 +4,7 @@ import { Dato, datoListo } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import { NoSeSabe, SegunDato } from '../ui'
 import { Banner, ComoSeCalcula } from '../plata/campos'
-import { AlertaCosto, PorProductoData, ProdMargen, fmt, prodUtil } from './helpers'
+import { AlertaCosto, PorProductoData, ProdMargen, fmt, fmtUnit, prodUtil } from './helpers'
 
 /** Lo que este banner necesita del payload, ya ordenado. */
 interface Lectura {
@@ -42,6 +42,14 @@ interface Lectura {
  * de un fetch caído se veía idéntico al ranking vacío de un negocio sin ventas.
  * Un banner que no está no dice «no pude leer»: dice «no hay nada que mostrar».
  * Ahora el vacío solo puede desaparecer cuando de verdad se MIRÓ y no había.
+ *
+ * ── Y LAS ALERTAS ENTRAN A ESE MISMO `return null` SIN COLCHÓN ──────────────
+ * `SegunDato` protege al SOBRE (el fetch), pero adentro de la rama `listo` el
+ * banner todavía decide con `alertas.length === 0`. Mientras `alertas_costo`
+ * fue un campo opcional con `?? []`, esa condición se cumplía también cuando el
+ * campo no venía, y el banner se evaporaba entero sin decir por qué. El campo
+ * ahora es obligatorio en el tipo porque el backend lo manda siempre: el `?? []`
+ * no se reemplazó por otro chequeo, se volvió imposible de escribir.
  */
 export default function BannerProductos({ prodData }: { prodData: Fuente<PorProductoData> }) {
   const lectura: Dato<Lectura> = useMemo(() => {
@@ -62,7 +70,12 @@ export default function BannerProductos({ prodData }: { prodData: Fuente<PorProd
       // mismos de arriba al revés».
       fondo: orden.length >= 6 ? orden.slice(-3).reverse() : [],
       excluidos: sinCosto,
-      alertas: (d.valor.alertas_costo ?? []).slice(0, 3),
+      // SIN `?? []`. El endpoint manda `alertas_costo` siempre (ver el tipo en
+      // helpers.ts), así que una lista vacía acá es «se comparó y no subió
+      // nada» y nada más. El `?? []` que había antes le daba ese mismo
+      // significado a un campo ausente, y abajo el `alertas.length === 0`
+      // convertía eso en un banner que no está.
+      alertas: d.valor.alertas_costo.slice(0, 3),
     })
   }, [prodData.dato])
 
@@ -139,9 +152,30 @@ export default function BannerProductos({ prodData }: { prodData: Fuente<PorProd
               {alertas.map(a => (
                 <div key={a.insumo_id} className="flex items-center gap-3 px-4 py-2 border-b border-warm-100 last:border-0">
                   <span className="flex-1 min-w-0">
-                    <span className="block text-sm font-semibold text-warm-700 truncate">{a.nombre}</span>
+                    <span className="block text-sm font-semibold text-warm-700 truncate">
+                      {a.nombre}
+                      {/* QUIÉN lo subió. Sin el nombre, la alerta se mira y no
+                          se hace nada con ella: no hay a quién llamar. `null` es
+                          una factura sin proveedor cargado —el único caso, el
+                          campo viaja siempre— y ahí no se escribe nada en vez de
+                          inventar un «varios». */}
+                      {a.proveedor && (
+                        <span className="font-normal text-warm-500"> · {a.proveedor}</span>
+                      )}
+                    </span>
                     <span className="block text-[11px] text-warm-500">
-                      {fmt(a.costo_usado)} → {fmt(a.costo_ultimo)}
+                      {/* EL PAR QUE MIDE EL PORCENTAJE DE AL LADO: referencia
+                          (lo más barato de los últimos meses) → último. Antes
+                          se imprimía «costeado → último», que es otro par y da
+                          otro número, y con `fmt` —que redondea a peso entero—
+                          $2,00 → $2,80 salía impreso «$2 → $3». */}
+                      {fmtUnit(a.costo_ref)} → {fmtUnit(a.costo_ultimo)}
+                      {/* El nombre de arriba es el del que cobra el precio NUEVO.
+                          Cuando el barato lo facturó otro hay que decirlo acá, o
+                          el % se lee como una acusación contra quien nunca cobró
+                          ese precio. */}
+                      {!a.mismo_proveedor && a.ref_proveedor !== null
+                        && ` · el barato era de ${a.ref_proveedor}`}
                       {a.productos_afectados.length > 0
                         && ` · afecta ${a.productos_afectados.length} producto${a.productos_afectados.length !== 1 ? 's' : ''}`}
                     </span>

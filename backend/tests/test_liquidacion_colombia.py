@@ -443,7 +443,7 @@ class LaAlertaLlegaAlResumenTest(unittest.TestCase):
     """
 
     def setUp(self):
-        from test_nomina_resumen import NominaBase
+        from tests.test_nomina_resumen import NominaBase
         self._caso = NominaBase("run")
         self._caso.setUp()
         self.db = self._caso.db
@@ -486,7 +486,7 @@ class TenerContratoNoEsTenerSueldoTest(unittest.TestCase):
     """
 
     def setUp(self):
-        from test_nomina_resumen import NominaBase
+        from tests.test_nomina_resumen import NominaBase
         self._caso = NominaBase("run")
         self._caso.setUp()
         self.db = self._caso.db
@@ -546,7 +546,7 @@ class DosSedesNoDuplicanLaNominaTest(unittest.TestCase):
     """
 
     def setUp(self):
-        from test_nomina_resumen import NominaBase
+        from tests.test_nomina_resumen import NominaBase
         from app.models.models import Tienda, ContratoBarista
         self._caso = NominaBase("run")
         self._caso.setUp()
@@ -585,7 +585,7 @@ class DosSedesNoDuplicanLaNominaTest(unittest.TestCase):
         mirando, daría un número distinto en cada pantalla — que es exactamente
         el bug que este escenario tiene que poder ver.
         """
-        from test_nomina_resumen import utc
+        from tests.test_nomina_resumen import utc
         from app.services import horarios as hsvc, nomina as nsvc
         for i, d in enumerate(self._habiles()):
             sede = self._caso.t if i < dias_en_la_primera else self.otra
@@ -673,7 +673,7 @@ class NingunInsumoDeLaLiquidacionPuedeSerPorSedeTest(unittest.TestCase):
     """
 
     def setUp(self):
-        from test_nomina_resumen import NominaBase
+        from tests.test_nomina_resumen import NominaBase
         from app.models.models import Tienda, ContratoBarista
         self._caso = NominaBase("run")
         self._caso.setUp()
@@ -699,7 +699,7 @@ class NingunInsumoDeLaLiquidacionPuedeSerPorSedeTest(unittest.TestCase):
     def _escenario_completo(self):
         """Todo junto: turnos publicados con almuerzo en las dos sedes, días
         cubiertos en la otra, y una novedad cargada en UNA sola sede."""
-        from test_nomina_resumen import utc
+        from tests.test_nomina_resumen import utc
         from app.services import horarios as hsvc, nomina as nsvc
         from app.services import novedades_nomina as nsv
         habiles = [date(2026, 8, d) for d in range(1, 32)
@@ -746,7 +746,7 @@ class NingunInsumoDeLaLiquidacionPuedeSerPorSedeTest(unittest.TestCase):
 
     def test_un_dia_cubierto_en_la_otra_sede_NO_pierde_el_auxilio(self):
         """Vino a trabajar, se desplazó y pagó el pasaje: el día cuenta."""
-        from test_nomina_resumen import utc
+        from tests.test_nomina_resumen import utc
         from app.services import novedades_nomina as nsv
         # Vacaciones cargadas del 10 al 14 en su sede, pero el 12 fue a cubrir
         # a la OTRA. Ese día no puede perder el auxilio.
@@ -778,7 +778,7 @@ class LaPANTALLAEsDeLaSedeAunqueElCALCULOSeaDeLaPersonaTest(unittest.TestCase):
     """
 
     def setUp(self):
-        from test_nomina_resumen import NominaBase
+        from tests.test_nomina_resumen import NominaBase
         from app.models.models import Tienda, Usuario, RolEnum, ContratoBarista
         self._caso = NominaBase("run")
         self._caso.setUp()
@@ -808,7 +808,7 @@ class LaPANTALLAEsDeLaSedeAunqueElCALCULOSeaDeLaPersonaTest(unittest.TestCase):
         return nsvc.resumen_mensual(self.db, tienda.id, 2026, 8)
 
     def _trabajar_zulma_solo_en_la_otra(self):
-        from test_nomina_resumen import utc
+        from tests.test_nomina_resumen import utc
         from app.services import horarios as hsvc, nomina as nsvc
         for d in [date(2026, 8, x) for x in range(1, 32)
                   if date(2026, 8, x).weekday() < 5]:
@@ -855,7 +855,7 @@ class LaPANTALLAEsDeLaSedeAunqueElCALCULOSeaDeLaPersonaTest(unittest.TestCase):
     def test_el_planeado_de_la_otra_sede_no_se_cuenta_como_propio(self):
         """Antes la pantalla acusaba a la barista de deber horas que trabajó en
         el otro local: plan 168 h acá, diferencia −168 h."""
-        from test_nomina_resumen import utc
+        from tests.test_nomina_resumen import utc
         from app.services import horarios as hsvc, nomina as nsvc
         dia = date(2026, 8, 11)
         # Catherin tiene turno acá y ADEMÁS cubre un día en la otra sede.
@@ -877,7 +877,7 @@ class LaPANTALLAEsDeLaSedeAunqueElCALCULOSeaDeLaPersonaTest(unittest.TestCase):
     def test_el_devengado_de_cada_sede_suma_el_de_la_persona(self):
         """Con la etiqueta pisada, un día acreditado en la otra sede se contaba
         como propio en las dos y esta suma dejaba de cerrar."""
-        from test_nomina_resumen import utc
+        from tests.test_nomina_resumen import utc
         from app.services import horarios as hsvc, nomina as nsvc
         from app.services import novedades_nomina as nsv
         for i, d in enumerate([date(2026, 8, x) for x in range(3, 15)

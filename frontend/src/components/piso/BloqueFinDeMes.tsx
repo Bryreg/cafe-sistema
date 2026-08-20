@@ -43,18 +43,33 @@ interface Bloqueo { titulo: string; detalle: string; cta?: string; hacer?: () =>
  * se dice en su lugar: dos listas separadas terminan con un colchón publicado
  * bajo un cartel que dice que falta información.
  */
-function bloqueosDe(a: Agenda, f: Flujo, irANomina: () => void, irASinFecha: () => void): Bloqueo[] {
+function bloqueosDe(a: Agenda, f: Flujo, irAlMensual: () => void, irASinFecha: () => void): Bloqueo[] {
   const out: Bloqueo[] = []
 
-  const hayNomina = a.items.some(i => i.categoria === 'nomina')
-    || a.sin_fecha.some(i => i.categoria === 'nomina')
-  if (!hayNomina) out.push({
-    titulo: 'La nómina del mes no está agendada',
-    detalle: 'Es el gasto más grande del negocio. Sin ella adentro, esta proyección muestra '
-      + 'plata que ya está comprometida — y es justo la que se gastaría.',
-    cta: 'Agendarla',
-    hacer: irANomina,
-  })
+  // ── LO QUE FALTA, POR CONCEPTO, DICHO POR EL BACKEND ──────────────────────
+  // Esta lista NO se calcula acá y esa es la decisión. Antes esta función miraba
+  // `a.items` para adivinar si la nómina estaba agendada, y era la única
+  // cobertura por concepto que existía: la declaración del impoconsumo —$11,5M
+  // en un bimestre— no la miraba nadie, porque desde el navegador no hay forma de
+  // MEDIRLA. El server sí puede (sale de la venta real del bimestre y de los
+  // contratos), así que manda nombre, plata y fecha, y acá solo se dibuja.
+  //
+  // Una segunda regla local se desincronizaría de la del server en el primer
+  // concepto que se agregue, y las dos estarían en la misma pantalla.
+  for (const c of f.advertencias.conceptos_sin_cargar) {
+    out.push({
+      titulo: `${c.nombre} no está en lo que hay que pagar`,
+      detalle: (c.monto === null
+        ? `El sistema no puede decir de cuánto: ${c.sin_monto_porque ?? 'no se pudo medir'}. `
+        : `${plata(c.monto)} que esta proyección no está restando. `)
+        + (c.vencido
+          ? 'Ya pasó la fecha en que se pagaba, así que es plata que se debe AHORA.'
+          : 'Sin eso adentro, la caja se ve mejor de lo que está — y es justo la '
+            + 'plata que se gastaría.'),
+      cta: 'Agendarlo',
+      hacer: irAlMensual,
+    })
+  }
 
   if (a.sin_fecha.length > 0) out.push({
     titulo: `Hay ${a.sin_fecha.length} cuenta${a.sin_fecha.length === 1 ? '' : 's'} sin fecha de pago`,
@@ -66,7 +81,10 @@ function bloqueosDe(a: Agenda, f: Flujo, irANomina: () => void, irASinFecha: () 
 
   // `sin_salidas_cargadas` lo decide el BACKEND: ni una sola salida en el
   // horizonte casi siempre significa que nadie cargó las cuentas por pagar, no
-  // que no haya nada que pagar.
+  // que no haya nada que pagar. SIGUE ACÁ pero ya no es la señal principal: se
+  // apaga con una sola obligación cargada, y ese era el agujero — con el
+  // arriendo adentro el colchón se publicaba igual faltando los millones de la
+  // DIAN. Lo de arriba es lo que cierra ese caso.
   if (f.advertencias.sin_salidas_cargadas) out.push({
     titulo: 'No hay ningún pago cargado en lo que queda del mes',
     detalle: 'Como está, la proyección solo sabe de la plata que entra. Un saldo que nunca baja '
@@ -186,14 +204,17 @@ function armarDias(p: Piso, f: Flujo, ventasDiarias: { dia: string; ventas: numb
 }
 
 export default function BloqueFinDeMes({
-  flujo, agenda, piso, pulso, onCambiarReserva, onANomina, onASinFecha,
+  flujo, agenda, piso, pulso, onCambiarReserva, onAlMensual, onASinFecha,
 }: {
   flujo: Fuente<Flujo>
   agenda: Fuente<Agenda>
   piso: Fuente<Piso>
   pulso: Fuente<PulsoData>
   onCambiarReserva: () => void
-  onANomina: () => void
+  /** Al pliegue «una vez al mes», donde viven los botones que agendan la nómina
+   *  Y la declaración del impoconsumo. Antes se llamaba `onANomina`, cuando la
+   *  nómina era el único concepto que esta pantalla sabía echar en falta. */
+  onAlMensual: () => void
   onASinFecha: () => void
 }) {
   /** El gráfico necesita los TRES. Con `ambos` encadenado, una falla gana. */
@@ -208,8 +229,8 @@ export default function BloqueFinDeMes({
   /** El colchón necesita el flujo Y la agenda: la agenda es la que puede vetarlo. */
   const colchon = useMemo(
     () => mapDato(ambos(flujo.dato, agenda.dato),
-      ([f, a]) => ({ f, bloqueos: bloqueosDe(a, f, onANomina, onASinFecha) })),
-    [flujo.dato, agenda.dato, onANomina, onASinFecha])
+      ([f, a]) => ({ f, bloqueos: bloqueosDe(a, f, onAlMensual, onASinFecha) })),
+    [flujo.dato, agenda.dato, onAlMensual, onASinFecha])
 
   return (
     <section className="rounded-2xl border border-warm-200 bg-white overflow-hidden">

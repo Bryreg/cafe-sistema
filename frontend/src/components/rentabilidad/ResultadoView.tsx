@@ -295,10 +295,119 @@ export default function ResultadoView({
     const eImpo = eVentas - eNeta
 
     const hayImpoMes = data.por_mes.some(m => m.impoconsumo > 0)
+    // ¿HAY PLATA DE EMPAQUE ADENTRO DE ESTE MARGEN? Es lo que decide si el aviso
+    // de cobertura puede NEGAR que haya empaque cargado. Sin `?? 0` (regla 1 y el
+    // docstring de esta función): el campo ausente es «no se calculó esta capa»,
+    // y ese lado deja el aviso fuerte, que es el que no tranquiliza.
+    const hayPlataDeEmpaque = r.cogs_desechables != null && r.cogs_desechables > 0
     // Los dos ejes de la cobertura de la fuga: MESES y SEDES. Cada uno se declara
     // solo cuando falta algo, y los dos sesgan para el mismo lado (subdeclaran).
-    const mesesParcial = (r.fuga_meses ?? 0) > 0 && (r.fuga_meses ?? 0) < (r.fuga_meses_rango ?? 0)
-    const sedesParcial = (r.fuga_sedes ?? 0) > 0 && (r.fuga_sedes ?? 0) < (r.fuga_sedes_rango ?? 0)
+    //
+    // EL NUMERADOR EN CERO ES EL PEOR CASO, NO EL MEJOR. Acá los dos ejes pedían
+    // además `> 0`, así que el aviso se apagaba JUSTO cuando la intersección daba
+    // cero — el caso cruzado que el propio backend nombra en
+    // `conciliacion.fuga_medida`: la sede que cerró el conteo no vendió y la que
+    // vendió nunca cerró. MEDIDO, con Vida cerrando sin vender un peso y Centro
+    // vendiendo 20 lattes sin cerrar: ventas $100.000, cogs_desechables $2.000,
+    // fuga_inventario $0,00, `fuga_sedes` 0 de 1 — y con el `> 0` la pantalla
+    // igual publicaba el renglón verde diciendo que el vaso ya estaba adentro de
+    // ese residuo. «Cero de N» no es cobertura completa: es la más chica que hay.
+    //
+    // Y SE PREGUNTA POR PRESENCIA, NO CON `?? 0`. Sacado el `> 0`, un `?? 0` del
+    // lado del numerador dejaría de ser inocuo: contra un backend que mandara el
+    // denominador y no el numerador, el cero fabricado prendería el aviso y la
+    // frase de abajo terminaría imprimiendo «solo de undefined que cerraron».
+    // Con `!= null` el campo ausente apaga el aviso —esta vista queda igual que
+    // antes del deploy— y adentro de la rama los dos números existen de verdad.
+    // Es además lo que promete el docstring de esta función: acá abajo no queda
+    // un `?? 0` sobre un dato que pudo no volver.
+    const mesesParcial = r.fuga_meses != null && r.fuga_meses_rango != null
+      && r.fuga_meses < r.fuga_meses_rango
+    const sedesParcial = r.fuga_sedes != null && r.fuga_sedes_rango != null
+      && r.fuga_sedes < r.fuga_sedes_rango
+    // EL TERCER EJE, Y ES DE OTRA NATURALEZA: los dos de arriba son de TRAMO
+    // (qué pedazo del período y de las sedes midió el conteo). Este es de
+    // CONTENIDO: si el conteo miró o no los renglones de EMPAQUE.
+    //
+    // De eso depende la única razón por la que el costo del vaso queda afuera de
+    // `margen_bruto_real`: «la fuga ya se lo lleva». Medido, cambiando una sola
+    // cosa sobre el mismo mes cerrado: con el vaso contado la fuga da −$2.000 y
+    // el argumento se cumple exacto; con el vaso SIN contar la fuga da $0,
+    // `tiene_fuga_medida` sigue en true, la banda igual se dibuja diciendo
+    // «Residuo» y esos $2.000 no están en este término.
+    //
+    // Sin `?? 0`: un backend que no publica estos campos no puede terminar
+    // afirmando «se contaron 0 de 0» y apagando el aviso por la forma del dato.
+    const desechNum = r.desechables_en_la_fuga
+    const desechDen = r.desechables_producto_mes
+    const desechMedidos = desechNum != null && desechDen != null && desechDen > 0
+    const desechEnLaFuga = desechNum != null && desechDen != null
+      && desechDen > 0 && desechNum >= desechDen
+
+    // ── Y EL TERCER EJE NO PUEDE HABLAR SOLO: EL TRAMO MANDA SOBRE EL VERDE ──
+    // El denominador cuenta los renglones de empaque UNA VEZ POR CIERRE, así que
+    // la sede que no cierra no aporta ni numerador ni denominador y se cae de la
+    // fracción entera en vez de bajarla. MEDIDO, dos sedes vendiendo 20 lattes de
+    // $5.000 cada una y solo Vida cerrando el conteo: ventas $200.000,
+    // cogs_desechables $4.000, residuo −$2.000 — los otros $2.000 de vaso no
+    // están ni en el residuo ni en `margen_bruto_real`— y el par daba 1 de 1, o
+    // sea el renglón VERDE afirmando que el empaque ya está adentro con la mitad
+    // afuera de todo término.
+    //
+    // La fracción no está mal: es correcta ADENTRO del tramo que el conteo miró,
+    // y no dice absolutamente nada de lo que quedó afuera. Por eso el verde —que
+    // es una afirmación sobre TODO el empaque servido— solo puede salir cuando no
+    // hay tramo afuera; con tramo parcial va la variante de al lado, que dice qué
+    // se midió y qué no en vez de callarse la mitad.
+    const tramoParcial = mesesParcial || sedesParcial
+    // SIN `?? 0`, POR EL MISMO MOTIVO QUE LOS DOS EJES DE ARRIBA Y QUE
+    // `sedesQueVendieron` de aca abajo. Hoy los dos solo se leen adentro de
+    // `sedesParcial` / `mesesParcial`, que ya exigen los cuatro campos, asi que
+    // el cero fabricado no llegaba a imprimirse — pero el que lo garantizaba era
+    // el orden de lectura, no el compilador, y contra un backend que mandara el
+    // denominador sin el numerador la resta pasaba a ser el rango entero. Es el
+    // `?? 0` sobre un dato que pudo no volver que prohibe la regla 1 de
+    // `ui/README.md`, y que el docstring de esta funcion promete que aca abajo
+    // no queda. `null` = no se pudo restar, que no es cero.
+    const sedesFuera = r.fuga_sedes_rango != null && r.fuga_sedes != null
+      ? r.fuga_sedes_rango - r.fuga_sedes
+      : null
+    const mesesFuera = r.fuga_meses_rango != null && r.fuga_meses != null
+      ? r.fuga_meses_rango - r.fuga_meses
+      : null
+    // El denominador del eje de sedes, dicho en castellano. Con una sola sede
+    // vendiendo, «las 1 sedes que vendieron» le resta autoridad a una frase que
+    // está contando algo incómodo — mismo criterio que `renglonesDeEmpaque`.
+    // Sin `?? 0`: solo se lee adentro de `sedesParcial`, que ya exige el campo.
+    const sedesQueVendieron = r.fuga_sedes_rango === 1
+      ? 'la única sede que vendió'
+      : `las ${r.fuga_sedes_rango} sedes que vendieron`
+    // Los dos avisos comparten sujeto y complemento, así que se arman una sola
+    // vez: el caso REAL del local es «1 renglón, 1 cierre» y con la plantilla
+    // vieja salía «Los 1 renglones … en los 1 cierre», que le resta autoridad a
+    // la frase justo donde está contando algo incómodo.
+    // SIN `?? 0`: el campo es obligatorio en el tipo porque el backend lo manda
+    // siempre (ver `helpers.ts`). Con el `?? 0` que había acá, una respuesta sin
+    // el campo imprimía «Los 0 renglones de empaque con costo pasaron por el
+    // conteo», y el renglón sigue con «así que el vaso ya está adentro de este
+    // residuo»: un conteo inventado sosteniendo el verde. Regla 1 del README de
+    // `ui/`, y además el propio docstring de esta función promete que acá abajo
+    // no queda un solo `?? 0` sobre un dato que pudo no volver.
+    const nRenglones = r.desechables_con_costo
+    const renglonesDeEmpaque = nRenglones === 1
+      ? 'El renglón de empaque con costo pasó'
+      : `Los ${nRenglones} renglones de empaque con costo pasaron`
+    const enLosCierres = r.fuga_cierres === 1 ? 'el cierre' : `los ${r.fuga_cierres} cierres`
+    // Qué pedazo del tramo se quedó afuera, con los MISMOS números que la banda
+    // de arriba: dos frases sobre el mismo hueco no pueden contarlo distinto.
+    const loQueQuedoAfuera = [
+      sedesParcial && (sedesFuera === 1
+        ? 'la sede que no cerró el conteo'
+        : `las ${sedesFuera} sedes que no cerraron el conteo`),
+      mesesParcial && (mesesFuera === 1
+        ? 'el mes del período sin cierre completo'
+        : `los ${mesesFuera} meses del período sin cierre completo`),
+    ].filter(Boolean).join(' y ')
 
     // El duelo compara SEDES entre sí: la fila «Corporativo» (tienda_id null,
     // arriendo y nómina sin sede) no compite con nadie y falsearía la barra con
@@ -489,7 +598,12 @@ export default function ResultadoView({
             : undefined}>
           <div className="grid grid-cols-3 gap-2 text-center px-4 py-3">
             <div>
-              <p className="text-[10px] uppercase font-bold text-warm-500">Margen sobre lo vendido</p>
+              {/* «SOLO RECETA» EN EL RÓTULO, NO EN UNA NOTA AL PIE. Este es
+                  `margen_bruto_real`, que no tiene el empaque adentro a
+                  propósito: al residuo de al lado ya se le fueron esos vasos.
+                  La tarjeta «Costo de lo VENDIDO» muestra el margen CON empaque
+                  y sería otro número con el mismo rótulo si este no lo dijera. */}
+              <p className="text-[10px] uppercase font-bold text-warm-500">Margen (solo receta)</p>
               <p className="text-sm font-mono font-bold tabular-nums text-warm-700 mt-0.5">
                 {plataOpcional(r.margen_bruto_real)}
               </p>
@@ -528,15 +642,64 @@ export default function ResultadoView({
                   cerrado{r.fuga_meses === 1 ? '' : 's'} y completo{r.fuga_meses === 1 ? '' : 's'} adentro
                   del rango.</>
               )}
-              {sedesParcial && (
-                <> El margen suma las {r.fuga_sedes_rango} sedes que vendieron; la fuga sale solo
-                  de {r.fuga_sedes} que cerró{r.fuga_sedes === 1 ? '' : 'aron'} el conteo. Lo que se
-                  fuga en {(r.fuga_sedes_rango ?? 0) - (r.fuga_sedes ?? 0) === 1 ? 'la sede' : 'las sedes'} que
-                  no cuenta{(r.fuga_sedes_rango ?? 0) - (r.fuga_sedes ?? 0) === 1 ? '' : 'n'} no aparece acá,
-                  pero su venta sí está arriba.</>
-              )}
+              {/* CON EL NUMERADOR EN CERO LA PLANTILLA DE AL LADO NO SIRVE: saldría
+                  «la fuga sale solo de 0 que cerróaron el conteo», y además el
+                  hecho es otro. Si esta banda se dibuja hay al menos un cierre
+                  (`tiene_fuga_medida`), así que un cero acá significa que ese
+                  cierre es de una sede que NO vendió en el período: el residuo y
+                  la venta de arriba no se tocan en ninguna sede. */}
+              {sedesParcial && (r.fuga_sedes === 0 ? (
+                <> El margen sale de {sedesQueVendieron}, y <b>ninguna de ellas cerró el
+                  conteo</b>: este residuo lo pone el cierre de otra sede, que no vendió en el
+                  período. La fuga de todo lo que se vendió acá arriba <b>no está en este
+                  número</b>.</>
+              ) : (
+                <> El margen suma {sedesQueVendieron}; la fuga sale solo de {r.fuga_sedes} que
+                  cerr{r.fuga_sedes === 1 ? 'ó' : 'aron'} el conteo. Lo que se fuga
+                  en {sedesFuera === 1 ? 'la sede' : `las ${sedesFuera} sedes`} que
+                  no cuenta{sedesFuera === 1 ? '' : 'n'} no aparece acá, pero su venta sí está
+                  arriba.</>
+              ))}
               {' '}Lo que no se cerró todavía no midió nada, así
               que <b>la fuga real del período es mayor</b> que la de acá.
+            </p>
+          )}
+          {/* ── ¿ESTE RESIDUO LLEVA ADENTRO EL EMPAQUE? MEDIDO, NO AFIRMADO ──
+              El costo del vaso queda afuera del margen de esta banda porque se
+              da por hecho que el conteo ya se lo llevó. Se cumple solo si el
+              barista contó ESE renglón; si no lo contó, `cerrar()` iguala su
+              cantidad al sistema, el residuo da 0 y el empaque desaparece de
+              este número sin que nada lo diga. */}
+          {desechMedidos && !desechEnLaFuga && (
+            <p className="text-[11px] text-gold-700 bg-gold-50 border-y border-gold-200 px-4 py-2 leading-relaxed">
+              <b>El conteo no miró todo el empaque.</b> De {r.desechables_producto_mes} renglones de
+              empaque × cierre, se contaron <b>{r.desechables_en_la_fuga}</b>. Este residuo deja el
+              costo del vaso afuera dando por hecho que el conteo se lo llevó, y en lo que no se
+              contó eso no pasó: ese empaque <b>no está en este número</b>. El margen que sí lo
+              tiene adentro es el de la tarjeta <b>«Costo de lo VENDIDO»</b>, más abajo.
+            </p>
+          )}
+          {desechEnLaFuga && !tramoParcial && (
+            <p className="text-[11px] text-warm-600 bg-warm-50 border-y border-warm-100 px-4 py-2 leading-relaxed">
+              {renglonesDeEmpaque} por el conteo en {enLosCierres}, así que el vaso que se
+              sirvió <b>ya está adentro de este residuo</b>. Por eso el margen de acá arriba no le
+              descuenta el empaque otra vez: sería la misma plata contada dos veces.
+            </p>
+          )}
+          {/* EL MISMO CONTEO, PERO SOBRE UN PEDAZO DEL PERÍODO. No es el dorado
+              de arriba —ahí el conteo estuvo y NO miró el empaque; acá lo miró
+              entero, pero solo donde hubo cierre— y tampoco es el verde, porque
+              del resto no se midió nada. Se nombra el pedazo que quedó afuera
+              con el mismo número que la banda del tramo, para que las dos frases
+              hablen del mismo hueco. */}
+          {desechEnLaFuga && tramoParcial && (
+            <p className="text-[11px] text-gold-700 bg-gold-50 border-y border-gold-200 px-4 py-2 leading-relaxed">
+              <b>El empaque está contado solo donde hubo cierre.</b> {renglonesDeEmpaque} por el
+              conteo en {enLosCierres} de arriba: <b>ahí</b> el vaso que se sirvió sí está adentro
+              de este residuo. Afuera de ese tramo —{loQueQuedoAfuera}— nadie contó nada, así que
+              el vaso que se sirvió ahí <b>no está en este residuo</b> ni en el margen de acá
+              arriba. El que sí lo tiene adentro, entero, es el de la
+              tarjeta <b>«Costo de lo VENDIDO»</b>, más abajo.
             </p>
           )}
           <ComoSeCalcula titulo="¿De dónde sale este número y por qué no se resta del margen neto?">
@@ -578,27 +741,47 @@ export default function ResultadoView({
         </Banner>
       )}
 
-      {/* COGS teórico: base de consumo (complementa a compras = recepción). */}
+      {/* COGS teórico: base de consumo (complementa a compras = recepción).
+
+          EL MARGEN QUE SE PUBLICA ACÁ NO PUEDE OMITIR EL EMPAQUE.
+          Esta tarjeta se dibuja SIEMPRE (`r.cogs_teorico != null`), también en
+          el mes en curso, donde no hay ningún cierre y la banda de fuga de
+          arriba —la única que justificaba dejar el vaso afuera del costo— ni
+          siquiera aparece. Con $100.000 vendidos, $2.500 de receta y $2.000 de
+          vaso, el número grande decía «$97.500 (97,5%)» y el empaque no estaba
+          en ninguna parte de la pantalla. Ahora el protagonista es
+          `margen_bruto_real_con_desechables`, que nunca deja el vaso afuera, y
+          el de receta sola queda abajo declarado como lo que es. */}
       {r.cogs_teorico != null && (
         <Banner titulo="Costo de lo VENDIDO (teórico) — sin la distorsión del stockeo"
-          sub={`Cubre el ${r.pct_venta_costeada ?? '—'}% de la venta (los productos con costo cargado)`}>
-          <div className="grid grid-cols-3 gap-2 text-center px-4 py-3">
+          sub={`Receta: cubre el ${r.pct_venta_costeada ?? '—'}% de la venta · `
+            + `Empaque: el ${r.pct_venta_con_desechables ?? '—'}%`}>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center px-4 py-3">
             <div>
-              <p className="text-[10px] uppercase font-bold text-warm-500">Consumo teórico</p>
+              <p className="text-[10px] uppercase font-bold text-warm-500">Receta de lo vendido</p>
               <p className="text-sm font-mono font-bold tabular-nums text-warm-700 mt-0.5">{fmt(r.cogs_teorico)}</p>
             </div>
             <div>
-              <p className="text-[10px] uppercase font-bold text-warm-500">Margen bruto real</p>
+              <p className="text-[10px] uppercase font-bold text-warm-500">Empaque (vaso, tapa)</p>
+              {/* Un `—` y no un `$0`: sin el campo el backend no calcula esta
+                  capa, y un cero diría «se midió y el empaque no cuesta nada». */}
               <p className={`text-sm font-mono font-bold tabular-nums mt-0.5 ${
-                r.margen_bruto_real == null ? 'text-warm-400' : 'text-success-600'}`}>
-                {plataOpcional(r.margen_bruto_real)}
-                {r.pct_margen_bruto_real != null && (
-                  <span className="text-warm-400 font-normal"> ({r.pct_margen_bruto_real}%)</span>
+                r.cogs_desechables == null ? 'text-warm-400' : 'text-warm-700'}`}>
+                {plataOpcional(r.cogs_desechables)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase font-bold text-warm-500">Margen sobre lo vendido</p>
+              <p className={`text-sm font-mono font-bold tabular-nums mt-0.5 ${
+                r.margen_bruto_real_con_desechables == null ? 'text-warm-400' : 'text-success-600'}`}>
+                {plataOpcional(r.margen_bruto_real_con_desechables)}
+                {r.pct_margen_bruto_real_con_desechables != null && (
+                  <span className="text-warm-400 font-normal"> ({r.pct_margen_bruto_real_con_desechables}%)</span>
                 )}
               </p>
             </div>
             <div>
-              <p className="text-[10px] uppercase font-bold text-warm-500">Compras − consumo</p>
+              <p className="text-[10px] uppercase font-bold text-warm-500">Compras − receta</p>
               <p className={`text-sm font-mono font-bold tabular-nums mt-0.5 ${
                 r.brecha_compras == null ? 'text-warm-400'
                   : r.brecha_compras >= 0 ? 'text-gold-700' : 'text-danger-700'}`}>
@@ -606,12 +789,79 @@ export default function ResultadoView({
               </p>
             </div>
           </div>
+          {/* EL AVISO MÁS FUERTE ES CUANDO NO HAY NADA CARGADO. Con 0% de la
+              venta con empaque costeado, el margen de arriba es de receta pura y
+              se ve MÁS ALTO que el real. No se puede callar: es el estado en el
+              que está el sistema hoy y el que hace que el número tranquilice.
+
+              PERO EL 0% NO SIGNIFICA «NO HAY EMPAQUE CARGADO»: significa que
+              ningún producto lo tiene COMPLETO. `pct_venta_con_desechables` sale
+              de `desech_completos`, y un solo renglón sin costo saca al producto
+              entero del numerador mientras su vaso sigue sumando pesos a
+              `cogs_desechables` (ver `costo_desechables_productos`). O sea que el
+              aviso se prendía cuando el dueño cargaba MÁS empaque. MEDIDO sobre
+              el mismo latte y el mismo mes, cambiando una sola cosa:
+
+                solo el vaso costeado     cogs_desechables $2.000 · pct 100,0 · sin aviso
+                + servilleta sin factura  cogs_desechables $2.000 · pct   0,0 · «ningún
+                  producto tiene el empaque cargado»
+
+              El margen no se movió un peso ($95.500 en los dos) y la tarjeta de
+              al lado seguía mostrando los $2.000 de empaque: la frase le decía al
+              dueño que ese renglón no existe. Con plata de empaque adentro, el
+              aviso no puede NEGARLA — dice lo mismo (el margen sigue más alto que
+              el real) con los pesos que sí están. */}
+          {r.pct_venta_con_desechables === 0 && !hayPlataDeEmpaque && (
+            <p className="text-[11px] text-gold-700 bg-gold-50 border-y border-gold-200 px-4 py-2 leading-relaxed">
+              <b>Ningún producto tiene el empaque cargado.</b> Este margen no lleva adentro vasos,
+              tapas, servilletas ni azúcar, así que está <b>más alto que el real</b>. Cargá los
+              desechables de cada bebida para llevar y el número baja a lo que de verdad te queda.
+            </p>
+          )}
+          {/* LAS DOS CAUSAS DEL 0% CON PLATA ADENTRO, Y NINGUNA SE PUEDE ELEGIR
+              DESDE ACÁ: o a cada producto le falta el costo de algún renglón, o
+              la venta es de líneas de COMBO —el backend las cuenta como no
+              cubiertas a propósito, porque la plata es del producto sombra y los
+              empaques cuelgan de los componentes—. El aviso nombra las dos en vez
+              de afirmar la que suena mejor: la conclusión que el dueño necesita
+              («falta empaque adentro de este margen») es la misma en los dos
+              mundos, y es la única que se puede sostener con este dato. */}
+          {r.pct_venta_con_desechables === 0 && hayPlataDeEmpaque && (
+            <p className="text-[11px] text-gold-700 bg-gold-50 border-y border-gold-200 px-4 py-2 leading-relaxed">
+              <b>Hay empaque adentro, pero no se puede afirmar que esté completo.</b> Los{' '}
+              {plataOpcional(r.cogs_desechables)} de la casilla de al lado <b>sí</b> están
+              descontados en este margen. Lo que el sistema no puede afirmar es que sean{' '}
+              <b>todo</b> el empaque que se sirvió: ninguna venta del período viene de un producto
+              con todos sus renglones costeados —o le falta la factura de alguno (una tapa, una
+              servilleta, el azúcar), o es una línea de combo, donde el empaque cuelga de los
+              componentes—. Lo que falte no está en este número, así que sigue estando{' '}
+              <b>más alto que el real</b>.
+            </p>
+          )}
+          {r.pct_venta_con_desechables != null && r.pct_venta_con_desechables > 0
+            && r.pct_venta_con_desechables < 100 && (
+            <p className="text-[11px] text-gold-700 bg-gold-50 border-y border-gold-200 px-4 py-2 leading-relaxed">
+              El empaque está cargado en el <b>{r.pct_venta_con_desechables}%</b> de la venta. Sobre
+              el resto este margen sigue sin descontar el vaso, así que sigue estando
+              <b> más alto que el real</b>.
+            </p>
+          )}
           <p className="px-4 pb-3 text-[11px] text-warm-500 leading-relaxed">
-            Brecha positiva = stockeaste (compraste más de lo que consumiste).
+            Brecha positiva = stockeaste (compraste más de lo que consumiste). Se compara contra la
+            <b> receta</b> sola porque el empaque no descuenta inventario cuando se vende.
+            {/* LOS DOS MÁRGENES CONVIVEN Y HAY QUE DECIR CUÁL ES CUÁL: el de la
+                banda de fuga es `margen_bruto_real` (receta sola), porque a ese
+                se le resta el residuo que ya se lleva los vasos. Si el dueño ve
+                dos cifras distintas sin explicación, lee un error del sistema. */}
+            {r.margen_bruto_real != null && r.cogs_desechables != null && r.cogs_desechables > 0 && (
+              <> Contando <b>solo la receta</b> el margen daría {fmt(r.margen_bruto_real)}
+                {r.pct_margen_bruto_real != null && <> ({r.pct_margen_bruto_real}%)</>}: ese es el
+                número que usa la tarjeta de fuga de arriba, porque al residuo del conteo ya se le
+                fueron esos vasos y restarlos otra vez contaría la misma plata dos veces.</>
+            )}
             {/* LA BASE DE ESTA TARJETA NO ES LA DE ARRIBA: el backend calcula
-                `margen_bruto_real` como ventas − cogs y su % sobre `ventas`, o
-                sea sobre lo COBRADO. Son dos números que el dueño va a comparar
-                sí o sí, así que la diferencia se dice acá. */}
+                estos márgenes sobre `ventas`, o sea sobre lo COBRADO. Son
+                números que el dueño va a comparar sí o sí. */}
             {hayImpo && (
               <> Este margen y su % se miden sobre <b>lo cobrado</b> ({fmt(r.ventas)}), no sobre la
                 venta neta: todavía tienen el impoconsumo adentro, así que se ven más altos que el
@@ -812,7 +1062,14 @@ export default function ResultadoView({
           // Acá el vacío SÍ está medido: el backend contestó y no hubo ninguna
           // factura en el rango. Nada que mostrar y nada que afirmar.
           if (c.por_proveedor.length === 0) return null
-          const maxProv = Math.max(1, ...c.por_proveedor.map(p => p.facturado))
+          // CONTRA EL TOTAL, no contra el proveedor más grande. Con el máximo
+          // como escala el primero SIEMPRE dibujaba la barra llena y los demás
+          // se leían en relación a él: la pantalla no podía contestar «¿cuánto
+          // de todo lo que compro pasa por sus manos?», que es la única versión
+          // del ranking que sirve para negociar. El total nunca es 0 acá (hay
+          // al menos una factura), pero se lo protege igual: una división por
+          // cero dibujaría barras vacías sin decir por qué.
+          const totalProv = c.totales.facturado
           return (
             <Banner titulo="A quién le compro"
               sub={<>Las {c.totales.n_facturas} facturas recibidas en el período, por proveedor</>}>
@@ -823,23 +1080,33 @@ export default function ResultadoView({
                       <span className="font-semibold text-warm-700 truncate">{p.proveedor}</span>
                       <span className="font-mono tabular-nums text-warm-600 shrink-0">
                         {fmt(p.facturado)}
+                        {/* `null` = no hay nada facturado, o sea no hay base para
+                            el porcentaje. No se dibuja un 0%, que diría que este
+                            proveedor no pesa. */}
+                        {p.pct_del_total != null && (
+                          <b className="text-warm-700"> · {Math.round(p.pct_del_total)}%</b>
+                        )}
                         {p.pendiente > 0 && (
                           <span className="text-danger-700"> · debés {fmt(p.pendiente)}</span>
                         )}
                       </span>
                     </div>
                     <div className="h-2 rounded-full bg-warm-100 overflow-hidden flex">
-                      <div className="h-full bg-success-500" style={{ width: `${(p.pagado / maxProv) * 100}%` }}
+                      <div className="h-full bg-success-500"
+                        style={{ width: totalProv > 0 ? `${(p.pagado / totalProv) * 100}%` : 0 }}
                         title={`Pagado ${fmt(p.pagado)}`} />
-                      <div className="h-full bg-danger-400" style={{ width: `${(p.pendiente / maxProv) * 100}%` }}
+                      <div className="h-full bg-danger-400"
+                        style={{ width: totalProv > 0 ? `${(p.pendiente / totalProv) * 100}%` : 0 }}
                         title={`Pendiente ${fmt(p.pendiente)}`} />
                     </div>
                   </div>
                 ))}
               </div>
               <p className="px-4 pb-3 text-[11px] text-warm-500 leading-relaxed">
-                La barra verde es lo que ya le pagaste y la roja lo que le debés, medidas contra el
-                proveedor al que más le compraste. Cuenta por el día en que <b>entró la mercadería</b>,
+                El porcentaje es cuánto de <b>todo</b> lo que se compró en el período se lleva ese
+                proveedor — no cuánto es respecto del más grande. La barra verde es lo que ya le
+                pagaste y la roja lo que le debés, con la misma escala.
+                Cuenta por el día en que <b>entró la mercadería</b>,
                 no por el día en que se paga: por eso es la misma base que «Compras proveedor» de
                 arriba. Las facturas una por una, con su vencimiento, están en <b>La plata</b>.
               </p>

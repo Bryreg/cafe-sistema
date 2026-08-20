@@ -614,7 +614,34 @@ def registrar_pago(db: Session, factura_id: int, monto: float, forma_pago: str |
 def get_dashboard_pagos(db: Session, tienda_id: int | None = None,
                         desde=None, hasta=None) -> dict:
     """Consolidado de pagos a proveedores: totales, ranking por proveedor, por mes y por sede,
-    + la lista de facturas (filtrable en el front por proveedor/estado/producto)."""
+    + la lista de facturas (filtrable en el front por proveedor/estado/producto).
+
+    ═══════════════════════════════════════════════════════════════════════════
+    EL RANKING AGRUPA POR NOMBRE NORMALIZADO, NO POR EL STRING CRUDO
+    ═══════════════════════════════════════════════════════════════════════════
+    `FacturaCompra.proveedor` es texto libre que teclea la barista, así que
+    «Lácteos Andina», «LACTEOS ANDINA» y «lacteos  andina» eran TRES filas del
+    ranking, cada una con un tercio del tamaño real. Para negociar, ese es el
+    peor error posible: parte al proveedor grande en varios chicos y ninguno
+    parece importante. Se agrupa con `producto_alias.normalizar_alias` —la misma
+    normalización que ya usan los aliases de factura y el catálogo de pedidos,
+    REUSADA y no copiada— y se MUESTRA la grafía de la factura más reciente,
+    porque el dueño reconoce el nombre que ve en el papel, no la clave.
+
+    LA FACTURA MÁS RECIENTE NO ES «LA PRIMERA DEL SELECT». `fecha_recibido` es
+    nullable y el orden de los NULLs cambia entre SQLite y Postgres: se cae a
+    `fecha_registro` y se desempata por id, igual que en `_historial_compras` y
+    en `_costos_insumos`.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    CONCENTRACIÓN: `pct_del_total`, CONTRA EL TOTAL Y NO CONTRA EL MÁS GRANDE
+    ═══════════════════════════════════════════════════════════════════════════
+    «El más grande de la lista» no dice nada para sentarse a negociar; «se lleva
+    el 34% de todo lo que compro» sí. Es la división `facturado / totales.facturado`
+    y se hace ACÁ, del mismo lado que los dos números, para que ninguna pantalla
+    la invente con otra base. `None` cuando no hay nada facturado: sin base no
+    hay porcentaje, y un 0% diría que ese proveedor no pesa.
+    """
     q = db.query(FacturaCompra)
     if tienda_id is not None:
         q = q.filter(FacturaCompra.tienda_id == tienda_id)
@@ -633,8 +660,17 @@ def get_dashboard_pagos(db: Session, tienda_id: int | None = None,
         vp = float(f.valor_pagado or 0)
         tot_fact += vt
         tot_pag += vp
-        p = por_prov.setdefault(f.proveedor, {"proveedor": f.proveedor, "facturado": 0.0, "pagado": 0.0, "n": 0})
+        # La clave agrupa; el nombre que se muestra es el de la factura más
+        # reciente. Sin grafía útil (proveedor vacío) la clave cae al crudo: una
+        # factura sin proveedor no puede fusionarse con las demás.
+        clave = alias_svc.normalizar_alias(f.proveedor) or (f.proveedor or "")
+        p = por_prov.setdefault(clave, {"clave": clave, "proveedor": f.proveedor,
+                                        "facturado": 0.0, "pagado": 0.0, "n": 0,
+                                        "_orden": None})
         p["facturado"] += vt; p["pagado"] += vp; p["n"] += 1
+        orden = (f.fecha_recibido or f.fecha_registro or datetime.min, f.id or 0)
+        if p["_orden"] is None or orden > p["_orden"]:
+            p["_orden"], p["proveedor"] = orden, f.proveedor
         mes = (f.fecha_recibido or f.fecha_registro).strftime("%Y-%m")
         m = por_mes.setdefault(mes, {"mes": mes, "facturado": 0.0, "pagado": 0.0})
         m["facturado"] += vt; m["pagado"] += vp
@@ -652,6 +688,13 @@ def get_dashboard_pagos(db: Session, tienda_id: int | None = None,
 
     ranking = sorted(_round_grupo(list(por_prov.values()), "facturado", "pagado"),
                      key=lambda x: x["facturado"], reverse=True)
+    for p in ranking:
+        p.pop("_orden", None)   # clave de desempate interna, no viaja
+        # CONTRA EL TOTAL. Es lo que convierte el ranking en una posición de
+        # negociación: no «el más grande», sino cuánto de todo lo que compro
+        # pasa por sus manos.
+        p["pct_del_total"] = (round(p["facturado"] / tot_fact * 100, 1)
+                              if tot_fact > 0 else None)
     return {
         "totales": {
             "facturado": round(tot_fact, 2),

@@ -61,6 +61,54 @@ export interface RentabilidadData {
     pct_margen_bruto_real?: number | null
     brecha_compras?: number
     pct_venta_costeada?: number | null
+    // ── EL COSTO COMPLETO DE SERVIR, EMPAQUE INCLUIDO ────────────────────────
+    // `cogs_teorico` es SOLO la receta. El vaso, la tapa y la servilleta viven
+    // en `cogs_desechables` y se suman en `cogs_con_desechables`.
+    //
+    // POR QUÉ VIAJAN LOS DOS MÁRGENES Y NO UNO SOLO: `margen_bruto_real`
+    // (ventas − receta) es el término al que se le resta la fuga medida por
+    // conteo, y esa fuga YA se lleva los vasos consumidos —el desechable no
+    // descuenta inventario al vender—, así que meterle el empaque adentro
+    // contaría el mismo vaso dos veces en `margen_bruto_real_con_fuga`. Pero
+    // ese argumento cubre ese número y NINGÚN otro: `margen_bruto_real` se
+    // dibuja también en el mes en curso, donde no hay ningún cierre y no existe
+    // término de fuga, y ahí el empaque no está en ninguna parte.
+    // `margen_bruto_real_con_desechables` es el que la pantalla muestra como
+    // «margen sobre lo vendido»: nunca le falta el vaso, haya conteo o no.
+    cogs_desechables?: number
+    cogs_con_desechables?: number
+    /** Qué parte de la venta viene de productos con TODOS sus desechables
+     *  costeados. En 0 = el margen de arriba no lleva un solo empaque adentro. */
+    pct_venta_con_desechables?: number | null
+    margen_bruto_real_con_desechables?: number
+    pct_margen_bruto_real_con_desechables?: number | null
+    // ── LA CONDICIÓN DEL DOBLE CONTEO, MEDIDA ────────────────────────────────
+    // «El vaso ya está adentro de la fuga» es cierto SOLO si el barista contó
+    // ese renglón en el cierre. `cerrar()` rellena `cantidad_real` con el
+    // sistema para todo lo no contado, así que un empaque que nadie miró da
+    // residuo 0 y desaparece del término de fuga sin que nada lo diga.
+    // `desechables_en_la_fuga` / `desechables_producto_mes` son PRODUCTO-MES
+    // (renglones de empaque × cierres), misma convención que
+    // `fuga_cobertura_contados`. Cuando el numerador es menor, la banda de fuga
+    // NO puede seguir diciendo que su residuo cubre el empaque.
+    //
+    // `desechables_con_costo` VA SIN `?`, y es el mismo candado que se le puso a
+    // `alertas_costo` en esta misma tanda. `get_rentabilidad` lo escribe como
+    // `len(desech_insumos_vendidos)` adentro del ÚNICO literal de `resumen`
+    // (backend/app/services/rentabilidad.py), sin condición, así que no existe
+    // la respuesta que no lo trae. Mientras fue opcional, el consumidor tenía que
+    // escribir `?? 0` para compilar, y ese cero se IMPRIMÍA: «Los 0 renglones de
+    // empaque con costo pasaron por el conteo», debajo del renglón que afirma que
+    // el vaso ya está adentro del residuo. Un conteo fabricado sosteniendo una
+    // afirmación tranquilizadora es la regla 1 de components/ui/README.md, y con
+    // el campo obligatorio el `?? 0` deja de compilar en vez de depender de que
+    // nadie lo vuelva a escribir.
+    desechables_con_costo: number
+    // Estos dos SÍ quedan opcionales a propósito: la pantalla los trata con
+    // `!= null` y su ausencia apaga el aviso en vez de fabricar un cero, o sea
+    // cae del lado que NO tranquiliza. No hay `?? 0` que puedan alimentar.
+    desechables_en_la_fuga?: number
+    desechables_producto_mes?: number
     // Cobertura de costos FIJOS del período (arriendo, nómina, servicios,
     // impuestos). Ya están DENTRO de `gastos` y `margen_neto`: se exponen aparte
     // para distinguir "el negocio no tiene costos fijos" de "nadie los cargó".
@@ -188,12 +236,70 @@ export interface ProdMargen {
 }
 export interface AlertaCosto {
   insumo_id: number; nombre: string; unidad_medida: string | null
-  costo_usado: number; costo_ultimo: number; pct_suba: number
+  /**
+   * Quién la subió, tal como está escrito en la factura que fijó el precio
+   * nuevo (no el proveedor más grande ni el último que facturó cualquier cosa).
+   * `null` —y SOLO `null`— cuando esa factura vino sin proveedor cargado.
+   *
+   * Sin `?`: `rentabilidad.alertas_de_costo` escribe la clave en cada alerta que
+   * arma, sin condición. Dejarlo opcional metía un `undefined` que había que
+   * distinguir de `null` y que en la práctica se leía igual, así que la pantalla
+   * terminaba diciendo lo mismo para «la factura no tenía proveedor» que para
+   * «no me llegó el campo». Son cosas distintas y una de las dos no existe.
+   */
+  proveedor: string | null
+  fecha_ultimo: string | null
+  /**
+   * LOS TRES COSTOS VIENEN SIN REDONDEAR, y hay que imprimirlos con `fmtUnit`,
+   * nunca con `fmt`. Un insumo de $0,004545/gr redondeado a peso entero imprime
+   * "$0 → $0" al lado de un "+150%", y son la misma cifra contándose de dos
+   * formas: la que se ve no explica la que se afirma.
+   *
+   * `costo_usado` es el promedio ponderado con el que HOY se costea (o el costo
+   * oficial fijado a mano); `costo_ref` es el más barato que ese insumo tuvo en
+   * los últimos `ref_meses` meses y es contra ESE que se mide `pct_suba`.
+   */
+  costo_usado: number; costo_ultimo: number; costo_ref: number
+  /** De qué factura salió la referencia: el «+40%» queda verificable en el papel. */
+  ref_proveedor: string | null
+  ref_fecha: string | null
+  ref_meses: number
+  /**
+   * `true` = el que cobraba la referencia y el que cobra ahora son el mismo.
+   * DECIDE DE QUIÉN PUEDE SER SUJETO LA FRASE: con `false`, escribir «Andina
+   * subió la leche +40%» le atribuye a Andina un precio que Andina nunca cobró.
+   */
+  mismo_proveedor: boolean
+  /** Lo que movió el proveedor: último contra referencia, NO contra el promedio. */
+  pct_suba: number
+  /**
+   * Qué parte de esa suba ya está adentro de `costo_usado` — o sea, qué parte
+   * ya llegó al piso. `null` cuando `costo_usado` no cae entre la referencia y
+   * el último (pasa con un costo fijado a mano) y por lo tanto no es fracción
+   * de nada.
+   */
+  pct_absorbido: number | null
   productos_afectados: string[]; venta_30d_afectada: number
 }
 export interface PorProductoData {
   productos: ProdMargen[]
-  alertas_costo?: AlertaCosto[]
+  /**
+   * SIN `?` A PROPÓSITO — es el candado que evita el `?? []` de río abajo.
+   *
+   * `get_rentabilidad_productos` (backend/app/services/rentabilidad.py) mete
+   * `alertas_costo` en el dict que devuelve SIEMPRE: la clave está en el
+   * `return`, no adentro de un `if`, y la función que la llena devuelve lista
+   * (vacía cuando no subió nada). O sea que acá `[]` significa una sola cosa:
+   * se comparó y ningún insumo se está facturando más de un 10% arriba de lo más
+   * barato que se le pagó en los últimos 12 meses.
+   *
+   * Mientras el campo fue opcional, el consumidor tenía que escribir
+   * `alertas_costo ?? []` y esa expresión aplastaba «no se pudo preguntar»
+   * contra «no subió nada» — regla 2 de components/ui/README.md. Que el tipo lo
+   * exija hace que el compilador cierre esa puerta en vez de la disciplina de
+   * quien edite dentro de seis meses.
+   */
+  alertas_costo: AlertaCosto[]
   facturas_pendientes_de_costos: number
   // Fase 2 del OCR: aliases proveedor→producto que el sistema aprendió.
   aliases_conocidos?: number
@@ -215,6 +321,21 @@ export interface PulsoData {
 }
 
 export const fmt = (v: number) => '$' + Math.round(v || 0).toLocaleString('es-CO')
+/**
+ * PRECIO POR UNIDAD DE INSUMO — $/ml, $/gr, $/unidad.
+ *
+ * Existe porque `fmt` redondea a peso entero, y estos números viven abajo del
+ * peso: la leche a $2,0727/ml y a $2,80/ml se imprimían las dos como "$2 → $3"
+ * (una suba del 50% dibujada al lado de un "+40%" que decía otra cosa), y la
+ * canela a $0,004545/gr imprimía "$0 → $0". Los decimales se estiran según la
+ * magnitud para que dos precios distintos NUNCA se impriman iguales.
+ */
+export const fmtUnit = (v: number) => {
+  const a = Math.abs(v || 0)
+  const dec = a === 0 ? 0 : a >= 100 ? 0 : a >= 10 ? 1 : a >= 1 ? 2 : a >= 0.01 ? 3 : 5
+  return '$' + (v || 0).toLocaleString('es-CO',
+    { minimumFractionDigits: dec, maximumFractionDigits: dec })
+}
 export const fmtK = (v: number) => {
   const a = Math.abs(v)
   if (a >= 1_000_000) return '$' + (v / 1_000_000).toFixed(1).replace('.', ',') + 'M'

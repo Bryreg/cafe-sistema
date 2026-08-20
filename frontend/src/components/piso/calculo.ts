@@ -140,3 +140,38 @@ export function detalleNum(d: Record<string, number | null>, clave: string): num
   const v = d[clave]
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
+
+// ─── Lo que el PISO cuenta de un mes, y por qué se filtra dos veces ──────────
+//
+// Esto NO recalcula el piso: el piso viene hecho del backend y volver a
+// dividirlo acá sería tener dos matemáticas para el mismo número. Lo que
+// contesta es otra pregunta, la que el endpoint del piso no contesta: «¿el mes
+// que viene ya tiene costos fijos cargados, o arranca en cero?» — y esa
+// pregunta se hace sobre el LISTADO de obligaciones, que es lo único que la
+// pantalla trae de los dos meses.
+//
+// TIENE QUE FILTRAR IGUAL QUE EL NUMERADOR DEL PISO, y por eso son dos filtros
+// y no uno. Contar TODAS las obligaciones vivas del mes daba un número CERCA
+// del correcto y siempre para el lado tranquilizador: una declaración del
+// impoconsumo de $12M o una fila legacy de proveedores hacían que un mes sin un
+// peso de costos fijos se leyera como un mes cubierto, y el aviso fuerte —el
+// único que le dice al dueño que el mes que viene arranca con el piso en cero—
+// se apagaba solo.
+//
+//   · grupo 'fijo'  → es lo que `rentabilidad._cuenta_costos_fijos` mira;
+//   · y NO las dos claves excluidas del gasto, que el backend saca antes en
+//     `_obligaciones_del_periodo` (proveedores ya entra por su factura de
+//     Compras; el impoconsumo ya está restado de la venta neta).
+//
+// SYNC: si cambia `rentabilidad.CLAVES_FUERA_DEL_GASTO`, cambia acá en el mismo
+// commit. Son dos copias porque son dos lados de la red, no porque sea gratis.
+const CLAVES_FUERA_DEL_PISO = ['proveedores', 'impoconsumo']
+
+/** ¿Esta obligación entra al numerador del piso? Anuladas afuera, siempre. */
+export function entraAlPiso(o: {
+  estado: string; categoria_grupo: string; categoria_clave: string
+}): boolean {
+  return o.estado !== 'anulada'
+    && o.categoria_grupo === 'fijo'
+    && !CLAVES_FUERA_DEL_PISO.includes(o.categoria_clave)
+}

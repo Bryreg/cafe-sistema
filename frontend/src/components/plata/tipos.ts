@@ -41,6 +41,30 @@ export interface Obligacion {
   fecha_devengo: string; fecha_vencimiento: string | null
   /** Llave de la serie mensual: la escribe «Repetir» y une agosto→septiembre→… */
   plantilla_id: number | null
+  /**
+   * `false` = esta fila es del SISTEMA y el formulario no la puede tocar: la
+   * declaración del impoconsumo (su monto lo mide el server sobre la venta real
+   * y su fecha sale del calendario de la DIAN) y las viejas de 'proveedores'
+   * (esa deuda ya entra al P&L y a la agenda por su factura de Compras).
+   *
+   * LO DECIDE EL BACKEND, con la misma lista que usa para rechazar la edición.
+   * No se recalcula acá: una segunda regla del lado de la pantalla se despega
+   * de la del server en la primera clave que se agregue, y la pantalla ofrecería
+   * un botón que el server contesta con un 400. Sin esto, «Corregir» sobre la
+   * fila del impoconsumo la movía a una categoría contada y el piso del mes del
+   * devengo subía $12.447.999 con el margen neto cayendo $11.525.925,93.
+   *
+   * OPCIONAL A PROPÓSITO, y no porque el backend lo omita: `_serializar` lo
+   * escribe SIEMPRE. Esto es una PWA con service worker, así que existe una
+   * ventana real —la del deploy— en la que la tablet ya tiene el bundle NUEVO
+   * contra el backend VIEJO, y ahí el campo llega `undefined`. Marcarlo
+   * `boolean` a secas era decirle al que edite esta pantalla que ese caso no
+   * existe, y de ahí salía el `o.editable_a_mano ? … : candado`: `undefined` es
+   * falsy, así que TODAS las filas —arriendo, servicios, contador— mostraban el
+   * candado y el dueño se quedaba sin poder corregir nada. El consumidor tiene
+   * que preguntar por `!== false`: el candado solo cuando el server lo AFIRMA.
+   */
+  editable_a_mano?: boolean
   nota: string | null
   pagos: Pago[]
 }
@@ -182,16 +206,48 @@ export interface CajaHoy {
 }
 
 /**
+ * Un gasto grande que el sistema SABE MEDIR SOLO y que esta proyección no está
+ * viendo, porque nadie lo agendó todavía.
+ *
+ * `monto` es `number | null` a propósito y acá no va ningún `?? 0`: un cero se
+ * leería como «no hay nada que reservar», que es la conclusión OPUESTA a la
+ * verdadera. Cuando viene en null, `sin_monto_porque` dice por qué en castellano.
+ */
+export interface ConceptoSinCargar {
+  /** 'impoconsumo' | 'nomina' — la clave de la categoría de costo. */
+  clave: string
+  /** «Impoconsumo mayo-junio 2026», en el idioma del dueño. */
+  nombre: string
+  monto: number | null
+  sin_monto_porque: string | null
+  /** El día en que saldría la plata si se agendara. */
+  vence: string
+  vencido: boolean
+}
+
+/**
  * Lo que la proyección NO sabe. Las entradas se derivan solas de cada ticket,
  * pero las salidas existen solo si alguien las tecleó: la PRESENCIA de un punto
  * de quiebre significa algo, su AUSENCIA sola no significa nada.
  */
 export interface AdvertenciasFlujo {
   saldo_banco_desactualizado: boolean
+  /**
+   * NI UNA SOLA salida cargada en el horizonte. Sigue siendo un caso que vale
+   * nombrar, pero YA NO ES la señal de cobertura: se apaga con una obligación
+   * cualquiera, y con el arriendo adentro el verde volvía a viajar aunque
+   * faltaran los millones de la DIAN. Para eso está `conceptos_sin_cargar`.
+   */
   sin_salidas_cargadas: boolean
   sin_historia_ventas: boolean
   excluye_corporativas: boolean
   corporativas_fuera: number
+  /** Lo que falta, CON NOMBRE Y PLATA. Lista, no booleano: es lo que se puede
+   *  convertir en una acción. Vacía = los conceptos medibles están todos adentro. */
+  conceptos_sin_cargar: ConceptoSinCargar[]
+  /** Atajo derivado de la lista, para el que solo necesita saber si puede
+   *  publicar un número. Nunca se prende por su cuenta. */
+  salidas_incompletas: boolean
 }
 
 export interface Flujo {
@@ -257,6 +313,24 @@ export interface Factura {
 export interface GrupoProveedor {
   proveedor?: string; tienda?: string
   facturado: number; pagado: number; pendiente: number; n?: number
+  /**
+   * Clave con la que el backend AGRUPA (nombre normalizado: sin tildes, sin
+   * dobles espacios, en mayúsculas). `proveedor` es la grafía de la factura más
+   * reciente, que es la que el dueño reconoce del papel. Los dos viajan porque
+   * son cosas distintas: agrupar por el crudo partía a «Lácteos Andina» en tres
+   * filas chicas y ninguna mostraba su tamaño real.
+   */
+  clave?: string
+  /**
+   * Cuánto de TODO lo comprado en el rango se lleva este proveedor, 0..100.
+   *
+   * `null` = no hay nada facturado, o sea no hay base para el porcentaje. NO es
+   * 0: un 0% diría que ese proveedor no pesa. Lo divide el backend —es
+   * `facturado / totales.facturado`, los dos del mismo payload— para que ninguna
+   * pantalla lo invente contra otra base, que es justo lo que pasaba cuando la
+   * barra se medía contra el proveedor más grande.
+   */
+  pct_del_total?: number | null
 }
 
 export interface DashboardFacturas {

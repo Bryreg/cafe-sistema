@@ -898,7 +898,8 @@ def get_escalera_mensual(db, tienda_id: int, anio: int, mes: int,
     return out
 
 
-def fuga_medida(db, desde: date, hasta: date, tienda_id: int | None = None) -> dict:
+def fuga_medida(db, desde: date, hasta: date, tienda_id: int | None = None,
+                desechables: set[int] | None = None) -> dict:
     """La fuga que los cierres del período MIDIERON, valorizada — el término que
     el P&L nunca vio.
 
@@ -907,6 +908,16 @@ def fuga_medida(db, desde: date, hasta: date, tienda_id: int | None = None) -> d
     cerrar todavía no midió nada. Si no hay ninguno, devuelve `None` y no 0: cero
     significa "se midió y no falta nada", que es una afirmación muy distinta de
     "nadie contó".
+
+    `desechables` son los ids de los insumos-empaque CON COSTO que el P&L le está
+    cargando a este rango. Se reciben por parámetro (y no se importan de
+    `rentabilidad`) para poder CONTESTAR una pregunta que el P&L hace y hasta hoy
+    solo se respondía con un comentario: el costo del vaso queda afuera de
+    `cogs_teorico` porque «la fuga ya lo cuenta» — y eso es cierto únicamente si
+    alguien contó ESE renglón en ESTE cierre. Acá está el único lugar del sistema
+    donde se sabe cuáles cierres formaron la fuga, así que acá se mide; hacerlo
+    con una segunda consulta afuera abriría la puerta a contar contra un cierre
+    que este total nunca miró.
     """
     from app.models.models import Tienda
 
@@ -944,6 +955,14 @@ def fuga_medida(db, desde: date, hasta: date, tienda_id: int | None = None) -> d
     # Una sede que nunca cierra desaparece del término de fuga sin ninguna señal, y
     # el sesgo va para el mismo lado que el de los meses: subdeclara.
     sedes_medidas: set[int] = set()
+    # EL EMPAQUE, CONTADO EN VEZ DE SUPUESTO. Producto-mes, igual que
+    # `contados`/`productos`: un cierre que contó los tres renglones no puede
+    # tapar a otro que no contó ninguno, y con `cierres` al lado el par se
+    # divide de vuelta. El denominador suma TODOS los renglones en CADA cierre
+    # aunque esa sede no venda ese producto: el sesgo va para el lado incómodo
+    # —dice que la fuga cubre MENOS empaque del que cubre— y ese es el único
+    # lado donde un error acá no vuelve a ser tranquilizador.
+    desech_contados = desech_producto_mes = 0
     # Un solo contexto para TODOS los meses: sin esto, pedir el P&L de un año
     # releería la historia completa de movimientos una vez por mes y por sede.
     # `horizonte` es el arranque del rango pedido, que es lo más viejo que
@@ -966,6 +985,14 @@ def fuga_medida(db, desde: date, hasta: date, tienda_id: int | None = None) -> d
         total_items += r["productos"]
         meses.add((inv.anio, inv.mes))
         sedes_medidas.add(inv.tienda_id)
+        if desechables:
+            desech_producto_mes += len(desechables)
+            # `fue_contado` y no `cantidad_real is not None`: `cerrar()` rellena
+            # esa columna con el sistema para todo lo NO contado, así que leerla
+            # sin la bandera daría por contado el renglón que nadie miró — que
+            # es exactamente la afirmación que este número viene a desmentir.
+            desech_contados += sum(1 for it in inv.items
+                                   if it.producto_id in desechables and it.fue_contado)
         for p in esc["productos"]:
             d = p["diferencia_inexplicada"]
             if d is None or abs(d) <= EPS:
@@ -981,7 +1008,8 @@ def fuga_medida(db, desde: date, hasta: date, tienda_id: int | None = None) -> d
     if not periodos:
         return {"valor": None, "periodos": [], "sin_costo": 0, "estimados": 0,
                 "contados": 0, "productos": 0, "cierres": 0, "meses": 0,
-                "sedes": 0, "sedes_ids": []}
+                "sedes": 0, "sedes_ids": [],
+                "desechables_contados": 0, "desechables_producto_mes": 0}
     return {"valor": round(total, 2), "periodos": periodos,
             "sin_costo": len(sin_costo_ids), "estimados": len(estimados_ids),
             # Producto-mes, no productos: el nombre del campo miente menos que el
@@ -996,4 +1024,10 @@ def fuga_medida(db, desde: date, hasta: date, tienda_id: int | None = None) -> d
             # el caso cruzado —una sede que cerró pero no vendió tapando a otra que
             # vendió y nunca cerró— y ahí el aviso no aparece justo cuando más falta.
             # Quien compara necesita intersecar conjuntos, no restar números.
-            "sedes": len(sedes_medidas), "sedes_ids": sorted(sedes_medidas)}
+            "sedes": len(sedes_medidas), "sedes_ids": sorted(sedes_medidas),
+            # De cuánto del EMPAQUE habla esta fuga. El P&L deja el vaso afuera
+            # de `cogs_teorico` diciendo que este total ya lo lleva adentro; con
+            # estos dos números esa frase deja de ser una promesa y pasa a ser
+            # una medición que la pantalla puede mostrar o desmentir.
+            "desechables_contados": desech_contados,
+            "desechables_producto_mes": desech_producto_mes}

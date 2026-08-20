@@ -9,9 +9,13 @@ from app.core.deps import get_barista_actor, require_admin
 from app.core.tz import hoy_col
 from app.database import get_db
 from app.models.models import Usuario
-from app.schemas.costos import (ComisionDatafonoRequest,AdopcionEgresoRequest, CategoriaCreate,
-                                CategoriaUpdate, NominaAgendarRequest,
-                                ObligacionCreate, ObligacionUpdate, PagoCreate,
+from app.schemas.costos import (AdopcionEgresoRequest, ArmarMesRequest,
+                                CategoriaCreate, CategoriaUpdate,
+                                ComisionDatafonoRequest,
+                                ImpoconsumoAgendarRequest,
+                                ImpoconsumoDeclaradoRequest,
+                                NominaAgendarRequest, ObligacionCreate,
+                                ObligacionUpdate, PagoCreate,
                                 ReservaMinimaRequest, SaldoBancoRequest)
 from app.services import costos as svc
 
@@ -162,6 +166,41 @@ def piso_de_venta(
     return svc.get_piso(db, anio, mes)
 
 
+@router.get("/palancas")
+def palancas_del_piso(
+    anio: int = Query(..., ge=2000, le=2100),
+    mes: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """QUIÉN SUBIÓ QUÉ, Y CUÁNTO LE MUEVE EL PISO POR DÍA.
+
+    La línea que el dueño se lleva a la reunión: «Lácteos Andina subió la leche
+    14%, toca $4.200.000 de venta al mes, y si ese precio se queda el piso me
+    sube $180.000 por día». Las partes salen de la misma lectura para que no se
+    puedan contradecir.
+
+    EL PORCENTAJE ES CONTRA LA REFERENCIA —lo más barato que se le facturó a ese
+    insumo en los últimos meses— y no contra el promedio con el que se costea:
+    es el número que el proveedor puede verificar en su propia factura, y el
+    único que no se apaga solo a medida que se compra al precio nuevo.
+
+    Y LA PLATA SON DOS CIFRAS, NO UNA: «lo que todavía va a subir si el precio
+    nuevo se queda» y «lo que baja hoy si el proveedor vuelve atrás» no son la
+    misma plata mirada de dos formas. Ver `costos.get_palancas`.
+
+    ES UN ENDPOINT APARTE DE `/piso` A PROPÓSITO. `/piso` lo pide también el
+    bloque del año, DOCE veces seguidas, y el reparto del costo por insumo no
+    tiene por qué correr doce veces para dibujar doce barras. Adentro llama a
+    `get_piso` una vez y mide la suba CONTRA ESE piso: no hay una segunda cuenta
+    del número, hay una diferencia contra el que ya se publicó.
+
+    CONTESTA 200 SIEMPRE, con las mismas puertas del piso. Una suba que no se
+    pudo traducir a pesos viaja igual con `sin_impacto_porque`: sacarla de la
+    lista la volvería invisible justo para el que iba a ir a negociarla."""
+    return svc.get_palancas(db, anio, mes)
+
+
 @router.post("/comision-datafono")
 def declarar_comision_datafono(
     data: ComisionDatafonoRequest,
@@ -286,6 +325,134 @@ def editar_obligacion(
     return svc.editar_obligacion(db, obligacion_id, data, admin.id)
 
 
+# Ruta LITERAL antes de la paramétrica `/obligaciones/{obligacion_id}`. Acá SÍ
+# competirían si estuviera abajo: `armar-mes` no parsea como int, así que
+# FastAPI devolvería un 422 confuso en vez de esta ruta.
+@router.post("/obligaciones/armar-mes")
+def armar_el_mes(
+    data: ArmarMesRequest,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+    barista: tuple = Depends(get_barista_actor),
+):
+    """Copia TODAS las series mensuales a un mes, en un viaje y un solo commit.
+
+    `confirmar: false` es la VISTA PREVIA: no escribe nada y devuelve
+    `van_a_crearse` con concepto, monto y las dos fechas de cada una, más el
+    `total` que le va a agregar al mes. `confirmar: true` las crea todas o
+    ninguna.
+
+    Es el reemplazo de hacer N veces `POST /obligaciones/{id}/repetir` desde la
+    pantalla. Aquel endpoint sigue existiendo y sigue siendo la unidad de a una;
+    lo que arregla este es el corte a la mitad: con catorce requests sueltas, una
+    tablet que pierde señal en la séptima deja el mes armado por la mitad y
+    ninguna pantalla lo dice.
+
+    Idempotente igual que `repetir`: las series que ya tienen su copia de ese mes
+    vuelven en `ya_estaban` y no se tocan. Las que NO se pueden copiar (categoría
+    desactivada, o la vieja 'proveedores') vuelven en `no_se_pueden` con el
+    porqué y no abortan el lote: una fila legacy no puede dejar el mes sin armar.
+
+    LOS DOS CEROS VUELVEN SEPARADOS. `van_a_crearse: []` no dice por qué está
+    vacío, y las dos razones son opuestas: «las series ya tienen su copia» (el
+    mes está armado) o «no hay NINGUNA serie marcada como repetible» (el mes
+    arranca sin un peso de costos fijos). `series_repetibles` las distingue, y
+    `candidatas` trae las cuentas vivas que todavía no son serie —con su plata y
+    su concepto— para que el dueño elija cuáles van. Lo que elige vuelve en
+    `incluir` y se copia por el mismo camino; de ahí en más ya son serie.
+
+    Los rangos de `anio`/`mes` los valida el handler con un 400 mostrable, no
+    pydantic: el `detail` de un 422 es una lista y el cliente solo lee strings.
+    Que un id de `incluir` SEA una cuenta elegible se valida en el servicio, que
+    es donde está la base — y también con un 400 mostrable, nunca ignorándolo:
+    tildar seis y que se creen cinco es el error que este módulo persigue."""
+    if not (2000 <= data.anio <= 2100):
+        raise HTTPException(400, "Año fuera de rango")
+    if not (1 <= data.mes <= 12):
+        raise HTTPException(400, "El mes va de 1 a 12")
+    if any(i <= 0 for i in data.incluir):
+        raise HTTPException(400, "Hay una cuenta elegida con un id inválido — "
+                                 "recargá la pantalla y volvé a elegir")
+    return svc.armar_mes(db, data.anio, data.mes, confirmar=data.confirmar,
+                         usuario_id=admin.id, incluir=data.incluir,
+                         barista_id=barista[0], barista_nombre=barista[1])
+
+
+@router.get("/impoconsumo")
+def declaracion_impoconsumo(
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """LA DECLARACIÓN DEL IMPOCONSUMO DEL BIMESTRE CERRADO.
+
+    El único gasto grande que el sistema tenía bien contado y no mostraba nunca
+    como plata a pagar: 7,41% de cada peso facturado se ve como menos venta todos
+    los días y después aparece de golpe cada dos meses.
+
+    Devuelve el bimestre a declarar, el mes en que la DIAN lo pide (el día exacto
+    depende del NIT y el sistema no lo sabe: no se inventa), y el impoconsumo
+    MEDIDO cobrado en ese bimestre — o `sin_monto_porque` en castellano cuando no
+    se puede medir. Es LECTURA PURA: no crea ninguna obligación. La crea
+    `POST /costos/impoconsumo/agendar`, con el monto a la vista, y `agendada`
+    dice si ya existe.
+
+    CONTESTA 200 SIEMPRE. Que no haya nada que declarar es una respuesta
+    (`hay_que_declarar: false`), no un error."""
+    return svc.get_impoconsumo(db)
+
+
+@router.post("/impoconsumo/agendar")
+def agendar_impoconsumo(
+    data: ImpoconsumoAgendarRequest,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+    barista: tuple = Depends(get_barista_actor),
+):
+    """Mete la declaración del bimestre en la agenda y en el flujo proyectado.
+
+    Es el mismo movimiento que `POST /costos/nomina/agendar` le hizo al costo
+    laboral: hasta acá el impoconsumo era un cálculo y un recordatorio, pero no
+    plata que hay que pagar en una fecha — no estaba en la agenda, no bajaba la
+    proyección y no tenía botón [Pagar]. Con $155,6M facturados en un bimestre son
+    $11,5M que la caja no veía venir.
+
+    LA OBLIGACIÓN NO ENTRA AL P&L NI AL PISO: va a una categoría dedicada que
+    `rentabilidad._obligaciones_del_periodo` excluye por clave, igual que a la de
+    proveedores. El margen ya se mide sobre la venta NETA de este impuesto, así
+    que contarla otra vez como gasto sería la misma plata dos veces.
+
+    `monto` es opcional: sin él manda lo MEDIDO sobre la venta real del bimestre,
+    con él manda el dueño (la declaración la arma el contador).
+
+    Idempotente por bimestre: si ya hay una obligación viva devuelve la que hay
+    con `ya_existia: true`. 400 si el bimestre no cerró o si no hay monto medido
+    ni escrito — una fila en $0 se leería como una cuenta ya resuelta— y también
+    si el `monto` escrito queda muy por DEBAJO del medido: crear la fila apaga el
+    aviso de cobertura de la caja, así que la cifra que lo apaga tiene que poder
+    ser la declaración de ese bimestre. Escribir de MÁS no rebota."""
+    return svc.agendar_impoconsumo(db, data.anio, data.bimestre, admin.id,
+                                   monto=data.monto,
+                                   barista_id=barista[0], barista_nombre=barista[1])
+
+
+@router.post("/impoconsumo/declarado")
+def marcar_impoconsumo(
+    data: ImpoconsumoDeclaradoRequest,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """«Esa ya la declaré»: el interruptor del recordatorio.
+
+    Sin esto el aviso no se puede apagar nunca, y una advertencia que no se puede
+    corregir se aprende a ignorar — el mismo motivo por el que existe
+    `POST /costos/comision-datafono`.
+
+    Marca el bimestre y todos los anteriores. Rechaza con 400 un bimestre que
+    todavía no cerró: apagar por adelantado un aviso sobre plata que ni siquiera
+    terminó de cobrarse apagaría de paso todos los de atrás."""
+    return svc.marcar_impoconsumo_declarado(db, data.anio, data.bimestre, admin.id)
+
+
 @router.post("/obligaciones/{obligacion_id}/repetir")
 def repetir_obligacion(
     obligacion_id: int,
@@ -301,6 +468,31 @@ def repetir_obligacion(
     con `ya_existia: true` en vez de cobrar el arriendo dos veces."""
     return svc.repetir_obligacion(db, obligacion_id, admin.id,
                                   barista_id=barista[0], barista_nombre=barista[1])
+
+
+@router.post("/obligaciones/{obligacion_id}/no-repetir")
+def dejar_de_repetir(
+    obligacion_id: int,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+    barista: tuple = Depends(get_barista_actor),
+):
+    """DESHACE que esta cuenta sea serie: deja de copiarse sola al mes siguiente.
+
+    Es la vuelta de `repetir` y del tilde de «elegir qué va al mes que viene».
+    Sin esto, tildar una vez la reparación del molino la convertía en un costo
+    fijo mensual para siempre —está medido que anular una copia no alcanza y que
+    anular la cabeza tampoco—, y el piso subía todos los meses por una plata que
+    se pagó una sola vez.
+
+    NO BORRA NI ANULA NADA: las obligaciones ya creadas siguen ahí con su plata y
+    sus pagos, porque se deben igual. Lo único que cambia es que el mes que viene
+    no se copian solas — vuelven a la lista de «elegir cuáles van».
+
+    Idempotente: si ya no era serie contesta `ya_estaba: true` y no toca nada. No
+    es un 400, porque no es un error del dueño: es el estado que él quería."""
+    return svc.dejar_de_repetir(db, obligacion_id, admin.id,
+                                barista_nombre=barista[1])
 
 
 # Ruta literal ANTES de la paramétrica `/obligaciones/{obligacion_id}`, aunque

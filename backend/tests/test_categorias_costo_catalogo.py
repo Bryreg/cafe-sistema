@@ -122,10 +122,31 @@ class _BaseApi(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class CatalogoSembradoTest(_BaseApi):
-    def test_una_base_nueva_nace_con_las_seis_categorias_en_fijo(self):
-        self.assertEqual(self.sembrar(), 6)
-        grupos = {c.clave: c.grupo for c in self.db.query(CostoCategoria).all()}
-        self.assertEqual(set(grupos.values()), {"fijo"})
+    def test_las_seis_categorias_que_el_dueno_elige_nacen_todas_en_fijo(self):
+        """Las ELEGIBLES son seis y son todas fijas. La séptima fila que siembra
+        el catálogo —'impoconsumo'— no cuenta acá y no es un descuido: no está
+        en el desplegable, no la puede cargar nadie a mano, y nace en 'variable'
+        porque el impuesto SÍ sube con la venta. Contarla entre las que el dueño
+        clasifica mezclaría una categoría del sistema con las suyas."""
+        self.assertEqual(self.sembrar(), 7)
+        elegibles = {c["clave"]: c["grupo"] for c in svc.listar_categorias(self.db)}
+        self.assertEqual(len(elegibles), 6)
+        self.assertEqual(set(elegibles.values()), {"fijo"})
+
+    def test_la_categoria_del_impoconsumo_se_siembra_pero_no_se_ofrece(self):
+        """La necesita `agendar_impoconsumo` existiendo —si no, el botón no puede
+        crear la obligación— pero elegirla a mano metería un monto inventado en
+        una fila que ningún margen corrige después."""
+        self.sembrar()
+        fila = self.categoria(svc.CLAVE_CATEGORIA_IMPOCONSUMO)
+        self.assertIsNotNone(fila)
+        self.assertEqual(fila.grupo, "variable")
+        self.assertNotIn(svc.CLAVE_CATEGORIA_IMPOCONSUMO,
+                         {c["clave"] for c in svc.listar_categorias(self.db)})
+        with self.assertRaises(HTTPException) as ctx:
+            svc._validar_categoria(self.db, fila.id)
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("no se carga a mano", ctx.exception.detail)
 
     def test_mantenimiento_y_otros_nacen_fijos(self):
         self.sembrar()

@@ -30,6 +30,13 @@ from app.models.models import (
 )
 from app.services import nomina as nomina_svc
 from app.services import parametros_tributarios as ptsvc
+from app.services import producto_alias as alias_svc
+
+# VENTANA DE LA REFERENCIA DE PRECIO, en meses. Es la que decide contra qué se
+# mide una suba (ver `_costos_insumos`), y viaja a la pantalla en `ref_meses`:
+# el número que se publica y el que se filtra salen de acá, porque dos
+# constantes que tienen que coincidir terminan sin coincidir.
+_MESES_REFERENCIA_PRECIO = 12
 
 # Patrones de concepto que crea services/facturas.py para pagos a proveedor.
 # Si esos strings cambian allá, hay que actualizarlos acá (no hay FK).
@@ -49,6 +56,42 @@ CLAVE_CATEGORIA_PROVEEDORES = "proveedores"
 # marcadas y los recargos de ley, así que cargarlo además a mano sería la misma
 # plata dos veces. La regla de convivencia está en `_nomina_del_periodo`.
 CLAVE_CATEGORIA_NOMINA = "nomina"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EL IMPOCONSUMO: PLATA QUE SALE DE LA CAJA Y **NO** ES GASTO DEL PERÍODO
+# ═══════════════════════════════════════════════════════════════════════════════
+# Categoría DEDICADA para la declaración bimestral de la DIAN. Existe para que esa
+# plata pueda estar en la AGENDA y en el FLUJO PROYECTADO —donde sí es una salida
+# con fecha— sin entrar NUNCA al P&L ni al piso de venta, donde ya está contada.
+#
+# POR QUÉ NO ALCANZA CON PONERLA EN UN GRUPO 'variable' (medido, no supuesto):
+# el grupo solo lo mira `_cuenta_costos_fijos`, o sea el NUMERADOR DEL PISO. El
+# P&L es otro camino: `tot_gastos` suma TODAS las filas de `oblig_rows` sin mirar
+# el grupo. Con la obligación en un grupo no fijo el piso queda quieto —parece
+# arreglado— y el margen neto igual se hunde. Medido sobre esta base: piso delta
+# $0 y margen_neto −$11.525.925,93. Un mes bueno leído como un mes malo por $11,5
+# millones, y el error MUDO porque el piso no se movió.
+#
+# Por eso la exclusión es POR CLAVE y en los mismos DOS lugares que 'proveedores'
+# (`_obligaciones_del_periodo` y `corporativas_fuera`): sacar la fila de
+# `oblig_rows` la saca DE UNA de los cuatro consumidores —`tot_gastos`, el
+# desglose `por_categoria`, `por_mes`/`por_sede` y `_cuenta_costos_fijos`— en vez
+# de tener que acordarse de cada uno. Es el mismo mecanismo, no uno nuevo.
+#
+# DE DÓNDE SALE EL DOBLE CONTEO, para el que venga a "arreglar" esta exclusión:
+# los márgenes se miden sobre la venta NETA, y `Tributos.separar` ya le sacó el
+# impoconsumo a cada peso facturado (ver el bloque de `tot_venta_neta`). El
+# margen de contribución del piso hace lo mismo por su lado
+# (`1 − impoconsumo − cogs − comisión`). El impuesto YA está descontado en las
+# dos fórmulas: sumarlo otra vez como gasto lo cobra dos veces.
+CLAVE_CATEGORIA_IMPOCONSUMO = "impoconsumo"
+
+# Las categorías cuya plata NO es un gasto del período, cada una por su motivo
+# —la de proveedores porque ya entra por FacturaCompra, la del impoconsumo porque
+# ya está restado de la venta neta— pero con la MISMA consecuencia: sus filas no
+# pueden entrar a `oblig_rows`. Van en una tupla y no en dos filtros sueltos para
+# que agregar la tercera sea una línea acá y no una cacería por el archivo.
+CLAVES_FUERA_DEL_GASTO = (CLAVE_CATEGORIA_PROVEEDORES, CLAVE_CATEGORIA_IMPOCONSUMO)
 
 ESTADOS_ANULADOS = ("anulado", "reversado")
 
@@ -191,11 +234,24 @@ def _obligaciones_del_periodo(db, desde: date, hasta: date,
     la BORRARÍA. Además `fecha_devengo` es Date, o sea fecha de NEGOCIO ya
     resuelta: se compara contra desde/hasta y NUNCA contra los instantes UTC.
 
-    Y se EXCLUYE la categoría 'proveedores': esa mercadería ya está contada en
-    `compras`, por FacturaCompra según fecha de recibido. Sumarla también acá
-    contaría la misma plata dos veces y hundiría el margen neto con un gasto que
-    no existe. El servicio ya no deja cargar nada ahí; este filtro es por las
-    filas que la versión anterior alcanzó a guardar.
+    Y se EXCLUYEN las claves de `CLAVES_FUERA_DEL_GASTO`, que son plata real pero
+    NO gasto de este período porque el P&L ya la contó por otro camino:
+
+      · 'proveedores': esa mercadería ya está contada en `compras`, por
+        FacturaCompra según fecha de recibido. El servicio ya no deja cargar nada
+        ahí; el filtro es por las filas que la versión anterior alcanzó a guardar.
+      · 'impoconsumo': la venta contra la que se mide el margen ya viene NETA de
+        este impuesto (`tot_venta_neta`). La obligación existe para que la
+        declaración esté en la AGENDA y en el FLUJO —donde sí es una salida con
+        fecha— y este filtro es lo único que impide que además se cobre como
+        gasto. Sacarlo hunde el margen neto $11,5M sobre la base de este negocio.
+
+    ES ACÁ Y NO EN CADA CONSUMIDOR a propósito: `oblig_rows` alimenta cuatro
+    cuentas distintas (`tot_gastos`, el desglose `por_categoria`, `por_mes`/
+    `por_sede` y `_cuenta_costos_fijos`). Filtrar en el origen las apaga a las
+    cuatro de una; filtrar en una sola —el error que este repo ya midió— deja al
+    piso quieto y al margen neto mintiendo, que es el peor de los dos mundos
+    porque nadie lo ve.
 
     ORDEN DE LAS COLUMNAS: `clave` va al final (índice 5) a propósito, porque el
     chequeo de costos fijos indexa por posición (r[4] == grupo) y agregarla en el
@@ -210,7 +266,7 @@ def _obligaciones_del_periodo(db, desde: date, hasta: date,
             Obligacion.anulada.is_(False),
             Obligacion.fecha_devengo >= desde,
             Obligacion.fecha_devengo <= hasta,
-            CostoCategoria.clave != CLAVE_CATEGORIA_PROVEEDORES,
+            CostoCategoria.clave.notin_(CLAVES_FUERA_DEL_GASTO),
         )
     )
     if tienda_id is not None:
@@ -440,7 +496,12 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
                 Obligacion.tienda_id.is_(None),
                 Obligacion.fecha_devengo >= desde,
                 Obligacion.fecha_devengo <= hasta,
-                CostoCategoria.clave != CLAVE_CATEGORIA_PROVEEDORES,
+                # LA MISMA LISTA que `_obligaciones_del_periodo`, y por eso es una
+                # constante compartida: este número dice "esto es lo que tu vista
+                # de sede NO está viendo del costo". Si acá entrara una clave que
+                # allá no entra, la advertencia hablaría de plata que el
+                # consolidado tampoco cuenta como gasto — un faltante inventado.
+                CostoCategoria.clave.notin_(CLAVES_FUERA_DEL_GASTO),
             )
         )
         corporativas_fuera = round(float(q_corp.scalar() or 0.0), 2)
@@ -450,6 +511,13 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # días en que se stockea fuerte. Se acompaña de pct_venta_costeada para no
     # leer el número como exacto si hay productos sin costo.
     costo_unit = _costo_unitario_productos(db)
+    # LA CAPA DE DESECHABLES, APARTE Y SUMADA. `cogs_teorico` NO la lleva
+    # adentro (ver `costo_desechables_productos`: la fuga por conteo ya cuenta
+    # esos vasos y el valor de inventario no debe llevarlos), pero el vaso, la
+    # tapa y la servilleta SON costo de la bebida, así que se miden acá y viajan
+    # ADITIVOS. El piso de venta —que no tiene término de fuga— usa la suma, y
+    # con eso se APAGA uno de sus cuatro sesgos.
+    desech_unit, desech_completos, desech_insumos_de = costo_desechables_productos(db)
     # Líneas de combo: el producto de la línea es el SOMBRA (Combo.producto_id),
     # sin costo propio — su costo real son los COMPONENTES elegidos
     # (TicketItemComboSeleccion), agregados más abajo.
@@ -466,19 +534,43 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     if tienda_id is not None:
         q_items = q_items.filter(Ticket.tienda_id == tienda_id)
     cogs_teorico = 0.0
+    cogs_desechables = 0.0
     venta_costeada = 0.0
+    venta_con_desechables = 0.0
     venta_items = 0.0
+    # LOS RENGLONES DE EMPAQUE QUE DE VERDAD APORTARON PLATA A ESTE RANGO.
+    # No todos los desechables del catálogo: solo los de lo que se VENDIÓ acá.
+    # Es el conjunto exacto del que habla la frase «la fuga ya se lleva esos
+    # vasos», y con él la frase se puede ir a MEDIR contra el conteo en vez de
+    # quedar como una afirmación del comentario. Un vaso de un producto que
+    # nadie vendió no está en `cogs_desechables`, así que meterlo acá haría ver
+    # la cobertura peor de lo que es — otra cifra cerca de la correcta.
+    desech_insumos_vendidos: set = set()
     for pid, cant, subtotal in q_items.all():
         venta_items += float(subtotal or 0)
         if pid in sombras_combo:
             # La venta del combo cuenta como costeada con su costo agregado
-            # (componentes × costo unitario, sumado abajo).
+            # (componentes × costo unitario, sumado abajo). Para los DESECHABLES
+            # no: la plata de la línea es del sombra y los empaques cuelgan de
+            # los componentes, así que la cobertura de esta línea no se puede
+            # afirmar. Queda del lado incómodo —«no medido»— a propósito.
             venta_costeada += float(subtotal or 0)
             continue
         c = costo_unit.get(pid)
         if c is not None:
             cogs_teorico += float(cant or 0) * c
             venta_costeada += float(subtotal or 0)
+        d = desech_unit.get(pid)
+        if d is not None:
+            # Se suma tenga o no costo de receta: el vaso es plata que salió
+            # igual. Un producto sin costear que sí tiene vaso aporta su vaso.
+            cogs_desechables += float(cant or 0) * d
+            desech_insumos_vendidos |= desech_insumos_de.get(pid, set())
+        # La COBERTURA es más exigente que la suma: solo cuenta como cubierta la
+        # venta de productos con TODOS sus desechables costeados. Con uno solo
+        # sin costo, el empaque de ese producto no está entero adentro.
+        if pid in desech_completos:
+            venta_con_desechables += float(subtotal or 0)
 
     # COGS de combos: consumo real de componentes en el rango × costo unitario
     # (la cantidad de la selección es POR combo → total = cantidad × línea).
@@ -497,6 +589,10 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
         c = costo_unit.get(pid)
         if c is not None:
             cogs_teorico += float(cant or 0) * c
+        d = desech_unit.get(pid)
+        if d is not None:
+            cogs_desechables += float(cant or 0) * d
+            desech_insumos_vendidos |= desech_insumos_de.get(pid, set())
 
     # ── Agregaciones ──────────────────────────────────────────────────────────
     tot_ventas = round(sum(float(r[1] or 0) for r in ventas_rows), 2)
@@ -670,12 +766,14 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # fuga viaja como "no medida" — que es la verdad: no se pudo medir.
     from app.services import conciliacion
     try:
-        fuga = conciliacion.fuga_medida(db, desde, hasta, tienda_id)
+        fuga = conciliacion.fuga_medida(db, desde, hasta, tienda_id,
+                                        desechables=desech_insumos_vendidos)
     except Exception:  # noqa: BLE001 — un dato aditivo jamás tumba el P&L entero
         logger.exception("No se pudo medir la fuga de inventario; el P&L sigue sin ella")
         fuga = {"valor": None, "periodos": [], "sin_costo": 0, "estimados": 0,
                 "contados": 0, "productos": 0, "cierres": 0, "meses": 0,
-                "sedes": 0, "sedes_ids": []}
+                "sedes": 0, "sedes_ids": [],
+                "desechables_contados": 0, "desechables_producto_mes": 0}
 
     # Cuántos meses CALENDARIO toca el rango pedido (el parcial también cuenta).
     # Es el denominador que deja ver que el margen y la fuga NO miden el mismo
@@ -728,6 +826,62 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             "pct_margen_bruto_real": round((tot_ventas - cogs_teorico) / tot_ventas * 100, 1) if tot_ventas > 0 else None,
             "brecha_compras": round(tot_compras - cogs_teorico, 2),
             "pct_venta_costeada": round(venta_costeada / venta_items * 100, 1) if venta_items > 0 else None,
+            # ── LOS DESECHABLES, ADITIVOS Y DECLARADOS ────────────────────────
+            # NO están adentro de `cogs_teorico` ni de `margen_bruto_real`: la
+            # fuga medida por conteo ya se lleva esos vasos (el desechable no
+            # descuenta inventario en la venta), y sumarlos a los dos lados
+            # contaría el mismo vaso dos veces. Quien necesite el costo COMPLETO
+            # de lo vendido —el piso de venta, que no tiene término de fuga— usa
+            # `cogs_con_desechables`. Ver `costo_desechables_productos`.
+            "cogs_desechables": round(cogs_desechables, 2),
+            "cogs_con_desechables": round(cogs_teorico + cogs_desechables, 2),
+            # ── EL MARGEN QUE LA PANTALLA TIENE QUE MOSTRAR ───────────────────
+            # `margen_bruto_real` NO tiene término de fuga y de todas formas
+            # dejaba el empaque afuera: con $100.000 vendidos, $2.500 de receta
+            # y $2.000 de vaso, publicaba 97,5% —el vaso en ninguna parte— y la
+            # tarjeta se dibuja SIEMPRE, también en el mes en curso, donde no
+            # hay ningún cierre y la banda de fuga (la única que justificaba la
+            # omisión) ni siquiera aparece. El argumento del doble conteo cubre
+            # `margen_bruto_real_con_fuga`; a este par nunca lo cubrió.
+            #
+            # No se le cambia el valor a `margen_bruto_real`: es la base de
+            # CONSUMO gemela de `compras`, la que se le resta a la fuga, y
+            # meterle el vaso adentro contaría el mismo vaso dos veces en
+            # `margen_bruto_real_con_fuga`. Lo que se hace es PUBLICAR el
+            # completo al lado, para que el dueño nunca lea el de receta sola
+            # creyendo que ahí está todo lo que le costó servir.
+            "margen_bruto_real_con_desechables": round(
+                tot_ventas - cogs_teorico - cogs_desechables, 2),
+            "pct_margen_bruto_real_con_desechables": (
+                round((tot_ventas - cogs_teorico - cogs_desechables) / tot_ventas * 100, 1)
+                if tot_ventas > 0 else None),
+            # Qué parte de la venta viene de productos CON desechables cargados.
+            # Es la cobertura de esa capa, hermana de `pct_venta_costeada`: con
+            # el 12% cargado, el costo del empaque sigue casi todo afuera y
+            # decirlo es lo que impide leer `cogs_con_desechables` como completo.
+            # Las líneas de combo cuentan como NO cubiertas (la plata es del
+            # producto sombra y los empaques cuelgan de sus componentes).
+            "pct_venta_con_desechables": (round(venta_con_desechables / venta_items * 100, 1)
+                                          if venta_items > 0 else None),
+            # ── ¿EL VASO DE VERDAD ESTÁ ADENTRO DE LA FUGA? SE MIDE ───────────
+            # Toda la arquitectura de esta capa se apoya en una frase: «el vaso
+            # ya está adentro de la fuga medida por conteo, sumarlo también a
+            # `cogs_teorico` sería doble conteo». Es una afirmación sobre lo que
+            # HIZO el barista, no sobre lo que hace el código, y nada la
+            # verificaba. Medido: con el renglón del vaso en `fue_contado=False`
+            # la fuga da $0, `tiene_fuga_medida` sigue en True, y esos $2.000 de
+            # empaque no están en NINGÚN término — ni en el costo ni en el
+            # residuo— mientras la banda igual dice «Residuo».
+            #
+            # `desechables_con_costo` son los renglones DISTINTOS de empaque con
+            # costo que aportaron plata a `cogs_desechables` en este rango.
+            # `desechables_en_la_fuga` / `desechables_producto_mes` son
+            # PRODUCTO-MES (renglones × cierres), la misma convención que
+            # `fuga_cobertura_contados`: así un cierre completo no tapa a uno que
+            # no contó un solo empaque.
+            "desechables_con_costo": len(desech_insumos_vendidos),
+            "desechables_en_la_fuga": fuga.get("desechables_contados", 0),
+            "desechables_producto_mes": fuga.get("desechables_producto_mes", 0),
             # Cobertura de costos fijos del período (ADITIVO — ya está DENTRO de
             # `gastos` y de `margen_neto`; se expone aparte solo para que la UI
             # sepa si puede emitir un veredicto o tiene que pedir el dato).
@@ -887,22 +1041,77 @@ def _costos_insumos(db) -> tuple[dict, dict]:
     """Costo por unidad de inventario de cada producto. Prioridad:
       1) Producto.precio_costo (costo OFICIAL fijado a mano) — si existe, MANDA.
       2) promedio ponderado de FacturaCompraItem (lo llena el escaneo / backfill).
-    Devuelve (costo por producto, último costo de factura conocido)."""
+
+    Devuelve (costo por producto, LO QUE SE SABE DE SU PRECIO DE COMPRA).
+
+    EL SEGUNDO VALOR ES UN DICT, NO UN FLOAT: `{precio, proveedor, fecha, ref}`.
+    La suba de precio ya se detectaba, pero llegaba ANÓNIMA a la pantalla —«la
+    leche subió 14%» sin decir QUIÉN la subió no sirve para sentarse a negociar,
+    que es exactamente para lo que el dueño pidió esta lista—. El proveedor sale
+    de la MISMA fila que el precio y con el MISMO desempate: si viajara por otra
+    consulta, un día diría el nombre de una factura distinta de la que fijó el
+    precio, y ese es el error de "un dato cerca del correcto" que este módulo ya
+    pagó caro.
+
+    ── `ref`: LA REFERENCIA QUE NO SE MUEVE SOLA ───────────────────────────────
+    El precio más BARATO por unidad que ese insumo tuvo en los últimos 12 meses,
+    con el proveedor y la fecha de ESA factura. Existe porque el promedio
+    ponderado (`costo`) NO sirve como punto de comparación: se acerca al precio
+    nuevo con cada compra, así que comparar contra él apaga la alerta sola.
+    MEDIDO sobre 10 compras de leche a $2,00 y una a $2,80 —el promedio arranca
+    en $2,0727 y sube—:
+
+        20 compras al precio nuevo → alerta SÍ · piso del mes  $9.993.415
+        22 compras                 → alerta NO · piso del mes  $9.995.269
+        60 compras                 → alerta NO · piso del mes $10.010.355  (y sigue)
+
+    O sea: la suba desaparecía de la pantalla con dos tercios de la plata
+    todavía sin llegar. Contra el mínimo de 12 meses ($2,00) la alerta se queda
+    prendida hasta que el precio de verdad baje.
+
+    LA VENTANA ES 12 MESES Y ESO ES UNA DECISIÓN, NO UN DEFAULT. Se eligió el
+    MÍNIMO —y no el promedio de una ventana de 90/180 días— por tres razones:
+      · un promedio de ventana también deriva: con 20 compras en tres semanas la
+        ventana se llena de precio nuevo tan rápido como el promedio de vida;
+      · el mínimo es un precio que ALGUIEN facturó de verdad, así que se puede
+        poner sobre la mesa («esto me cobraste»); un promedio no aparece en
+        ningún papel y el proveedor lo desconoce;
+      · si se equivoca, se equivoca alertando de más, que es el lado contrario
+        al que este módulo se equivocó siempre.
+    El costo: una factura barata rara ancla la referencia abajo. Por eso `ref`
+    viaja con `proveedor` y `fecha` — la afirmación queda verificable en el papel
+    en vez de ser un número que hay que creer. Y a los 12 meses envejece sola.
+
+    EL ÚLTIMO PRECIO SIEMPRE ES CANDIDATO A REFERENCIA, aunque sea más viejo que
+    la ventana: sin eso, un insumo que no se compra hace más de un año se
+    quedaría sin `ref` y habría que decidir qué hacer con un None río abajo.
+    Así `ref` nunca falta, y en ese caso da igual al último —o sea, ninguna
+    suba que reportar, que es exactamente lo que corresponde.
+    """
     # fecha_recibido puede ser NULL (columna agregada por ALTER) → caer a
     # fecha_registro, igual que get_rentabilidad, para no perder esas filas al
     # buscar el "último precio".
     fc_fecha = func.coalesce(FacturaCompra.fecha_recibido, FacturaCompra.fecha_registro)
     rows = (
         db.query(FacturaCompraItem.producto_id, FacturaCompraItem.cantidad,
-                 FacturaCompraItem.precio_unitario, fc_fecha, FacturaCompraItem.id)
+                 FacturaCompraItem.precio_unitario, fc_fecha, FacturaCompraItem.id,
+                 FacturaCompra.proveedor)
         .join(FacturaCompra, FacturaCompra.id == FacturaCompraItem.factura_id)
         .filter(FacturaCompraItem.precio_unitario.isnot(None),
                 FacturaCompraItem.precio_unitario > 0,
                 FacturaCompraItem.cantidad > 0)
         .all()
     )
-    acum: dict[int, dict] = defaultdict(lambda: {"plata": 0.0, "cant": 0.0, "ultimo": None, "ultima_clave": None})
-    for pid, cant, precio, fecha, item_id in rows:
+    # Corte de la ventana de la referencia. Una factura SIN fecha entra igual:
+    # dejarla afuera SUBIRÍA la referencia (se pierde un precio barato) y eso
+    # apaga alertas, que es el lado tranquilizador del error.
+    dias_ref = int(_MESES_REFERENCIA_PRECIO * 30.44)   # mes promedio del calendario
+    corte_ref, _ = rango_col_utc(hoy_col() - timedelta(days=dias_ref), hoy_col())
+
+    acum: dict[int, dict] = defaultdict(lambda: {"plata": 0.0, "cant": 0.0, "ultimo": None,
+                                                 "ultima_clave": None, "ref": None,
+                                                 "ref_clave": None})
+    for pid, cant, precio, fecha, item_id, proveedor in rows:
         a = acum[pid]
         a["plata"] += float(cant) * float(precio)
         a["cant"] += float(cant)
@@ -910,14 +1119,337 @@ def _costos_insumos(db) -> tuple[dict, dict]:
         # (dos facturas del mismo día no dependen del orden arbitrario del SELECT).
         clave = (fecha or datetime.min, item_id or 0)
         if a["ultima_clave"] is None or clave > a["ultima_clave"]:
-            a["ultima_clave"], a["ultimo"] = clave, float(precio)
+            a["ultima_clave"] = clave
+            a["ultimo"] = {"precio": float(precio), "proveedor": proveedor,
+                           "fecha": fecha}
+        # Referencia = el MÁS BARATO adentro de la ventana. Empate de precio lo
+        # gana el MÁS RECIENTE (misma `clave` que arriba): «esto me cobraste la
+        # semana pasada» pesa más en una negociación que la misma cifra de hace
+        # once meses, y el desempate tiene que ser DETERMINISTA — con un `<` a
+        # secas el nombre del proveedor dependería del orden del SELECT.
+        if fecha is None or fecha >= corte_ref:
+            mejor = a["ref"]
+            if (mejor is None or float(precio) < mejor["precio"]
+                    or (float(precio) == mejor["precio"] and clave > a["ref_clave"])):
+                a["ref_clave"] = clave
+                a["ref"] = {"precio": float(precio), "proveedor": proveedor,
+                            "fecha": fecha}
     costo = {pid: a["plata"] / a["cant"] for pid, a in acum.items() if a["cant"] > 0}
-    ultimo = {pid: a["ultimo"] for pid, a in acum.items() if a["ultimo"] is not None}
+    ultimo = {}
+    for pid, a in acum.items():
+        if a["ultimo"] is None:
+            continue
+        # Sin ninguna compra adentro de la ventana, la referencia es el último
+        # precio: no hay contra qué compararlo, y decirlo así es más honesto que
+        # inventar un piso viejo que ya nadie factura.
+        ultimo[pid] = {**a["ultimo"], "ref": a["ref"] or a["ultimo"],
+                       "ref_meses": _MESES_REFERENCIA_PRECIO}
     # El costo oficial a mano pisa el promedio de facturas (lecturas con ruido).
     for pid, pc in db.query(Producto.id, Producto.precio_costo).filter(
             Producto.precio_costo.isnot(None), Producto.precio_costo > 0).all():
         costo[pid] = float(pc)
     return costo, ultimo
+
+
+def _ventas_30d(db) -> dict[int, dict]:
+    """Unidades y plata vendidas por producto en los últimos 30 días (Colombia).
+
+    Vive aparte porque la usan DOS lecturas —el ranking de margen por producto y
+    las alertas de costo— y son el mismo número: dos consultas con ventanas que
+    se despeguen un día harían que la misma alerta dijera dos cifras distintas
+    según qué pantalla la muestre.
+    """
+    d_utc, h_utc = rango_col_utc(hoy_col() - timedelta(days=29), hoy_col())
+    rows = (
+        db.query(TicketItem.producto_id,
+                 func.coalesce(func.sum(TicketItem.cantidad), 0),
+                 func.coalesce(func.sum(TicketItem.subtotal), 0.0))
+        .join(Ticket, Ticket.id == TicketItem.ticket_id)
+        .filter(Ticket.estado.notin_(ESTADOS_ANULADOS),
+                Ticket.fecha >= d_utc, Ticket.fecha <= h_utc)
+        .group_by(TicketItem.producto_id)
+        .all()
+    )
+    return {pid: {"unidades": int(u or 0), "plata": float(pl or 0)}
+            for pid, u, pl in rows}
+
+
+def alertas_de_costo(db, *, costo_prom=None, costo_ult=None, recetas=None,
+                     por_id=None, ventas_30d=None) -> list[dict]:
+    """LO QUE SUBIÓ, CON NOMBRE Y APELLIDO.
+
+    Un insumo cuyo ÚLTIMO precio de factura supera en >10% a la REFERENCIA —el
+    más barato que se le facturó en los últimos 12 meses (`_costos_insumos`,
+    clave `ref`)—. Es la señal temprana de «esto está subiendo», y se dimensiona
+    por la venta que toca.
+
+    ── LA REFERENCIA NO ES `costo_usado`, Y ESE FUE EL BUG ─────────────────────
+    Durante una versión el umbral se medía contra el costo con el que HOY se
+    calculan los márgenes (el promedio ponderado de toda la vida). Ese número se
+    acerca al precio nuevo con cada compra, así que la alerta se apagaba sola
+    mientras el piso todavía subía: con 20 compras al precio nuevo la alerta
+    seguía viva, con 22 ya no, y el piso del mes seguía trepando de $9.995.269
+    hacia $10.023.098. Se comparaba contra una regla que se movía.
+
+    LOS DOS COSTOS SIGUEN VIAJANDO PORQUE SON DOS PREGUNTAS DISTINTAS:
+      · `costo_ref`   → ¿cuánto subió el PROVEEDOR? Es el número que se le dice
+                        en la cara y que él puede verificar contra su factura.
+      · `costo_usado` → ¿cuánto de esa suba ya está adentro del margen de hoy?
+                        Es el que traduce la suba a pesos de piso.
+    Un solo número para las dos preguntas es la promesa de 10× que este módulo
+    ya publicó una vez (ver `costos.get_palancas`).
+
+    NINGUNO DE LOS TRES SE REDONDEA ACÁ. `round(costo, 2)` sobre un insumo de
+    $0,004545/gr da 0,00, y río abajo eso fue un ZeroDivisionError —un 500 que
+    se llevaba puesto el bloque entero de la pantalla— además de meter medio
+    punto de error en el cociente. El redondeo es cosa de quien IMPRIME.
+
+    ── POR QUÉ VIAJA EL PROVEEDOR ───────────────────────────────────────────
+    «La leche subió 14%» no es accionable; «Lácteos Andina subió la leche 14%»
+    sí, porque el dueño levanta el teléfono. El nombre sale de la MISMA factura
+    que fijó `costo_ultimo` (ver `_costos_insumos`), no de la última factura del
+    proveedor ni de la más grande: cualquiera de esas dos sería un nombre CERCA
+    del correcto, que en este repo es la familia de error más cara.
+
+    ── ESTÁ AFUERA DE `get_rentabilidad_productos` A PROPÓSITO ──────────────
+    La lista la miran dos pantallas (margen por producto y el piso de venta) y
+    la segunda le agrega el impacto en pesos de piso por día. Con dos copias de
+    la regla del 10%, un día una pantalla alerta y la otra no. Los parámetros
+    con default `None` son para no repetir consultas cuando el llamador ya tiene
+    los mapas en la mano; el resultado es idéntico si no los pasa.
+    """
+    if costo_prom is None or costo_ult is None:
+        costo_prom, costo_ult = _costos_insumos(db)
+    if por_id is None:
+        por_id = {p.id: p for p in db.query(Producto).all()}
+    if recetas is None:
+        recetas = defaultdict(list)
+        for pi in db.query(ProductoInsumo).all():
+            recetas[pi.producto_id].append(pi)
+    if ventas_30d is None:
+        ventas_30d = _ventas_30d(db)
+
+    usa_insumo: dict[int, set] = defaultdict(set)
+    for prod_id, ings in recetas.items():
+        for pi in ings:
+            usa_insumo[pi.insumo_id].add(prod_id)
+
+    alertas = []
+    for iid, ult in costo_ult.items():
+        ultimo = ult["precio"]
+        ref = ult["ref"]["precio"]
+        usado = costo_prom.get(iid)
+        # `usado > 0` es requisito de lo que viene DESPUÉS (traducir la suba a
+        # pesos de piso divide por él). Se filtra acá, en el origen, para que
+        # ningún consumidor tenga que acordarse de chequearlo.
+        if not usado or usado <= 0 or not ref or ref <= 0 or ultimo <= ref * 1.10:
+            continue
+        afectados = set(usa_insumo.get(iid, set()))
+        ins = por_id.get(iid)
+        if ins is not None and float(ins.precio_venta or 0) > 0:
+            afectados.add(iid)  # el insumo también se vende directo (reventa)
+        if not afectados:
+            continue
+        venta_afectada = sum(ventas_30d.get(pid, {}).get("plata", 0.0) for pid in afectados)
+        alertas.append({
+            "insumo_id": iid,
+            "nombre": ins.nombre if ins else f"insumo {iid}",
+            "unidad_medida": ins.unidad_medida if ins else None,
+            # EL NOMBRE TAL COMO VINO EN LA FACTURA, sin normalizar: el dueño
+            # reconoce el que ve en el papel, no la clave con la que se agrupa.
+            "proveedor": ult["proveedor"],
+            "fecha_ultimo": ult["fecha"],
+            # SIN REDONDEAR, los tres: acá se PUBLICAN, no se imprimen.
+            "costo_usado": usado,
+            "costo_ultimo": ultimo,
+            "costo_ref": ref,
+            # De qué factura salió la referencia. Sin esto el «+40%» es un número
+            # que hay que creer; con esto es una afirmación que el dueño puede
+            # verificar en el papel antes de discutirla con el proveedor.
+            "ref_proveedor": ult["ref"]["proveedor"],
+            "ref_fecha": ult["ref"]["fecha"],
+            "ref_meses": ult["ref_meses"],
+            # ¿Es el MISMO proveedor el que cobraba la referencia y el que cobra
+            # ahora? Decide de quién puede ser SUJETO la frase de la pantalla: si
+            # el barato lo facturó otro, «Andina subió la leche 40%» le atribuye
+            # a Andina un precio que Andina nunca cobró. Misma normalización que
+            # el ranking de proveedores, para que dos grafías del mismo teléfono
+            # no se lean como dos empresas.
+            #
+            # Sin nombre de un lado NO hay coincidencia: dos facturas sin
+            # proveedor cargado normalizan las dos a "" y compararlas a secas
+            # devolvería «es el mismo», que es afirmar algo que nadie sabe.
+            "mismo_proveedor": bool(
+                alias_svc.normalizar_alias(ult["proveedor"])
+                and (alias_svc.normalizar_alias(ult["ref"]["proveedor"])
+                     == alias_svc.normalizar_alias(ult["proveedor"]))),
+            # LO QUE MOVIÓ EL PROVEEDOR, contra la referencia. Es el número que
+            # se lleva a la reunión, así que tiene que ser el que él reconoce en
+            # su propia factura: medido contra el promedio ponderado daba 35%
+            # donde el papel decía 40%, y el proveedor lo desmiente en dos
+            # segundos.
+            "pct_suba": round((ultimo / ref - 1) * 100, 1),
+            # CUÁNTO DE ESA SUBA YA ESTÁ ADENTRO DEL COSTO CON EL QUE SE COSTEA.
+            # Es lo que explica por qué recuperar el precio viejo devuelve mucho
+            # menos de lo que la suba promete: con el 9% absorbido, el resto de
+            # la suba TODAVÍA NO LLEGÓ al piso, y lo que se puede recuperar hoy
+            # es solo ese 9%.
+            #
+            # `None` cuando `usado` no cae ENTRE la referencia y el último —pasa
+            # con un `precio_costo` fijado a mano, que no tiene por qué estar en
+            # el medio—: ahí no es la fracción de nada, y recortarlo a 0% o 100%
+            # sonaría a medición.
+            "pct_absorbido": (round((usado - ref) / (ultimo - ref) * 100, 1)
+                              if ref <= usado <= ultimo else None),
+            "productos_afectados": sorted(
+                (por_id[pid].nombre for pid in afectados if pid in por_id))[:6],
+            "venta_30d_afectada": round(venta_afectada, 2),
+        })
+    alertas.sort(key=lambda a: -a["venta_30d_afectada"])
+    return alertas
+
+
+def costo_desechables_productos(db, costo_prom=None) -> tuple[dict[int, float], set, dict[int, set]]:
+    """Costo de los DESECHABLES por unidad vendida de cada producto, de cuáles
+    ese costo está COMPLETO, y QUÉ INSUMOS lo forman.
+
+    Son tres cosas distintas y por eso viajan las tres. Un latte con vaso costeado
+    y servilleta sin costear suma los $200 del vaso —esa plata salió igual— pero
+    NO entra al conjunto de los completos: contarlo como cubierto diría que el
+    empaque de ese producto ya está adentro del costo, que es la versión
+    tranquilizadora de la verdad. Y el tercer valor —los ids de los insumos que
+    forman esa plata— es lo que deja ir a PREGUNTARLE al conteo físico si de
+    verdad miró esos renglones, en vez de darlo por hecho.
+
+    El vaso, la tapa, la servilleta y el azúcar de cada bebida para llevar. Es
+    una CAPA APARTE del costo y no una entrada más de `_costo_unitario_productos`
+    a propósito, aunque el costo completo del producto sea la suma de los dos:
+
+      1. `_costo_unitario_productos` también lo consume `conciliacion.costo_unitario`
+         para VALORIZAR movimientos de inventario. Un desechable no descuenta
+         inventario en la venta (models.py::ProductoDesechable), así que meterlo
+         ahí adentro le sumaría al valor de cada salida de bodega un empaque que
+         esa salida no movió.
+      2. El vaso que se consume sin descontarse aparece HOY dentro de la fuga
+         medida por conteo físico. Sumarlo también a `cogs_teorico` haría que
+         `margen_bruto_real_con_fuga` (ventas − cogs + fuga) contara el mismo
+         vaso dos veces.
+
+    Por eso la capa viaja SUMADA pero DECLARADA: `cogs_desechables` es aditivo al
+    lado de `cogs_teorico`, y el piso de venta —que no tiene término de fuga— usa
+    la suma de los dos. Ver `costos._razones_de_la_venta`.
+    """
+    if costo_prom is None:
+        costo_prom, _ = _costos_insumos(db)
+    out: dict[int, float] = defaultdict(float)
+    incompletos: set = set()
+    # QUÉ RENGLONES CONCRETOS FORMAN ESA PLATA, no solo cuánta es.
+    # El punto 2 de arriba —«el vaso ya está adentro de la fuga por conteo»— es
+    # una afirmación sobre el MUNDO, no sobre el código: se cumple solo si el
+    # barista contó ese renglón en el cierre. Sin los ids no hay con qué ir a
+    # preguntarle al conteo, y la única salida era creerle al comentario. Van
+    # SOLO los que tienen costo: un desechable sin costo aporta $0 a
+    # `cogs_desechables`, así que no es de lo que habla esa afirmación.
+    insumos_de: dict[int, set] = defaultdict(set)
+    for pd in db.query(ProductoDesechable).all():
+        c = costo_prom.get(pd.insumo_id)
+        if c is None:
+            incompletos.add(pd.producto_id)
+        else:
+            out[pd.producto_id] += float(pd.cantidad) * float(c)
+            insumos_de[pd.producto_id].add(pd.insumo_id)
+    return (dict(out), {pid for pid in out if pid not in incompletos},
+            dict(insumos_de))
+
+
+def cogs_por_insumo(db, desde: date, hasta: date, tienda_id: int | None = None) -> dict[int, float]:
+    """DE QUIÉN SON LOS PESOS DEL COSTO DE LO VENDIDO, insumo por insumo.
+
+    Es una PARTICIÓN de `cogs_con_desechables` en la misma ventana, no una
+    segunda cuenta: recorre las mismas ventas con las mismas reglas de costeo
+    que `get_rentabilidad` y reparte cada peso al insumo que lo causó. Sirve para
+    una sola pregunta, la que el dueño hace en la reunión: «si la leche vuelve al
+    precio viejo, ¿cuánto me baja el piso?».
+
+    LAS TRES REGLAS SON LAS DE `_costo_unitario_productos`, deliberadamente:
+
+      · Producto con COSTO OFICIAL a mano: su costo NO se reparte entre insumos.
+        Mientras ese número esté fijado, el precio de la leche no mueve su COGS
+        ni un peso — y decir lo contrario prometería un ahorro que no va a
+        aparecer. Sus desechables SÍ se reparten: se suman aparte del oficial.
+      · Producto con RECETA: cantidad × costo del insumo, para los que tienen costo.
+      · REVENTA (sin receta, no a granel): el peso es del producto mismo.
+
+    Lo que no se puede costear no aparece, y por eso el llamador tiene que
+    distinguir «no lo usa nadie» de «no se pudo medir» en vez de leer un 0.
+    """
+    costo_prom, _ = _costos_insumos(db)
+    desech_unit, _, _ = costo_desechables_productos(db, costo_prom)
+    recetas: dict[int, list] = defaultdict(list)
+    for pi in db.query(ProductoInsumo).all():
+        recetas[pi.producto_id].append(pi)
+    desech_de: dict[int, list] = defaultdict(list)
+    for pd in db.query(ProductoDesechable).all():
+        desech_de[pd.producto_id].append(pd)
+
+    oficiales, granel, existe = set(), set(), set()
+    for pid, precio_costo, um in db.query(Producto.id, Producto.precio_costo,
+                                          Producto.unidad_medida).all():
+        existe.add(pid)
+        if precio_costo is not None and float(precio_costo) > 0:
+            oficiales.add(pid)
+        if (um or "").lower() in ("gr", "g", "gramos", "ml"):
+            granel.add(pid)
+
+    sombras_combo = {pid for (pid,) in db.query(Combo.producto_id).all()}
+    d_utc, h_utc = rango_col_utc(desde, hasta)
+    q_items = (
+        db.query(TicketItem.producto_id, func.coalesce(func.sum(TicketItem.cantidad), 0))
+        .join(Ticket, Ticket.id == TicketItem.ticket_id)
+        .filter(Ticket.estado.notin_(ESTADOS_ANULADOS),
+                Ticket.fecha >= d_utc, Ticket.fecha <= h_utc)
+        .group_by(TicketItem.producto_id)
+    )
+    q_sel = (
+        db.query(TicketItemComboSeleccion.producto_id,
+                 func.coalesce(func.sum(TicketItemComboSeleccion.cantidad * TicketItem.cantidad), 0))
+        .join(TicketItem, TicketItem.id == TicketItemComboSeleccion.ticket_item_id)
+        .join(Ticket, Ticket.id == TicketItem.ticket_id)
+        .filter(Ticket.estado.notin_(ESTADOS_ANULADOS),
+                Ticket.fecha >= d_utc, Ticket.fecha <= h_utc)
+        .group_by(TicketItemComboSeleccion.producto_id)
+    )
+    if tienda_id is not None:
+        q_items = q_items.filter(Ticket.tienda_id == tienda_id)
+        q_sel = q_sel.filter(Ticket.tienda_id == tienda_id)
+
+    vendidos: dict[int, float] = defaultdict(float)
+    for pid, cant in q_items.all():
+        if pid in sombras_combo:
+            continue          # el costo del combo son sus componentes, abajo
+        vendidos[pid] += float(cant or 0)
+    for pid, cant in q_sel.all():
+        vendidos[pid] += float(cant or 0)
+
+    out: dict[int, float] = defaultdict(float)
+    for pid, unidades in vendidos.items():
+        if unidades <= 0 or pid not in existe:
+            continue
+        if pid not in oficiales:
+            ings = recetas.get(pid)
+            if ings:
+                for pi in ings:
+                    c = costo_prom.get(pi.insumo_id)
+                    if c is not None:
+                        out[pi.insumo_id] += unidades * float(pi.cantidad) * float(c)
+            elif pid not in granel and pid in costo_prom:
+                out[pid] += unidades * float(costo_prom[pid])
+        if desech_unit.get(pid):
+            for pd in desech_de.get(pid, []):
+                c = costo_prom.get(pd.insumo_id)
+                if c is not None:
+                    out[pd.insumo_id] += unidades * float(pd.cantidad) * float(c)
+    return {pid: round(v, 2) for pid, v in out.items()}
 
 
 def get_rentabilidad_productos(db) -> dict:
@@ -939,24 +1471,15 @@ def get_rentabilidad_productos(db) -> dict:
 
     # Desechables (capa de costo aparte, NO descuenta inventario). Se suman al
     # costo de receta para dar el "costo completo" del producto para llevar.
+    # SYNC: la MISMA suma (Σ cantidad × costo del insumo) vive en
+    # `costo_desechables_productos`, que es la que consume el P&L. Acá se hace a
+    # mano porque esta pantalla además necesita QUÉ desechable quedó sin costo.
     desechables: dict[int, list] = defaultdict(list)
     for pd in db.query(ProductoDesechable).all():
         desechables[pd.producto_id].append(pd)
 
     # Ventas últimos 30 días (Colombia) para ordenar por relevancia real.
-    d_utc, h_utc = rango_col_utc(hoy_col() - timedelta(days=29), hoy_col())
-    ventas_rows = (
-        db.query(TicketItem.producto_id,
-                 func.coalesce(func.sum(TicketItem.cantidad), 0),
-                 func.coalesce(func.sum(TicketItem.subtotal), 0.0))
-        .join(Ticket, Ticket.id == TicketItem.ticket_id)
-        .filter(Ticket.estado.notin_(ESTADOS_ANULADOS),
-                Ticket.fecha >= d_utc, Ticket.fecha <= h_utc)
-        .group_by(TicketItem.producto_id)
-        .all()
-    )
-    ventas_30d = {pid: {"unidades": int(u or 0), "plata": float(pl or 0)}
-                  for pid, u, pl in ventas_rows}
+    ventas_30d = _ventas_30d(db)
 
     out = []
     for p in productos:
@@ -1059,38 +1582,11 @@ def get_rentabilidad_productos(db) -> dict:
 
     out.sort(key=lambda x: -x["venta_30d"])
 
-    # ── Alertas de costo: el ÚLTIMO precio de factura de un insumo supera en
-    # >10% al costo con el que hoy se calculan los márgenes (promedio u oficial).
-    # Es la señal temprana de "este insumo está subiendo" — palanca central de
-    # la estrategia de ganar por costo. Se dimensiona por la venta afectada.
-    usa_insumo: dict[int, set] = defaultdict(set)
-    for prod_id, ings in recetas.items():
-        for pi in ings:
-            usa_insumo[pi.insumo_id].add(prod_id)
-    alertas_costo = []
-    for iid, ultimo in costo_ult.items():
-        usado = costo_prom.get(iid)
-        if not usado or usado <= 0 or ultimo <= usado * 1.10:
-            continue
-        afectados = set(usa_insumo.get(iid, set()))
-        ins = por_id.get(iid)
-        if ins is not None and float(ins.precio_venta or 0) > 0:
-            afectados.add(iid)  # el insumo también se vende directo (reventa)
-        if not afectados:
-            continue
-        venta_afectada = sum(ventas_30d.get(pid, {}).get("plata", 0.0) for pid in afectados)
-        alertas_costo.append({
-            "insumo_id": iid,
-            "nombre": ins.nombre if ins else f"insumo {iid}",
-            "unidad_medida": ins.unidad_medida if ins else None,
-            "costo_usado": round(usado, 2),
-            "costo_ultimo": round(ultimo, 2),
-            "pct_suba": round((ultimo / usado - 1) * 100, 1),
-            "productos_afectados": sorted(
-                (por_id[pid].nombre for pid in afectados if pid in por_id))[:6],
-            "venta_30d_afectada": round(venta_afectada, 2),
-        })
-    alertas_costo.sort(key=lambda a: -a["venta_30d_afectada"])
+    # ── Alertas de costo: LA MISMA función que mira el piso de venta, con los
+    # mapas ya calculados acá arriba para no repetir las consultas.
+    alertas_costo = alertas_de_costo(db, costo_prom=costo_prom, costo_ult=costo_ult,
+                                     recetas=recetas, por_id=por_id,
+                                     ventas_30d=ventas_30d)
 
     from app.services.factura_ocr import facturas_pendientes_de_costos
     from app.services.producto_alias import contar_aliases

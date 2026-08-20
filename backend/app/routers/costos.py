@@ -9,10 +9,10 @@ from app.core.deps import get_barista_actor, require_admin
 from app.core.tz import hoy_col
 from app.database import get_db
 from app.models.models import Usuario
-from app.schemas.costos import (AdopcionEgresoRequest, CategoriaCreate,
+from app.schemas.costos import (ComisionDatafonoRequest,AdopcionEgresoRequest, CategoriaCreate,
                                 CategoriaUpdate, NominaAgendarRequest,
                                 ObligacionCreate, ObligacionUpdate, PagoCreate,
-                                SaldoBancoRequest)
+                                ReservaMinimaRequest, SaldoBancoRequest)
 from app.services import costos as svc
 
 router = APIRouter(prefix="/costos", tags=["costos"])
@@ -103,7 +103,7 @@ def agenda(
 
 @router.get("/flujo")
 def flujo_proyectado(
-    dias: int = Query(svc.HORIZONTE_DEFAULT, ge=1, le=svc.HORIZONTE_MAX),
+    dias: Optional[int] = Query(None, ge=1, le=svc.HORIZONTE_MAX),
     tienda_id: Optional[int] = Query(None, ge=1),
     db: Session = Depends(get_db),
     admin: Usuario = Depends(require_admin),
@@ -114,12 +114,107 @@ def flujo_proyectado(
     declarado, más la venta esperada (MEDIANA por día de semana) y menos lo que
     hay que pagar. `punto_de_quiebre` es el primer día en negativo, o null.
 
+    SIN `dias` el horizonte llega hasta FIN DE MES y no a 30 días fijos: el
+    colchón que sale de esta serie tiene que mirar la misma ventana que el piso
+    de venta (`/costos/piso`), o son dos respuestas a preguntas distintas puestas
+    una al lado de la otra. `dias_hasta_fin_de_mes` y `horizonte_es_fin_de_mes`
+    viajan en la respuesta para que la pantalla pueda decir cuál está mirando.
+
     Con `tienda_id` la proyección es SOLO de esa sede: el saldo del banco (que es
     de la empresa) no suma y las obligaciones corporativas quedan fuera, declaradas
     en `advertencias`. `advertencias` también dice cuándo faltan datos para que la
     respuesta signifique algo — un null en `punto_de_quiebre` no es un all-clear si
     nadie cargó las salidas."""
     return svc.get_flujo_proyectado(db, dias=dias, tienda_id=tienda_id)
+
+
+@router.get("/piso")
+def piso_de_venta(
+    anio: int = Query(..., ge=2000, le=2100),
+    mes: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """CUÁNTO HAY QUE VENDER ESTE MES PARA NO PERDER, y cuánto por día.
+
+        piso del mes = costos fijos del mes completo / margen de contribución
+        falta        = piso del mes − lo vendido en el mes a la fecha
+        piso de hoy  = falta / los días que QUEDAN por abrir
+
+    Los costos fijos se piden por el MES ENTERO y no "del 1 a hoy": el arriendo y
+    la nómina se devengan a fin de mes, y con la ventana recortada el piso salía
+    ridículamente bajo a principios de mes, que es cuando más se mira.
+
+    El margen se MIDE sobre la venta real del mes —impuesto, costo de mercadería
+    y comisión del datáfono como cocientes— y no se supone de las tarifas.
+
+    CONTESTA 200 SIEMPRE. Las cuatro puertas de honestidad viajan en `puerta`, no
+    como errores: sin costos fijos cargados no hay piso de resultado pero sí
+    puede haber piso de caja, sin venta en el mes se usan las razones del mes
+    anterior rotuladas, y un margen que no da positivo es un veredicto («cada
+    venta pierde plata») y no un dato que falta. En todos los demás casos el
+    número se publica rotulado «al menos», con `sesgos` diciendo cuáles de los
+    cuatro están vivos — los cuatro empujan el piso hacia ABAJO.
+
+    Los rangos de `anio`/`mes` van en Query y no en el servicio porque son
+    límites de FORMA: un mes 13 no es una decisión de negocio mal tomada, es un
+    parámetro que no existe, y ahí el 422 de FastAPI dice exactamente eso."""
+    return svc.get_piso(db, anio, mes)
+
+
+@router.post("/comision-datafono")
+def declarar_comision_datafono(
+    data: ComisionDatafonoRequest,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Lo que cobra el datáfono de cada venta con tarjeta.
+
+    Sin este dato el piso de venta sale CORTO: la comisión se paga de cada venta
+    y hoy no la descuenta nadie. Es uno de los cuatro sesgos que el propio piso
+    declara, y el único que se apaga escribiendo un número.
+
+    Se recibe en PORCENTAJE (2.5 = 2,5%) porque es como viene en el contrato del
+    adquirente, y se guarda como fracción. El tope de 20% no es burocracia: una
+    comisión más alta que eso es casi siempre un porcentaje tecleado como
+    fracción o al revés, y guardarlo silenciosamente desfigura el piso.
+    """
+    p = data.porcentaje
+    if not isinstance(p, (int, float)) or not math.isfinite(p):
+        raise HTTPException(400, "La comisión tiene que ser un número.")
+    if p < 0:
+        raise HTTPException(400, "La comisión no puede ser negativa.")
+    if p > 20:
+        raise HTTPException(
+            400, "Esa comisión es demasiado alta: se escribe en porcentaje "
+                 "(por ejemplo 2.5 para 2,5%).")
+    return svc.guardar_comision_datafono(db, p / 100.0, admin.id)
+
+
+@router.post("/reserva-minima")
+def declarar_reserva_minima(
+    data: ReservaMinimaRequest,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """La plata con la que el negocio no puede quedarse sin.
+
+    Es lo que convierte «cuánto puedo gastar» en una decisión de negocio en vez
+    de «cuánto puedo gastar hasta quedar en cero». El colchón del flujo se mide
+    contra este número; el default es 0 y la respuesta del flujo lo dice
+    (`reserva_es_default`), para que un cero sin decidir no pase por una decisión.
+
+    La validación va acá y NO en el schema, mismo patrón que `/saldo-banco`: con
+    Field(ge=..) el valor rechazado vuelve dentro del cuerpo del 422, un `inf` no
+    es serializable a JSON y la respuesta de error revienta. Además el `detail`
+    de un 422 es una LISTA y el cliente solo sabe leer strings."""
+    if not math.isfinite(data.reserva):
+        raise HTTPException(400, "La reserva debe ser un número válido")
+    if data.reserva < 0:
+        raise HTTPException(400, "La reserva no puede ser negativa")
+    if data.reserva > svc.SALDO_BANCO_MAX:
+        raise HTTPException(400, "La reserva es demasiado grande")
+    return svc.guardar_reserva_minima_caja(db, data.reserva, admin.id)
 
 
 @router.post("/saldo-banco")

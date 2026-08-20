@@ -175,6 +175,149 @@ def _nomina_del_periodo(db, desde: date, hasta: date, tienda_id: int | None,
     }
 
 
+def _obligaciones_del_periodo(db, desde: date, hasta: date,
+                              tienda_id: int | None) -> list:
+    """Las obligaciones devengadas que entran al gasto del período.
+
+    Vivía INLINE adentro de `get_rentabilidad` y se saca acá porque ahora tiene
+    DOS consumidores: el P&L y el numerador del piso de venta. Una segunda copia
+    de esta query se desincronizaría en el primer filtro que cambie, que es
+    exactamente el error que este repo ya pagó con la fórmula del consignable
+    escrita dos veces.
+
+    Va en QUERY SEPARADA de los egresos de caja a propósito: aquella hace
+    `join(CajaTurno)` y filtra sede por `CajaTurno.tienda_id`, y una obligación
+    corporativa (arriendo, nómina) tiene tienda_id NULL y ningún turno — ese join
+    la BORRARÍA. Además `fecha_devengo` es Date, o sea fecha de NEGOCIO ya
+    resuelta: se compara contra desde/hasta y NUNCA contra los instantes UTC.
+
+    Y se EXCLUYE la categoría 'proveedores': esa mercadería ya está contada en
+    `compras`, por FacturaCompra según fecha de recibido. Sumarla también acá
+    contaría la misma plata dos veces y hundiría el margen neto con un gasto que
+    no existe. El servicio ya no deja cargar nada ahí; este filtro es por las
+    filas que la versión anterior alcanzó a guardar.
+
+    ORDEN DE LAS COLUMNAS: `clave` va al final (índice 5) a propósito, porque el
+    chequeo de costos fijos indexa por posición (r[4] == grupo) y agregarla en el
+    medio lo rompería sin que ningún test de tipos se entere.
+    """
+    q_oblig = (
+        db.query(Obligacion.fecha_devengo, Obligacion.monto,
+                 Obligacion.tienda_id, CostoCategoria.nombre, CostoCategoria.grupo,
+                 CostoCategoria.clave)
+        .join(CostoCategoria, CostoCategoria.id == Obligacion.categoria_id)
+        .filter(
+            Obligacion.anulada.is_(False),
+            Obligacion.fecha_devengo >= desde,
+            Obligacion.fecha_devengo <= hasta,
+            CostoCategoria.clave != CLAVE_CATEGORIA_PROVEEDORES,
+        )
+    )
+    if tienda_id is not None:
+        # Con sede filtrada las corporativas NO se cuelan ni se prorratean: repartirlas
+        # las duplicaría y Σ por_sede dejaría de dar el global.
+        q_oblig = q_oblig.filter(Obligacion.tienda_id == tienda_id)
+    return q_oblig.all()
+
+
+def _cuenta_costos_fijos(oblig_rows: list, nomina: dict) -> tuple[float, int, bool]:
+    """(plata devengada en costos FIJOS, cuántos son, si hay alguno).
+
+    LA MISMA CUENTA PARA EL P&L Y PARA EL PISO, en un solo lugar. El piso de
+    venta divide este número por el margen de contribución, así que si el P&L y
+    el piso lo calcularan por separado el dueño vería dos costos fijos distintos
+    en la misma pantalla y ninguno de los dos sabría cuál es el bueno.
+
+    La nómina CALCULADA es un costo fijo del período y cuenta como tal: sin esto,
+    un negocio que dejó de cargarla a mano —justamente el objetivo de la
+    integración— aparecía como "no tiene costos fijos cargados" y el semáforo se
+    apagaba solo el día que el dato empezó a ser mejor que antes.
+
+    Se cuentan los pares CON PLATA, no las claves: `nomina["pares"]` tiene una
+    entrada por cada (mes, sede) donde alguien marcó horas, valga lo que valga.
+    Contando claves, un negocio sin un solo peso de costo fijo cargado veía "1
+    obligación fija devengada — el margen neto ya las descuenta", y el aviso "no
+    hay arriendo, nómina ni servicios devengados" se volvía inalcanzable: la
+    advertencia moría justo en el caso que la necesita.
+    """
+    fijos_rows = [r for r in oblig_rows if (r[4] or "") == "fijo"]
+    devengados = round(sum(float(r[1] or 0) for r in fijos_rows) + nomina["total"], 2)
+    n = len(fijos_rows) + sum(1 for v in nomina["pares"].values() if v)
+    tiene = bool(fijos_rows) or nomina["total"] > 0
+    return devengados, n, tiene
+
+
+def costos_fijos_del_mes(db, anio: int, mes: int,
+                         tienda_id: int | None = None) -> dict:
+    """LO QUE HAY QUE PAGAR EN EL MES COMPLETO, venda el negocio lo que venda.
+
+    Es el NUMERADOR del piso de venta, y por eso la ventana es el mes ENTERO —del
+    1 al último día— y no "del 1 a hoy".
+
+    ═══════════════════════════════════════════════════════════════════════════
+    LA VENTANA ES LA MITAD DEL ASUNTO
+    ═══════════════════════════════════════════════════════════════════════════
+    `_obligaciones_del_periodo` filtra `fecha_devengo BETWEEN desde AND hasta`, y
+    la pantalla de La plata pide el P&L con `hasta = hoy` (`mesActualBogota` en
+    Plata.tsx). El arriendo y la nómina se devengan a fin de mes: el 3 de
+    septiembre esa ventana no los contiene y `costos_fijos_devengados` vuelve casi
+    en cero. Un piso calculado con ese numerador sale ridículamente bajo justo a
+    principios de mes, que es cuando más se mira y cuando todavía se puede hacer
+    algo. El error va para el lado tranquilizador, como toda esta familia.
+
+    Devuelve además POR QUÉ vale lo que vale: sin el desglose, la pantalla recibe
+    un número que no puede explicar ni auditar.
+
+    `tiene_costos_fijos` y `n_costos_fijos` son la PRIMERA puerta de honestidad
+    del piso: con el catálogo vacío no hay piso de resultado que calcular, y hay
+    que decir el hueco con nombre en vez de dibujar un $0 tranquilizador.
+    """
+    desde = date(int(anio), int(mes), 1)
+    hasta = date(int(anio), int(mes), calendar.monthrange(int(anio), int(mes))[1])
+    oblig_rows = _obligaciones_del_periodo(db, desde, hasta, tienda_id)
+    nomina = _nomina_del_periodo(db, desde, hasta, tienda_id, oblig_rows)
+    devengados, n, tiene = _cuenta_costos_fijos(oblig_rows, nomina)
+
+    # Desglose por categoría de lo FIJO, para que la pantalla pueda decir "de qué
+    # está hecho el piso" sin recalcular nada. La nómina calculada va como una
+    # fila más, con su propia clave, igual que en `gastos_por_categoria`.
+    por_categoria: dict[str, dict] = {}
+    for _dev, monto, _tid, nombre, grupo, clave in oblig_rows:
+        if (grupo or "") != "fijo":
+            continue
+        g = por_categoria.setdefault(clave or "otros",
+                                     {"clave": clave or "otros",
+                                      "nombre": (nombre or "Sin categoría").strip(),
+                                      "monto": 0.0, "n": 0})
+        g["monto"] += float(monto or 0)
+        g["n"] += 1
+    if nomina["total"]:
+        por_categoria.setdefault(CLAVE_CATEGORIA_NOMINA,
+                                 {"clave": CLAVE_CATEGORIA_NOMINA,
+                                  "nombre": "Nómina (calculada)", "monto": 0.0, "n": 0})
+        por_categoria[CLAVE_CATEGORIA_NOMINA]["monto"] += nomina["total"]
+        por_categoria[CLAVE_CATEGORIA_NOMINA]["n"] += sum(
+            1 for v in nomina["pares"].values() if v)
+    for g in por_categoria.values():
+        g["monto"] = round(g["monto"], 2)
+
+    return {
+        "desde": desde,
+        "hasta": hasta,
+        "costos_fijos_devengados": devengados,
+        "n_costos_fijos": n,
+        "tiene_costos_fijos": tiene,
+        # ADITIVOS, ya adentro de `costos_fijos_devengados`: se abren para que la
+        # pantalla pueda nombrar de dónde sale cada peso del numerador.
+        "nomina_calculada": nomina["total"],
+        "nomina_manual_en_ventana": nomina["manual_en_ventana"],
+        "nomina_meses_manuales": nomina["meses_manuales"],
+        "nomina_sin_contrato": nomina["sin_contrato"],
+        "por_categoria": sorted(por_categoria.values(),
+                                key=lambda g: (-g["monto"], g["clave"])),
+    }
+
+
 def _costo_unitario_productos(db) -> dict[int, float]:
     """Costo por unidad de VENTA de cada producto (para el COGS teórico).
     Prioridad: precio_costo oficial > receta (Σ insumos × costo) > costo de
@@ -266,37 +409,11 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     gastos_rows = q_gastos.all()
 
     # ── Obligaciones devengadas (módulo Costos) ──────────────────────────────
-    # Término NUEVO del gasto, en QUERY SEPARADA a propósito: la de arriba hace
-    # `join(CajaTurno)` y filtra sede por `CajaTurno.tienda_id`, y una obligación
-    # corporativa (arriendo, nómina) tiene tienda_id NULL y ningún turno — ese join
-    # la BORRARÍA. Además `fecha_devengo` es Date, o sea fecha de NEGOCIO ya
-    # resuelta: se compara contra desde/hasta y NUNCA contra d_utc/h_utc, que son
-    # instantes UTC para columnas de instante.
-    #
-    # Y se EXCLUYE la categoría 'proveedores': esa mercadería ya está contada
-    # arriba, en `compras`, por FacturaCompra según fecha de recibido. Sumarla
-    # también acá contaría la misma plata dos veces y hundiría el margen neto con
-    # un gasto que no existe. El servicio ya no deja cargar nada ahí; este filtro
-    # es por las filas que la versión anterior alcanzó a guardar.
-    # `clave` va al final (índice 5) a propósito: el chequeo de costos fijos de más
-    # abajo indexa por posición (r[4] == grupo) y agregarla en el medio lo rompería.
-    q_oblig = (
-        db.query(Obligacion.fecha_devengo, Obligacion.monto,
-                 Obligacion.tienda_id, CostoCategoria.nombre, CostoCategoria.grupo,
-                 CostoCategoria.clave)
-        .join(CostoCategoria, CostoCategoria.id == Obligacion.categoria_id)
-        .filter(
-            Obligacion.anulada.is_(False),
-            Obligacion.fecha_devengo >= desde,
-            Obligacion.fecha_devengo <= hasta,
-            CostoCategoria.clave != CLAVE_CATEGORIA_PROVEEDORES,
-        )
-    )
-    if tienda_id is not None:
-        # Con sede filtrada las corporativas NO se cuelan ni se prorratean: repartirlas
-        # las duplicaría y Σ por_sede dejaría de dar el global.
-        q_oblig = q_oblig.filter(Obligacion.tienda_id == tienda_id)
-    oblig_rows = q_oblig.all()
+    # Término NUEVO del gasto. La query vive en `_obligaciones_del_periodo` y no
+    # acá inline: el numerador del piso de venta (`costos_fijos_del_mes`) tiene
+    # que leer EXACTAMENTE las mismas filas con los mismos filtros. El porqué de
+    # cada filtro está en su docstring.
+    oblig_rows = _obligaciones_del_periodo(db, desde, hasta, tienda_id)
 
     # ── LO QUE ESTA VISTA NO PUEDE VER, DICHO EN VOZ ALTA ────────────────────
     # Lo de arriba es correcto y no se toca. Lo que faltaba era DECIRLO: mirando
@@ -481,20 +598,11 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
     # de este período está mirando los costos fijos o no. Sin esto la pantalla no
     # puede distinguir "el negocio no tiene costos fijos" de "nadie los cargó", y
     # un semáforo en verde sobre el segundo caso es una mentira tranquilizadora.
-    fijos_rows = [r for r in oblig_rows if (r[4] or "") == "fijo"]
-    # La nómina calculada ES un costo fijo del período, y cuenta como tal: sin
-    # esto, un negocio que dejó de cargarla a mano —justamente el objetivo de la
-    # integración— aparecía como "no tiene costos fijos cargados" y el semáforo
-    # se apagaba solo el día que el dato empezó a ser mejor que antes.
-    costos_fijos_devengados = round(sum(float(r[1] or 0) for r in fijos_rows)
-                                    + nomina["total"], 2)
-    # Se cuentan los pares CON PLATA, por el mismo motivo que `tiene_costos_fijos`
-    # mira el monto: `pares` tiene una clave por cada (mes, sede) donde alguien
-    # marcó horas, valga lo que valga. Contando claves, un negocio sin un solo peso
-    # de costo fijo cargado veía "1 obligación fija devengada — el margen neto ya
-    # las descuenta", y el aviso "no hay arriendo, nómina ni servicios devengados"
-    # se volvía inalcanzable: la advertencia moría justo en el caso que la necesita.
-    n_costos_fijos = len(fijos_rows) + sum(1 for v in nomina["pares"].values() if v)
+    # La cuenta vive en `_cuenta_costos_fijos` y no acá inline, por el mismo
+    # motivo que la query: el piso de venta divide este número por el margen de
+    # contribución, y dos copias de la misma suma se desincronizan.
+    costos_fijos_devengados, n_costos_fijos, hay_costos_fijos = _cuenta_costos_fijos(
+        oblig_rows, nomina)
 
     # ── Descuentos: la plata REGALADA en mostrador ────────────────────────────
     # ADITIVO y fuera de toda fórmula: Ticket.total ya viene neto. El % se mide
@@ -637,7 +745,8 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             # dict con claves da True. O sea la bandera se prendía —y la pantalla
             # decía «el margen ya descuenta los costos fijos»— con $0 descontado,
             # porque nadie tiene salario cargado. Se mira el MONTO, no la forma.
-            "tiene_costos_fijos": bool(fijos_rows) or nomina["total"] > 0,
+            # (la decisión vive en `_cuenta_costos_fijos`, compartida con el piso)
+            "tiene_costos_fijos": hay_costos_fijos,
             # ── Costo laboral: cuánto, de dónde salió y qué le falta ──────────
             # ADITIVO: ya está DENTRO de `gastos` y de `margen_neto`. Se expone
             # aparte para que la pantalla pueda decir de qué meses el número lo

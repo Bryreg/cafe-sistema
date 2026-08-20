@@ -28,7 +28,7 @@ from app.models.models import (CajaTurno, Configuracion, Consignacion,
                                CostoCategoria, EntregaTurno,
                                EstadoConsignacionEnum, EstadoTurnoEnum,
                                FacturaCompra, MovimientoBanco, MovimientoCaja,
-                               Obligacion, Pago,
+                               Obligacion, Pago, ProductoDesechable,
                                RecogidaEfectivo, Ticket, Tienda,
                                TipoMovCajaEnum)
 from app.services import audit
@@ -52,6 +52,10 @@ from app.services import nomina as nomina_svc
 from app.services.rentabilidad import (CLAVE_CATEGORIA_NOMINA,
                                        CLAVE_CATEGORIA_PROVEEDORES,
                                        _CONCEPTOS_COMPRA)
+# El piso de venta necesita el P&L entero (para MEDIR las razones de la venta) y
+# los costos fijos del MES COMPLETO. Se importa el módulo y no solo unos nombres
+# porque son funciones, no constantes: así queda a la vista de dónde salen.
+from app.services import rentabilidad as rent_svc
 
 METODOS_PAGO = {"efectivo", "transferencia", "tarjeta", "cheque", "otro"}
 RECURRENCIAS = {"mensual", "quincenal", "semanal"}
@@ -1584,7 +1588,17 @@ def listar_pagos(db: Session, *, obligacion_id: int | None = None,
 #      salida de 3.000.000 ya tecleada bajaba el libro y no bajaba la proyección,
 #      así que el punto de quiebre se calculaba con plata que ya no estaba.
 
-HORIZONTE_DEFAULT = 30
+# EL HORIZONTE POR DEFECTO SE ANCLA A FIN DE MES, no a 30 días fijos.
+#
+# Los 30 días eran un número redondo que no coincide con ningún mes: parado en
+# el 19 de agosto la serie terminaba el 18 de septiembre, mientras el piso de
+# venta hablaba del 31 de agosto. El colchón —el mínimo de esa serie— miraba
+# entonces una ventana distinta a la del piso, y las dos cifras de la MISMA
+# pantalla contestaban preguntas de períodos diferentes sin decirlo.
+#
+# Ya no hay `HORIZONTE_DEFAULT`: un default constante es justamente lo que no
+# puede existir acá, porque el horizonte correcto depende del día en que se
+# pregunta. Lo calcula `dias_hasta_fin_de_mes`.
 HORIZONTE_MAX = 180
 SEMANAS_HISTORIA = 8          # 56 días = exactamente 8 muestras de cada día de semana
 DIAS_SALDO_BANCO_VIGENTE = 7  # más viejo que esto y la respuesta se marca desactualizada
@@ -1592,6 +1606,12 @@ SALDO_BANCO_MAX = 1e12
 CLAVE_RECOGIDAS_DESDE = "recogidas_desde"
 CLAVE_SALDO_BANCO = "saldo_banco"
 CLAVE_SALDO_BANCO_FECHA = "saldo_banco_fecha"
+# La plata con la que el negocio no puede quedarse sin. Ver `leer_reserva_minima_caja`.
+CLAVE_RESERVA_MINIMA_CAJA = "reserva_minima_caja"
+# Lo que se queda el datáfono de cada venta con tarjeta, como fracción (0,025 =
+# 2,5%). En `configuracion` y no quemada: es una tasa negociada con el
+# adquirente, cambia sin deploy y hoy NADIE la cargó — ver `_leer_comision_datafono`.
+CLAVE_COMISION_DATAFONO = "comision_datafono"
 
 
 def _efectivo_en_registradora(db: Session, tienda_id: int) -> tuple:
@@ -1932,6 +1952,95 @@ def _leer_saldo_banco(db: Session) -> tuple:
     return round(saldo, 2), fecha
 
 
+def leer_reserva_minima_caja(db: Session) -> tuple:
+    """(reserva mínima de caja, si ese valor es el default y nadie lo decidió).
+
+    LA PLATA CON LA QUE EL NEGOCIO NO PUEDE QUEDARSE SIN. Es lo que convierte
+    «cuánto puedo gastar» en una decisión de negocio en vez de «cuánto puedo
+    gastar hasta quedar en cero»: nadie opera una cafetería con la cuenta vacía
+    —hay un domicilio que pagar, una devolución, un turno extra— y un colchón
+    medido contra cero se lee como permiso para gastarlo todo.
+
+    Mismo patrón que `_leer_saldo_banco`, y por la misma razón: la fila es TEXTO
+    y un valor podrido de otra versión no puede tumbar la pantalla del dueño.
+    Ante cualquier duda vuelve 0, que es el comportamiento de siempre — el
+    colchón queda igual que antes de que esta clave existiera.
+
+    EL DEFAULT ES 0 Y SE DICE. Un 0 silencioso es indistinguible de «el dueño
+    decidió que no necesita reserva», y esas dos cosas piden pantallas distintas:
+    la primera es una invitación a poner el número, la segunda es una decisión
+    tomada. Este repo ya se quemó con un default en cero que dejó todo un motor
+    de pedidos inerte sin que nadie lo notara.
+    """
+    fila = db.query(Configuracion).filter(
+        Configuracion.clave == CLAVE_RESERVA_MINIMA_CAJA).first()
+    crudo = (fila.valor if fila is not None else None) or ""
+    if not crudo.strip():
+        return 0.0, True
+    try:
+        reserva = float(crudo.strip())
+    except (TypeError, ValueError):
+        return 0.0, True
+    if not math.isfinite(reserva) or reserva < 0 or reserva > SALDO_BANCO_MAX:
+        return 0.0, True
+    return round(reserva, 2), False
+
+
+def guardar_reserva_minima_caja(db: Session, reserva: float,
+                                usuario_id: int) -> dict:
+    """Persiste la reserva en `configuracion`. Asume que el handler ya rechazó
+    inf/NaN/negativos: se guarda como TEXTO, así que un valor podrido acá
+    envenena toda lectura futura y no solo esta escritura (mismo motivo que
+    `guardar_saldo_banco`)."""
+    fila = db.query(Configuracion).filter(
+        Configuracion.clave == CLAVE_RESERVA_MINIMA_CAJA).first()
+    valor = str(round(float(reserva), 2))
+    if fila is not None:
+        fila.valor = valor
+    else:
+        db.add(Configuracion(clave=CLAVE_RESERVA_MINIMA_CAJA, valor=valor))
+    audit.registrar(
+        db, accion="declarar_reserva_minima_caja", tabla="configuracion",
+        registro_id=None, usuario_id=usuario_id, tienda_id=None,
+        datos_despues={CLAVE_RESERVA_MINIMA_CAJA: round(float(reserva), 2)},
+    )
+    db.commit()
+    guardada, es_default = leer_reserva_minima_caja(db)
+    return {"reserva_minima_caja": guardada, "reserva_es_default": es_default}
+
+
+def guardar_comision_datafono(db: Session, tasa: float, usuario_id: int) -> dict:
+    """Persiste la comisión del datáfono en `configuracion`, como FRACCIÓN.
+
+    Sin este dato el término `k` del margen vale 0, y esa es una de las cuatro
+    cosas que hacen que el piso salga CORTO: la comisión se cobra de cada venta
+    con tarjeta y hoy no la descuenta nadie. Con la mitad de la venta por
+    datáfono y una tasa típica de 2,5%, el margen se infla 1,25 puntos y el piso
+    baja en proporción — hacia el lado que tranquiliza.
+
+    Se guarda la FRACCIÓN (0,025) y no el porcentaje (2,5): el handler recibe lo
+    que el dueño escribe y convierte, para que nadie tenga que acordarse de en
+    qué unidad quedó guardado. Asume que el handler ya rechazó inf/NaN/negativos
+    y las tasas absurdas — se guarda como TEXTO y un valor podrido envenena toda
+    lectura futura, no solo esta escritura.
+    """
+    fila = db.query(Configuracion).filter(
+        Configuracion.clave == CLAVE_COMISION_DATAFONO).first()
+    valor = str(round(float(tasa), 6))
+    if fila is not None:
+        fila.valor = valor
+    else:
+        db.add(Configuracion(clave=CLAVE_COMISION_DATAFONO, valor=valor))
+    audit.registrar(
+        db, accion="declarar_comision_datafono", tabla="configuracion",
+        registro_id=None, usuario_id=usuario_id, tienda_id=None,
+        datos_despues={CLAVE_COMISION_DATAFONO: round(float(tasa), 6)},
+    )
+    db.commit()
+    guardada, sin_cargar = _leer_comision_datafono(db)
+    return {"comision_datafono": guardada, "sin_cargar": sin_cargar}
+
+
 def _saldo_banco_hoy(db: Session, hoy: date) -> dict:
     """Cuánta plata hay HOY en el banco, según el LIBRO — no según el ancla cruda.
 
@@ -2205,13 +2314,30 @@ def _corporativas_fuera(db: Session, hoy: date, dias: int) -> float:
     return round(sum(i["monto"] for i in agenda["items"] if i["tienda_id"] is None), 2)
 
 
-def get_flujo_proyectado(db: Session, dias: int = HORIZONTE_DEFAULT,
+def dias_hasta_fin_de_mes(hoy: date) -> int:
+    """Cuántos días de serie hacen falta para llegar al último día del mes.
+
+    La serie del flujo arranca en hoy+1, así que para que el último punto sea el
+    último día del mes el horizonte es exactamente esa diferencia. El 31 da 0 y
+    se recorta a 1: una serie vacía no es una respuesta, y un solo día de más al
+    mes siguiente es preferible a devolver nada el día que más se mira.
+    """
+    fin = date(hoy.year, hoy.month, calendar.monthrange(hoy.year, hoy.month)[1])
+    return max(1, (fin - hoy).days)
+
+
+def get_flujo_proyectado(db: Session, dias: int | None = None,
                          tienda_id: int | None = None) -> dict:
     """Serie diaria del saldo proyectado y, sobre todo, el PUNTO DE QUIEBRE: el
     primer día en que el saldo cruza a negativo, o None si nunca cruza.
 
     El punto de quiebre es el único número que el dueño realmente necesita: le
     dice el día en que se queda sin plata ANTES de que pase.
+
+    SIN `dias`, EL HORIZONTE ES HASTA FIN DE MES y no 30 días fijos: ver el
+    bloque de constantes. El colchón que sale de esta serie tiene que mirar la
+    MISMA ventana que el piso de venta, o son dos respuestas a dos preguntas
+    distintas presentadas como si fueran comparables.
 
     Con `advertencias` va lo que la serie NO sabe, porque las dos mitades de la
     fórmula no se ganan igual: las ENTRADAS se derivan solas de cada ticket, pero
@@ -2222,13 +2348,16 @@ def get_flujo_proyectado(db: Session, dias: int = HORIZONTE_DEFAULT,
     los que le permiten a la pantalla decir "falta información" en vez de vender
     tranquilidad con un verde.
     """
+    hoy = hoy_col()
+    ancla = dias_hasta_fin_de_mes(hoy)
     try:
-        dias = int(dias or HORIZONTE_DEFAULT)
+        dias = int(dias) if dias is not None else ancla
     except (TypeError, ValueError):
-        dias = HORIZONTE_DEFAULT
+        dias = ancla
+    if dias <= 0:
+        dias = ancla
     dias = max(1, min(dias, HORIZONTE_MAX))
 
-    hoy = hoy_col()
     caja = _caja_hoy(db, hoy, tienda_id)
     entradas_dow = _venta_esperada_por_dia_semana(db, hoy, tienda_id)
     salidas_dia = _salidas_por_dia(db, hoy, dias, tienda_id)
@@ -2250,14 +2379,43 @@ def get_flujo_proyectado(db: Session, dias: int = HORIZONTE_DEFAULT,
                       "saldo": saldo})
 
     corporativas_fuera = _corporativas_fuera(db, hoy, dias) if tienda_id else 0.0
+
+    # ── EL COLCHÓN: cuánta plata sobra sobre la reserva, en el peor día ───────
+    # `punto_de_quiebre` contesta "¿me quedo sin plata?" — un sí/no. El colchón
+    # contesta "¿cuánto puedo gastar?", que es la pregunta que el dueño hace de
+    # verdad cuando evalúa una activación o una compra grande.
+    #
+    # Se mide contra el MÍNIMO de la serie y no contra el saldo final: la plata
+    # tiene que alcanzar TODOS los días del horizonte, no solo el último. Un mes
+    # que termina bien pero pasa por un lunes en rojo no tiene colchón.
+    #
+    # Y se le resta la RESERVA. Sin ella el colchón contesta "cuánto puedo gastar
+    # hasta quedar en cero", que no es una decisión de negocio: nadie opera una
+    # cafetería con la cuenta en $0. Con la reserva en 0 —el default— el número
+    # es el de siempre, y `reserva_es_default` lo dice para que la pantalla pueda
+    # invitar a ponerla en vez de dejar el cero pasando por una decisión tomada.
+    piso_serie = min((p["saldo"] for p in serie), default=caja["total"])
+    reserva, reserva_es_default = leer_reserva_minima_caja(db)
     return {
         "hoy": hoy,
         "dias": dias,
+        # Si el horizonte pedido coincide con el ancla de fin de mes, el colchón
+        # y el piso de venta hablan del mismo período. La pantalla necesita poder
+        # decirlo, así que el ancla viaja al lado del horizonte usado.
+        "dias_hasta_fin_de_mes": ancla,
+        "horizonte_es_fin_de_mes": dias == ancla,
         "tienda_id": tienda_id,
         "caja_hoy": caja,
         "serie": serie,
         "punto_de_quiebre": quiebre,
         "dias_hasta_quiebre": (quiebre - hoy).days if quiebre else None,
+        "saldo_minimo": round(piso_serie, 2),
+        "reserva_minima_caja": reserva,
+        "reserva_es_default": reserva_es_default,
+        # Negativo = no hay colchón, falta esa plata para sostener la reserva.
+        # No se recorta en cero: un colchón negativo es exactamente el dato que
+        # hay que ver antes de gastar.
+        "colchon": round(piso_serie - reserva, 2),
         "advertencias": {
             # Solo molesta si el banco de verdad entra al total: filtrando por
             # sede no suma, y avisar de un dato que no se usa es ruido.
@@ -2314,4 +2472,425 @@ def guardar_saldo_banco(db: Session, saldo: float, fecha: date,
         "saldo_banco_desactualizado": (
             fecha_guardada is None
             or (hoy_col() - fecha_guardada).days > DIAS_SALDO_BANCO_VIGENTE),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EL PISO: cuánto hay que vender este mes para no perder plata
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# La venta cayó 54% de enero a julio y la proyección del dueño cierra agosto en
+# negativo. La pregunta que ninguna pantalla contesta hoy es la única que decide
+# si gasta o no gasta: CUÁNTO TENGO QUE VENDER PARA NO PERDER.
+#
+#   PISO_MES = costos fijos del mes / margen de contribución
+#   falta    = PISO_MES − lo vendido en el mes a la fecha
+#   PISO_HOY = falta / los días que QUEDAN por abrir
+#
+# TRES DECISIONES QUE HACEN QUE EL NÚMERO SIRVA, y cada una es un error que este
+# módulo ya cometió en otra forma:
+#
+# 1. EL NUMERADOR MIRA EL MES COMPLETO, no "del 1 a hoy". El arriendo y la
+#    nómina se devengan a fin de mes y la pantalla pide el P&L con `hasta = hoy`
+#    (`mesActualBogota` en Plata.tsx): el 3 de septiembre esa ventana no los
+#    contiene y el piso saldría ridículamente bajo justo cuando más se mira.
+#    Lo resuelve `rentabilidad.costos_fijos_del_mes`, que fija la ventana adentro.
+#
+# 2. EL DENOMINADOR SE MIDE, NO SE SUPONE. Las tres razones —impuesto, costo de
+#    mercadería, comisión del datáfono— salen de la venta REAL del mes a la
+#    fecha, no de tarifas nominales. En particular el impoconsumo NO se calcula
+#    como tasa/(1+tasa): `Tributos.separar` devuelve impuesto CERO cuando el
+#    precio no incluye el impuesto, y el cociente medido cubre los dos regímenes
+#    sin una rama que se pueda olvidar.
+#
+# 3. EL PISO DEL DÍA NO ES EL DEL MES DIVIDIDO PLANO. Se descuenta lo ya vendido
+#    y se reparte entre los días que faltan: si el mes viene atrasado, el piso de
+#    los días que quedan SUBE. Un mensual repartido en partes iguales da una
+#    cifra tranquilizadora y falsa a mitad de mes.
+#
+# Y UNA CUARTA, sobre unidades: como el impoconsumo ya está restado del margen,
+# PISO_MES queda en pesos COBRADOS —lo mismo que `resumen.ventas`— y NO se le
+# vuelve a sumar. Se trabaja en cobrado o en neto, nunca en los dos.
+
+# Las cuatro puertas de honestidad. Son estados de la RESPUESTA, no errores: el
+# endpoint contesta 200 en todos los casos y dice cuál se activó.
+PUERTA_SIN_COSTOS_FIJOS = "sin_costos_fijos"
+PUERTA_SIN_RAZONES = "sin_razones"
+PUERTA_MARGEN_NO_POSITIVO = "margen_no_positivo"
+PUERTA_RAZONES_DEL_MES_ANTERIOR = "razones_del_mes_anterior"
+PUERTA_OK = "ok"
+
+
+def _leer_comision_datafono(db: Session) -> tuple:
+    """(comisión del datáfono como fracción, si nadie la cargó).
+
+    Tolera basura por el mismo motivo que `_leer_saldo_banco`: la fila es TEXTO.
+    Ante cualquier duda vuelve 0 — o sea, el margen de contribución sale MÁS ALTO
+    y el piso MÁS BAJO. Es un sesgo, va para el lado tranquilizador como todos
+    los de este cálculo, y por eso el segundo valor del par existe: la respuesta
+    tiene que poder decir «este costo no está adentro» en vez de callarlo.
+
+    Tope en 1: una comisión mayor al 100% de la venta no es un dato, es un error
+    de tipeo, y dejarla pasar volvería el margen negativo y dispararía la puerta
+    del veredicto («cada venta pierde plata») por una tecla mal apretada.
+    """
+    fila = db.query(Configuracion).filter(
+        Configuracion.clave == CLAVE_COMISION_DATAFONO).first()
+    crudo = (fila.valor if fila is not None else None) or ""
+    if not crudo.strip():
+        return 0.0, True
+    try:
+        tasa = float(crudo.strip())
+    except (TypeError, ValueError):
+        return 0.0, True
+    if not math.isfinite(tasa) or tasa < 0 or tasa > 1:
+        return 0.0, True
+    return tasa, False
+
+
+def _parte_con_tarjeta(db: Session, desde: date, hasta: date) -> float:
+    """Qué fracción de lo cobrado entró por el datáfono, en esa ventana.
+
+    Se mide sobre `Ticket.monto_tarjeta`, que el POS llena también en los tickets
+    MIXTOS: contar por `metodo_pago == 'tarjeta'` dejaría afuera la parte con
+    tarjeta de cada venta mixta y subestimaría la comisión — otra vez hacia el
+    lado tranquilizador.
+
+    Sin venta en la ventana devuelve 0: no hay de dónde medir y no se inventa.
+    """
+    d_utc, h_utc = rango_col_utc(desde, hasta)
+    total, tarjeta = db.query(
+        func.coalesce(func.sum(Ticket.total), 0.0),
+        func.coalesce(func.sum(Ticket.monto_tarjeta), 0.0),
+    ).filter(
+        Ticket.estado.notin_(("anulado", "reversado")),
+        Ticket.fecha >= d_utc,
+        Ticket.fecha <= h_utc,
+    ).first()
+    total = float(total or 0.0)
+    if total <= 0:
+        return 0.0
+    return max(0.0, min(1.0, float(tarjeta or 0.0) / total))
+
+
+def dias_que_abre(db: Session, desde: date, hasta: date,
+                  tienda_id: int | None = None) -> dict:
+    """Cuántos días entre `desde` y `hasta` (los dos incluidos) ABRE el local.
+
+    NO SE PREGUNTA, SE DERIVA. `_venta_esperada_por_dia_semana` ya devuelve la
+    mediana de venta de cada día de la semana sobre las últimas 8 semanas
+    contando SOLO los días con venta: un día de la semana con mediana > 0 es un
+    día que el local abre, y uno con mediana 0 —o ausente— es uno que no. Contar
+    cuántos de esos caen en el rango es aritmética de calendario.
+
+    HOY CUENTA COMO DÍA QUE QUEDA, y no es un detalle de borde: la venta del mes
+    "a la fecha" que se le resta al piso ya incluye lo que se lleva vendido hoy,
+    así que las horas que quedan de hoy son horas en las que todavía se puede
+    vender el resto. Dejar hoy afuera repartiría el faltante entre menos días y
+    daría un piso diario más alto que el real.
+
+    SIN HISTORIA NO SE DERIVA NADA y se cuentan todos los días del calendario.
+    Es el único punto de esta función que empuja el piso hacia abajo (más días,
+    menos por día), así que `derivados` viaja en la respuesta para que la
+    pantalla lo pueda decir en vez de dejarlo implícito.
+    """
+    esperada = _venta_esperada_por_dia_semana(db, hoy_col(), tienda_id)
+    dows = {dow for dow, valor in esperada.items() if valor > 0}
+    calendario = ([desde + timedelta(days=n) for n in range((hasta - desde).days + 1)]
+                  if hasta >= desde else [])
+    if not dows:
+        return {"dias": len(calendario), "dias_calendario": len(calendario),
+                "dias_semana": [], "derivados": False}
+    abre = [d for d in calendario if d.weekday() in dows]
+    return {"dias": len(abre), "dias_calendario": len(calendario),
+            "dias_semana": sorted(dows), "derivados": True}
+
+
+def _razones_de_la_venta(db: Session, desde: date, hasta: date):
+    """Los tres términos que se comen cada peso COBRADO, medidos en esa ventana.
+
+    Devuelve None cuando no hubo venta: sin denominador no hay cociente, y
+    devolver ceros diría que de cada peso queda el peso entero — el error más
+    caro posible en este cálculo.
+
+    El impoconsumo sale de `resumen.impoconsumo / resumen.ventas` y NO de la
+    tarifa. Con el precio con impuesto adentro y tarifa 8% el cociente da 0,0741
+    y no 0,08; y con `precio_incluye_impoconsumo` en False, `Tributos.separar`
+    devuelve impuesto 0 y el cociente da 0 solo, sin una rama aparte que alguien
+    pueda olvidar de actualizar el día que cambie el régimen.
+    """
+    pnl = rent_svc.get_rentabilidad(db, desde, hasta)
+    resumen = pnl["resumen"]
+    ventas = float(resumen["ventas"] or 0.0)
+    if ventas <= 0:
+        return None
+    tasa_comision, comision_sin_cargar = _leer_comision_datafono(db)
+    pct_tarjeta = _parte_con_tarjeta(db, desde, hasta)
+    return {
+        "desde": desde,
+        "hasta": hasta,
+        "ventas": round(ventas, 2),
+        "impoconsumo": round(float(resumen["impoconsumo"] or 0.0) / ventas, 6),
+        "cogs": round(float(resumen["cogs_teorico"] or 0.0) / ventas, 6),
+        "comision": round(tasa_comision * pct_tarjeta, 6),
+        "tasa_comision": tasa_comision,
+        "comision_sin_cargar": comision_sin_cargar,
+        "pct_tarjeta": round(pct_tarjeta, 6),
+        "pct_venta_costeada": resumen["pct_venta_costeada"],
+    }
+
+
+def _sesgos_del_piso(razones: dict, n_desechables: int) -> list:
+    """LOS CUATRO SESGOS, TODOS PARA EL MISMO LADO: el piso sale CORTO.
+
+    Los cuatro INFLAN lo que queda de cada peso —o sea, agrandan el denominador
+    de la división— y por lo tanto BAJAN el piso. Ninguno lo sube. Por eso el
+    número se publica rotulado «AL MENOS» y por eso esta lista viaja en la
+    respuesta: la pantalla tiene que poder nombrar cuáles están vivos, no adornar
+    el número con un asterisco genérico.
+
+    Los dos primeros son la MISMA medición vista de dos formas —cuánta venta
+    quedó sin costear— y se separan a propósito: uno es la instrucción de trabajo
+    («cargá el costo de lo que falta») y el otro es cuánto creerle al número. Se
+    dice acá para que nadie los lea después como dos evidencias independientes.
+    """
+    pct = razones["pct_venta_costeada"]
+    sin_costear = pct is None or pct < 100
+    plata_sin_costear = (round(razones["ventas"] * (100.0 - pct) / 100.0, 2)
+                         if pct is not None else razones["ventas"])
+    return [
+        {
+            "clave": "productos_sin_costo",
+            "activo": bool(sin_costear),
+            "texto": "los productos sin costo cargado aportan $0 al costo de la venta",
+            "detalle": {"venta_sin_costear": plata_sin_costear if sin_costear else 0.0},
+        },
+        {
+            "clave": "costeo_parcial",
+            "activo": bool(sin_costear),
+            "texto": "el costeo cubre solo una parte de la venta",
+            "detalle": {"pct_venta_costeada": pct},
+        },
+        {
+            # ESTRUCTURAL, no un dato que falte: `_costo_unitario_productos` —el
+            # que arma `cogs_teorico`— resuelve por precio_costo, receta o costo
+            # de compra, y ProductoDesechable no entra por ninguno de los tres.
+            # El vaso, la tapa y la servilleta de cada bebida para llevar están
+            # afuera del costo SIEMPRE, se hayan cargado o no.
+            "clave": "desechables_fuera_del_costo",
+            "activo": True,
+            "texto": "los desechables no están dentro del costo de la bebida",
+            "detalle": {"productos_con_desechables": n_desechables},
+        },
+        {
+            "clave": "comision_datafono_sin_cargar",
+            "activo": bool(razones["comision_sin_cargar"]),
+            "texto": "la comisión del datáfono no está cargada",
+            "detalle": {"pct_tarjeta": razones["pct_tarjeta"],
+                        "tasa_comision": razones["tasa_comision"]},
+        },
+    ]
+
+
+def get_piso(db: Session, anio: int, mes: int) -> dict:
+    """CUÁNTO HAY QUE VENDER ESTE MES PARA NO PERDER, y cuánto por día.
+
+    La fórmula y sus cuatro decisiones están en el bloque de arriba. Acá va lo
+    que la respuesta DEVUELVE y por qué, que es la mitad del trabajo: una
+    pantalla que recibe solo el resultado no lo puede explicar ni auditar, y este
+    número es el que decide si el dueño gasta o no gasta.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    EL TITULAR Y EL PISO DEL DÍA SALEN DE LOS MISMOS DOS NÚMEROS
+    ═══════════════════════════════════════════════════════════════════════════
+    «Para no perder en agosto faltan $14.500.000» es `falta`; «$1.208.000 más por
+    día» es `falta / días que quedan`. Los dos van juntos en `titular`
+    justamente para que no se puedan calcular por separado: dos cuentas distintas
+    se contradicen en la misma pantalla el día que una de ellas cambie.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    LAS CUATRO PUERTAS
+    ═══════════════════════════════════════════════════════════════════════════
+    1. SIN COSTOS FIJOS cargados: no hay piso de resultado. Va el hueco CON
+       NOMBRE y el piso de caja, si se puede calcular.
+    2. SIN VENTA todavía en el mes: no hay cociente. Se usan las razones del mes
+       anterior y se ROTULA (`razones.de`). Sin mes anterior tampoco, solo caja.
+    3. MARGEN <= 0: no es falta de datos, es un VEREDICTO, y se dice plano.
+    4. TODO LO DEMÁS: el número SIEMPRE se publica, rotulado «AL MENOS».
+
+    NO HAY UN PORTÓN EN `pct_venta_costeada`. La pantalla se llama EL PISO y su
+    columna vertebral no puede desaparecer porque el costeo esté al 58% en vez de
+    al 62%. Ese porcentaje decide las PALABRAS de la banda —cuánto creerle— y
+    nunca si el número existe. Lo que la regla de la casa prohíbe es un VERDE
+    fuera del dato resuelto, no un número.
+
+    EL PISO DE CAJA es la columna de repuesto: salidas agendadas + reserva −
+    plata que hay, sobre los días que quedan. No necesita costeo de producto ni
+    margen, así que sobrevive al negocio que todavía no cargó ni una receta. NO
+    es un atajo para saltarse la nómina: la necesita EN LA AGENDA igual que el
+    otro (`POST /costos/nomina/agendar`). Cuando existen los dos, MANDA EL MÁS
+    ALTO y el de abajo se nombra.
+    """
+    hoy = hoy_col()
+    anio, mes = int(anio), int(mes)
+    desde = date(anio, mes, 1)
+    fin_mes = date(anio, mes, calendar.monthrange(anio, mes)[1])
+
+    # ── NUMERADOR: el mes COMPLETO, siempre ──────────────────────────────────
+    cf = rent_svc.costos_fijos_del_mes(db, anio, mes)
+    costos_fijos = cf["costos_fijos_devengados"]
+
+    # ── DENOMINADOR: la ventana simétrica con la venta real ──────────────────
+    # Del 1 a HOY para el mes en curso; del 1 al último día para un mes cerrado
+    # (ahí "hasta hoy" ya es el mes entero, y recortarlo sería mirar el futuro).
+    hasta_venta = min(hoy, fin_mes)
+    razones = (_razones_de_la_venta(db, desde, hasta_venta)
+               if hasta_venta >= desde else None)
+    # «mes_pedido» y no «mes_actual»: el endpoint también contesta por meses
+    # cerrados, y una pantalla que lea «actual» escribiría «este mes» sobre
+    # el resultado de julio.
+    razones_de = "mes_pedido"
+    if razones is None:
+        # PUERTA 2. El mes anterior COMPLETO, recortado a hoy por las dudas: un
+        # mes que todavía no terminó no se puede leer entero.
+        prev_fin = desde - timedelta(days=1)
+        prev_desde = date(prev_fin.year, prev_fin.month, 1)
+        razones = _razones_de_la_venta(db, prev_desde, min(prev_fin, hoy))
+        razones_de = "mes_anterior" if razones is not None else None
+
+    # LO VENDIDO EN EL MES PEDIDO, que es lo único que se le puede restar al
+    # piso. Con las razones prestadas del mes anterior esto vale 0 a propósito:
+    # restarle al piso de agosto la venta de julio sería la doble contabilidad
+    # más cara de la pantalla.
+    ventas_mes = (round(float(razones["ventas"]), 2)
+                  if razones is not None and razones_de == "mes_pedido" else 0.0)
+    margen_contribucion = (round(1.0 - razones["impoconsumo"] - razones["cogs"]
+                                 - razones["comision"], 6)
+                           if razones is not None else None)
+
+    # ── LOS DÍAS QUE QUEDAN POR ABRIR ────────────────────────────────────────
+    dias = dias_que_abre(db, max(hoy, desde), fin_mes)
+    n_dias = dias["dias"]
+
+    # ── PISO DE RESULTADO ────────────────────────────────────────────────────
+    puerta = PUERTA_OK
+    piso_mes = falta = piso_hoy = None
+    if not cf["tiene_costos_fijos"] or cf["n_costos_fijos"] == 0:
+        puerta = PUERTA_SIN_COSTOS_FIJOS
+    elif razones is None:
+        puerta = PUERTA_SIN_RAZONES
+    elif margen_contribucion <= 0:
+        puerta = PUERTA_MARGEN_NO_POSITIVO
+    else:
+        piso_mes = round(costos_fijos / margen_contribucion, 2)
+        falta = round(piso_mes - ventas_mes, 2)
+        # Sin días que queden no hay "por día" que calcular: el mes ya cerró, o
+        # el local no vuelve a abrir antes de fin de mes. `falta` sigue siendo
+        # válido y se devuelve; `piso_hoy` vuelve None, que es la verdad.
+        piso_hoy = round(falta / n_dias, 2) if n_dias > 0 else None
+        if razones_de == "mes_anterior":
+            puerta = PUERTA_RAZONES_DEL_MES_ANTERIOR
+
+    # ── PISO DE CAJA: la columna de repuesto ─────────────────────────────────
+    # `desde=None` a propósito: lo VENCIDO también hay que pagarlo, y arrancar la
+    # ventana hoy lo dejaría afuera. Es la misma regla que `_salidas_por_dia`.
+    agenda = get_agenda(db, desde=None, hasta=fin_mes, tienda_id=None)
+    salidas = round(sum(i["monto"] for i in agenda["items"]), 2)
+    reserva, reserva_es_default = leer_reserva_minima_caja(db)
+    caja = _caja_hoy(db, hoy, None)
+    piso_caja_mes = round(salidas + reserva - caja["total"], 2)
+    piso_caja = round(piso_caja_mes / n_dias, 2) if n_dias > 0 else None
+
+    # ── MANDA EL MÁS ALTO ────────────────────────────────────────────────────
+    # Los dos son plata COBRADA por día, así que se comparan de frente. Con los
+    # dos vivos manda el más exigente: cubrir el más chico y creer que alcanza es
+    # exactamente el error tranquilizador que esta pantalla existe para evitar.
+    candidatos = {k: v for k, v in (("resultado", piso_hoy), ("caja", piso_caja))
+                  if v is not None}
+    manda = max(candidatos, key=candidatos.get) if candidatos else None
+    otro = next((k for k in candidatos if k != manda), None)
+
+    n_desechables = db.query(func.count(func.distinct(
+        ProductoDesechable.producto_id))).scalar() or 0
+
+    return {
+        "anio": anio,
+        "mes": mes,
+        "hoy": hoy,
+        "desde": desde,
+        "hasta": fin_mes,
+        # CUÁL DE LAS CUATRO PUERTAS SE ACTIVÓ. La pantalla no tiene que deducirla
+        # de qué campos vinieron en None.
+        "puerta": puerta,
+        # ── El numerador, abierto ────────────────────────────────────────────
+        "costos_fijos": {
+            "total": costos_fijos,
+            "n": cf["n_costos_fijos"],
+            "hay": cf["tiene_costos_fijos"],
+            # LA VENTANA, explícita: es el bug más fácil de reintroducir y tiene
+            # que poder verificarse leyendo la respuesta.
+            "desde": cf["desde"],
+            "hasta": cf["hasta"],
+            "nomina_calculada": cf["nomina_calculada"],
+            "nomina_manual_en_ventana": cf["nomina_manual_en_ventana"],
+            "nomina_sin_contrato": cf["nomina_sin_contrato"],
+            "por_categoria": cf["por_categoria"],
+        },
+        # ── El denominador, término por término ──────────────────────────────
+        # Sin esto la pantalla recibe un margen de 0,41 y no puede decir de dónde
+        # sale ni qué habría que mover para subirlo.
+        "margen_contribucion": margen_contribucion,
+        "razones": None if razones is None else {
+            "de": razones_de,               # 'mes_pedido' | 'mes_anterior'
+            "desde": razones["desde"],
+            "hasta": razones["hasta"],
+            "ventas_medidas": razones["ventas"],
+            "impoconsumo": razones["impoconsumo"],
+            "cogs": razones["cogs"],
+            "comision": razones["comision"],
+            "tasa_comision": razones["tasa_comision"],
+            "pct_tarjeta": razones["pct_tarjeta"],
+            "pct_venta_costeada": razones["pct_venta_costeada"],
+        },
+        # ── El resultado ─────────────────────────────────────────────────────
+        "ventas_mes": ventas_mes,
+        "piso_mes": piso_mes,
+        "piso_hoy": piso_hoy,
+        # Negativo = el piso del mes ya está cubierto. No se recorta en cero: el
+        # dueño tiene derecho a ver por cuánto lo pasó.
+        "falta": falta,
+        "cubierto": bool(falta is not None and falta <= 0),
+        # LOS MISMOS DOS NÚMEROS que el titular de la pantalla, servidos juntos
+        # para que no se puedan calcular por separado y contradecirse.
+        "titular": {"falta": falta, "por_dia": piso_hoy},
+        # ── Los días ─────────────────────────────────────────────────────────
+        "dias": {
+            "quedan": n_dias,
+            "calendario": dias["dias_calendario"],
+            "dias_semana": dias["dias_semana"],
+            "derivados": dias["derivados"],
+            "incluye_hoy": bool(desde <= hoy <= fin_mes),
+        },
+        # ── El piso de caja, y quién manda ───────────────────────────────────
+        "piso_caja": {
+            "por_dia": piso_caja,
+            "del_mes": piso_caja_mes,
+            "salidas_agendadas": salidas,
+            "vencido": agenda["totales"]["vencido"],
+            "reserva": reserva,
+            "reserva_es_default": reserva_es_default,
+            "caja_hoy": caja["total"],
+            # Lo agendado SIN fecha no entra a `salidas` (misma regla que la
+            # proyección), y por eso se declara: es plata que se debe y que este
+            # piso todavía no está mirando.
+            "sin_fecha": agenda["totales"]["sin_fecha"],
+        },
+        "manda": manda,                     # 'resultado' | 'caja' | None
+        "el_otro": otro,
+        # ── Lo que el número NO sabe ─────────────────────────────────────────
+        "sesgos": (_sesgos_del_piso(razones, int(n_desechables))
+                   if razones is not None else []),
+        # Los cuatro empujan para el mismo lado, así que el rótulo es uno solo y
+        # sale del backend: la pantalla no tiene que inferirlo de la lista.
+        "rotulo": "al_menos",
     }

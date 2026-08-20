@@ -167,6 +167,26 @@ class SaldoBancoRequest(BaseModel):
     fecha: Optional[date] = None
 
 
+class ComisionDatafonoRequest(BaseModel):
+    """Lo que cobra el datafono, EN PORCENTAJE — 2.5 quiere decir 2,5%.
+
+    Se recibe como el dueño lo escribe y el handler lo convierte a fraccion antes
+    de guardar, para que nadie tenga que acordarse de en que unidad quedo. SIN
+    restricciones de pydantic, por el mismo motivo que `ReservaMinimaRequest`.
+    """
+    porcentaje: float
+
+
+class ReservaMinimaRequest(BaseModel):
+    """La plata con la que el negocio no puede quedarse sin.
+
+    SIN restricciones de pydantic, por el mismo motivo exacto que
+    `SaldoBancoRequest`: un `inf` rechazado por el schema vuelve dentro del
+    cuerpo del 422 y revienta al serializar. La validación vive en el handler.
+    """
+    reserva: float
+
+
 class SaldoBancoOut(BaseModel):
     saldo_banco: float
     saldo_banco_fecha: Optional[date]

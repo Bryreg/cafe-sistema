@@ -49,6 +49,7 @@ from app.models.models import (CajaTurno, Configuracion, Consignacion,
                                FacturaCompra, MovimientoBanco, MovimientoCaja,
                                RolEnum, Ticket, Tienda, TipoPagoEnum, Usuario)
 from app.routers import costos as costos_router
+from app.services import costos as costos_svc
 
 
 class CostosFlujoTest(unittest.TestCase):
@@ -181,7 +182,22 @@ class CostosFlujoTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()["id"]
 
-    def flujo(self, **params) -> dict:
+    def flujo(self, *, sin_dias=False, **params) -> dict:
+        """El flujo, con VENTANA FIJA DE 30 DIAS salvo que se pida otra cosa.
+
+        Casi todos los tests de este archivo indexan la serie con offsets fijos
+        —`self.dia(10)`, `self.dia(7)`, `self.dia(3)`— que asumian los 30 dias
+        que el endpoint traia por default. Ese default paso a anclarse a FIN DE
+        MES, asi que la ventana ahora depende del dia en que se corra la suite:
+        un 19 de agosto quedan 12 dias y todo pasa; un 22 quedan 9 y
+        `serie[dia(10)]` revienta con KeyError.
+
+        Verde falso hoy, rojo falso en tres dias, y ninguno de los dos dice nada
+        del codigo. Fijar la ventana aca deja los tests midiendo lo que de verdad
+        quieren medir, y `sin_dias=True` es para el unico que mide el default.
+        """
+        if not sin_dias:
+            params.setdefault("dias", 30)
         r = self.client.get("/api/v1/costos/flujo", params=params)
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()
@@ -397,8 +413,18 @@ class CostosFlujoTest(unittest.TestCase):
         self.assertEqual(serie[str(self.dia(2))]["saldo"], 100000)
         self.assertEqual(serie[str(self.dia(3))]["saldo"], -50000)
 
-    def test_el_horizonte_es_parametrizable_y_por_defecto_30_dias(self):
-        self.assertEqual(len(self.flujo()["serie"]), 30)
+    def test_el_horizonte_es_parametrizable_y_por_defecto_llega_a_fin_de_mes(self):
+        """Los 30 días fijos eran un número redondo que no coincide con ningún
+        mes: la serie terminaba en un día y el piso de venta hablaba de otro, y
+        el colchón —el mínimo de esta serie— miraba entonces una ventana distinta
+        a la del piso. Ahora el default se ancla al último día del mes."""
+        data = self.flujo(sin_dias=True)
+        esperado = costos_svc.dias_hasta_fin_de_mes(hoy_col())
+        self.assertEqual(len(data["serie"]), esperado)
+        self.assertEqual(data["dias_hasta_fin_de_mes"], esperado)
+        self.assertTrue(data["horizonte_es_fin_de_mes"])
+        self.assertEqual(data["serie"][-1]["fecha"], str(self.dia(esperado)))
+
         data = self.flujo(dias=7)
         self.assertEqual(len(data["serie"]), 7)
         self.assertEqual(data["serie"][0]["fecha"], str(self.dia(1)))

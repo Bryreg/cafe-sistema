@@ -72,6 +72,23 @@ class ObligacionUpdate(BaseModel):
     imagen_url: Optional[str] = None
 
 
+class NominaAgendarRequest(BaseModel):
+    """Agenda la nómina de un mes como obligación corporativa.
+
+    SIN restricciones de pydantic (nada de Field(ge=1, le=12) en `mes`), mismo
+    criterio que `CategoriaCreate` y `SaldoBancoRequest`: lo que rechaza el
+    schema vuelve como 422 y el `detail` de un 422 es una LISTA de errores — el
+    cliente solo sabe leer strings. El mes y el año los valida `nomina.rango_mes`
+    con un 400 que se puede mostrar; el monto, `_validar_monto`.
+    """
+    anio: int
+    mes: int
+    # EDITABLE ANTES DE CONFIRMAR. None = usar el cálculo. El dueño puede tener
+    # la liquidación del contador, que trae retención en la fuente, embargos y el
+    # redondeo de PILA — cosas que el cálculo declara que no incluye.
+    monto: Optional[float] = None
+
+
 class PagoCreate(BaseModel):
     monto: float
     # EL DÍA QUE SALIÓ LA PLATA. Obligatoria a nivel schema (falta → 422): es el

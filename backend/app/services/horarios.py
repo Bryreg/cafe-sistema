@@ -414,8 +414,17 @@ def baristas_de(db: Session, tienda_id: int) -> list[Usuario]:
     ).order_by(Usuario.nombre.asc()).all()
 
 
-def personas_de_nomina(db: Session, tienda_id: int) -> list[Usuario]:
+def personas_de_nomina(db: Session, tienda_id: int | None) -> list[Usuario]:
     """A quién se le PAGA en esta sede: las baristas + quien tenga contrato.
+
+    `tienda_id=None` trae las de TODAS las sedes, con la misma convención que
+    `_tramos_planeados`, `_pausas_planeadas` y `costo_laboral`. Hace falta para
+    la nómina CONSOLIDADA: la planilla del negocio es una sola y hasta acá no
+    había forma de pedirla sin nombrar una sede, así que los $20.400.000 que se
+    pagan cada mes no eran consultables en ningún lado. Y no se arma sumando dos
+    llamadas por sede: quien tiene `Usuario.tienda_id` en NULL —o apuntando a una
+    sede que ya no está— no aparecería en ninguna de las dos y su sueldo se
+    caería del total sin que nada lo avise.
 
     EL CRITERIO: nadie entra a la nómina por tener rol admin — entra por TENER
     CONTRATO CARGADO. El rol dice qué puede hacer en el sistema; el contrato
@@ -433,14 +442,16 @@ def personas_de_nomina(db: Session, tienda_id: int) -> list[Usuario]:
     planilla, igual que una barista con contrato marcado inactivo sigue
     apareciendo. La baja de verdad es `Usuario.activo`.
     """
-    return db.query(Usuario).outerjoin(
+    q = db.query(Usuario).outerjoin(
         ContratoBarista, ContratoBarista.usuario_id == Usuario.id,
     ).filter(
         Usuario.activo == True,  # noqa: E712
-        Usuario.tienda_id == tienda_id,
         ~Usuario.email.like("kiosk@%"),
         or_(Usuario.rol == RolEnum.barista, ContratoBarista.id.isnot(None)),
-    ).order_by(Usuario.nombre.asc()).all()
+    )
+    if tienda_id is not None:
+        q = q.filter(Usuario.tienda_id == tienda_id)
+    return q.order_by(Usuario.nombre.asc()).all()
 
 
 def semana(db: Session, tienda_id: int, lunes: date) -> dict:

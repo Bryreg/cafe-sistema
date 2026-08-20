@@ -12,6 +12,7 @@ sus pagos vivos. Lo único persistido es `anulada`. Es una asimetría deliberada
 FacturaCompra.valor_pagado — esa columna es justamente la que se puede
 desincronizar de los movimientos que la originaron.
 """
+import calendar
 import math
 import re
 import unicodedata
@@ -37,13 +38,19 @@ from app.services import audit
 # pantallas que están a un toque una de la otra. No hay ciclo de importación:
 # `services/banco.py` solo depende de los modelos.
 from app.services import banco as banco_svc
+# El costo laboral lo CALCULA services/nomina.py con las horas marcadas y los
+# recargos de ley; acá solo se lo convierte en una Obligacion para que entre a
+# la agenda, al flujo y al botón [Pagar]. No hay ciclo: nomina.py no importa
+# costos.py, y rentabilidad.py —que este módulo ya importa— también lo usa.
+from app.services import nomina as nomina_svc
 # La lista de conceptos reservados que services/facturas.py escribe para los pagos
 # a proveedor vive en rentabilidad.py y se REUSA, no se copia: si allá cambia, acá
 # tiene que cambiar en el mismo commit o el anti-doble-conteo se abre un agujero.
 # Misma razón para la clave de categoría prohibida: el P&L la excluye del término
 # de obligaciones y este servicio la rechaza en la entrada — las dos mitades tienen
 # que hablar de la MISMA constante.
-from app.services.rentabilidad import (CLAVE_CATEGORIA_PROVEEDORES,
+from app.services.rentabilidad import (CLAVE_CATEGORIA_NOMINA,
+                                       CLAVE_CATEGORIA_PROVEEDORES,
                                        _CONCEPTOS_COMPRA)
 
 METODOS_PAGO = {"efectivo", "transferencia", "tarjeta", "cheque", "otro"}
@@ -812,6 +819,271 @@ def listar_obligaciones(db: Session, *, tienda_id: int | None = None,
             "pagado": round(total_pagado, 2),
             "saldo": round(max(total_monto - total_pagado, 0), 2),
             "n": len(obligaciones),
+        },
+    }
+
+
+# ── La nómina, agendada como obligación de verdad ───────────────────────────
+#
+# El costo laboral de MEDIUM CAFÉ —hoy más de $20.000.000 al mes entre las dos
+# sedes y las siete personas— existía como cálculo (services/nomina.py) y como
+# pantalla, pero no como PLATA QUE HAY QUE PAGAR: no era una Obligacion, así que
+# no entraba a la agenda, no entraba al flujo proyectado, no tenía botón
+# [Pagar] y no bajaba ningún saldo. El punto de quiebre, el piso de venta y el
+# colchón para activaciones se calculaban todos sin el gasto más grande del
+# negocio, y todos daban de más.
+#
+# Meterla acá no es una pantalla nueva: es hacer que la nómina sea la misma
+# clase de cosa que el arriendo, y con eso hereda toda la cañería que ya existe.
+
+# EL DÍA DE PAGO, en `configuracion` y no en el código. Mismo patrón que
+# `saldo_banco`: es un dato del negocio, y un negocio que mañana pague el 5 y el
+# 20 no tiene por qué esperar un deploy.
+#
+# UN SOLO PAGO Y A PROPÓSITO. El dueño confirmó que la nómina se paga ENTERA el
+# último día del mes: no hay quincena ni reparto. Acá no se construye el reparto
+# «por si acaso» —una segunda fecha que nadie usa se llena de casos raros y de
+# tests que fijan un comportamiento que nunca ocurrió—. El día que cambie, se
+# agrega entonces, y lo que hay que tocar es esta clave y `fecha_de_pago_nomina`.
+CLAVE_NOMINA_DIA_PAGO = "nomina_dia_pago"
+# El valor por defecto y el único que hoy existe en la base. Es una PALABRA y no
+# un 31: guardar 31 para decir «el último» funciona por accidente (el recorte al
+# último día real lo convierte en 28 o 30 cuando toca) pero deja el dato
+# diciendo algo que no es, y el día que alguien lea la fila no va a poder
+# distinguir «el último» de «el 31 y recórtalo».
+DIA_PAGO_ULTIMO = "ultimo"
+
+MESES_ES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+            "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+
+
+def leer_dia_pago_nomina(db: Session) -> str:
+    """Qué día del mes se paga la nómina: `'ultimo'` o un día 1..31 como texto.
+
+    Tolera basura guardada por el mismo motivo que `_leer_saldo_banco`: la fila
+    es TEXTO y un valor podrido de otra versión no puede tumbar el agendado. Ante
+    cualquier duda devuelve el último día del mes, que es lo que el negocio hace
+    hoy — y errar hacia el final del mes es la dirección prudente: adelantar la
+    fecha haría aparecer la salida antes de tiempo y correría el punto de quiebre
+    hacia atrás sin que nadie lo pidiera.
+    """
+    fila = db.query(Configuracion).filter(
+        Configuracion.clave == CLAVE_NOMINA_DIA_PAGO).first()
+    crudo = (fila.valor if fila is not None else None) or ""
+    crudo = crudo.strip().lower()
+    if not crudo or crudo == DIA_PAGO_ULTIMO:
+        return DIA_PAGO_ULTIMO
+    try:
+        dia = int(crudo)
+    except (TypeError, ValueError):
+        return DIA_PAGO_ULTIMO
+    if not 1 <= dia <= 31:
+        return DIA_PAGO_ULTIMO
+    return str(dia)
+
+
+def fecha_de_pago_nomina(db: Session, anio: int, mes: int) -> date:
+    """El día del mes DEVENGADO en que sale la plata de la nómina.
+
+    El día configurado se RECORTA al último real del mes, igual que
+    `_mes_siguiente`: sin el recorte, un día 31 pediría un 31 de febrero y
+    reventaría.
+    """
+    ultimo = calendar.monthrange(int(anio), int(mes))[1]
+    dia = leer_dia_pago_nomina(db)
+    if dia == DIA_PAGO_ULTIMO:
+        return date(int(anio), int(mes), ultimo)
+    return date(int(anio), int(mes), min(int(dia), ultimo))
+
+
+def _obligacion_de_nomina_del_mes(db: Session, desde: date, hasta: date):
+    """La obligación VIVA de nómina devengada en ese mes, si hay alguna.
+
+    No se filtra por sede A PROPÓSITO, y la que no está es la restricción que
+    parecía obvia (`tienda_id IS NULL`, o sea «solo las corporativas»). La razón
+    es `rentabilidad._nomina_del_periodo`: ahí una obligación de nómina de UNA
+    sede apaga el cálculo de esa sede y una corporativa lo apaga en todas, pero
+    las DOS entran a `gastos`. Si el agendado corporativo ignorara una de sede ya
+    cargada, el P&L del mes sumaría las dos y contaría la misma nómina dos veces.
+    Cualquier fila de nómina viva devengada en el mes bloquea, y se devuelve para
+    que la pantalla pueda decir cuál es.
+    """
+    return (
+        db.query(Obligacion)
+        .join(CostoCategoria, CostoCategoria.id == Obligacion.categoria_id)
+        .filter(
+            Obligacion.anulada == False,  # noqa: E712
+            Obligacion.fecha_devengo >= desde,
+            Obligacion.fecha_devengo <= hasta,
+            CostoCategoria.clave == CLAVE_CATEGORIA_NOMINA,
+        )
+        .order_by(Obligacion.id)
+        .first()
+    )
+
+
+def _con_pagos(db: Session, obligacion: Obligacion) -> dict:
+    """Serializa una obligación con sus pagos vivos y lo ya salido del banco.
+    Tres líneas que se repetían en cada retorno de este módulo."""
+    return _serializar(
+        obligacion,
+        _pagos_vivos(db, [obligacion.id]).get(obligacion.id, []),
+        _salidas_banco_por_obligacion(db, [obligacion.id]).get(obligacion.id, 0.0))
+
+
+def agendar_nomina(db: Session, anio: int, mes: int, usuario_id: int,
+                   monto: float | None = None,
+                   barista_id: int | None = None,
+                   barista_nombre: str | None = None) -> dict:
+    """Crea LA obligación corporativa de la nómina de un mes.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    EL MES DE **DEVENGO** DECIDE DE QUÉ FUENTE SALE EL NÚMERO; LA FECHA DE
+    **VENCIMIENTO** DECIDE EN QUÉ DÍA DEL FLUJO SE DIBUJA.
+    ═══════════════════════════════════════════════════════════════════════════
+    Con el pago a fin de mes las dos coinciden al día, y por eso hay que
+    escribirlo: son la misma fecha por casualidad, no por definición. El devengo
+    dice A QUÉ MES pertenece el costo —es lo que lee el P&L, y lo que decide si
+    el número sale de las horas ya trabajadas o del contrato— y el vencimiento
+    dice CUÁNDO sale la plata —es lo que lee la agenda y el flujo proyectado—.
+    El día que el negocio pase a quincena, o que la nómina de agosto se pague el
+    5 de septiembre, confundirlas contaría un mes dos veces: el costo se movería
+    de mes en el margen al mover la fecha de pago, o al revés, la salida de plata
+    se dibujaría en el mes equivocado del flujo.
+
+    DE DÓNDE SALE EL MONTO, entonces, según el mes DEVENGADO:
+
+      · mes ya terminado → `nomina.consolidada`: horas realmente marcadas más las
+        acreditadas por novedad, liquidadas persona por persona.
+      · mes en curso o futuro → `nomina.proyectada`: desde el CONTRATO. Un mes
+        que no terminó no tiene todas sus marcaciones, y pedirle el número a las
+        horas devolvería la parte trabajada hasta hoy como si fuera el mes
+        entero — que es la mitad del sueldo dicha con cara de total.
+
+    EL MONTO ES `costo_empleador`, NO EL NETO. Es lo que sale del negocio:
+    devengado + auxilio + aportes + prestaciones, ~1,55 a 1,69 veces el sueldo.
+    Es también el número que reemplaza al calculado en el P&L, que solo tiene el
+    devengado (ver `rentabilidad._nomina_del_periodo`: lo cargado a mano gana
+    justamente porque trae adentro lo que el cálculo declara que no tiene).
+
+    LÍMITE DECLARADO DEL FLUJO: la obligación entera vence el día de pago, pero
+    en la realidad ese día sale el NETO y los aportes de PILA se giran en los
+    primeros días del mes siguiente. O sea que el flujo proyectado ve salir la
+    plata unos días ANTES de lo que sale. Es la dirección prudente para un punto
+    de quiebre y por eso se deja así; la apertura viaja en la respuesta
+    (`detalle`) para que la pantalla pueda decirlo. Partirla en dos obligaciones
+    sería inventar una fecha de PILA que nadie declaró.
+
+    IDEMPOTENTE Y ATÓMICA sobre el mes de devengo: si ya hay una obligación viva
+    de nómina devengada en ese mes —corporativa o de una sede— se devuelve la que
+    hay con `ya_existia: true` y no se crea nada. Dos taps no pagan la nómina dos
+    veces. La comprobación y el alta viajan en la MISMA transacción, sin commit
+    en el medio; queda una ventana teórica si dos admins aprietan el botón en el
+    mismo instante, que se cerraría con un índice único parcial en la tabla —no
+    se agrega acá porque `create_all` no toca tablas que ya existen y en
+    producción no llegaría nunca.
+    """
+    desde, hasta = nomina_svc.rango_mes(anio, mes)
+
+    ya = _obligacion_de_nomina_del_mes(db, desde, hasta)
+    if ya is not None:
+        return {**_con_pagos(db, ya), "ya_existia": True,
+                "fuente": None, "detalle": None}
+
+    cat = db.query(CostoCategoria).filter(
+        CostoCategoria.clave == CLAVE_CATEGORIA_NOMINA).first()
+    if cat is None:
+        # El catálogo se siembra al arrancar; llegar acá es una base a la que le
+        # falta la siembra, no un error del dueño. Se le dice qué falta.
+        raise HTTPException(
+            400, "No existe la categoría «Nómina» en el catálogo de costos. "
+                 "Creala en Costos → Categorías antes de agendar la nómina.")
+    if not cat.activa:
+        raise HTTPException(
+            400, f"La categoría «{cat.nombre}» está desactivada — reactivala para "
+                 "poder agendar la nómina.")
+
+    # LA FUENTE LA DECIDE EL MES DEVENGADO, no la fecha de pago ni el mes de hoy.
+    mes_terminado = hasta < hoy_col()
+    fuente = "real" if mes_terminado else "contrato"
+    calculo = (nomina_svc.consolidada(db, anio, mes) if mes_terminado
+               else nomina_svc.proyectada(db, anio, mes))
+    totales = calculo["totales"]
+    # EDITABLE ANTES DE CONFIRMAR: si la pantalla manda un monto, manda ese. El
+    # cálculo es un estimado declarado (no tiene retención en la fuente, embargos
+    # ni el redondeo de PILA) y el dueño tiene la liquidación del contador; que
+    # el sistema le imponga su número sería confiar más en la estimación que en
+    # el papel.
+    valor = (_validar_monto(monto) if monto is not None
+             else round(float(totales["total_costo_empleador"]), 2))
+    if valor <= 0:
+        # Un cero acá es «nadie cargó los sueldos», no «la nómina no cuesta».
+        # Crear la obligación en $0 la dejaría marcada como cargada y APAGARÍA el
+        # cálculo de ese mes en el P&L (ver `_nomina_del_periodo`): el costo
+        # laboral pasaría a valer cero por haber apretado un botón.
+        raise HTTPException(
+            400, "El cálculo de la nómina da $0: no hay sueldos cargados en "
+                 "Contratos. Cargalos primero, o escribí el monto a mano — "
+                 "agendar $0 apagaría el costo laboral de ese mes en el P&L.")
+
+    devengo = hasta                                    # último día del mes devengado
+    vencimiento = fecha_de_pago_nomina(db, anio, mes)  # el día que sale la plata
+    concepto = f"Nómina {MESES_ES[int(mes) - 1]} {int(anio)}"
+
+    obligacion = Obligacion(
+        # CORPORATIVA (tienda_id NULL), igual que el arriendo. La nómina de una
+        # persona no se parte entre las sedes en las que cubrió —se probó y el
+        # redondeo no cerraba— y además una corporativa apaga el cálculo del mes
+        # en TODAS las sedes, que es lo que corresponde a un pago que cubre a
+        # todo el mundo.
+        tienda_id=None,
+        categoria_id=cat.id,
+        concepto=_validar_concepto(concepto),
+        beneficiario=None,
+        monto=valor,
+        fecha_devengo=devengo,
+        fecha_vencimiento=vencimiento,
+        # Mensual como METADATA, igual que el arriendo: `repetir_obligacion` es
+        # lo que crea la del mes que viene, y lo aprieta el dueño.
+        recurrencia="mensual",
+        nota=(f"Agendada desde nómina ({'lo trabajado' if mes_terminado else 'proyección del contrato'}): "
+              f"{len(calculo['personas'])} personas, "
+              f"neto ${totales['total_neto']:,.0f} + aportes y prestaciones."),
+        usuario_id=usuario_id,
+        barista_id=barista_id,
+        barista_nombre=barista_nombre,
+    )
+    db.add(obligacion)
+    db.flush()
+    audit.registrar(
+        db, accion="agendar_nomina", tabla="obligaciones",
+        registro_id=obligacion.id, usuario_id=usuario_id, tienda_id=None,
+        datos_despues={"anio": int(anio), "mes": int(mes), "fuente": fuente,
+                       "monto": valor, "monto_calculado": totales["total_costo_empleador"],
+                       "monto_editado": monto is not None,
+                       "fecha_devengo": devengo, "fecha_vencimiento": vencimiento,
+                       "personas": len(calculo["personas"])},
+    )
+    db.commit()
+    db.refresh(obligacion)
+    return {
+        **_serializar(obligacion, []),
+        "ya_existia": False,
+        "fuente": fuente,
+        # La apertura del monto, para que la pantalla pueda explicar por qué el
+        # costo es tanto más grande que la suma de los sueldos —y para que se vea
+        # que lo que sale el día de pago es el NETO, no el total.
+        "detalle": {
+            "personas": len(calculo["personas"]),
+            "sin_sueldo": totales["sin_sueldo"],
+            "total_devengado": totales["total_devengado"],
+            "total_auxilio": totales["total_auxilio"],
+            "total_deducciones": totales["total_deducciones"],
+            "total_neto": totales["total_neto"],
+            "total_costo_empleador": totales["total_costo_empleador"],
+            "monto_calculado": round(float(totales["total_costo_empleador"]), 2),
+            "monto_editado": monto is not None,
+            "advertencias": calculo["advertencias"],
         },
     }
 

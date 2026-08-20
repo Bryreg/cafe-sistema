@@ -10,8 +10,9 @@ from app.core.tz import hoy_col
 from app.database import get_db
 from app.models.models import Usuario
 from app.schemas.costos import (AdopcionEgresoRequest, CategoriaCreate,
-                                CategoriaUpdate, ObligacionCreate,
-                                ObligacionUpdate, PagoCreate, SaldoBancoRequest)
+                                CategoriaUpdate, NominaAgendarRequest,
+                                ObligacionCreate, ObligacionUpdate, PagoCreate,
+                                SaldoBancoRequest)
 from app.services import costos as svc
 
 router = APIRouter(prefix="/costos", tags=["costos"])
@@ -205,6 +206,37 @@ def repetir_obligacion(
     con `ya_existia: true` en vez de cobrar el arriendo dos veces."""
     return svc.repetir_obligacion(db, obligacion_id, admin.id,
                                   barista_id=barista[0], barista_nombre=barista[1])
+
+
+# Ruta literal ANTES de la paramétrica `/obligaciones/{obligacion_id}`, aunque
+# no compitan: es la regla de lectura del router.
+@router.post("/nomina/agendar")
+def agendar_nomina(
+    data: NominaAgendarRequest,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+    barista: tuple = Depends(get_barista_actor),
+):
+    """Convierte la nómina de un mes en una obligación CORPORATIVA de verdad.
+
+    Hasta acá el costo laboral era un cálculo y una pantalla, pero no plata que
+    hay que pagar: no estaba en la agenda, no bajaba el flujo proyectado y no
+    tenía botón [Pagar]. El gasto más grande del negocio faltaba en todas las
+    cuentas que deciden si alcanza.
+
+    El mes de DEVENGO decide de qué fuente sale el número —mes terminado, de las
+    horas trabajadas; mes en curso o futuro, del contrato— y la fecha de
+    VENCIMIENTO decide en qué día del flujo se dibuja. Con el pago a fin de mes
+    coinciden, y por eso hay que escribirlo.
+
+    `monto` es opcional: sin él manda el cálculo, con él manda el dueño.
+
+    Idempotente por mes de devengo: si ya hay una obligación viva de nómina de
+    ese mes devuelve la que hay con `ya_existia: true` y no crea nada.
+    """
+    return svc.agendar_nomina(db, data.anio, data.mes, admin.id,
+                              monto=data.monto,
+                              barista_id=barista[0], barista_nombre=barista[1])
 
 
 @router.delete("/obligaciones/{obligacion_id}")

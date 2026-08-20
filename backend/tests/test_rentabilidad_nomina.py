@@ -522,3 +522,52 @@ class LaNominaManualSeAbrePorMesTest(RentabilidadNominaBase):
         self.obligacion(self.cat_nomina, 2_000_000, date(2026, 8, 31))
         r = self.pl(date(2026, 8, 1), date(2026, 8, 31))["resumen"]
         self.assertAlmostEqual(r["nomina_manual_por_mes"]["2026-08"], 2_000_000)
+
+
+# ─── Lo que la vista por sede NO puede ver, dicho en voz alta ───────────────
+
+class CorporativasFueraTest(RentabilidadNominaBase):
+    """AGENDAR LA NÓMINA ARREGLA EL CONSOLIDADO Y DEJA LAS SEDES MINTIENDO.
+
+    La nómina es una obligación CORPORATIVA (`tienda_id` NULL) porque cubre a
+    todo el negocio y repartirla entre sedes la duplicaría. Eso está bien y no se
+    toca. Lo que faltaba era DECIRLO.
+
+    Medido con los $20.400.000 de agosto agendados: el consolidado los descuenta;
+    Vida y Palmetto, miradas por separado, muestran solo su costo laboral
+    calculado por horas —centavos al lado— y un margen precioso. Un dueño que
+    abre «Rentabilidad → Vida» leía un costo treinta veces más chico que el real
+    y nada en la pantalla se lo advertía.
+
+    Estos tests fijan que el número deje de afirmarse solo. No prorratean nada:
+    repartir una nómina corporativa entre sedes es una decisión del negocio, no
+    una fórmula.
+    """
+
+    def test_el_consolidado_no_declara_nada_porque_las_incluye(self):
+        self.obligacion(self.cat_nomina, 20_400_000, self.martes)
+        r = self.pl()["resumen"]
+        self.assertEqual(r["corporativas_fuera"], 0)
+        self.assertFalse(r["excluye_corporativas"])
+
+    def test_la_sede_declara_lo_que_quedo_afuera(self):
+        self.obligacion(self.cat_nomina, 20_400_000, self.martes)
+        r = self.pl(tienda_id=self.t1.id)["resumen"]
+        self.assertEqual(r["corporativas_fuera"], 20_400_000)
+        self.assertTrue(r["excluye_corporativas"])
+
+    def test_una_sede_sin_corporativas_no_advierte_nada(self):
+        """La bandera mira el MONTO, no la forma: sin corporativas en el período
+        la sede no tiene nada que declarar y la pantalla queda limpia."""
+        self.obligacion(self.cat_nomina, 3_000_000, self.martes, tienda_id=self.t1.id)
+        r = self.pl(tienda_id=self.t1.id)["resumen"]
+        self.assertEqual(r["corporativas_fuera"], 0)
+        self.assertFalse(r["excluye_corporativas"])
+
+    def test_lo_declarado_no_se_suma_al_costo_de_la_sede(self):
+        """`corporativas_fuera` es INFORMATIVO: dice lo que NO está adentro. Si
+        alguien lo sumara a `gastos`, Σ por sede dejaría de dar el global — que
+        es exactamente la razón por la que no se prorratea."""
+        self.obligacion(self.cat_nomina, 20_400_000, self.martes)
+        sede = self.pl(tienda_id=self.t1.id)["resumen"]
+        self.assertNotIn(20_400_000, (sede["gastos"], sede["costos_fijos_devengados"]))

@@ -298,6 +298,36 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
         q_oblig = q_oblig.filter(Obligacion.tienda_id == tienda_id)
     oblig_rows = q_oblig.all()
 
+    # ── LO QUE ESTA VISTA NO PUEDE VER, DICHO EN VOZ ALTA ────────────────────
+    # Lo de arriba es correcto y no se toca. Lo que faltaba era DECIRLO: mirando
+    # una sola sede, el arriendo y la nómina —que son corporativos— quedan afuera
+    # del costo, y la pantalla lo mostraba como si esa sede no los tuviera.
+    #
+    # Medido con la nómina de agosto agendada ($20.400.000 en una obligación
+    # corporativa): el consolidado descuenta los $20.400.000; Vida muestra
+    # $308.423 de costo laboral y Palmetto $175.090. Vida + Palmetto da $483.514
+    # contra $20.400.000 del global. Un dueño que abre «Rentabilidad → Vida» lee
+    # un costo laboral treinta veces más chico que el real y un margen precioso.
+    #
+    # No se prorratea acá —repartir una nómina corporativa entre sedes es una
+    # decisión del negocio, no una fórmula— pero el número deja de afirmarse solo.
+    # Es el mismo trato que `_caja_hoy` ya le da a esto en services/costos.py con
+    # `advertencias.excluye_corporativas`.
+    corporativas_fuera = 0.0
+    if tienda_id is not None:
+        q_corp = (
+            db.query(func.coalesce(func.sum(Obligacion.monto), 0.0))
+            .join(CostoCategoria, Obligacion.categoria_id == CostoCategoria.id)
+            .filter(
+                Obligacion.anulada == False,  # noqa: E712
+                Obligacion.tienda_id.is_(None),
+                Obligacion.fecha_devengo >= desde,
+                Obligacion.fecha_devengo <= hasta,
+                CostoCategoria.clave != CLAVE_CATEGORIA_PROVEEDORES,
+            )
+        )
+        corporativas_fuera = round(float(q_corp.scalar() or 0.0), 2)
+
     # ── COGS teórico: lo VENDIDO × costo de receta (base de consumo, no de
     # recepción). Da el margen bruto real del período sin la distorsión de los
     # días en que se stockea fuerte. Se acompaña de pct_venta_costeada para no
@@ -595,6 +625,13 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
             # sepa si puede emitir un veredicto o tiene que pedir el dato).
             "costos_fijos_devengados": costos_fijos_devengados,
             "n_costos_fijos": n_costos_fijos,
+            # LO QUE ESTA VISTA NO PUEDE VER. Con una sede filtrada, el arriendo y
+            # la nómina son corporativos y quedan afuera del costo: sin este campo
+            # la pantalla mostraba el margen de una sede como si no los tuviera.
+            # Cero cuando se mira el global, que sí los incluye. Ver el bloque de
+            # `q_oblig` para el número medido de agosto.
+            "corporativas_fuera": corporativas_fuera,
+            "excluye_corporativas": bool(tienda_id is not None and corporativas_fuera > 0),
             # `nomina["pares"]` es un defaultdict(float): basta con que alguien
             # tenga horas marcadas para que la clave exista en 0.0, y bool() de un
             # dict con claves da True. O sea la bandera se prendía —y la pantalla

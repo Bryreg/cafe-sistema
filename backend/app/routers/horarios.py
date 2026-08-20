@@ -311,6 +311,53 @@ def resumen(tienda_id: int = Query(..., ge=1), anio: Optional[int] = Query(None)
     return nmsvc.resumen_mensual(db, tienda_id, anio or hoy.year, mes or hoy.month)
 
 
+# Las dos bases que sabe calcular `/nomina-consolidada`. Van acá y no en un
+# Literal del schema porque lo que rechaza pydantic vuelve como 422 y el detail
+# de un 422 es una LISTA: el cliente solo lee strings y el dueño vería «error»
+# pelado en vez de qué escribir.
+BASES_NOMINA_CONSOLIDADA = ("real", "contrato")
+
+
+@router.get("/nomina-consolidada")
+def nomina_consolidada(anio: Optional[int] = Query(None), mes: Optional[int] = Query(None),
+                       base: str = Query("real"),
+                       db: Session = Depends(get_db),
+                       admin: Usuario = Depends(require_admin)):
+    """LA NÓMINA DEL NEGOCIO ENTERO, sin `tienda_id`. Detalle por persona y total.
+
+    Es el primer endpoint de nómina GLOBAL del sistema: `/horarios/resumen` exige
+    `tienda_id` obligatorio, así que el costo laboral consolidado —hoy más de
+    $20.000.000 al mes entre las dos sedes— no se podía consultar desde ninguna
+    pantalla. No es que estuviera mal calculado: no había forma de pedirlo.
+
+    Y no es la suma de dos llamadas a `/resumen`. Quien cubre en las dos sedes
+    aparece ENTERA en los dos resúmenes (el auxilio, el piso del IBC, los aportes
+    y las prestaciones son mensuales POR TRABAJADOR), así que sumarlos duplica su
+    nómina. Acá el universo se arma una sola vez y cada persona se liquida una
+    sola vez: este total SÍ se suma.
+
+    `base` elige de qué fuente sale el número, que es la misma distinción que
+    gobierna el agendado de la nómina:
+
+      · `real` (default) — lo que YA se trabajó: horas marcadas más las
+        acreditadas por novedad. Es el mes cerrado o el mes en curso hasta hoy.
+      · `contrato` — la PROYECCIÓN del mes que viene, desde el sueldo pactado.
+        Un mes que todavía no ocurrió no tiene marcaciones, así que pedirle el
+        número a las horas devuelve $0 — que es exactamente el bug por el cual la
+        nómina no aparecía en ninguna proyección de plata.
+    """
+    hoy = hoy_col()
+    if base not in BASES_NOMINA_CONSOLIDADA:
+        raise HTTPException(
+            status_code=400,
+            detail="La base tiene que ser «real» (lo trabajado) o «contrato» "
+                   "(la proyección del mes que viene).")
+    a, m = anio or hoy.year, mes or hoy.month
+    if base == "contrato":
+        return nmsvc.proyectada(db, a, m)
+    return nmsvc.consolidada(db, a, m)
+
+
 @router.get("/resumen.csv")
 def resumen_csv(tienda_id: int = Query(..., ge=1), anio: Optional[int] = Query(None),
                 mes: Optional[int] = Query(None), db: Session = Depends(get_db),

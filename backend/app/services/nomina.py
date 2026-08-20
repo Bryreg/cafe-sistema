@@ -50,6 +50,20 @@ from app.services.horas import (
     valorizar,
 )
 
+# Sacada de la lista y con nombre propio porque es LA ÚNICA que el consolidado
+# tiene que apagar, y el consolidado la identifica POR IDENTIDAD (`is`), no por
+# buscarle un pedazo de texto adentro: buscando el texto, el día que alguien le
+# corrija una coma el filtro deja de matchear en silencio y la pantalla que suma
+# bien termina advirtiendo que no se suma.
+ADVERTENCIA_NO_SUMAR_SEDES = (
+    "La liquidación en pesos es de la PERSONA y del mes completo: el auxilio de "
+    "transporte, la base de cotización, los aportes y las prestaciones son "
+    "mensuales por trabajador, no por local. Quien cubrió en las dos sedes "
+    "aparece con las MISMAS cifras en los dos resúmenes —es la misma obligación "
+    "mirada dos veces— así que SUMAR DOS RESÚMENES LA CUENTA DOS VECES. Las "
+    "horas sí son de esta sede."
+)
+
 ADVERTENCIAS = [
     "Las horas reales salen de la entrada y la salida que se marcan en caja. "
     "Cuando alguien no marca su salida, el cierre de caja la registra por ella con "
@@ -63,12 +77,7 @@ ADVERTENCIAS = [
     "Los días que alguien cubrió en la OTRA sede cuentan para su tope semanal: la "
     "jornada máxima es por persona, no por local. Su almuerzo también se les "
     "descuenta, usando el horario de la sede donde lo trabajó.",
-    "La liquidación en pesos es de la PERSONA y del mes completo: el auxilio de "
-    "transporte, la base de cotización, los aportes y las prestaciones son "
-    "mensuales por trabajador, no por local. Quien cubrió en las dos sedes "
-    "aparece con las MISMAS cifras en los dos resúmenes —es la misma obligación "
-    "mirada dos veces— así que SUMAR DOS RESÚMENES LA CUENTA DOS VECES. Las "
-    "horas sí son de esta sede.",
+    ADVERTENCIA_NO_SUMAR_SEDES,
     # Estas tres reemplazaron a una sola que decía «no incluye auxilio de
     # transporte, prestaciones, seguridad social ni deducciones». Desde que el
     # resumen expone `liquidacion`, esa frase pasó a ser MENTIRA — y una
@@ -99,9 +108,51 @@ ADVERTENCIAS = [
 ]
 
 
+# La de «no sumes dos resúmenes» se apaga POR IDENTIDAD, no buscando texto: en
+# el consolidado sumar es justamente lo correcto, y dejarla ahí haría dudar del
+# único número del módulo que sí se puede sumar.
+ADVERTENCIAS_CONSOLIDADO = [
+    a for a in ADVERTENCIAS if a is not ADVERTENCIA_NO_SUMAR_SEDES
+] + [
+    "Este es el número CONSOLIDADO del negocio: cada persona se liquida una sola "
+    "vez sobre todas las sedes, así que el total se puede sumar y comparar contra "
+    "lo que se paga. Lo que NO se puede es sumarle encima los resúmenes por sede: "
+    "esa plata ya está adentro de acá.",
+]
+
+# La proyección NO hereda las de arriba: casi todas hablan de marcaciones,
+# almuerzos y días sin marcar, y un mes que no pasó no tiene nada de eso. Una
+# advertencia que no aplica es peor que ninguna, porque enseña a no leerlas.
+ADVERTENCIAS_PROYECCION = [
+    "Es una PROYECCIÓN y es un PISO: sale del sueldo pactado en Contratos, sin "
+    "recargos nocturnos, horas extra, dominicales ni festivos, porque todavía no "
+    "hay turnos trabajados que medir. El mes real va a costar esto o más.",
+    "Quien no tenga sueldo cargado en Contratos proyecta $0 y aparece marcado en "
+    "la lista. No es que no cueste: es que nadie declaró cuánto.",
+    "Las novedades ya cargadas para ese mes NO se descuentan. Las vacaciones se "
+    "pagan igual, y una incapacidad cambia quién pone la plata, no si se debe.",
+    "El auxilio de transporte va por los 30 días del mes comercial completo, que "
+    "es el mismo divisor con el que se liquida un mes cerrado.",
+    "Los montos salen de los parámetros de nómina vigentes en el MES PROYECTADO, "
+    "no en el de hoy: proyectar enero desde diciembre ya usa el mínimo del año "
+    "que arranca.",
+]
+
+
+# Rango de años que el módulo acepta. No es una regla de negocio: es el guardia
+# que evita que un año fuera del calendario de Python (el 0, un 99999) baje con
+# un ValueError crudo —o sea un 500— en vez de con un mensaje que el dueño pueda
+# leer. `date` no admite año 0 y `calendar.monthrange` tampoco.
+ANIO_MIN, ANIO_MAX = 2000, 2100
+
+
 def rango_mes(anio: int, mes: int) -> tuple[date, date]:
     if not 1 <= int(mes) <= 12:
         raise HTTPException(status_code=400, detail="Mes inválido (tiene que ser 1 a 12).")
+    if not ANIO_MIN <= int(anio) <= ANIO_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Año inválido (tiene que ser {ANIO_MIN} a {ANIO_MAX}).")
     ultimo = calendar.monthrange(int(anio), int(mes))[1]
     return date(int(anio), int(mes), 1), date(int(anio), int(mes), ultimo)
 
@@ -154,10 +205,17 @@ def _redondear(h: dict[str, float]) -> dict[str, float]:
     return {c: round(v, 2) for c, v in h.items()}
 
 
-def _tramos_reales(db: Session, tienda_id: int, desde: date, hasta: date,
+def _tramos_reales(db: Session, tienda_id: int | None, desde: date, hasta: date,
                    pausas: dict[int, list[tuple[datetime, datetime]]] | None = None,
-                   ) -> tuple[dict[int, list], dict[int, int], dict[int, Usuario]]:
+                   ) -> tuple[dict[int, list], dict[int, int], dict[int, Usuario], dict]:
     """Tramos REALES (entró/salió) de la sede en el rango, en hora Colombia.
+
+    `tienda_id=None` significa TODAS LAS SEDES, igual que en `_tramos_planeados`
+    y `_pausas_planeadas`, y entonces todo tramo es «propio»: no hay una otra
+    sede contra la cual serlo. Ojo con la alternativa que parece equivalente y
+    no lo es —llamar a esta función una vez por sede y unir los resultados—:
+    la query NO filtra por sede (a propósito, ver abajo), así que cada vuelta
+    devuelve TODOS los tramos y la unión los contaría una vez por local.
 
     A cada tramo se le sacan las ventanas de almuerzo PLANEADAS que caigan
     adentro (ver `_pausas_planeadas`): la caja no marca el descanso, así que sin
@@ -199,7 +257,7 @@ def _tramos_reales(db: Session, tienda_id: int, desde: date, hasta: date,
         entrada = local_col(tb.created_at)
         if not (desde <= entrada.date() <= hasta):
             continue
-        propio = sede_id == tienda_id
+        propio = tienda_id is None or sede_id == tienda_id
         if propio:
             # `personas` y `sin_salida` son del REPORTE, que es de esta sede: no
             # se pueblan con gente que solo trabajó en la otra.
@@ -538,6 +596,228 @@ def resumen_mensual(db: Session, tienda_id: int, anio: int, mes: int) -> dict:
     }
 
 
+def consolidada(db: Session, anio: int, mes: int) -> dict:
+    """LA NÓMINA DEL NEGOCIO: un universo de personas, una liquidación por cabeza.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    POR QUÉ NO ES LA SUMA DE LOS RESÚMENES POR SEDE
+    ═══════════════════════════════════════════════════════════════════════════
+    `resumen_mensual` declara —y el CSV lo repite en su pie— que dos resúmenes de
+    sedes distintas NO SE SUMAN: el auxilio de transporte, el piso del IBC, los
+    aportes y las prestaciones son mensuales POR TRABAJADOR, así que quien cubre
+    en las dos sedes aparece ENTERA en las dos pantallas. Son la misma obligación
+    mirada dos veces, no dos obligaciones.
+
+    Y por el otro lado tampoco se puede partir. Se probó prorratear por fracción
+    de devengado y salió peor: las partes de una persona sumaban 0,934 de su
+    liquidación y se evaporaban $33.644 —el redondeo de un IBC con piso y de un
+    auxilio con tope no reparte—, el CSV quedó con otro criterio que la pantalla,
+    y la fila decía una cosa y el total otra.
+
+    De esas dos cosas sale la única forma correcta de tener el número global, que
+    es lo que hace esta función: se arma el universo de personas UNA vez sobre
+    TODAS las sedes y se llama a `liquidacion.liquidar` UNA vez por persona. El
+    total de acá SÍ se suma, porque cada obligación entra exactamente una vez.
+
+    Acá el consolidado también decide QUIÉN APARECE, y no se contradice con la
+    regla de `resumen_mensual` («quién aparece es una pregunta de SEDE»): esa
+    regla existe para que la gente de Palmetto no se cuele en el número de Vida.
+    Cuando la pantalla es el negocio entero no hay otra sede de la cual colarse
+    —el universo ES todo el mundo—, así que la novedad consolidada suma gente sin
+    inflar nada.
+
+    Reusa `_resumen_barista` en vez de recalcular: los tramos entran etiquetados
+    como propios (todas las sedes lo son acá), con lo cual `estimado` y el
+    devengado de la persona son el mismo número y `en_varias_sedes` queda en
+    False para todo el mundo. Es cierto y es el punto: en esta vista nadie está
+    «en otra sede».
+    """
+    desde, hasta = rango_mes(anio, mes)
+    semanas = _semanas(desde, hasta)
+    tasas = [tasas_laborales.tasa_para(db, lunes) for lunes, _ in semanas]
+    filas_tasa = [tasas_laborales.tasa_vigente(db, lunes) for lunes, _ in semanas]
+
+    borde_ini, borde_fin = semanas[0][0], semanas[-1][1]
+    festivas = fsvc.fechas_festivas(db, borde_ini, borde_fin)
+
+    def es_festivo(d: date) -> bool:
+        return d in festivas
+
+    # TODO consolidado (tienda_id=None) y nada por sede: es la regla de oro del
+    # módulo —«TODO insumo de la liquidación de una persona viene de todas las
+    # sedes»— aplicada sin la excepción que el resumen por sede necesita para
+    # decidir quién aparece en SU pantalla.
+    pausas = _pausas_planeadas(db, None, borde_ini, borde_fin)
+    reales, sin_salida, personas_real, _otra = _tramos_reales(
+        db, None, borde_ini, borde_fin, pausas)
+    planeados, _plan_dia_ext = _tramos_planeados(db, None, borde_ini, borde_fin)
+    # Acotado al mes: alimenta la tabla día por día y las ausencias.
+    _plan_mes, planeado_por_dia = _tramos_planeados(db, None, desde, hasta)
+    novedades = nsvc.listar(db, None, desde, hasta)
+
+    con_contrato = _ids_con_contrato(db)
+    # `personas_de_nomina(db, None)` y no dos llamadas por sede: quien tenga
+    # `Usuario.tienda_id` en NULL se caería de las dos y su sueldo del total.
+    personas: dict[int, Usuario] = {
+        u.id: u for u in hsvc.personas_de_nomina(db, None)}
+    personas.update(personas_real)
+    for uid in list(planeado_por_dia) + [n.usuario_id for n in novedades]:
+        if uid not in personas:
+            u = db.query(Usuario).filter(Usuario.id == uid).first()
+            if u is not None and _es_persona(u, con_contrato):
+                personas[uid] = u
+
+    contratos = {
+        c.usuario_id: c
+        for c in db.query(ContratoBarista).filter(
+            ContratoBarista.usuario_id.in_(list(personas) or [0])).all()
+    }
+
+    salida = []
+    for uid, u in sorted(personas.items(), key=lambda kv: (kv[1].nombre or "").lower()):
+        salida.append(_resumen_barista(
+            db, uid, u, reales.get(uid, []), planeados.get(uid, []),
+            planeado_por_dia.get(uid, {}), [n for n in novedades if n.usuario_id == uid],
+            semanas, tasas, es_festivo, desde, hasta,
+            sin_salida.get(uid, 0), contratos.get(uid), frozenset(),
+        ))
+
+    return {
+        # Sin `tienda_id`: el que falta es el punto. Devolverlo en None sería
+        # invitar a la pantalla a tratarlo como «una sede más».
+        "anio": int(anio), "mes": int(mes),
+        "desde": desde.isoformat(), "hasta": hasta.isoformat(),
+        "alcance": "consolidado",
+        "base_liquidacion": "real",
+        "base_liquidacion_detalle": (
+            "La nómina del negocio entero: todas las sedes en un solo número. Se "
+            "liquida sobre lo REAL (lo que se marcó al entrar y salir) más las "
+            "horas programadas de los días cubiertos por una novedad remunerada. "
+            "Cada persona se liquida UNA vez, así que este total SÍ es sumable — "
+            "al revés que los resúmenes por sede."
+        ),
+        "advertencias": ADVERTENCIAS_CONSOLIDADO + [
+            a for a in [pnsvc.alerta_exoneracion(db, pnsvc.para(db, desde))] if a
+        ],
+        "categorias": [{"clave": c, "label": ETIQUETAS[c]} for c in CATEGORIAS],
+        "semanas": [
+            {"lunes": lunes.isoformat(), "domingo": domingo.isoformat(),
+             "jornada_max_semanal": float(fila.jornada_max_semanal),
+             "vigente_desde": fila.vigente_desde.isoformat(),
+             "confirmar_contador": bool(fila.confirmar_contador)}
+            for (lunes, domingo), fila in zip(semanas, filas_tasa)
+        ],
+        "personas": salida,
+        "totales": _totales(salida),
+    }
+
+
+def proyectada(db: Session, anio: int, mes: int) -> dict:
+    """La nómina del mes que VIENE, desde el CONTRATO. Nunca desde las horas.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    POR QUÉ ESTA FUNCIÓN NO PUEDE PASAR POR `_acreditar`, Y POR QUÉ DABA $0
+    ═══════════════════════════════════════════════════════════════════════════
+    ACREDITADO = lo real + lo PROGRAMADO de los días con novedad remunerada. Las
+    dos mitades son del pasado: la primera necesita marcaciones de caja y la
+    segunda necesita una novedad cargada. Un mes que todavía no ocurrió no tiene
+    ninguna de las dos, así que `_acreditar` devuelve una lista vacía, el
+    devengado da 0 y con él dan 0 el auxilio, los aportes, las prestaciones y el
+    costo. La proyección de la nómina valía $0 — y con ella el punto de quiebre,
+    el piso de venta y el colchón para activaciones, todos hacia el lado
+    tranquilizador.
+
+    Y el bug no se arregla poniendo turnos: publicar el horario del mes que viene
+    tampoco lo enciende, porque el planeado solo se acredita en los días que YA
+    tienen una novedad remunerada encima. Un mes entero publicado y sin ninguna
+    novedad sigue proyectando cero. Por eso la fuente tiene que ser otra.
+
+    LA FUENTE ES EL CONTRATO. Lo que se debe el mes que viene no depende de que
+    alguien marque: es el sueldo pactado, su auxilio de transporte, sus aportes y
+    su provisión de prestaciones. Se liquida con `liquidacion.liquidar`, la misma
+    función pura que usa el mes cerrado, y el auxilio va por los 30 días del mes
+    comercial completo.
+
+    LO QUE ESTO ES Y LO QUE NO ES. Es el PISO: el sueldo base sin recargos, sin
+    horas extra, sin dominicales y sin festivos, porque nada de eso está decidido
+    todavía. El mes real va a costar esto o más, nunca menos, y esa dirección es
+    deliberada: el número existe para saber cuánta plata hay que tener, y un
+    faltante que se descubre el día 30 no se resuelve.
+
+    LAS NOVEDADES FUTURAS YA CARGADAS NO SE DESCUENTAN. Unas vacaciones que
+    arrancan el 5 igual se pagan; una incapacidad cambia quién pone la plata (EPS
+    o el negocio), no si se debe. Descontarlas bajaría la proyección por un dato
+    que no significa lo que parece, que es la familia de error que este módulo ya
+    pagó doce veces.
+    """
+    desde, hasta = rango_mes(anio, mes)
+    # Los parámetros se resuelven por la fecha del PERÍODO PROYECTADO, no por
+    # hoy: proyectar enero desde diciembre tiene que usar el mínimo del año que
+    # arranca, que es cuando se paga. Sin esto, la proyección de enero nace vieja
+    # y corta —justo el mes en que el sueldo sube.
+    params = pnsvc.para(db, desde)
+    dias_del_mes = _dias_de_nomina(desde, hasta, params)
+
+    personas = hsvc.personas_de_nomina(db, None)
+    contratos = {
+        c.usuario_id: c
+        for c in db.query(ContratoBarista).filter(
+            ContratoBarista.usuario_id.in_([u.id for u in personas] or [0])).all()
+    }
+
+    filas = []
+    for u in personas:
+        contrato = contratos.get(u.id)
+        salario = pnsvc.salario_del_contrato(contrato, params)
+        # SIN SUELDO NO HAY AUXILIO, mismo guardia que `_resumen_barista`:
+        # `auxilio_del_periodo` le da derecho a cualquier sueldo por debajo del
+        # tope y $0 está por debajo, así que sin esto una barista sin contrato
+        # cargado aparecía cobrando el auxilio entero y nada más.
+        dias_auxilio = lqsvc.dias_con_auxilio(dias_del_mes) if salario > 0 else 0
+        # El DEVENGADO proyectado es el sueldo pactado del mes, y `salario` va
+        # además como segundo argumento porque el tope del auxilio se mide sobre
+        # el sueldo pactado, no sobre lo devengado.
+        liquidacion = (lqsvc.liquidar(params, salario, salario, dias_auxilio)
+                       if params is not None else _liquidacion_vacia())
+        filas.append({
+            "usuario_id": u.id,
+            "nombre": u.nombre,
+            "tienda_id": u.tienda_id,
+            "tiene_contrato": contrato is not None,
+            # Las dos preguntas distintas de siempre: `tiene_contrato` es «existe
+            # la fila» y `tiene_sueldo` es «hay plata adentro». El PUT de Sueldos
+            # crea la fila con salario 0.
+            "tiene_sueldo": salario > 0,
+            "contrato_activo": bool(contrato.activo) if contrato is not None else False,
+            "salario_mensual": salario,
+            "liquidacion": liquidacion,
+        })
+
+    filas.sort(key=lambda f: (f["nombre"] or "").lower())
+    totales = _totales_liquidacion(filas)
+    return {
+        "anio": int(anio), "mes": int(mes),
+        "desde": desde.isoformat(), "hasta": hasta.isoformat(),
+        "alcance": "consolidado",
+        "base_liquidacion": "contrato",
+        "base_liquidacion_detalle": (
+            "Proyección del mes que viene, calculada desde el CONTRATO de cada "
+            "persona y no desde horas marcadas —un mes que no pasó no tiene "
+            "marcaciones—. Es el PISO: sueldo pactado, auxilio de transporte de "
+            f"{dias_del_mes} días, aportes y provisión de prestaciones, SIN "
+            "recargos, extras, dominicales ni festivos. El mes real cuesta esto "
+            "o más."
+        ),
+        "dias_auxilio_base": dias_del_mes,
+        "personas": filas,
+        "totales": totales,
+        "advertencias": ADVERTENCIAS_PROYECCION + [
+            a for a in [pnsvc.alerta_exoneracion(db, params)] if a
+        ],
+        "es_proyeccion": True,
+    }
+
+
 def _resumen_barista(db, uid, u, tramos_reales, tramos_planeados, planeado_dia,
                      novedades, semanas, tasas, es_festivo, desde, hasta,
                      sin_salida, contrato, dias_otra_sede=frozenset()) -> dict:
@@ -804,6 +1084,37 @@ def _liquidacion_vacia() -> dict:
     }
 
 
+def _totales_liquidacion(filas: list[dict]) -> dict:
+    """Los CINCO números del período, sumados. Los usan el resumen por sede, el
+    consolidado y la proyección, y por eso viven acá y no adentro de `_totales`:
+    la proyección no tiene horas que sumar, y una segunda función de totales que
+    sumara la misma plata con otro criterio es exactamente cómo dos pantallas de
+    nómina empiezan a dar números distintos.
+
+    SE SUMAN, NUNCA SE RECALCULAN. Recalcular el total sobre el devengado
+    agregado daría OTRO número y sería el equivocado: el piso del IBC y el tope
+    del auxilio son por PERSONA. Dos baristas de medio tiempo cotizan sobre dos
+    mínimos enteros, no sobre uno solo; sumar sus devengados y liquidar eso una
+    vez se comería la mitad de los aportes.
+    """
+    return {
+        "total_devengado": round(
+            sum(b["liquidacion"]["devengado"] for b in filas), 2),
+        "total_auxilio": round(
+            sum(b["liquidacion"]["auxilio"]["total"] for b in filas), 2),
+        "total_deducciones": round(
+            sum(b["liquidacion"]["deducciones"]["total"] for b in filas), 2),
+        "total_neto": round(
+            sum(b["liquidacion"]["neto_a_pagar"] for b in filas), 2),
+        "total_costo_empleador": round(
+            sum(b["liquidacion"]["costo_empleador"] for b in filas), 2),
+        # El que la pantalla usa para avisar: cuenta a quien NO tiene sueldo,
+        # tenga o no fila de contrato. Contando solo las filas faltantes, el
+        # dueño leía «2 sin sueldo cargado» cuando eran 3.
+        "sin_sueldo": sum(1 for b in filas if not b["tiene_sueldo"]),
+    }
+
+
 def _totales(baristas: list[dict]) -> dict:
     """Los agregados del mes. Los cinco números se SUMAN, nunca se recalculan.
 
@@ -814,6 +1125,7 @@ def _totales(baristas: list[dict]) -> dict:
     los aportes. El total es la suma de las liquidaciones, punto.
     """
     return {
+        **_totales_liquidacion(baristas),
         "total_planeado": round(sum(b["total_planeado"] for b in baristas), 2),
         "total_real": round(sum(b["total_real"] for b in baristas), 2),
         "total_acreditado": round(sum(b["total_acreditado"] for b in baristas), 2),
@@ -831,17 +1143,11 @@ def _totales(baristas: list[dict]) -> dict:
         # y salió peor —el redondeo no cerraba, el CSV quedaba con otro criterio
         # que la pantalla, y la fila decía una cosa y el total otra—. Un número
         # correcto que no se puede sumar, declarado, le sirve más al dueño que
-        # dos mitades que parecen sumables.
-        "total_devengado": round(
-            sum(b["liquidacion"]["devengado"] for b in baristas), 2),
-        "total_auxilio": round(
-            sum(b["liquidacion"]["auxilio"]["total"] for b in baristas), 2),
-        "total_deducciones": round(
-            sum(b["liquidacion"]["deducciones"]["total"] for b in baristas), 2),
-        "total_neto": round(
-            sum(b["liquidacion"]["neto_a_pagar"] for b in baristas), 2),
-        "total_costo_empleador": round(
-            sum(b["liquidacion"]["costo_empleador"] for b in baristas), 2),
+        # dos mitades que parecen sumables. Para el número que SÍ se puede sumar
+        # está `consolidada`, que arma el universo una sola vez.
+        #
+        # Los cinco totales de plata los pone `_totales_liquidacion`, compartido
+        # con el consolidado y la proyección.
         # Cuántas personas del mes trabajaron además en la otra sede: su fila
         # muestra el mes COMPLETO y los totales solo la parte de acá, así que la
         # pantalla tiene que poder decirlo o los dos números parecen pelearse.
@@ -850,10 +1156,9 @@ def _totales(baristas: list[dict]) -> dict:
         "dias_sin_marcacion": sum(len(b["dias_sin_marcacion"]) for b in baristas),
         "tramos_sin_salida": sum(b["tramos_sin_salida"] for b in baristas),
         "sin_contrato": sum(1 for b in baristas if not b["tiene_contrato"]),
-        # El que la pantalla usa para avisar: cuenta a quien NO tiene sueldo,
-        # tenga o no fila de contrato. Contando solo las filas faltantes, el
-        # dueño leía «2 sin sueldo cargado» cuando eran 3.
-        "sin_sueldo": sum(1 for b in baristas if not b["tiene_sueldo"]),
+        # `sin_sueldo` NO se repite acá: lo pone `_totales_liquidacion`. Escrito
+        # en los dos lados, el día que cambie el criterio de «no tiene sueldo»
+        # cambia en uno solo y las dos pantallas empiezan a contar distinto.
     }
 
 

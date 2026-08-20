@@ -203,6 +203,32 @@ export interface Flujo {
   dias_hasta_quiebre: number | null
   advertencias: AdvertenciasFlujo
   totales: { entradas: number; salidas: number; saldo_final: number }
+
+  // ── El horizonte tiene FECHA DE CIERRE, y el colchón sale de esta serie ────
+  // Sin `dias`, el backend proyecta HASTA FIN DE MES y no 30 días que se corren.
+  // No es cosmético: el colchón de acá y el piso de venta (`/costos/piso`) tienen
+  // que mirar la MISMA ventana, o son dos respuestas a dos preguntas distintas
+  // puestas una al lado de la otra. Estos dos campos son los que dejan que la
+  // pantalla diga cuál está mirando en vez de suponerlo.
+  dias_hasta_fin_de_mes: number
+  horizonte_es_fin_de_mes: boolean
+
+  /**
+   * El punto MÁS BAJO de la serie, no el saldo final.
+   *
+   * Un mes que termina bien pero pasa por un lunes en rojo no tiene colchón: el
+   * proveedor rebota igual. Por eso el colchón se mide contra el mínimo.
+   */
+  saldo_minimo: number
+  /** La plata con la que el negocio no puede quedarse sin. Default 0. */
+  reserva_minima_caja: number
+  /** true = el 0 es el default, no una decisión que alguien tomó. */
+  reserva_es_default: boolean
+  /**
+   * `saldo_minimo − reserva`. NEGATIVO POSIBLE, y no se recorta en cero: un
+   * colchón negativo es exactamente el dato que hay que ver antes de gastar.
+   */
+  colchon: number
 }
 
 // ── Facturas de proveedor ────────────────────────────────────────────────────

@@ -59,6 +59,7 @@ import NotificacionesConfig from './pages/NotificacionesConfig'
 import CuadreTurnos from './pages/CuadreTurnos'
 import ConfigTicketPage from './pages/ConfigTicket'
 import Plata from './pages/Plata'
+import MesEnDetalle from './pages/MesEnDetalle'
 import Carta from './pages/Carta'
 import Horarios from './pages/Horarios'
 
@@ -219,14 +220,19 @@ function AppRoutes() {
       <Route path="/notificaciones-config" element={<RequireAdmin><Layout><NotificacionesConfig /></Layout></RequireAdmin>} />
       <Route path="/cumplimiento"     element={<RequireAdmin><Layout><CumplimientoAdmin /></Layout></RequireAdmin>} />
       <Route path="/config-ticket"   element={<RequireAdmin><Layout><ConfigTicketPage /></Layout></RequireAdmin>} />
-      {/* «Plata» = la fusión de /rentabilidad y /costos. Las dos rutas viejas
-          redirigen a la pestaña que responde su pregunta: /rentabilidad al
-          Resultado (¿gano?) y /costos a La plata (qué hay, qué se movió y qué hay que
-          pagar). Ningún bookmark ni ningún link viejo se rompe: la pestaña
-          «calendario» tampoco, que Plata resuelve como alias de «plata». */}
+      {/* «El piso» = una sola página con los ocho bloques. Las pestañas se
+          murieron, así que los hashes viejos (#plata, #resultado, #hoy,
+          #calendario) ya no seleccionan nada — y no hace falta que lo hagan:
+          `/plata` a secas es la página entera y un hash desconocido no rompe
+          nada, simplemente no ancla. Lo único que se mudó de verdad es el
+          Resultado, que ahora es su propia ruta.
+
+          `/rentabilidad` apunta ahí y NO a `/plata`: quien tenía ese bookmark
+          buscaba el margen por producto y el duelo de sedes, no el piso. */}
       <Route path="/plata"           element={<RequireAdmin><Layout><Plata /></Layout></RequireAdmin>} />
-      <Route path="/rentabilidad"    element={<Navigate to="/plata#resultado" replace />} />
-      <Route path="/costos"          element={<Navigate to="/plata#plata" replace />} />
+      <Route path="/plata/mes"       element={<RequireAdmin><Layout><MesEnDetalle /></Layout></RequireAdmin>} />
+      <Route path="/rentabilidad"    element={<Navigate to="/plata/mes" replace />} />
+      <Route path="/costos"          element={<Navigate to="/plata" replace />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

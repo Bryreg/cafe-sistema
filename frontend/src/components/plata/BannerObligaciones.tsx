@@ -10,7 +10,7 @@ import type { Fuente } from '../../api/useDato'
 import { SegunDato, NoSeSabe } from '../ui'
 import { CuentaBanco, detalleDeError, fechaCorta, plata } from './banco'
 import {
-  Agenda, AgendaSinFecha, Categoria, CORPORATIVO, Listado, Obligacion, Pago, Tienda,
+  Categoria, CORPORATIVO, Listado, Obligacion, Pago, Tienda,
 } from './tipos'
 import { Banner, CLS_INPUT, ComoSeCalcula, ErrorCampo } from './campos'
 import FormObligacion from './FormObligacion'
@@ -96,21 +96,18 @@ function KpisMudos({ marca }: { marca: string }) {
  * «Corporativo» NO es lo mismo que «todas»: el arriendo y la nómina no
  * pertenecen a ninguna sede, y necesitan una opción propia para poder aislarlos.
  *
- * ── EL BLOQUE DORADO QUE SE EVAPORABA ──────────────────────────────────────
- * «Sin fecha de pago» sale de `agenda.sin_fecha`, que es OTRO fetch. Con la
- * agenda caída el bloque desaparecía entero y la pantalla quedaba diciendo, por
- * omisión, que no hay plata sin agendar. Es plata que se debe: ahora en su lugar
- * queda un hueco del mismo tamaño que dice qué no se pudo leer.
+ * ── LO QUE SE FUE ──────────────────────────────────────────────────────────
+ * El bloque «sin fecha de pago» vivía acá y salía de `agenda.sin_fecha`, que es
+ * OTRO fetch. Se mudó entero al bloque «lo que hay que pagar», que es la única
+ * lista de la página: por eso este banner ya no necesita la agenda.
  */
 export default function BannerObligaciones({
-  categorias, tiendas, cuentas, agenda, onCambio, refreshKey = 0,
+  categorias, tiendas, cuentas, onCambio, refreshKey = 0,
 }: {
   categorias: Fuente<Categoria[]>
   tiendas: Fuente<Tienda[]>
   cuentas: Fuente<CuentaBanco[]>
-  /** Para el bloque «sin fecha de pago», que no sale de la lista filtrada. */
-  agenda: Fuente<Agenda>
-  /** Cambió algo que otros banners leen (agenda, flujo, resultado). */
+  /** Cambió algo que otros bloques leen (agenda, flujo, resultado). */
   onCambio: () => void
   /** Sube cuando se pagó algo desde OTRO banner de esta misma página: sin esta
    *  señal la lista seguía con el saldo viejo y dejaba pagar dos veces. */
@@ -134,8 +131,6 @@ export default function BannerObligaciones({
   const [editando, setEditando] = useState<number | null>(null)
   const [pagando, setPagando] = useState<number | null>(null)
   const [confirmando, setConfirmando] = useState<string | null>(null)
-  const [fechando, setFechando] = useState<AgendaSinFecha | null>(null)
-  const [fVence, setFVence] = useState('')
 
   const cargar = useCallback(() => {
     setDatos(datoCargando)
@@ -149,7 +144,7 @@ export default function BannerObligaciones({
     return api.get<Listado>('/costos/obligaciones', { params })
       .then(r => setDatos(datoListo(r.data)))
       .catch(e => setDatos(datoFalla(detalleDeError(e, 'No se pudieron leer las obligaciones.'))))
-    // `refreshKey` sube desde LaPlataView cuando se pagó algo en OTRO banner de
+    // `refreshKey` sube desde la página cuando se pagó algo en OTRO bloque de
     // esta misma página. Va adentro de las deps de `cargar` —no solo del
     // efecto— porque el efecto depende de la identidad de `cargar`: sin esto el
     // prop queda declarado y muerto, la lista sigue mostrando el saldo entero y
@@ -203,15 +198,6 @@ export default function BannerObligaciones({
     } catch (e) { setError(detalleDeError(e, 'No se pudo repetir.')) }
   }
 
-  const guardarFecha = async () => {
-    if (!fechando || !fVence) return
-    setError('')
-    try {
-      await api.patch(`/costos/obligaciones/${fechando.id}`, { fecha_vencimiento: fVence })
-      setFechando(null); refrescar()
-    } catch (e) { setError(detalleDeError(e, 'No se pudo guardar la fecha.')) }
-  }
-
   const hayFiltros = !!(desde || hasta || sede || fCategoria || fEstado)
 
   return (
@@ -244,89 +230,15 @@ export default function BannerObligaciones({
         />
       </div>
 
-      {/* ── Sin fecha de pago ─────────────────────────────────────────────────
-          «Vence» es opcional en el alta, así que el caso normal terminaba
-          invisible: cuenta en el resultado del mes pero no se agenda ni entra a
-          la proyección. Sin este bloque el dueño concluye que no se guardó — y
-          con la agenda caída el bloque entero se evaporaba, que es la misma
-          conclusión por otro camino. */}
-      <SegunDato
-        dato={agenda.dato}
-        cargando={null}
-        falla={m => (
-          <div className="border-b border-warm-100 px-4 py-3">
-            <NoSeSabe bloque onReintentar={agenda.recargar}
-              mensaje={`${m} — no se sabe si hay obligaciones cargadas sin fecha de pago. Esa `
-                + 'plata se debe igual y no entra a la agenda ni a la proyección.'} />
-          </div>
-        )}
-        listo={a => a.sin_fecha.length === 0 ? null : (
-          <div className="border-b border-gold-200 bg-gold-50">
-            <div className="flex items-baseline justify-between gap-2 px-4 py-2">
-              <p className="text-xs font-bold text-gold-700">
-                Sin fecha de pago — no entran a la agenda ni a la proyección
-              </p>
-              <p className="font-mono font-bold text-xs text-gold-700 tabular-nums shrink-0">
-                {plata(a.totales.sin_fecha)}
-              </p>
-            </div>
-            <div className="divide-y divide-gold-200/40">
-              {a.sin_fecha.map(i => (
-                <div key={`sf-${i.id}`}>
-                  <div className="flex items-center gap-2 px-4 py-2">
-                    <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-white text-gold-700 border border-gold-200">
-                      <Tag size={11} /> {i.categoria_nombre || 'Sin categoría'}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-warm-700 truncate">{i.concepto}</p>
-                      <p className="text-[11px] text-warm-500 truncate">
-                        {i.tienda_nombre || 'Corporativo'} · devengo {fechaCorta(i.fecha_devengo)}
-                      </p>
-                    </div>
-                    <span className="font-mono font-bold text-sm text-warm-700 shrink-0 tabular-nums">
-                      {plata(i.monto)}
-                    </span>
-                    <button
-                      onClick={() => {
-                        setFechando(f => (f?.id === i.id ? null : i))
-                        setFVence(i.fecha_devengo || hoy)
-                      }}
-                      className="shrink-0 flex items-center gap-1.5 text-[11px] font-bold text-white bg-gold-600 hover:bg-gold-500 px-3 min-h-[38px] rounded-lg">
-                      <CalendarClock size={13} /> Poner fecha
-                    </button>
-                  </div>
-                  {/* Un solo campo: no merece un modal. */}
-                  {fechando?.id === i.id && (
-                    <div className="px-4 pb-3 flex flex-wrap items-end gap-2">
-                      <label className="block">
-                        <span className="block text-[10px] font-bold uppercase tracking-wide text-warm-500 mb-1">
-                          ¿Para cuándo hay que pagarlo?
-                        </span>
-                        <input type="date" value={fVence} autoFocus
-                          onChange={e => setFVence(e.target.value)}
-                          onKeyDown={e => { if (e.key === 'Enter') guardarFecha() }}
-                          className={`${CLS_INPUT} w-auto`} />
-                      </label>
-                      <button onClick={guardarFecha} disabled={!fVence}
-                        className="min-h-[44px] px-4 rounded-xl bg-forest hover:bg-forest-700 disabled:opacity-40 text-white text-sm font-bold">
-                        Guardar
-                      </button>
-                      <button onClick={() => setFechando(null)}
-                        className="min-h-[44px] px-3 rounded-xl text-sm font-bold text-warm-500">
-                        Cancelar
-                      </button>
-                      <p className="w-full text-[11px] text-warm-500 leading-snug">
-                        Con esta fecha el costo entra al día que le toca en la agenda. El mes al que
-                        pertenece (el devengo) <b>no cambia</b>.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      />
+      {/* ── «Sin fecha de pago» YA NO VIVE ACÁ ───────────────────────────────
+          Se mudó ENTERO al bloque «lo que hay que pagar», que es la única lista
+          de la página: ahí está su renglón, su total aparte y el mismo
+          `PATCH /costos/obligaciones/{id}` que se hacía desde este banner.
+
+          Tenerlo en los dos lugares no era redundancia inofensiva: eran dos
+          formularios de fecha para la misma obligación, y el que quedaba
+          abierto en el que no se tocó seguía mostrando la fecha vieja. Una
+          acción, un lugar. */}
 
       {/* ── Filtros ───────────────────────────────────────────────────────────
           Tocar una categoría filtra: con las categorías ya listadas, tener

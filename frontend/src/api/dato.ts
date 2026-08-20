@@ -50,8 +50,7 @@ export type Dato<T> =
   | { readonly estado: 'listo'; readonly valor: T }
 
 // Prefijo `dato*` a propósito. `listo` y `cargando` ya son identificadores
-// locales en FormObligacion, FormMovimiento, FormPagoObligacion, BannerFlujo y
-// BannerEgresos. El shadowing es legal y compila sin chistar —por eso hay que
+// locales en FormObligacion, FormMovimiento, FormPagoObligacion y BannerEgresos. El shadowing es legal y compila sin chistar —por eso hay que
 // elegir el nombre a mano—, pero deja dos cosas distintas llamadas igual justo
 // en los archivos donde más caro sale confundirlas.
 export const datoCargando: Dato<never> = { estado: 'cargando' }

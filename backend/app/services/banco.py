@@ -295,7 +295,14 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
     pag_antes = (db.query(func.coalesce(func.sum(Pago.monto), 0.0))
                  .filter(Pago.metodo == "efectivo", Pago.anulado == False,  # noqa: E712
                          Pago.fecha_pago < desde).scalar() or 0.0)
-    mano_saldo = round(float(rec_antes) - float(pag_antes), 2)
+    # Y lo que ANTES del rango salió de la mano al banco: los depósitos de lo
+    # recogido. Sin arrastrarlos, la mano de un mes mirado suelto no descontaría
+    # lo que ya se depositó en meses anteriores y quedaría inflada.
+    dep_antes = (db.query(func.coalesce(func.sum(MovimientoBanco.monto), 0.0))
+                 .filter(MovimientoBanco.desde_mano == True,  # noqa: E712
+                         MovimientoBanco.tipo == ENTRADA,
+                         MovimientoBanco.fecha < desde).scalar() or 0.0)
+    mano_saldo = round(float(rec_antes) - float(pag_antes) - float(dep_antes), 2)
 
     # ── LA CADENA SE DECIDE POR DÍA, NO POR MES ───────────────────────────────
     # Antes había UNA bandera para todo el rango, calculada mirando solo el
@@ -342,13 +349,19 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
         inicial = round(saldo, 2) if con_cadena else None
         final = round(inicial + tot_e - tot_s, 2) if con_cadena else None
 
-        # La mano del día: lo recogido entra, lo pagado en efectivo sale. El
+        # La mano del día: lo recogido entra, lo pagado en efectivo sale, y lo
+        # DEPOSITADO en el banco también sale de la mano (pasó al banco). El
         # sub-saldo corre solo (derivado), exista o no la cadena del banco.
         pagos_dia = pagos_por_dia.get(d, [])
         recog_dia = recogidas_por_dia.get(d, [])
         mano_e = round(sum(float(r.monto or 0.0) for r in recog_dia), 2)
         mano_s = round(sum(float(p["monto"] or 0.0) for p in pagos_dia), 2)
-        mano_saldo = round(mano_saldo + mano_e - mano_s, 2)
+        # Los depósitos de lo recogido de ESTE día: ya están sumados arriba en las
+        # entradas del banco (suben `final`); acá bajan la mano por el mismo monto,
+        # así que al total no le entra ni le sale nada — es un traspaso mano→banco.
+        mano_dep = round(sum(float(m.monto or 0.0) for m in del_dia
+                             if m.desde_mano and m.tipo == ENTRADA), 2)
+        mano_saldo = round(mano_saldo + mano_e - mano_s - mano_dep, 2)
         # El total (banco + mano) solo se conoce donde el banco tiene cadena: sin
         # el saldo del banco no hay total, y un número ahí sería inventado.
         total_final = round(final + mano_saldo, 2) if con_cadena else None
@@ -372,6 +385,10 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
                          for r in recog_dia],
             "mano_entradas": mano_e,
             "mano_salidas": mano_s,
+            # Lo que este día pasó de la mano al banco (depósito de lo recogido).
+            # Neutro al total; se dice para que la pantalla lo pueda mostrar como
+            # traspaso y no como una salida de plata del negocio.
+            "mano_depositos": mano_dep,
             "mano_saldo": mano_saldo,
             "total_final": total_final,
             "movimientos": [_a_dict(m, nombres, categorias) for m in del_dia],
@@ -433,6 +450,7 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
             # libro (banco + mano) solo se sabe donde el banco tiene cadena.
             "mano_entradas": round(sum(f["mano_entradas"] for f in filas), 2),
             "mano_salidas": round(sum(f["mano_salidas"] for f in filas), 2),
+            "mano_depositos": round(sum(f["mano_depositos"] for f in filas), 2),
             "mano_final": filas[-1]["mano_saldo"] if filas else None,
             "total_final": filas[-1]["total_final"] if filas else None,
             "dias_en_rojo": sum(1 for f in filas if f["en_rojo"]),
@@ -492,6 +510,9 @@ def _a_dict(m: MovimientoBanco, nombres: dict[int, str],
         "monto": float(m.monto or 0.0),
         "concepto": m.concepto,
         "automatico": bool(m.automatico),
+        # Esta entrada es un depósito de lo recogido (traspaso mano→banco, neutro
+        # al total). La pantalla lo pinta distinto: no es plata nueva que entró.
+        "desde_mano": bool(getattr(m, "desde_mano", False)),
         "obligacion_id": m.obligacion_id,
         # La categoría, resuelta a display: null = «sin clasificar», que es un
         # estado válido del libro, no un error.
@@ -647,7 +668,8 @@ def registrar(db: Session, fecha: date, cuenta_id: int, tipo: str, monto: float,
               concepto: str, usuario_id: int | None = None,
               obligacion_id: int | None = None, nota: str | None = None,
               automatico: bool = False, commit: bool = True,
-              categoria_id: int | None = None) -> MovimientoBanco:
+              categoria_id: int | None = None,
+              desde_mano: bool = False) -> MovimientoBanco:
     """Un movimiento. El monto va SIEMPRE positivo: el signo lo pone el tipo.
 
     Aceptar negativos dejaría que una salida de −$100.000 sume plata, y ese
@@ -667,6 +689,12 @@ def registrar(db: Session, fecha: date, cuenta_id: int, tipo: str, monto: float,
     if not (concepto or "").strip():
         raise ValueError("Un movimiento sin concepto no se puede conciliar "
                          "después contra el extracto.")
+    # Un depósito de lo recogido es plata que ENTRA al banco desde la mano: marcarlo
+    # en una salida no significa nada (la mano no baja por una salida del banco) y
+    # dejaría una fila que resta del total sin que nadie lo vea. Se corta acá.
+    if desde_mano and tipo != ENTRADA:
+        raise ValueError("Solo una entrada puede ser un depósito de lo recogido: "
+                         "es efectivo que pasa de tu mano al banco.")
     if db.query(CuentaBancaria).filter(CuentaBancaria.id == cuenta_id).first() is None:
         raise ValueError("Esa cuenta no existe.")
     if (categoria_id is not None and
@@ -678,7 +706,7 @@ def registrar(db: Session, fecha: date, cuenta_id: int, tipo: str, monto: float,
         fecha=fecha, cuenta_id=cuenta_id, tipo=tipo, monto=m,
         concepto=concepto.strip(), usuario_id=usuario_id,
         obligacion_id=obligacion_id, categoria_id=categoria_id,
-        nota=(nota or None), automatico=automatico)
+        nota=(nota or None), automatico=automatico, desde_mano=desde_mano)
     db.add(mov)
     if commit:
         db.commit()

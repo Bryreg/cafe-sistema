@@ -177,6 +177,10 @@ export default function FormMovimiento({
   const [obligacionId, setObligacionId] = useState('')
   /** '' = sin clasificar, también legítimo: la categoría es un rótulo, no un gate. */
   const [categoriaId, setCategoriaId] = useState('')
+  /** Esta entrada es un depósito de lo recogido: efectivo que ya estaba en la
+   *  mano y que pasa al banco. Sube el banco y baja la mano — neutro al total.
+   *  Solo aplica a las entradas; se olvida al pasar a «Salió» y al guardar. */
+  const [desdeMano, setDesdeMano] = useState(false)
   // La creación sobre la marcha: cuando cargue «Reteica» o «Cuota del carro»
   // por primera vez, la categoría nace ACÁ, sin ir a otra pantalla.
   const [creandoCat, setCreandoCat] = useState(false)
@@ -288,6 +292,11 @@ export default function FormMovimiento({
         // solo suma salidas. Una fila que dice pagar algo que no paga nada.
         obligacion_id: tipo === 'salida' && obligacionId ? Number(obligacionId) : null,
         categoria_id: categoriaId ? Number(categoriaId) : null,
+        // Blindado por tipo, igual que el enlace: el estado vive acá arriba y
+        // sobrevive a que la celda se desmonte. Un «Entró» marcado como depósito
+        // y después cambiado a «Salió» no debe mandar la marca — el backend la
+        // rechaza en una salida, pero no dependemos de eso para no mandarla.
+        desde_mano: tipo === 'entrada' && desdeMano,
       })
       // El GMF se OFRECE, nunca se escribe solo: el banco lo cobra por débito y
       // la fila sale con un toque — pero es el dueño el que confirma que este
@@ -316,6 +325,7 @@ export default function FormMovimiento({
       // y la sacaría de la agenda debiendo plata. La categoría también: el GMF
       // del arriendo no es el arriendo siguiente.
       setMonto(''); setConcepto(''); setTipo(null); setObligacionId(''); setCategoriaId('')
+      setDesdeMano(false)
       setAviso(r.data.advertencia ?? '')
       refMonto.current?.focus()
       onGuardado(r.data)
@@ -452,7 +462,7 @@ export default function FormMovimiento({
                   : 'border-warm-200 bg-white text-warm-500'}`}>
               <ArrowDownLeft size={14} /> Entró
             </button>
-            <button type="button" onClick={() => setTipo('salida')}
+            <button type="button" onClick={() => { setTipo('salida'); setDesdeMano(false) }}
               aria-pressed={tipo === 'salida'}
               className={`flex items-center justify-center gap-1 min-h-[44px] rounded-xl border-2 text-xs font-bold transition-colors ${
                 tipo === 'salida'
@@ -533,6 +543,27 @@ export default function FormMovimiento({
           {guardando ? 'Guardando…' : 'Guardar'}
         </button>
       </div>
+
+      {/* ── ¿ES UN DEPÓSITO DE LO RECOGIDO? — solo en las entradas ───────────
+          Cuando el dueño deposita en el banco efectivo que ya había recogido, esa
+          plata YA se contó (al recogerla entró a la mano). Marcarlo hace el
+          depósito NEUTRO al total: sube el banco, baja la mano. Sin la marca, lo
+          recogido quedaría contado dos veces. Va afuera de la grilla y sin gate:
+          es opcional, y la enorme mayoría de las entradas son plata nueva. */}
+      {tipo === 'entrada' && (
+        <label className="flex items-start gap-2.5 rounded-xl border border-success-200 bg-success-50/60 px-3 py-2.5 cursor-pointer">
+          <input type="checkbox" checked={desdeMano}
+            onChange={e => setDesdeMano(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-success-600" />
+          <span className="text-[12px] text-warm-600 leading-snug">
+            <b className="text-success-800">Es plata que ya recogí</b> y ahora deposité en el banco.
+            <span className="block text-[11px] text-warm-500 mt-0.5">
+              Ya la contamos cuando la recogiste, así que acá <b>no vuelve a sumar</b> al total: solo
+              pasa de tu mano al banco.
+            </span>
+          </span>
+        </label>
+      )}
 
       {/* ── LA CATEGORÍA: un rótulo, no un gate ─────────────────────────────
           Va en su propia fila y no en la grilla de arriba: es opcional, y la

@@ -146,6 +146,10 @@ with engine.connect() as _conn:
         # Atribución de VENTAS por barista en kiosko compartido (plano, sin FK).
         "ALTER TABLE tickets ADD COLUMN barista_id INTEGER",
         "ALTER TABLE tickets ADD COLUMN barista_nombre VARCHAR(100)",
+        # Modelo banco + mano (etapa 3): un depósito de lo recogido sube el banco
+        # y baja la mano por el mismo monto — neutro al total. DEFAULT FALSE (no 0):
+        # Postgres rechaza '0' como default de BOOLEAN.
+        "ALTER TABLE movimientos_banco ADD COLUMN desde_mano BOOLEAN DEFAULT FALSE",
         # Módulo 6: umbrales de stock configurables (ideal hacia el que reponer, crítico para alerta roja)
         "ALTER TABLE inventario ADD COLUMN stock_ideal FLOAT DEFAULT 0",
         "ALTER TABLE inventario ADD COLUMN stock_critico FLOAT DEFAULT 0",

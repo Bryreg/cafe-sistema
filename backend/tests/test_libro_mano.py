@@ -138,5 +138,81 @@ class ManoDentroDelLibroTest(Base_):
         self.assertEqual(desp["total_final"], desp["final"] + 300_000)
 
 
+class DepositoDeLoRecogidoTest(Base_):
+    """Etapa 3: depositar lo recogido es un traspaso mano→banco, NEUTRO al total.
+
+    «Nada nuevo (ya entró al recogerlo)»: la plata se contó una vez, al recogerla.
+    Cuando el dueño deposita parte en el banco, el banco sube y la mano baja por
+    el mismo monto — el total no se mueve. Sin esto, lo recogido se contaría dos
+    veces: una en la mano y otra en el banco.
+    """
+
+    def deposito(self, fecha, monto):
+        """Un depósito de lo recogido: entrada del banco marcada `desde_mano`."""
+        return registrar(self.db, fecha, self.occ.id, "entrada", monto,
+                         "Depósito de lo recogido", usuario_id=self.admin.id,
+                         desde_mano=True)
+
+    def test_depositar_lo_recogido_no_mueve_el_total(self):
+        self.ancla(1_000_000, date(2026, 8, 1))
+        self.recogida(date(2026, 8, 2), 500_000)   # mano +500k, total +500k
+        self.deposito(date(2026, 8, 3), 300_000)    # 300k pasan de la mano al banco
+        l = libro(self.db, date(2026, 8, 1), date(2026, 8, 5))
+        d3 = self.dia(l, "2026-08-03")
+        # El banco SÍ recibió los 300k (el extracto los muestra):
+        self.assertEqual(d3["total_entradas"], 300_000)
+        self.assertEqual(d3["final"], 1_300_000)     # 1.000.000 + 300.000
+        # La mano bajó los mismos 300k:
+        self.assertEqual(d3["mano_depositos"], 300_000)
+        self.assertEqual(d3["mano_saldo"], 200_000)  # 500k − 300k
+        # Y el TOTAL no se movió por el depósito: sigue siendo 1.000.000 + 500.000.
+        self.assertEqual(d3["total_final"], 1_500_000)
+
+    def test_una_entrada_normal_no_baja_la_mano(self):
+        """El contraste: una entrada que NO es depósito (un Bold, una transferencia
+        recibida) es plata nueva — sube el banco y el total, y la mano ni se entera."""
+        self.ancla(1_000_000, date(2026, 8, 1))
+        self.recogida(date(2026, 8, 2), 500_000)
+        registrar(self.db, date(2026, 8, 3), self.occ.id, "entrada", 300_000,
+                  "Bold", usuario_id=self.admin.id)   # desde_mano=False por defecto
+        l = libro(self.db, date(2026, 8, 1), date(2026, 8, 5))
+        d3 = self.dia(l, "2026-08-03")
+        self.assertEqual(d3["mano_depositos"], 0)
+        self.assertEqual(d3["mano_saldo"], 500_000)   # intacta
+        self.assertEqual(d3["final"], 1_300_000)      # banco subió
+        self.assertEqual(d3["total_final"], 1_800_000)  # y el total también
+
+    def test_el_deposito_de_antes_del_rango_baja_la_mano(self):
+        """Un mes mirado suelto arrastra la mano ya descontada de lo depositado
+        en meses anteriores — no la infla."""
+        self.ancla(1_000_000, date(2026, 8, 1))
+        self.recogida(date(2026, 7, 10), 800_000)     # julio, antes del rango
+        self.deposito(date(2026, 7, 20), 300_000)     # depositó 300k en julio
+        l = libro(self.db, date(2026, 8, 1), date(2026, 8, 2))
+        d1 = self.dia(l, "2026-08-01")
+        self.assertEqual(d1["mano_saldo"], 500_000)   # 800k − 300k, arrastrado
+
+    def test_no_se_puede_marcar_desde_mano_en_una_salida(self):
+        """Marcar una salida como depósito de lo recogido no significa nada: se
+        rechaza en el servicio antes de escribir una fila que restaría del total."""
+        self.ancla(1_000_000, date(2026, 8, 1))
+        with self.assertRaises(ValueError):
+            registrar(self.db, date(2026, 8, 3), self.occ.id, "salida", 100_000,
+                      "x", usuario_id=self.admin.id, desde_mano=True)
+
+    def test_el_deposito_no_rompe_la_cadena_del_banco(self):
+        """El depósito es una entrada del banco como cualquier otra para la cadena:
+        el saldo del banco sube y sigue cuadrando — la aceptación de julio intacta."""
+        self.ancla(1_000_000, date(2026, 8, 1))
+        self.recogida(date(2026, 8, 2), 500_000)
+        self.deposito(date(2026, 8, 3), 300_000)
+        t = libro(self.db, date(2026, 8, 1), date(2026, 8, 5))["totales"]
+        self.assertEqual(t["entradas"], 300_000)       # el banco lo ve entrar
+        self.assertEqual(t["final"], 1_300_000)
+        self.assertEqual(t["mano_depositos"], 300_000)
+        self.assertEqual(t["mano_final"], 200_000)
+        self.assertEqual(t["total_final"], 1_500_000)  # neutro respecto de recoger
+
+
 if __name__ == "__main__":
     unittest.main()

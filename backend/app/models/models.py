@@ -1871,6 +1871,14 @@ class MovimientoBanco(Base):
     # Marca los que el sistema puede sugerir solo (GMF, comisión) para poder
     # distinguirlos de lo que el dueño escribió a mano.
     automatico = Column(Boolean, nullable=False, default=False)
+    # DEPÓSITO DE LO RECOGIDO: esta entrada NO es plata nueva, es efectivo que el
+    # dueño ya había recogido (y que el libro ya contó como entrada de la MANO) y
+    # ahora deposita en el banco. Para el banco es una entrada real —el extracto
+    # la muestra y la cadena tiene que cuadrar con ella—, pero para el TOTAL del
+    # libro (banco + mano) es neutra: sube el banco y baja la mano por el mismo
+    # monto. Sin esta marca, la plata recogida quedaría contada dos veces —una al
+    # recogerla, otra al depositarla—. Solo tiene sentido en las entradas.
+    desde_mano = Column(Boolean, nullable=False, default=False)
     # Enlace a la obligación que este movimiento paga. Lo consumen
     # `costos._salidas_banco_por_obligacion` y `cubierto_de` (descuentan de la
     # agenda lo ya debitado, combinando con los pagos por MÁXIMO y no por suma),

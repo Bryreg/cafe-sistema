@@ -98,6 +98,11 @@ class MovimientoIn(BaseModel):
     # Opcional: un movimiento sin clasificar es válido, no un error.
     categoria_id: Optional[int] = None
     nota: Optional[str] = None
+    # Esta entrada es un depósito de lo recogido: efectivo que ya estaba en la mano
+    # y que ahora pasa al banco. Sube el banco y baja la mano — neutro al total.
+    # Default False: la enorme mayoría de las entradas son plata nueva. El servicio
+    # rechaza marcarlo en una salida (no significa nada ahí).
+    desde_mano: bool = False
 
 
 class AnclaIn(BaseModel):
@@ -283,7 +288,7 @@ def crear_movimiento(
         mov = banco.registrar(
             db, data.fecha, data.cuenta_id, data.tipo, data.monto, data.concepto,
             usuario_id=admin.id, obligacion_id=data.obligacion_id, nota=data.nota,
-            categoria_id=data.categoria_id)
+            categoria_id=data.categoria_id, desde_mano=data.desde_mano)
     except ValueError as e:
         # El texto del servicio ya está escrito para que lo lea el dueño.
         raise HTTPException(400, str(e))

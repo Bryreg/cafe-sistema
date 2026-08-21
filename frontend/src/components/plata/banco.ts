@@ -26,6 +26,10 @@ export interface MovimientoBanco {
   concepto: string
   /** Lo marcó el sistema (GMF, comisión), no el dueño. Hoy nada lo prende. */
   automatico: boolean
+  /** Esta entrada es un depósito de lo recogido (traspaso mano→banco, neutro al
+   *  total). Con `?` por la ventana de deploy: un servidor viejo no lo manda y
+   *  la fila se pinta como una entrada común, sin afirmar que sea un depósito. */
+  desde_mano?: boolean
   obligacion_id: number | null
   /**
    * La categoría del movimiento, ya resuelta a display por el backend. Los
@@ -148,6 +152,9 @@ interface DiaComun {
   recogido?: RecogidoLibro[]
   mano_entradas?: number
   mano_salidas?: number
+  /** Lo que este día pasó de la mano al banco (depósito de lo recogido). Neutro
+   *  al total: sube el banco, baja la mano. `?` por la ventana de deploy. */
+  mano_depositos?: number
   mano_saldo?: number
   /** banco `final` + `mano_saldo`. null donde el banco no tiene cadena: sin el
    *  saldo del banco no hay total, y un número ahí sería inventado. */
@@ -221,6 +228,7 @@ export interface LibroMes {
      *  null donde el banco no tiene cadena. */
     mano_entradas?: number
     mano_salidas?: number
+    mano_depositos?: number
     mano_final?: number | null
     total_final?: number | null
     dias_en_rojo: number

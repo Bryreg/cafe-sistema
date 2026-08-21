@@ -33,7 +33,7 @@ import FormMovimiento from './FormMovimiento'
  */
 
 // ── Un movimiento aplanado, listo para pintar en el panel ────────────────────
-type Clase = 'consig' | 'banco' | 'personal' | 'cafe' | 'efectivo' | 'cuenta' | 'recogido'
+type Clase = 'consig' | 'banco' | 'personal' | 'cafe' | 'efectivo' | 'cuenta' | 'recogido' | 'deposito'
 
 interface MovFila {
   key: string
@@ -53,7 +53,7 @@ interface MovFila {
  *  verde, personal dorado), no cada categoría. */
 const TONO: Record<Clase, 'success' | 'warm' | 'gold'> = {
   consig: 'success', personal: 'gold', recogido: 'success',
-  banco: 'warm', cafe: 'warm', cuenta: 'warm', efectivo: 'warm',
+  banco: 'warm', cafe: 'warm', cuenta: 'warm', efectivo: 'warm', deposito: 'warm',
 }
 
 const claseDeMovimiento = (ambito: string | null | undefined): Clase => {
@@ -81,10 +81,14 @@ function aplanar(dias: DiaLibro[]): MovFila[] {
       })
     }
     for (const m of d.movimientos) {
+      // Un depósito de lo recogido no es plata nueva: es un traspaso de la mano al
+      // banco (neutro al total). Se pinta aparte para que no se lea como ingreso.
+      const esDeposito = m.desde_mano === true && m.tipo === 'entrada'
       filas.push({
         key: `m-${m.id}`, fecha: d.fecha, dia: n,
-        clase: m.categoria ? claseDeMovimiento(m.categoria_ambito) : 'cuenta',
-        tag: m.categoria || m.cuenta, label: m.concepto,
+        clase: esDeposito ? 'deposito'
+          : m.categoria ? claseDeMovimiento(m.categoria_ambito) : 'cuenta',
+        tag: esDeposito ? 'Depósito' : (m.categoria || m.cuenta), label: m.concepto,
         monto: m.monto, entra: m.tipo === 'entrada', auto: false,
       })
     }
@@ -438,10 +442,13 @@ function FilaMov({ m }: { m: MovFila }) {
       <span className="flex-1 min-w-0 truncate text-sm text-warm-600">
         {m.label}
         {m.clase === 'efectivo' && <span className="ml-1 text-[11px] text-warm-400">· no toca el banco</span>}
+        {m.clase === 'deposito' && <span className="ml-1 text-[11px] text-warm-400">· de lo recogido, no suma al total</span>}
       </span>
+      {/* El depósito de lo recogido es un traspaso mano→banco: ni + ni − al total.
+          Se pinta con «↔» y en gris para que no se lea como un ingreso. */}
       <span className={`shrink-0 font-mono tabular-nums text-sm font-bold ${
-        m.entra ? 'text-success-600' : 'text-danger-600'}`}>
-        {m.entra ? '+' : '−'} {plata(m.monto)}
+        m.clase === 'deposito' ? 'text-warm-400' : m.entra ? 'text-success-600' : 'text-danger-600'}`}>
+        {m.clase === 'deposito' ? '↔' : m.entra ? '+' : '−'} {plata(m.monto)}
       </span>
     </div>
   )

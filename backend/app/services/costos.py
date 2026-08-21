@@ -688,12 +688,14 @@ def crear_obligacion(db: Session, data, usuario_id: int,
                      barista_nombre: str | None = None) -> dict:
     _validar_categoria(db, data.categoria_id)
     _validar_tienda(db, data.tienda_id)
+    monto = _validar_monto(data.monto)
+    _validar_nomina_a_mano(db, data.categoria_id, monto, data.fecha_devengo)
     obligacion = Obligacion(
         tienda_id=data.tienda_id,
         categoria_id=data.categoria_id,
         concepto=_validar_concepto(data.concepto),
         beneficiario=(data.beneficiario or "").strip() or None,
-        monto=_validar_monto(data.monto),
+        monto=monto,
         fecha_devengo=data.fecha_devengo,
         fecha_vencimiento=data.fecha_vencimiento,
         nota=data.nota,
@@ -751,6 +753,15 @@ def editar_obligacion(db: Session, obligacion_id: int, data, usuario_id: int) ->
         obligacion.nota = campos["nota"]
     if "imagen_url" in campos:
         obligacion.imagen_url = campos["imagen_url"]
+
+    # Con los campos ya aplicados y ANTES del commit: la edición también puede
+    # convertir una fila en «la nómina del mes» (cambiando la categoría, el
+    # devengo o bajando el monto a una quincena), y esa fila apaga el cálculo
+    # igual que una creada de cero. Solo se recalcula si se tocó algo que pesa:
+    # liquidar el mes por editar una nota sería castigar la edición inocente.
+    if {"monto", "categoria_id", "fecha_devengo"} & campos.keys():
+        _validar_nomina_a_mano(db, obligacion.categoria_id,
+                               float(obligacion.monto), obligacion.fecha_devengo)
 
     audit.registrar(
         db, accion="editar_obligacion", tabla="obligaciones",
@@ -1997,6 +2008,62 @@ def _obligacion_de_nomina_del_mes(db: Session, desde: date, hasta: date):
     )
 
 
+# Una quincena es la MITAD del mes, y la liquidación real del contador difiere
+# del cálculo por puntos (retención en la fuente, embargos, el redondeo de
+# PILA), no por mitades: el corte en 3/5 deja pasar cualquier liquidación
+# completa y rebota la quincena. Más alta que el cálculo entra siempre — el
+# mismo criterio asimétrico que el quinto del impoconsumo.
+FRACCION_MINIMA_NOMINA = 0.6
+
+
+def _nomina_calculada_del_mes(db: Session, anio: int, mes: int) -> float:
+    """El costo laboral que el sistema calcula para ese mes, con la MISMA regla
+    de fuente que el agendado: mes terminado → horas reales (consolidada); en
+    curso o futuro → contratos (proyectada)."""
+    _desde, hasta = nomina_svc.rango_mes(anio, mes)
+    calculo = (nomina_svc.consolidada(db, anio, mes) if hasta < hoy_col()
+               else nomina_svc.proyectada(db, anio, mes))
+    return round(float(calculo["totales"]["total_costo_empleador"]), 2)
+
+
+def _validar_nomina_a_mano(db: Session, categoria_id: int, monto: float,
+                           fecha_devengo) -> None:
+    """El candado de la nómina parcial.
+
+    Una obligación de nómina devengada en un mes APAGA el cálculo del mes
+    ENTERO (`rentabilidad._nomina_del_periodo`: «si el mes tiene nómina cargada
+    a mano, gana la mano») sin mirar el monto: una «Nómina quincena» de la
+    mitad dejaba el costo laboral del mes en la mitad y el margen se veía mejor
+    de lo que está, sin ningún aviso. El error es MUDO y tranquilizador — la
+    familia entera de este repo.
+
+    Se compara contra el cálculo del mes del DEVENGO. Sin cálculo (>0) no hay
+    contra qué comparar y la mano es la única fuente: pasa.
+    """
+    cat = db.get(CostoCategoria, categoria_id)
+    if cat is None or cat.clave != CLAVE_CATEGORIA_NOMINA or fecha_devengo is None:
+        return
+    calculada = _nomina_calculada_del_mes(db, fecha_devengo.year, fecha_devengo.month)
+    if calculada <= 0 or float(monto) >= calculada * FRACCION_MINIMA_NOMINA:
+        return
+    raise HTTPException(400, _mensaje_nomina_parcial(
+        float(monto), calculada,
+        f"{MESES_ES[fecha_devengo.month - 1]} {fecha_devengo.year}"))
+
+
+def _mensaje_nomina_parcial(valor: float, calculada: float, mes_nombre: str) -> str:
+    return (
+        f"Escribiste ${valor:,.0f} de nómina para {mes_nombre} y el sistema "
+        f"calcula ${calculada:,.0f} con los contratos y turnos cargados. Una "
+        "nómina cargada a mano apaga el cálculo del mes ENTERO: con esa cifra "
+        "el costo laboral del mes quedaría en menos de la mitad y el margen se "
+        "vería mejor de lo que está, sin ningún aviso. Si es una quincena, no "
+        "va sola: cargá el mes completo (el monto se corrige después si hace "
+        "falta). Si es la liquidación completa de tu contador, fijate si no le "
+        "falta un dígito — parecida al cálculo entra, y más alta entra siempre."
+    )
+
+
 def _con_pagos(db: Session, obligacion: Obligacion) -> dict:
     """Serializa una obligación con sus pagos vivos y lo ya salido del banco.
     Tres líneas que se repetían en cada retorno de este módulo."""
@@ -2091,6 +2158,15 @@ def agendar_nomina(db: Session, anio: int, mes: int, usuario_id: int,
     # el papel.
     valor = (_validar_monto(monto) if monto is not None
              else round(float(totales["total_costo_empleador"]), 2))
+    # El monto a mano del agendado pasa por el MISMO candado que la obligación
+    # manual: una quincena entra igual de callada por este botón que por el
+    # formulario, y apaga el mismo mes. El cálculo ya está hecho — se compara
+    # contra él sin liquidar de nuevo.
+    calculada = round(float(totales["total_costo_empleador"]), 2)
+    if (monto is not None and calculada > 0
+            and valor < calculada * FRACCION_MINIMA_NOMINA):
+        raise HTTPException(400, _mensaje_nomina_parcial(
+            valor, calculada, f"{MESES_ES[int(mes) - 1]} {int(anio)}"))
     if valor <= 0:
         # Un cero acá es «nadie cargó los sueldos», no «la nómina no cuesta».
         # Crear la obligación en $0 la dejaría marcada como cargada y APAGARÍA el

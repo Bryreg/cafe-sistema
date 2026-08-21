@@ -32,6 +32,18 @@ async def crear_factura(
 
     ensure_tienda_access(user, payload.tienda_id)
 
+    # LA FOTO DE LA FACTURA ES OBLIGATORIA para registrar el ingreso: es el
+    # comprobante físico de la mercancía que entró, y sin ella el recibo no se
+    # puede auditar ni conciliar después contra lo que se pagó. La regla vive acá,
+    # en el router, y no en el servicio, porque este endpoint es el ÚNICO camino
+    # por el que una barista registra una recepción —el admin no crea facturas,
+    # las paga y las corrige—, mientras que `crear_factura` sigue aceptando
+    # `imagen_url=None` para las composiciones internas y los tests del servicio.
+    if imagen is None or not (imagen.filename or "").strip():
+        raise HTTPException(400, "La foto de la factura es obligatoria: es el "
+                                 "comprobante de la mercancía que entró. Tomale una "
+                                 "foto antes de registrar el ingreso.")
+
     imagen_url = await upload_imagen(imagen, max_side=1600, quality=85)
     # En threadpool (mismo patrón de /analizar-foto): crear_factura hace commits
     # por-item del aprendizaje de aliases — eso no puede bloquear el event loop.

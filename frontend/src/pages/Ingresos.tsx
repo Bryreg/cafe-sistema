@@ -478,6 +478,9 @@ export default function Ingresos() {
       }
       if (!it.cantidad || Number(it.cantidad) <= 0) return setError(`Cantidad inválida en ${it.nombre}`)
     }
+    // Blindaje además del botón deshabilitado: la foto es el comprobante del
+    // ingreso y sin ella el backend rebota igual — mejor decirlo acá, claro.
+    if (!imagen) return setError('Tomale una foto a la factura: es obligatoria para registrar el ingreso.')
     if (!user?.tienda_id) return
     setError(''); setSaving(true)
 
@@ -541,7 +544,10 @@ export default function Ingresos() {
   // (count × cpe), no el conteo crudo — así no mezcla "2 botellas" con gramos.
   const totalUnidades = items.reduce((s, i) =>
     s + (i.en_empaques ? Number(i.cantidad) * (i.contenido_por_empaque || 0) : Number(i.cantidad) || 0), 0)
-  const canSave       = !!proveedor && !!valorTotal && Number(valorTotal) > 0 && items.length > 0
+  // La foto de la factura es OBLIGATORIA: es el comprobante de la mercancía que
+  // entró. Escanear o fotografiar dejan la misma imagen adjunta (`imagen`), así
+  // que cualquiera de los dos caminos habilita el registro.
+  const canSave       = !!proveedor && !!valorTotal && Number(valorTotal) > 0 && items.length > 0 && !!imagen
 
   return (
     <div className={embedded ? 'flex flex-col w-full' : 'min-h-screen bg-warm-50 flex flex-col'}>
@@ -906,7 +912,7 @@ export default function Ingresos() {
             <div className="bg-white rounded-2xl border border-warm-200 p-4 space-y-3">
               <p className="text-sm font-bold text-warm-700">
                 Foto de la factura
-                <span className="ml-1.5 text-xs font-normal text-warm-400">(opcional)</span>
+                <span className="ml-1.5 text-xs font-bold text-danger-600">· obligatoria</span>
               </p>
               <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
               <input ref={scanRef} type="file" accept="image/*" capture="environment" onChange={onScanFile} className="hidden" />
@@ -933,10 +939,11 @@ export default function Ingresos() {
               ) : (
                 <button
                   onClick={() => fileRef.current?.click()}
-                  className="w-full h-28 border-2 border-dashed border-warm-200 rounded-xl flex flex-col items-center justify-center gap-2 hover:border-amber-400 hover:bg-amber-50 transition-colors"
+                  className="w-full h-28 border-2 border-dashed border-danger-200 rounded-xl flex flex-col items-center justify-center gap-2 hover:border-amber-400 hover:bg-amber-50 transition-colors"
                 >
                   <Upload size={22} className="text-warm-300" />
-                  <span className="text-xs text-warm-400 font-medium">Toca para fotografiar la factura</span>
+                  <span className="text-xs text-warm-500 font-medium">Toca para fotografiar la factura</span>
+                  <span className="text-[11px] text-danger-500 font-semibold">Sin la foto no se puede registrar el ingreso</span>
                 </button>
               )}
             </div>

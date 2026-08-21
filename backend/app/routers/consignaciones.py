@@ -80,7 +80,9 @@ def recoger(
     db: Session = Depends(get_db),
     user: Usuario = Depends(require_admin),
 ):
-    """El admin recogió el efectivo en la tienda: salda esos días sin comprobante."""
+    """PUERTA CERRADA — contesta 400 siempre (ver `svc.recoger`). El endpoint se
+    conserva para que un cliente viejo (la PWA cachea el bundle) reciba el motivo
+    legible en vez de un 404 mudo."""
     ensure_tienda_access(user, tienda_id)
     try:
         parsed = json.loads(turno_ids)

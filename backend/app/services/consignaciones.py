@@ -612,52 +612,32 @@ def confirmar(db: Session, consignacion_id: int):
 
 
 def recoger(db: Session, tienda_id: int, turno_ids: list[int], usuario_id: int):
-    """El admin pasó por la tienda y se llevó el efectivo pendiente de esos días.
+    """PUERTA CERRADA. Era el flujo viejo: saldar días creando una `Consignacion`
+    sin comprobante — o sea afirmando que la plata llegó al banco cuando en
+    realidad quedó en la mano del dueño.
 
-    Reemplaza al flujo viejo (la barista sube la foto del comprobante bancario y
-    el admin la aprueba): ahora la plata la recoge el admin en persona, así que
-    no hay comprobante que fotografiar y la consignación nace ya `realizada`.
+    El aviso de que esta puerta y la recogida descuentan el mismo cajón vivió
+    meses como comentario, y un comentario no detiene un dedo sobre una tablet:
+    usar las dos para la misma pasada descontaba el cajón dos veces. Desde que
+    la recogida cubre el pendiente por consignar (`_aplicar_recogidas`), este
+    camino no hace falta para nada — la pasada real ya deja los días en cero y
+    la plata contada donde de verdad está.
 
-    El valor NUNCA llega del cliente: se recalcula acá con `_saldos_consignacion`
-    (mismo criterio que todo el módulo, con la cascada FIFO ya aplicada). Si un
-    turno dejó de tener saldo entre que se pintó la pantalla y se apretó el botón,
-    se omite en silencio en vez de duplicar plata.
+    Se cierra con 400 y no borrando la función: las consignaciones que este
+    flujo creó siguen vivas en la base y los docstrings del módulo cuentan la
+    historia contra este nombre. La firma se conserva por el mismo motivo.
     """
-    from app.services import audit
-
-    if not turno_ids:
-        raise HTTPException(status_code=400, detail="No se indicó ningún turno")
-
-    pendientes = {
-        s["turno"].id: round(s["saldo"], 2)
-        for s in _saldos_consignacion(db, tienda_id)
-        if round(s["saldo"], 2) > 0
-    }
-
-    creadas: list[dict] = []
-    for tid in turno_ids:
-        saldo = pendientes.get(tid)
-        if not saldo:
-            continue
-        db.add(Consignacion(
-            tienda_id=tienda_id, caja_turno_id=tid, valor=saldo,
-            imagen_url=None, usuario_id=usuario_id,
-            estado=EstadoConsignacionEnum.realizada,
-        ))
-        creadas.append({"turno_id": tid, "valor": saldo})
-
-    if not creadas:
-        raise HTTPException(status_code=400,
-                            detail="Esos turnos ya no tienen saldo pendiente")
-
-    total = round(sum(c["valor"] for c in creadas), 2)
-    audit.registrar(
-        db, accion="recoger_efectivo", tabla="consignaciones",
-        usuario_id=usuario_id, tienda_id=tienda_id,
-        datos_despues={"turnos": creadas, "total": total},
+    del db, tienda_id, turno_ids, usuario_id
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "Esta puerta se cerró. Marcar el día como saldado creaba una "
+            "consignación sin comprobante: afirmaba que la plata llegó al banco "
+            "cuando en realidad quedó en tu mano, y si además registrabas la "
+            "recogida, el cajón se descontaba dos veces. Registrá la pasada en "
+            "«Recogí efectivo», en La Plata: el día pendiente se descuenta solo."
+        ),
     )
-    db.commit()
-    return {"recogidas": creadas, "total": total}
 
 
 def editar(db: Session, consignacion_id: int, usuario_id: int,

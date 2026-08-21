@@ -1,10 +1,11 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
+import { Dato } from '../api/dato'
 import { useDato } from '../api/useDato'
 import { FranjaDeConfianza } from '../components/ui'
 import { hoyBogota } from '../utils/fechaLocal'
-import { CuentaBanco } from '../components/plata/banco'
+import { CuentaBanco, Sede } from '../components/plata/banco'
 import { Agenda, Categoria } from '../components/plata/tipos'
 import { useLibro } from '../components/plata/useLibro'
 import LibroDiario from '../components/plata/LibroDiario'
@@ -42,6 +43,13 @@ export default function Plata() {
   const [refresco, setRefresco] = useState(0)
   const refrescarTodo = useCallback(() => setRefresco(n => n + 1), [])
 
+  // ── LA SEDE que se está mirando: null = «Ambas» (las dos sumadas). Desde
+  // agosto cada sede lleva su libro; antes, y en Ambas, es el combinado. ────────
+  const [sede, setSede] = useState<number | null>(null)
+  const tiendas = useDato<Sede[]>(
+    () => api.get('/auth/tiendas'), 'las sedes',
+    'No se pudieron leer las sedes.')
+
   // ── Los datos de la página, cada uno un `Dato<T>` (ver src/api/dato.ts) ────
   const piso = useDato<Piso>(
     () => api.get('/costos/piso', { params: { anio, mes } }), 'el piso de venta',
@@ -68,7 +76,7 @@ export default function Plata() {
   // El libro tiene su propia llave: teclear un movimiento no repide la página
   // entera ni hace parpadear los bloques que nadie tocó.
   const [llaveLibro, setLlaveLibro] = useState(0)
-  const libro = useLibro(llaveLibro)
+  const libro = useLibro(llaveLibro, sede)
 
   /** Cambió plata: se repide la página Y el libro. */
   const refrescarPlata = useCallback(() => {
@@ -91,16 +99,25 @@ export default function Plata() {
 
   const irAlDetalleDelMes = useCallback(() => navigate('/plata/mes'), [navigate])
 
+  /** El nombre de la sede elegida (para el título del extracto). */
+  const sedeNombre = sede != null && tiendas.dato.estado === 'listo'
+    ? tiendas.dato.valor.find(t => t.id === sede)?.nombre
+    : undefined
+
   return (
     <div className="space-y-3 pb-8">
       {/* «¿Le puedo creer a esta pantalla?» en un renglón. Invisible si nada se rompió. */}
       <FranjaDeConfianza fuentes={fuentes} />
+
+      {/* El selector de sede: cada una su libro, o «Ambas» sumadas. */}
+      <SelectorSede tiendas={tiendas.dato} sede={sede} onCambiar={setSede} />
 
       {/* 1 · El libro y sus movimientos + 2 · agregar (adentro, siempre montado). */}
       <LibroDiario
         libro={libro.libro} anio={libro.anio} mes={libro.mes}
         hoy={libro.hoy} viendoElMesDeHoy={libro.viendoElMesDeHoy}
         cuentas={cuentas} agenda={agenda} categorias={categoriasLibro}
+        sede={sede} tiendas={tiendas}
         onIrAlMes={libro.irAlMes} onIrAHoy={libro.irAHoy}
         onGuardado={fecha => { libro.irALaFechaDe(fecha); refrescarPlata() }}
         onIrAlAncla={irAlExtracto} />
@@ -109,7 +126,7 @@ export default function Plata() {
       <div ref={refExtracto}>
         <ExtractoDelBanco
           libro={libro.libroConHoy} hoy={libro.hoy}
-          pedidoFoco={pedidoFocoExtracto}
+          pedidoFoco={pedidoFocoExtracto} sedeNombre={sedeNombre}
           onGuardado={refrescarPlata} onRecargarLibro={libro.recargar} />
       </div>
 
@@ -129,6 +146,41 @@ export default function Plata() {
         El equilibrio se muestra en <b>tres números</b> — lo de Vida, lo de Palmetto y lo
         corporativo que las dos cubren entre las dos — y nunca se prorratea.
       </p>
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// El selector de sede: «Ambas» + cada sede. Desde agosto cada una lleva su libro.
+// ═════════════════════════════════════════════════════════════════════════════
+function SelectorSede({ tiendas, sede, onCambiar }: {
+  tiendas: Dato<Sede[]>
+  sede: number | null
+  onCambiar: (s: number | null) => void
+}) {
+  // Sin las sedes (cargando o caído) el selector no aparece: el libro se ve
+  // igual como «Ambas». No es un gate del libro —es una comodidad de navegación—.
+  if (tiendas.estado !== 'listo' || tiendas.valor.length < 2) return null
+  const opciones: { id: number | null; nombre: string }[] = [
+    { id: null, nombre: 'Ambas' },
+    ...tiendas.valor.map(t => ({ id: t.id, nombre: t.nombre })),
+  ]
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className="text-[11px] font-bold uppercase tracking-wide text-warm-400 mr-1">Sede</span>
+      {opciones.map(o => {
+        const activo = sede === o.id
+        return (
+          <button key={o.id ?? 'ambas'} onClick={() => onCambiar(o.id)}
+            aria-pressed={activo}
+            className={`min-h-[40px] px-4 rounded-xl text-sm font-bold border-2 transition-colors ${
+              activo
+                ? 'border-forest bg-forest text-white'
+                : 'border-warm-200 bg-white text-warm-600 hover:border-forest-300'}`}>
+            {o.nombre}
+          </button>
+        )
+      })}
     </div>
   )
 }

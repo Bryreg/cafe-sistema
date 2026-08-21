@@ -37,7 +37,7 @@ from app.core.tz import hoy_col
 # el saldo desaparece.
 LIBRO_DESDE = date(2000, 1, 1)
 from app.database import get_db
-from app.models.models import Obligacion, Usuario
+from app.models.models import Obligacion, Tienda, Usuario
 from app.services import banco
 from app.services import costos as costos_svc
 
@@ -103,6 +103,10 @@ class MovimientoIn(BaseModel):
     # Default False: la enorme mayoría de las entradas son plata nueva. El servicio
     # rechaza marcarlo en una salida (no significa nada ahí).
     desde_mano: bool = False
+    # La sede del movimiento. Desde el corte por sede (agosto) es OBLIGATORIA —cada
+    # movimiento es de una sede—; antes es None (el histórico combinado). El handler
+    # lo exige según la fecha.
+    tienda_id: Optional[int] = None
 
 
 class AnclaIn(BaseModel):
@@ -116,16 +120,23 @@ class AnclaIn(BaseModel):
     """
     saldo: float
     fecha: Optional[date] = None   # None = hoy
+    # La sede de este saldo (None = el global/combinado). Cada sede carga el
+    # extracto de SU cuenta por separado.
+    tienda_id: Optional[int] = None
 
 
 @router.get("/libro")
 def libro_del_mes(
     anio: Optional[int] = Query(None),
     mes: Optional[int] = Query(None),
+    tienda_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     admin: Usuario = Depends(require_admin),
 ):
     """Una fila por día del mes: arranca, entra, sale, queda.
+
+    `tienda_id` elige el libro: una sede, o —sin él— la vista combinada («Ambas»:
+    suma de las sedes desde agosto, histórico combinado antes).
 
     Van TODOS los días, también los que no tuvieron movimiento: son los que
     dejan ver que el saldo se quedó abajo cuatro días seguidos.
@@ -139,7 +150,7 @@ def libro_del_mes(
     """
     a, m = _anio_mes(anio, mes)
     desde, hasta = banco.dias_del_mes(a, m)
-    return banco.libro(db, desde, hasta)
+    return banco.libro(db, desde, hasta, tienda_id)
 
 
 @router.get("/por-categoria")
@@ -284,11 +295,22 @@ def crear_movimiento(
     if data.obligacion_id is not None and db.query(Obligacion).filter(
             Obligacion.id == data.obligacion_id).first() is None:
         raise HTTPException(400, "Esa obligación no existe.")
+    # DESDE EL CORTE POR SEDE, cada movimiento es de una sede: sin ella no se
+    # sabría en qué libro va y «Ambas» dejaría de cuadrar. Antes del corte no se
+    # exige (el histórico es combinado). La sede tiene que existir siempre.
+    if data.tienda_id is not None and db.query(Tienda).filter(
+            Tienda.id == data.tienda_id).first() is None:
+        raise HTTPException(400, "Esa sede no existe.")
+    if (data.fecha >= banco.LIBRO_POR_SEDE_DESDE and data.tienda_id is None
+            and banco.por_sede_activo(db)):
+        raise HTTPException(400, "Elegí la sede del movimiento: desde agosto cada "
+                                 "sede lleva su propio libro.")
     try:
         mov = banco.registrar(
             db, data.fecha, data.cuenta_id, data.tipo, data.monto, data.concepto,
             usuario_id=admin.id, obligacion_id=data.obligacion_id, nota=data.nota,
-            categoria_id=data.categoria_id, desde_mano=data.desde_mano)
+            categoria_id=data.categoria_id, desde_mano=data.desde_mano,
+            tienda_id=data.tienda_id)
     except ValueError as e:
         # El texto del servicio ya está escrito para que lo lea el dueño.
         raise HTTPException(400, str(e))
@@ -361,11 +383,18 @@ def declarar_ancla(
     if fecha > hoy_col():
         raise HTTPException(400, "La fecha del saldo no puede ser futura.")
 
-    costos_svc.guardar_saldo_banco(db, data.saldo, fecha, admin.id)
+    # La GLOBAL va por el único escritor de esas dos claves (costos); la de una
+    # sede se escribe en sus propias claves (nadie más las toca).
+    if data.tienda_id is None:
+        costos_svc.guardar_saldo_banco(db, data.saldo, fecha, admin.id)
+    else:
+        if db.query(Tienda).filter(Tienda.id == data.tienda_id).first() is None:
+            raise HTTPException(400, "Esa sede no existe.")
+        banco.fijar_ancla_sede(db, data.saldo, fecha, data.tienda_id)
 
     # Se relee del ancla (no se devuelve lo que llegó): lo que la pantalla
     # muestre tiene que ser lo que quedó guardado, no lo que se pidió guardar.
-    saldo, guardada = banco.ancla(db)
+    saldo, guardada = banco.ancla(db, data.tienda_id)
     return {
         "saldo": saldo,
         "fecha": guardada.isoformat() if guardada else None,

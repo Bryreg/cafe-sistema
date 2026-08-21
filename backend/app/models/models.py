@@ -1857,6 +1857,11 @@ class MovimientoBanco(Base):
     """
     __tablename__ = "movimientos_banco"
     id = Column(Integer, primary_key=True)
+    # LA SEDE dueña de este movimiento. Nullable: los históricos (enero–julio, el
+    # banco combinado) van con NULL —no estaban separados por sede y no se pueden
+    # repartir hacia atrás—; de agosto en adelante cada movimiento se teclea con su
+    # sede. `libro(tienda_id=...)` filtra por acá; la vista «Ambas» no filtra.
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=True, index=True)
     # Fecha del banco (no un timestamp): la hoja es día por día y el extracto
     # también. Sin hora no hay que pelear con la zona horaria acá.
     fecha = Column(Date, nullable=False, index=True)

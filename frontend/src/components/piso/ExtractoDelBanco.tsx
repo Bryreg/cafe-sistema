@@ -36,7 +36,7 @@ import { Campo, CLS_INPUT, CLS_INPUT_PLATA, CLS_BOTON_GUARDAR, ErrorCampo, tecla
 // leída, entera, o queda en blanco.
 
 export default function ExtractoDelBanco({
-  libro, hoy, pedidoFoco, onGuardado, onRecargarLibro,
+  libro, hoy, pedidoFoco, onGuardado, onRecargarLibro, sedeNombre,
 }: {
   /** El libro del MES DE HOY: de ahí sale el ancla y la fila de hoy. */
   libro: Dato<LibroMes>
@@ -46,6 +46,8 @@ export default function ExtractoDelBanco({
   /** Guardó el ancla: hay que repedir el libro, el flujo y el piso (los tres lo leen). */
   onGuardado: () => void
   onRecargarLibro: () => void
+  /** El nombre de la sede que se está mirando (para el título). Ausente = «Ambas». */
+  sedeNombre?: string
 }) {
   /**
    * El ancla LEÍDA, o `null` mientras no esté en la mano.
@@ -55,6 +57,9 @@ export default function ExtractoDelBanco({
    * pantalla se decide adentro de cada rama de `SegunDato`.
    */
   const ancla = libro.estado === 'listo' ? libro.valor.ancla : null
+  // La sede del libro que se está mirando: el ancla se guarda para ESA sede
+  // (null = la global/histórica). Así cada sede carga el saldo de su extracto.
+  const sedeDelLibro = libro.estado === 'listo' ? (libro.valor.tienda_id ?? null) : null
 
   const [saldo, setSaldo] = useState('')
   const [fecha, setFecha] = useState(hoy)
@@ -98,7 +103,7 @@ export default function ExtractoDelBanco({
       // exige que no esté vacío. El `|| 0` que había acá no se podía disparar
       // nunca, y dejarlo escrito es dejar el idioma prohibido a mano para que
       // alguien lo copie a un lugar donde sí miente.
-      await api.put('/banco/ancla', { saldo: Number(saldo), fecha })
+      await api.put('/banco/ancla', { saldo: Number(saldo), fecha, tienda_id: sedeDelLibro })
       setTocado(false)
       onGuardado()
     } catch (e) {
@@ -109,8 +114,19 @@ export default function ExtractoDelBanco({
   return (
     <div className="px-4 py-3 space-y-2.5" onKeyDown={teclas({ listo, guardar })}>
       <p className="text-[10px] font-bold uppercase tracking-wide text-warm-500 flex items-center gap-1">
-        <Landmark size={11} /> El extracto del banco
+        <Landmark size={11} /> El extracto del banco{sedeNombre ? ` · ${sedeNombre}` : ''}
       </p>
+
+      {/* En «Ambas» con el modelo por sede activo, el saldo combinado se arma con
+          el de cada sede: acá se cargaría el global, que ya no manda. Se dice y se
+          manda al dueño a cargar el de cada sede. */}
+      {libro.estado === 'listo' && libro.valor.por_sede
+        && (libro.valor.tienda_id ?? null) === null && (
+        <p className="text-[12px] text-gold-800 bg-gold-50 border border-gold-200 rounded-xl px-3 py-2 leading-snug">
+          El saldo de <b>«Ambas»</b> se arma sumando el de cada sede. Elegí <b>Vida</b> o
+          <b> Palmetto</b> arriba y cargá el extracto de cada una por separado.
+        </p>
+      )}
 
       {/* Lo que el libro dice hoy: el saldo encadenado, que es el que usan las
           proyecciones. Va ARRIBA del campo para que se vea contra qué se compara

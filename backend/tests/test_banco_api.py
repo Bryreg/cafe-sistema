@@ -324,6 +324,47 @@ class CadaValidacionLlegaComo400Test(BancoApiBase):
         self.assertAlmostEqual(self.dia(lib, date(2026, 8, 31))["final"], 1_000_000)
 
 
+class ElLibroPorSedeSobreHTTPTest(BancoApiBase):
+    """El contrato HTTP del libro por sede: ancla por sede, el candado que pide la
+    sede desde agosto, y el filtro por `tienda_id`."""
+
+    def test_ancla_por_sede_prende_el_modo_y_pide_la_sede(self):
+        from datetime import date
+        # Antes de arrancar: un movimiento de agosto SIN sede entra igual.
+        r = self.mover(date(2026, 8, 2), banco.ENTRADA, 100_000, concepto="x")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertFalse(self.libro(2026, 8)["por_sede"])
+
+        # Cargar el ancla de una sede prende el modo por sede.
+        r = self.client.put("/api/v1/banco/ancla",
+                            json={"saldo": 1_000_000, "fecha": "2026-08-01",
+                                  "tienda_id": self.t.id})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertTrue(self.libro(2026, 8)["por_sede"])
+
+        # Ahora un movimiento de agosto SIN sede rebota, legible.
+        r = self.mover(date(2026, 8, 3), banco.ENTRADA, 50_000, concepto="x")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("sede", r.json()["detail"].lower())
+
+        # Con la sede, entra, y el libro de esa sede lo muestra.
+        r = self.mover(date(2026, 8, 3), banco.ENTRADA, 50_000, concepto="x",
+                       tienda_id=self.t.id)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["tienda_id"], self.t.id)
+        r = self.client.get("/api/v1/banco/libro",
+                            params={"anio": 2026, "mes": 8, "tienda_id": self.t.id})
+        self.assertEqual(r.status_code, 200, r.text)
+        d = [x for x in r.json()["dias"] if x["fecha"] == "2026-08-03"][0]
+        self.assertEqual(d["total_entradas"], 50_000)
+
+    def test_una_sede_que_no_existe_en_el_ancla_rebota(self):
+        r = self.client.put("/api/v1/banco/ancla",
+                            json={"saldo": 1000, "fecha": "2026-08-01", "tienda_id": 9999})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("sede", r.json()["detail"].lower())
+
+
 class ElAnclaSeEditaDesdeAcaTest(BancoApiBase):
     def test_guarda_las_dos_claves_de_configuracion(self):
         """Las MISMAS que escribe POST /costos/saldo-banco: dos escritores con

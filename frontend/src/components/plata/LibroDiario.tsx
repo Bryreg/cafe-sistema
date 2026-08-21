@@ -4,7 +4,7 @@ import { Dato } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import { SegunDato, NoSeSabe } from '../ui'
 import {
-  CuentaBanco, DiaLibro, LibroMes,
+  CuentaBanco, DiaLibro, LibroMes, Sede,
   MESES, compacto, diaSemana, esFinde, fechaCorta, fechaLarga, plata,
 } from './banco'
 import { Agenda, Categoria } from './tipos'
@@ -112,7 +112,7 @@ function aplanar(dias: DiaLibro[]): MovFila[] {
 
 export default function LibroDiario({
   libro, anio, mes, hoy, viendoElMesDeHoy,
-  cuentas, agenda, categorias,
+  cuentas, agenda, categorias, sede, tiendas,
   onIrAlMes, onIrAHoy, onGuardado, onIrAlAncla,
 }: {
   libro: Dato<LibroMes>
@@ -123,6 +123,11 @@ export default function LibroDiario({
   cuentas: Fuente<CuentaBanco[]>
   agenda: Fuente<Agenda>
   categorias?: Fuente<Categoria[]>
+  /** La sede que se está mirando (null = «Ambas»): con la que se etiqueta el
+   *  movimiento nuevo. */
+  sede: number | null
+  /** Las sedes, para elegir a cuál va el movimiento cuando se mira «Ambas». */
+  tiendas: Fuente<Sede[]>
   onIrAlMes: (delta: number) => void
   onIrAHoy: () => void
   onGuardado: (fecha: string) => void
@@ -138,6 +143,9 @@ export default function LibroDiario({
   // La tasa del GMF viaja con el libro. AUSENTE (servidor viejo o libro caído)
   // es null: la sugerencia del GMF se apaga en vez de inventar una tasa.
   const tasaGmf = libro.estado === 'listo' ? (libro.valor.tasa_gmf ?? null) : null
+  // ¿Arrancó el modelo por sede? Con esto el formulario pide la sede al cargar un
+  // movimiento de agosto en adelante.
+  const porSede = libro.estado === 'listo' ? !!libro.valor.por_sede : false
 
   return (
     <div className="space-y-3">
@@ -177,6 +185,7 @@ export default function LibroDiario({
         <FormMovimiento
           fechaInicial={hoy} cuentas={cuentas} agenda={agenda} maxFecha={hoy}
           categorias={categorias} tasaGmf={tasaGmf}
+          sede={sede} tiendas={tiendas} porSede={porSede}
           onGuardado={m => onGuardado(m.fecha)} />
       </div>
     </div>

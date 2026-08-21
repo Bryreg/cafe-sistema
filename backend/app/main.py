@@ -150,6 +150,10 @@ with engine.connect() as _conn:
         # y baja la mano por el mismo monto — neutro al total. DEFAULT FALSE (no 0):
         # Postgres rechaza '0' como default de BOOLEAN.
         "ALTER TABLE movimientos_banco ADD COLUMN desde_mano BOOLEAN DEFAULT FALSE",
+        # Libro por sede desde agosto: cada movimiento lleva su sede (NULL = el
+        # histórico combinado, que no estaba separado). Sin REFERENCES para no
+        # depender del orden de creación de tablas en el arranque.
+        "ALTER TABLE movimientos_banco ADD COLUMN tienda_id INTEGER",
         # Módulo 6: umbrales de stock configurables (ideal hacia el que reponer, crítico para alerta roja)
         "ALTER TABLE inventario ADD COLUMN stock_ideal FLOAT DEFAULT 0",
         "ALTER TABLE inventario ADD COLUMN stock_critico FLOAT DEFAULT 0",

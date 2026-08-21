@@ -5,7 +5,7 @@ import { conMiles, soloDigitos } from '../../utils/plata'
 import { mapDato } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import { SegunDato, NoSeSabe } from '../ui'
-import { CuentaBanco, MovimientoBanco, detalleDeError, fechaCorta, plata } from './banco'
+import { CuentaBanco, LIBRO_POR_SEDE_DESDE, MovimientoBanco, Sede, detalleDeError, fechaCorta, plata } from './banco'
 import type { Agenda, AgendaItem, AgendaSinFecha, Categoria } from './tipos'
 import { Campo, CLS_INPUT, CLS_INPUT_PLATA, CLS_BOTON_GUARDAR, ErrorCampo, teclas } from './campos'
 
@@ -136,6 +136,7 @@ const GRILLA_SM_CON_ENLACE = 'sm:grid-cols-[7.5rem_11rem_9rem_9rem_1fr_1fr_auto]
 export default function FormMovimiento({
   fechaInicial, cuentas, agenda, maxFecha, onGuardado,
   categorias, tasaGmf, onCategoriaCreada,
+  sede = null, tiendas, porSede = false,
 }: {
   /** Con qué día arranca. El libro precarga hoy, o el día de la fila que lo abrió. */
   fechaInicial: string
@@ -163,6 +164,15 @@ export default function FormMovimiento({
   /** Se creó una categoría desde acá: el catálogo de la página tiene que
    *  repedirse para que el resto de los selects la vean. */
   onCategoriaCreada?: () => void
+  /** La sede que se está mirando (null = «Ambas»): el movimiento nuevo se etiqueta
+   *  con ella. En «Ambas» el formulario pide elegir una. Opcional: los banners
+   *  viejos (BloqueHoy, BannerLibro) no la pasan y el libro sigue combinado. */
+  sede?: number | null
+  /** Las sedes, para el selector cuando se mira «Ambas». */
+  tiendas?: Fuente<Sede[]>
+  /** ¿Arrancó el modelo por sede? Con esto, un movimiento del corte en adelante
+   *  EXIGE una sede; antes de arrancar no (el libro sigue combinado). */
+  porSede?: boolean
 }) {
   /** El catálogo LEÍDO, o `null` mientras no esté en la mano. `null` no es «no
    *  hay cuentas»: es «no se sabe». Solo alimenta el default del efecto. */
@@ -181,6 +191,11 @@ export default function FormMovimiento({
    *  mano y que pasa al banco. Sube el banco y baja la mano — neutro al total.
    *  Solo aplica a las entradas; se olvida al pasar a «Salió» y al guardar. */
   const [desdeMano, setDesdeMano] = useState(false)
+  // La sede del movimiento. Arranca en la que se está mirando arriba; si el dueño
+  // cambia el selector de arriba, ésta lo sigue. En «Ambas» arranca sin elegir y
+  // el formulario la pide.
+  const [tiendaId, setTiendaId] = useState<number | null>(sede)
+  useEffect(() => { setTiendaId(sede) }, [sede])
   // La creación sobre la marcha: cuando cargue «Reteica» o «Cuota del carro»
   // por primera vez, la categoría nace ACÁ, sin ir a otra pantalla.
   const [creandoCat, setCreandoCat] = useState(false)
@@ -217,9 +232,16 @@ export default function FormMovimiento({
   }, [cs, cuentaId])
 
   const cuenta = cs?.find(c => String(c.id) === cuentaId)
+  // Desde el corte por sede, un movimiento tiene que ir a UNA sede. Antes del
+  // corte (o si el modelo por sede no arrancó) no se pide: el libro es combinado.
+  const necesitaSede = porSede && fecha >= LIBRO_POR_SEDE_DESDE
+  const sedes = tiendas?.dato.estado === 'listo' ? tiendas.dato.valor : null
   // El enlace NO entra acá a propósito: es opcional, y meterlo en `listo`
-  // convertiría un campo de ayuda en un requisito para guardar el movimiento.
-  const listo = !!fecha && !!cuentaId && !!tipo && Number(monto) > 0 && !!concepto.trim()
+  // convertiría un campo de ayuda en un requisito para guardar el movimiento. La
+  // sede SÍ es requisito cuando el corte lo pide: sin ella el movimiento no sabe
+  // a qué libro va.
+  const listo = !!fecha && !!cuentaId && !!tipo && Number(monto) > 0
+    && !!concepto.trim() && (!necesitaSede || tiendaId != null)
 
   /**
    * Lo enlazable: las obligaciones con saldo, agendadas y sin fecha.
@@ -297,6 +319,9 @@ export default function FormMovimiento({
         // y después cambiado a «Salió» no debe mandar la marca — el backend la
         // rechaza en una salida, pero no dependemos de eso para no mandarla.
         desde_mano: tipo === 'entrada' && desdeMano,
+        // La sede va SOLO cuando el corte la pide; antes es null (histórico
+        // combinado). El backend rebota si falta y ya arrancó el modelo por sede.
+        tienda_id: necesitaSede ? tiendaId : null,
       })
       // El GMF se OFRECE, nunca se escribe solo: el banco lo cobra por débito y
       // la fila sale con un toque — pero es el dueño el que confirma que este
@@ -390,6 +415,32 @@ export default function FormMovimiento({
           Cargar un movimiento del banco
         </p>
       </div>
+
+      {/* ── ¿DE QUÉ SEDE? — desde el corte, cada movimiento va a una sede ──────
+          Si arriba ya se eligió una sede, el movimiento va a ésa (se dice, sin
+          pedir de nuevo). En «Ambas» el formulario pide elegirla: sin sede no se
+          sabría en qué libro va. Antes del corte no aparece (libro combinado). */}
+      {necesitaSede && tiendas && (sede !== null ? (
+        <p className="text-[12px] text-warm-600 bg-forest-50 border border-forest-100 rounded-xl px-3 py-2">
+          Este movimiento va a la sede{' '}
+          <b className="text-forest">{sedes?.find(t => t.id === sede)?.nombre ?? '—'}</b>.
+        </p>
+      ) : (
+        <Campo label="¿De qué sede es este movimiento?" ancho="w-full sm:w-64">
+          <SegunDato
+            dato={tiendas.dato}
+            cargando={<CajaMuda texto="Cargando las sedes…" />}
+            falla={() => <CajaMuda texto="No se pudieron leer las sedes" />}
+            listo={lista => (
+              <select value={tiendaId ?? ''}
+                onChange={e => setTiendaId(e.target.value ? Number(e.target.value) : null)}
+                className={CLS_INPUT}>
+                <option value="">Elegí la sede…</option>
+                {lista.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+              </select>
+            )} />
+        </Campo>
+      ))}
 
       {/* EL AVISO VA ARRIBA DEL SELECT y el formulario se queda montado: sin
           cuenta el backend no acepta el movimiento, así que decirlo acá —con el

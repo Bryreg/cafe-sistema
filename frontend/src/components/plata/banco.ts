@@ -16,6 +16,13 @@ export interface CuentaBanco {
 }
 
 /** Un movimiento TECLEADO. El monto va siempre positivo: el signo lo pone `tipo`. */
+/** Una sede, como la devuelve `/auth/tiendas`. */
+export interface Sede { id: number; nombre: string }
+
+/** El corte del libro por sede: de esta fecha en adelante cada movimiento va a
+ *  una sede. Tiene que coincidir con `LIBRO_POR_SEDE_DESDE` del backend. */
+export const LIBRO_POR_SEDE_DESDE = '2026-08-01'
+
 export interface MovimientoBanco {
   id: number
   fecha: string                     // YYYY-MM-DD
@@ -30,6 +37,9 @@ export interface MovimientoBanco {
    *  total). Con `?` por la ventana de deploy: un servidor viejo no lo manda y
    *  la fila se pinta como una entrada común, sin afirmar que sea un depósito. */
   desde_mano?: boolean
+  /** La sede del movimiento (null = histórico combinado). En «Ambas» deja ver de
+   *  qué sede es cada fila. */
+  tienda_id?: number | null
   obligacion_id: number | null
   /**
    * La categoría del movimiento, ya resuelta a display por el backend. Los
@@ -188,6 +198,12 @@ export type DiaLibro = DiaConSaldo | DiaSinSaldo
 export interface LibroMes {
   desde: string
   hasta: string
+  /** De qué libro es esto: una sede, o null = «Ambas»/histórico combinado. `?`
+   *  por la ventana de deploy (un servidor viejo no lo manda). */
+  tienda_id?: number | null
+  /** ¿Arrancó el modelo por sede? (alguna sede tiene su ancla cargada). Con esto
+   *  el formulario pide la sede al cargar un movimiento de agosto en adelante. */
+  por_sede?: boolean
   cuentas: CuentaBanco[]
   /** El saldo del extracto que tecleó el dueño: de ahí arranca toda la cadena. */
   ancla: { saldo: number; fecha: string | null }

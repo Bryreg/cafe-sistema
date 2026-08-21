@@ -54,7 +54,7 @@ export function filaConSaldoDe(libro: LibroMes, iso: string): DiaConSaldo | null
   return f && f.cadena ? f : null
 }
 
-export function useLibro(refreshKey: number) {
+export function useLibro(refreshKey: number, sede: number | null = null) {
   const hoy = hoyBogota()
   const anioDeHoy = Number(hoy.slice(0, 4))
   const mesDeHoy = Number(hoy.slice(5, 7))
@@ -72,8 +72,11 @@ export function useLibro(refreshKey: number) {
   useEffect(() => {
     let vivo = true
     setLibro(datoCargando); setSerie(datoCargando)
+    // `tienda_id` elige el libro: una sede, o —sin él— «Ambas». `?? undefined`
+    // para que el combinado NO mande el parámetro (null lo serializaría como texto).
+    const porSede = { tienda_id: sede ?? undefined }
     Promise.all([
-      api.get<LibroMes>('/banco/libro', { params: { anio, mes } }),
+      api.get<LibroMes>('/banco/libro', { params: { anio, mes, ...porSede } }),
       api.get<SerieAnual>('/banco/serie', { params: { anio } }),
     ])
       .then(([l, s]) => { if (!vivo) return; setLibro(datoListo(l.data)); setSerie(datoListo(s.data)) })
@@ -86,7 +89,7 @@ export function useLibro(refreshKey: number) {
         setLibro(datoFalla(m)); setSerie(datoFalla(m))
       })
     return () => { vivo = false }
-  }, [anio, mes, propio, refreshKey])
+  }, [anio, mes, propio, refreshKey, sede])
 
   // El mes de hoy solo se pide aparte cuando NO es el que se está mirando: en el
   // caso normal se lee del mismo libro y no se gasta una segunda consulta.
@@ -94,14 +97,15 @@ export function useLibro(refreshKey: number) {
     if (viendoElMesDeHoy) { setLibroDeHoy(datoCargando); return }
     let vivo = true
     setLibroDeHoy(datoCargando)
-    api.get<LibroMes>('/banco/libro', { params: { anio: anioDeHoy, mes: mesDeHoy } })
+    api.get<LibroMes>('/banco/libro',
+      { params: { anio: anioDeHoy, mes: mesDeHoy, tienda_id: sede ?? undefined } })
       .then(r => { if (vivo) setLibroDeHoy(datoListo(r.data)) })
       .catch(e => {
         if (vivo) setLibroDeHoy(datoFalla(
           detalleDeError(e, 'No se pudo leer el libro del mes de hoy.')))
       })
     return () => { vivo = false }
-  }, [viendoElMesDeHoy, anioDeHoy, mesDeHoy, propio, refreshKey])
+  }, [viendoElMesDeHoy, anioDeHoy, mesDeHoy, propio, refreshKey, sede])
 
   /** El libro del mes de HOY, venga del mes que se mira o del pedido aparte. */
   const libroConHoy = viendoElMesDeHoy ? libro : libroDeHoy

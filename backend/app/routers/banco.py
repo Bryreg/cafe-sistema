@@ -201,6 +201,22 @@ def serie_del_anio(
     return banco.serie_mensual(db, _anio(anio))
 
 
+@router.get("/proyeccion")
+def proyeccion_de_meses(
+    meses: int = Query(3, ge=1, le=12),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """«Lo que viene»: el cierre ESTIMADO de los próximos meses, aprendido del
+    ritmo del libro. Es una guía para prepararse, no una promesa.
+
+    `base` en null con un `motivo` es una respuesta, no una falla: no hay
+    historial suficiente (o falta el saldo del extracto) para estimar sin
+    inventar. La pantalla lo dice y no dibuja números.
+    """
+    return banco.proyeccion(db, hoy_col(), meses)
+
+
 @router.get("/cuentas")
 def listar_cuentas(
     solo_activas: bool = Query(True),

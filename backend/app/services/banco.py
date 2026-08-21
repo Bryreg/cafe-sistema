@@ -483,6 +483,115 @@ def serie_mensual(db: Session, anio: int) -> dict:
     return {"anio": anio, "meses": meses}
 
 
+# Cuántos meses completos de historial hacen falta para animarse a proyectar.
+# Con menos, cualquier número es una casualidad disfrazada de tendencia: mejor
+# decir «todavía no hay base» que inventar una calma (o un susto) que no se midió.
+_MIN_MESES_PROYECCION = 3
+# El techo de la ventana: se mira a lo sumo este tanto de meses hacia atrás. Un
+# café cambia —sube el arriendo, se va un empleado— y arrastrar dos años de
+# historia haría que lo viejo pese igual que lo de ahora.
+_MESES_VENTANA_PROYECCION = 6
+
+
+def _mes_menos(anio: int, mes: int, n: int) -> tuple[int, int]:
+    """El (año, mes) que queda `n` meses ANTES de (anio, mes). Aritmética pura."""
+    total = (anio * 12 + (mes - 1)) - n
+    return total // 12, (total % 12) + 1
+
+
+def _mes_mas(anio: int, mes: int, n: int) -> tuple[int, int]:
+    """El (año, mes) que queda `n` meses DESPUÉS de (anio, mes)."""
+    total = (anio * 12 + (mes - 1)) + n
+    return total // 12, (total % 12) + 1
+
+
+def proyeccion(db: Session, hoy: date, meses: int = 3) -> dict:
+    """«LO QUE VIENE»: con cuánto van a cerrar los próximos meses, ESTIMADO.
+
+    Es una guía para prepararse, no una promesa —y la pantalla lo dice—: sale
+    del ritmo que el libro ya vivió, no de un deseo. La cuenta, a propósito, es
+    modesta y se puede explicar en una línea:
+
+      · Se miran los meses COMPLETOS anteriores a este (el mes en curso está a
+        medias y mentiría el promedio), a lo sumo los últimos seis.
+      · De esos meses se toma la MEDIANA del neto (entró − salió), no el
+        promedio: un mes con una compra grande de café no arrastra la tendencia
+        entera hacia abajo. La mediana es lo que este módulo entiende por
+        «un mes normal».
+      · Desde el saldo que HOY se conoce, se le suma ese neto normal una vez por
+        cada mes que viene.
+
+    DOS PUERTAS, y ninguna inventa un número:
+      · Sin ancla del extracto no hay desde dónde arrancar la cadena → `sin_base`.
+      · Con menos de tres meses completos con movimiento, cualquier tendencia es
+        casualidad → `sin_base`, diciendo cuántos meses hay.
+
+    Devuelve SIEMPRE las mismas claves (`base`, `meses`, `motivo`) para que la
+    pantalla distinga «no hay con qué proyectar» de «no pude preguntar» sin
+    adivinar por la forma de la respuesta.
+    """
+    meses = max(1, min(int(meses or 3), 12))
+    anio_hoy, mes_hoy = hoy.year, hoy.month
+
+    saldo_hoy, hay_cadena = saldo_al_cierre(db, hoy)
+    if not hay_cadena:
+        return {"base": None, "meses": [],
+                "motivo": "Todavía no cargaste el saldo del extracto, así que no "
+                          "hay desde dónde proyectar."}
+
+    # Los meses completos anteriores a este, del más viejo al más nuevo, y solo
+    # los que tuvieron movimiento: un mes sin un peso movido no es un «mes
+    # normal», es un mes sin datos, y meterlo tira la mediana hacia el cero.
+    netos = []
+    for atras in range(_MESES_VENTANA_PROYECCION, 0, -1):
+        a, m = _mes_menos(anio_hoy, mes_hoy, atras)
+        ini, fin = dias_del_mes(a, m)
+        ent = (db.query(func.sum(MovimientoBanco.monto))
+               .filter(MovimientoBanco.fecha >= ini, MovimientoBanco.fecha <= fin,
+                       MovimientoBanco.tipo == ENTRADA).scalar() or 0.0)
+        ent += sum(float(c.valor or 0.0) for c in _consigs_en_rango(db, ini, fin))
+        sal = (db.query(func.sum(MovimientoBanco.monto))
+               .filter(MovimientoBanco.fecha >= ini, MovimientoBanco.fecha <= fin,
+                       MovimientoBanco.tipo == SALIDA).scalar() or 0.0)
+        if float(ent) > 0 or float(sal) > 0:
+            netos.append(round(float(ent) - float(sal), 2))
+
+    if len(netos) < _MIN_MESES_PROYECCION:
+        return {"base": None, "meses": [],
+                "motivo": f"Hacen falta al menos {_MIN_MESES_PROYECCION} meses "
+                          f"con movimiento para estimar; hay {len(netos)}."}
+
+    neto_normal = round(_mediana(netos), 2)
+
+    filas = []
+    acumulado = saldo_hoy
+    for i in range(1, meses + 1):
+        a, m = _mes_mas(anio_hoy, mes_hoy, i)
+        acumulado = round(acumulado + neto_normal, 2)
+        filas.append({"anio": a, "mes": m, "cierre_estimado": acumulado})
+
+    return {
+        "base": {
+            "saldo_hoy": round(saldo_hoy, 2),
+            "neto_normal": neto_normal,
+            "meses_de_historial": len(netos),
+        },
+        "meses": filas,
+        "motivo": None,
+    }
+
+
+def _mediana(xs: list[float]) -> float:
+    """La mediana, sin `import statistics`: son a lo sumo seis números y así el
+    módulo no suma una dependencia por una cuenta de dos líneas."""
+    ys = sorted(xs)
+    n = len(ys)
+    medio = n // 2
+    if n % 2 == 1:
+        return ys[medio]
+    return (ys[medio - 1] + ys[medio]) / 2.0
+
+
 def registrar(db: Session, fecha: date, cuenta_id: int, tipo: str, monto: float,
               concepto: str, usuario_id: int | None = None,
               obligacion_id: int | None = None, nota: str | None = None,

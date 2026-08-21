@@ -59,6 +59,7 @@ import NotificacionesConfig from './pages/NotificacionesConfig'
 import CuadreTurnos from './pages/CuadreTurnos'
 import ConfigTicketPage from './pages/ConfigTicket'
 import Plata from './pages/Plata'
+import Proveedores from './pages/Proveedores'
 import MesEnDetalle from './pages/MesEnDetalle'
 import Carta from './pages/Carta'
 import Horarios from './pages/Horarios'
@@ -204,12 +205,11 @@ function AppRoutes() {
       <Route path="/bandeja"          element={<RequireAdmin><Layout><Bandeja /></Layout></RequireAdmin>} />
       <Route path="/informes"         element={<RequireAdmin><Layout><Informes /></Layout></RequireAdmin>} />
       <Route path="/informe-contador" element={<RequireAdmin><Layout><InformeContador /></Layout></RequireAdmin>} />
-      {/* Pagos a proveedores se mudó adentro del módulo de la plata (fase 5, y de
-          nuevo con la fusión). La ruta vieja se conserva como redirect: nadie con
-          un bookmark se queda colgado. SIN hash: `#plata` dejó de anclar nada y
-          un redirect a un ancla muerta aterriza en el tope igual — mejor decirlo
-          con la URL limpia. */}
-      <Route path="/pagos-proveedores" element={<Navigate to="/plata" replace />} />
+      {/* Pago a proveedores volvió a tener pantalla propia (pedido del dueño):
+          con el rediseño del libro, Plata quedó para «lo que ya se movió», y el
+          pago de facturas —elegir proveedor, ver la deuda, registrar— pide su
+          lugar aparte. `?factura=ID` abre una factura puntual. */}
+      <Route path="/pagos-proveedores" element={<RequireAdmin><Layout><Proveedores /></Layout></RequireAdmin>} />
       <Route path="/conciliacion-inventario" element={<RequireAdmin><Layout><ConciliacionInventario /></Layout></RequireAdmin>} />
       <Route path="/conteos-admin"    element={<RequireAdmin><Layout><ConteosAdmin /></Layout></RequireAdmin>} />
       <Route path="/lotes"            element={<RequireAdmin><Layout><LotesTrazabilidad /></Layout></RequireAdmin>} />

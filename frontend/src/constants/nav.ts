@@ -3,6 +3,7 @@ import {
   Banknote, Wrench, ClipboardCheck, Activity,
   Bell, Inbox, BarChart2, Users, Tag, RotateCcw, Calculator, Scale, Boxes, Wallet,
   Receipt, ShieldCheck, ListChecks, BookOpen, TrendingUp, Package, CalendarDays,
+  Truck,
 } from 'lucide-react'
 
 export interface NavItem { to: string; label: string; icon: typeof Layers }
@@ -38,11 +39,14 @@ export const NAV_GROUPS: NavGroup[] = [
     { to: '/conciliacion-inventario', label: 'Cierre de mes',  icon: Scale           },
     { to: '/lotes',                   label: 'Lotes',          icon: Boxes           },
   ]},
-  // "Pagos proveedores" salió de acá en la fase 5: vive como pestaña dentro de
-  // Costos, junto a la agenda y al flujo. La plata que sale es un solo tema.
+  // «Pago a proveedores» volvió a tener pantalla propia (pedido del dueño):
+  // con el rediseño del libro, Plata quedó para «lo que ya se movió» y el pago
+  // de facturas pide su lugar aparte. La plata que sale y la que entra al banco
+  // conviven acá, en Caja.
   { label: 'Caja', items: [
     { to: '/cuadre-turnos',     label: 'Cuadres',        icon: Wallet          },
     { to: '/consignaciones',    label: 'Consignaciones', icon: Banknote        },
+    { to: '/pagos-proveedores', label: 'Proveedores',    icon: Truck           },
   ]},
   { label: 'Operación', items: [
     // Horarios vive en Operación (junto a Comunicados y Cumplimiento) porque su

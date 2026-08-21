@@ -30,11 +30,22 @@ from datetime import date, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.models import (CostoCategoria, CuentaBancaria, Configuracion,
-                               MovimientoBanco)
+from app.core.tz import dia_col, fin_dia_col_utc, inicio_dia_col_utc
+from app.models.models import (Consignacion, CostoCategoria, CuentaBancaria,
+                               Configuracion, MovimientoBanco)
 
 CLAVE_SALDO = "saldo_banco"
 CLAVE_SALDO_FECHA = "saldo_banco_fecha"
+
+# Desde qué día las CONSIGNACIONES entran solas al libro como entradas de
+# Occidente (la excepción medida a la regla «no deduce» del encabezado: una
+# consignación ES un hecho bancario — el comprobante es literalmente la boleta
+# del depósito, sin rezago ni comisión que adivinar; Bold sigue tecleado).
+# Guardada en `configuracion` como el ancla del saldo, y SE FIJA UNA VEZ:
+# moverla hacia atrás duplicaría contra lo ya tecleado, hacia adelante haría
+# desaparecer plata — la misma trampa que `desde_recogidas` cerró con su ancla.
+# Sin fijar, el libro es 100% tecleado, como siempre.
+CLAVE_CONSIG_DESDE = "libro_consignaciones_desde"
 
 # Mismo tope que usa `costos._leer_saldo_banco`: un saldo más grande que esto
 # es un typo, no plata.
@@ -112,8 +123,52 @@ def ancla(db: Session) -> tuple[float, date | None]:
     return saldo, fecha
 
 
+def consignaciones_desde(db: Session) -> date | None:
+    """El corte del régimen de consignaciones-al-libro, o None si no se activó."""
+    fila = db.query(Configuracion).filter(
+        Configuracion.clave == CLAVE_CONSIG_DESDE).first()
+    crudo = ((fila.valor if fila else "") or "").strip()
+    try:
+        return date.fromisoformat(crudo) if crudo else None
+    except ValueError:
+        # Un corte podrido no es un corte de «desde siempre»: es no tener corte.
+        return None
+
+
+def _consigs_en_rango(db: Session, desde_d: date, hasta_d: date) -> list:
+    """Las consignaciones que el libro proyecta en [desde_d, hasta_d].
+
+    Entran TODAS las que caen desde el corte, `pendiente` y `realizada` por
+    igual: la pendiente es un depósito afirmado con comprobante que el admin no
+    confirmó todavía, y su plata YA está en el banco — dejarla afuera del saldo
+    la haría aparecer días después, el día de la confirmación, que no es el día
+    del depósito. El estado viaja en la fila para que la pantalla lo diga.
+
+    Las filas con `fecha` NULL no entran a NINGÚN día: no se les inventa uno
+    (ver `consignaciones_sin_fecha` en `libro`). El filtro >= las descarta solo,
+    igual que en SQL cualquier comparación contra NULL.
+    """
+    corte = consignaciones_desde(db)
+    if corte is None:
+        return []
+    lo = max(desde_d, corte)
+    if hasta_d < lo:
+        return []
+    return (db.query(Consignacion)
+            .filter(Consignacion.fecha >= inicio_dia_col_utc(lo),
+                    Consignacion.fecha <= fin_dia_col_utc(hasta_d))
+            .order_by(Consignacion.fecha.asc(), Consignacion.id.asc())
+            .all())
+
+
 def _neto_hasta(db: Session, desde: date, hasta: date) -> float:
-    """Σ(entradas − salidas) en [desde, hasta]. Una sola query, no un bucle."""
+    """Σ(entradas − salidas) en [desde, hasta]. Una sola query, no un bucle.
+
+    Las consignaciones proyectadas SUMAN ACÁ ADENTRO y no en cada llamador: por
+    esta función pasa toda la cadena (`saldo_al_cierre` → `apertura` → el libro
+    y la serie), así que sumarlas en un solo lugar es lo que garantiza que el
+    saldo del libro, el de la serie y el del flujo digan lo mismo.
+    """
     if hasta < desde:
         return 0.0
     filas = (db.query(MovimientoBanco.tipo, func.sum(MovimientoBanco.monto))
@@ -123,6 +178,7 @@ def _neto_hasta(db: Session, desde: date, hasta: date) -> float:
     for tipo, total in filas:
         v = float(total or 0.0)
         neto += v if tipo == ENTRADA else -v
+    neto += sum(float(c.valor or 0.0) for c in _consigs_en_rango(db, desde, hasta))
     return round(neto, 2)
 
 
@@ -189,6 +245,21 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
     for m in movs:
         por_dia.setdefault(m.fecha, []).append(m)
 
+    # Las consignaciones proyectadas, cada una en SU día Colombia. Van en una
+    # lista aparte de `movimientos` a propósito: no son filas tecleadas, no se
+    # borran desde el libro (se corrigen en Consignaciones), y un bundle viejo
+    # que no conozca la clave simplemente no las dibuja — los totales del día
+    # igual las suman, así que el saldo no depende de la versión del cliente.
+    corte_consig = consignaciones_desde(db)
+    consigs_por_dia: dict[date, list] = {}
+    for c in _consigs_en_rango(db, desde, hasta):
+        consigs_por_dia.setdefault(dia_col(c.fecha), []).append(c)
+    sin_fecha = []
+    if corte_consig is not None:
+        # Las filas legacy sin fecha existen (el modelo las tolera) y no se
+        # ubican en un día inventado: se cuentan y se dicen.
+        sin_fecha = db.query(Consignacion).filter(Consignacion.fecha.is_(None)).all()
+
     # ── LA CADENA SE DECIDE POR DÍA, NO POR MES ───────────────────────────────
     # Antes había UNA bandera para todo el rango, calculada mirando solo el
     # primer día. Con el ancla a mitad de mes —que es el caso NORMAL, porque el
@@ -207,12 +278,18 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
     while d <= hasta:
         delta = timedelta(days=1)
         del_dia = por_dia.get(d, [])
+        consigs_del_dia = consigs_por_dia.get(d, [])
         entradas: dict[str, float] = {}
         salidas: dict[str, float] = {}
         for m in del_dia:
             destino = entradas if m.tipo == ENTRADA else salidas
             nom = nombres.get(m.cuenta_id, "—")
             destino[nom] = round(destino.get(nom, 0.0) + float(m.monto or 0.0), 2)
+        # Lo consignado del día entra a la columna Occidente — es su definición
+        # (efectivo que se consigna), con el nombre de la hoja del dueño.
+        for c in consigs_del_dia:
+            entradas["Occidente"] = round(
+                entradas.get("Occidente", 0.0) + float(c.valor or 0.0), 2)
         tot_e = round(sum(entradas.values()), 2)
         tot_s = round(sum(salidas.values()), 2)
 
@@ -240,6 +317,15 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
             # un saldo que no se conoce no puede estar en negativo.
             "en_rojo": bool(con_cadena and final < 0),
             "movimientos": [_a_dict(m, nombres, categorias) for m in del_dia],
+            "consignaciones": [{
+                "consignacion_id": c.id,
+                "tienda_id": c.tienda_id,
+                "valor": float(c.valor or 0.0),
+                "estado": (c.estado.value if hasattr(c.estado, "value")
+                           else c.estado),
+                "barista_nombre": c.barista_nombre,
+                "imagen_url": c.imagen_url,
+            } for c in consigs_del_dia],
         })
         saldo = final
         d += delta
@@ -263,6 +349,15 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
         # apagar el mes entero.
         "dias_con_saldo": len(con_saldo),
         "primer_dia_con_saldo": con_saldo[0]["fecha"] if con_saldo else None,
+        # El régimen de consignaciones-al-libro: desde cuándo entran solas
+        # (null = todavía tecleado, como siempre), y las filas legacy sin fecha
+        # que NO están en ningún día — se dicen, no se ubican en uno inventado.
+        "consignaciones_desde": (corte_consig.isoformat()
+                                 if corte_consig is not None else None),
+        "consignaciones_sin_fecha": {
+            "n": len(sin_fecha),
+            "total": round(sum(float(c.valor or 0.0) for c in sin_fecha), 2),
+        },
         "dias": filas,
         "totales": {
             "entradas": round(sum(f["total_entradas"] for f in filas), 2),
@@ -315,6 +410,10 @@ def serie_mensual(db: Session, anio: int) -> dict:
         neto_e = (db.query(func.sum(MovimientoBanco.monto))
                   .filter(MovimientoBanco.fecha >= ini, MovimientoBanco.fecha <= fin,
                           MovimientoBanco.tipo == ENTRADA).scalar() or 0.0)
+        # Las consignaciones proyectadas son entradas del mes igual que en el
+        # libro: sin esta suma la serie y el libro dirían dos totales distintos
+        # para el mismo mes (el cierre ya las trae — viaja por la cadena).
+        neto_e += sum(float(c.valor or 0.0) for c in _consigs_en_rango(db, ini, fin))
         neto_s = (db.query(func.sum(MovimientoBanco.monto))
                   .filter(MovimientoBanco.fecha >= ini, MovimientoBanco.fecha <= fin,
                           MovimientoBanco.tipo == SALIDA).scalar() or 0.0)
@@ -372,6 +471,64 @@ def registrar(db: Session, fecha: date, cuenta_id: int, tipo: str, monto: float,
     else:
         db.flush()
     return mov
+
+
+def preview_consignaciones(db: Session, desde: date) -> dict:
+    """Qué pasaría si las consignaciones entraran al libro desde `desde`.
+
+    La activación no puede ser un default silencioso: si el dueño ya venía
+    tecleando las entradas de Occidente, proyectar encima las cuenta DOS veces.
+    Esta vista previa trae las dos mitades con sus números — lo que entraría
+    solo, y lo tecleado en ese rango que habría que revisar — para que él
+    active viendo exactamente qué cambia. Es el patrón del impoconsumo: la
+    decisión con las cifras en pantalla, nunca un interruptor a ciegas.
+    """
+    consigs = (db.query(Consignacion)
+               .filter(Consignacion.fecha >= inicio_dia_col_utc(desde)).all())
+    occ = db.query(CuentaBancaria).filter(CuentaBancaria.nombre == "Occidente").first()
+    tecleadas = []
+    if occ is not None:
+        tecleadas = (db.query(MovimientoBanco)
+                     .filter(MovimientoBanco.fecha >= desde,
+                             MovimientoBanco.tipo == ENTRADA,
+                             MovimientoBanco.cuenta_id == occ.id)
+                     .order_by(MovimientoBanco.fecha.asc()).all())
+    return {
+        "desde": desde.isoformat(),
+        "consignaciones": {
+            "n": len(consigs),
+            "total": round(sum(float(c.valor or 0.0) for c in consigs), 2),
+        },
+        "tecleadas_en_rango": {
+            "n": len(tecleadas),
+            "total": round(sum(float(m.monto or 0.0) for m in tecleadas), 2),
+            "movimientos": [{"id": m.id, "fecha": m.fecha.isoformat(),
+                             "monto": float(m.monto or 0.0),
+                             "concepto": m.concepto} for m in tecleadas],
+        },
+        "ya_activado_desde": (consignaciones_desde(db).isoformat()
+                              if consignaciones_desde(db) else None),
+    }
+
+
+def activar_consignaciones(db: Session, desde: date) -> dict:
+    """Fija el corte del régimen. UNA vez, como el ancla de las recogidas:
+    un corte que se mueve es plata que aparece o desaparece sola."""
+    vigente = consignaciones_desde(db)
+    if vigente is not None:
+        raise ValueError(
+            f"Las consignaciones ya entran solas al libro desde el "
+            f"{vigente.isoformat()}. El corte no se mueve: hacia atrás "
+            "duplicaría contra lo ya tecleado y hacia adelante haría "
+            "desaparecer plata del libro.")
+    fila = db.query(Configuracion).filter(
+        Configuracion.clave == CLAVE_CONSIG_DESDE).first()
+    if fila is None:
+        db.add(Configuracion(clave=CLAVE_CONSIG_DESDE, valor=desde.isoformat()))
+    else:
+        fila.valor = desde.isoformat()
+    db.commit()
+    return {"consignaciones_desde": desde.isoformat()}
 
 
 def borrar(db: Session, movimiento_id: int) -> bool:

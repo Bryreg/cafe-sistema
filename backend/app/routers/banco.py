@@ -137,6 +137,43 @@ def libro_del_mes(
     return banco.libro(db, desde, hasta)
 
 
+@router.get("/consignaciones-preview")
+def preview_consignaciones(
+    desde: date = Query(...),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Qué cambiaría si las consignaciones entraran solas al libro desde esa
+    fecha: cuántas son y cuánta plata, y qué entradas de Occidente ya tecleadas
+    en ese rango quedarían contadas DOS veces. Es la vista previa con la que se
+    decide la activación — nunca un interruptor a ciegas."""
+    if desde < LIBRO_DESDE:
+        raise HTTPException(400, "Esa fecha es anterior al año 2000: revisá lo "
+                                 "que tecleaste.")
+    return banco.preview_consignaciones(db, desde)
+
+
+class ConsignacionesDesdeIn(BaseModel):
+    desde: date
+
+
+@router.post("/consignaciones-desde")
+def activar_consignaciones(
+    data: ConsignacionesDesdeIn,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Activa el régimen: desde `desde`, cada consignación entra al libro en SU
+    día, como entrada de Occidente, sin que nadie la teclee. Se fija UNA vez."""
+    if data.desde < LIBRO_DESDE:
+        raise HTTPException(400, "Esa fecha es anterior al año 2000: revisá lo "
+                                 "que tecleaste.")
+    try:
+        return banco.activar_consignaciones(db, data.desde)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/serie")
 def serie_del_anio(
     anio: Optional[int] = Query(None),
@@ -227,7 +264,19 @@ def crear_movimiento(
     # que vienen adentro de `dias[].movimientos`, y la pantalla no necesita
     # aprender dos formas del mismo objeto.
     fila = banco.libro(db, mov.fecha, mov.fecha)["dias"][0]
-    return next(m for m in fila["movimientos"] if m["id"] == mov.id)
+    out = next(m for m in fila["movimientos"] if m["id"] == mov.id)
+    # Bajo el régimen de consignaciones-al-libro, una entrada de Occidente
+    # tecleada puede ser la MISMA plata que una consignación ya proyectada.
+    # No se bloquea (una transferencia recibida es legítima) pero se dice, con
+    # la clave aditiva que el bundle viejo ignora.
+    corte = banco.consignaciones_desde(db)
+    if (corte is not None and data.tipo == "entrada" and data.fecha >= corte
+            and out.get("cuenta") == "Occidente"):
+        out["advertencia"] = (
+            "Ojo: desde el " + corte.isoformat() + " las consignaciones entran "
+            "solas al libro. Si esta entrada es una consignación, ya está "
+            "contada y quedaría dos veces — borrala si es el caso.")
+    return out
 
 
 @router.delete("/movimientos/{movimiento_id}")

@@ -562,6 +562,17 @@ def listar_pagos(
                             desde=desde, hasta=hasta)
 
 
+@router.get("/patrones-de-pago")
+def patrones_de_pago(
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Las costumbres de pago, APRENDIDAS del historial: «el arriendo lo pagás
+    cerca del 15», «proveedores los viernes». Cada una con su soporte («4 de
+    5») — se proponen, jamás se afirman sin decir de cuántos pagos salen."""
+    return svc.get_patrones_de_pago(db)
+
+
 @router.post("/pagos")
 def registrar_pago(
     data: PagoCreate,

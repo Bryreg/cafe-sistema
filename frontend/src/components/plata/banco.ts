@@ -62,6 +62,39 @@ export interface ConsignacionLibro {
 }
 
 /**
+ * Un pago EN EFECTIVO que se muestra en su día del libro. Es INFORMATIVO:
+ * esa plata salió del cajón o de la mano y nunca pasó por una cuenta, así que
+ * NO está sumada en `salidas` ni mueve el saldo — sumarla rompería la
+ * invariante inicial + entra − sale = final contra el extracto.
+ */
+export interface PagoEfectivoLibro {
+  pago_id: number
+  monto: number
+  /** El concepto de la obligación o «Proveedor: X». null = el padre ya no
+   *  existe y no se le inventa un nombre. */
+  detalle: string | null
+  nota: string | null
+}
+
+/** Una categoría en la serie anual de salidas: los doce meses, ene..dic. */
+export interface CategoriaAnual {
+  categoria_id: number | null
+  clave: string | null
+  /** «Sin clasificar» cuando la salida se tecleó sin categoría: un estado
+   *  dicho, nunca un cero escondido. */
+  nombre: string
+  ambito: string | null
+  meses: number[]
+  total: number
+}
+
+export interface PorCategoriaAnual {
+  anio: number
+  /** Ordenadas por total desc por el backend: «qué me cuesta más este año». */
+  categorias: CategoriaAnual[]
+}
+
+/**
  * Una fila del libro = un día. La invariante que la pantalla tiene que dejar
  * verificar a ojo, porque es la fórmula de la hoja del dueño:
  *
@@ -99,6 +132,13 @@ interface DiaComun {
    * proyectadas», nunca «no tuvo».
    */
   consignaciones?: ConsignacionLibro[]
+  /**
+   * Los pagos EN EFECTIVO del día, para que la plata que salió del cajón o de
+   * la mano se vea donde pasó. NO están en `salidas` ni en `total_salidas` y
+   * no mueven el saldo. Con `?` por la ventana de deploy: ausente = «este
+   * servidor no los cuenta», y no se dibuja nada.
+   */
+  pagos_efectivo?: PagoEfectivoLibro[]
 }
 
 /** Un día del ancla en adelante: el saldo es exacto. */

@@ -2521,6 +2521,96 @@ def _agenda_por_categoria(items: list) -> list:
     return sorted(acc.values(), key=lambda g: (-g["monto"], g["clave"]))
 
 
+# ── Patrones de pago ────────────────────────────────────────────────────────
+
+# Los nombres de los días, para el texto del patrón («los viernes»). Lunes = 0,
+# como date.weekday().
+_DIAS_SEMANA_ES = ("los lunes", "los martes", "los miércoles", "los jueves",
+                   "los viernes", "los sábados", "los domingos")
+
+# Cuántos pagos hacen un patrón. Con dos, cualquier coincidencia es casualidad;
+# con tres ya es una costumbre que vale la pena proponer.
+_MIN_PAGOS_PATRON = 3
+
+
+def get_patrones_de_pago(db: Session) -> dict:
+    """«Esto lo pagás todos los viernes», «esto siempre antes del 15».
+
+    EL PATRÓN SE APRENDE, NO SE TECLEA (pedido del dueño): el sistema ya tiene
+    el historial —`Pago.fecha_pago` es el día que salió la plata— así que la
+    costumbre se DERIVA de ahí y se propone, en vez de pedirle que la escriba.
+    Es la columna «FECHA APROX» de su hoja, deducida de lo que él mismo hizo.
+
+    La cuenta se agrupa con `_llave_de_cuenta` (concepto normalizado + sede),
+    la MISMA llave de «armar el mes»: dos escrituras del mismo arriendo son una
+    sola costumbre. Tres reglas, de la más específica a la más laxa, y la que
+    no matchea ninguna NO SE PUBLICA — proponer un patrón dudoso es peor que no
+    proponer nada:
+
+      · mismo día de semana en ≥ 70% de los pagos → «los viernes»
+      · días del mes en una ventana de ±4        → «cerca del día 14»
+      · todos a más tardar el 18                 → «siempre antes del 19»
+
+    Cada patrón viaja con su soporte («4 de 5») para que el dueño pueda
+    descreerle con fundamento.
+    """
+    filas = (db.query(Pago, Obligacion)
+             .join(Obligacion, Obligacion.id == Pago.obligacion_id)
+             .filter(Pago.anulado == False,  # noqa: E712
+                     Pago.obligacion_id.isnot(None),
+                     Obligacion.anulada == False)  # noqa: E712
+             .all())
+
+    grupos: dict[tuple, dict] = {}
+    for pago, ob in filas:
+        g = grupos.setdefault(_llave_de_cuenta(ob), {
+            "concepto": ob.concepto, "tienda_id": ob.tienda_id, "fechas": []})
+        g["fechas"].append(pago.fecha_pago)
+
+    tiendas = {t.id: t.nombre for t in db.query(Tienda).all()}
+    patrones = []
+    for g in grupos.values():
+        fechas = sorted(g["fechas"])
+        n = len(fechas)
+        if n < _MIN_PAGOS_PATRON:
+            continue
+        patron = _detectar_patron(fechas)
+        if patron is None:
+            continue
+        patrones.append({
+            "concepto": g["concepto"],
+            "tienda_id": g["tienda_id"],
+            "tienda_nombre": tiendas.get(g["tienda_id"]),
+            "n_pagos": n,
+            **patron,
+        })
+    patrones.sort(key=lambda p: (-p["n_pagos"], p["concepto"]))
+    return {"patrones": patrones}
+
+
+def _detectar_patron(fechas: list) -> dict | None:
+    """El patrón de una lista de fechas de pago, o None si no hay uno claro."""
+    n = len(fechas)
+    dias_semana = [f.weekday() for f in fechas]
+    moda = max(set(dias_semana), key=dias_semana.count)
+    soporte_semana = dias_semana.count(moda)
+    if soporte_semana / n >= 0.7:
+        return {"tipo": "dia_semana", "dia": moda,
+                "soporte": soporte_semana,
+                "texto": f"{_DIAS_SEMANA_ES[moda]} ({soporte_semana} de {n})"}
+
+    dias_mes = sorted(f.day for f in fechas)
+    if dias_mes[-1] - dias_mes[0] <= 4:
+        centro = dias_mes[len(dias_mes) // 2]
+        return {"tipo": "dia_del_mes", "dia": centro, "soporte": n,
+                "texto": f"cerca del día {centro} ({n} de {n})"}
+
+    if dias_mes[-1] <= 18:
+        return {"tipo": "antes_del", "dia": dias_mes[-1] + 1, "soporte": n,
+                "texto": f"siempre antes del {dias_mes[-1] + 1} ({n} de {n})"}
+    return None
+
+
 # ── Pagos ───────────────────────────────────────────────────────────────────
 
 def registrar_pago(db: Session, data, usuario_id: int,

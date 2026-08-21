@@ -137,6 +137,19 @@ def libro_del_mes(
     return banco.libro(db, desde, hasta)
 
 
+@router.get("/por-categoria")
+def por_categoria(
+    anio: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Cuánto se está yendo en cada cosa, mes a mes: las salidas del libro
+    agrupadas por categoría, los doce meses del año. Lo sin categoría viaja
+    como «Sin clasificar» — dicho, no escondido."""
+    a, _ = _anio_mes(anio, None)
+    return banco.por_categoria_anual(db, a)
+
+
 @router.get("/consignaciones-preview")
 def preview_consignaciones(
     desde: date = Query(...),

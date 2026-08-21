@@ -25,6 +25,24 @@ export interface Categoria {
 }
 export interface Tienda { id: number; nombre: string }
 
+/**
+ * Una costumbre de pago APRENDIDA del historial (`GET /costos/patrones-de-pago`).
+ * El backend solo publica la que es clara y la manda con su soporte («4 de 5»):
+ * la cuenta sin costumbre clara NO viene — proponer un patrón dudoso es peor
+ * que no proponer nada.
+ */
+export interface PatronDePago {
+  concepto: string
+  tienda_id: number | null
+  tienda_nombre: string | null
+  n_pagos: number
+  tipo: 'dia_semana' | 'dia_del_mes' | 'antes_del'
+  dia: number
+  soporte: number
+  /** Ya armado por el backend: «los viernes (4 de 4)», «cerca del día 14 (3 de 3)». */
+  texto: string
+}
+
 // ── Obligaciones (los costos fijos: arriendo, nómina, servicios) ─────────────
 export interface Pago {
   id: number

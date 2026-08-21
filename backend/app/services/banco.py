@@ -32,7 +32,8 @@ from sqlalchemy.orm import Session
 
 from app.core.tz import dia_col, fin_dia_col_utc, inicio_dia_col_utc
 from app.models.models import (Consignacion, CostoCategoria, CuentaBancaria,
-                               Configuracion, MovimientoBanco)
+                               Configuracion, FacturaCompra, MovimientoBanco,
+                               Obligacion, Pago)
 
 CLAVE_SALDO = "saldo_banco"
 CLAVE_SALDO_FECHA = "saldo_banco_fecha"
@@ -260,6 +261,19 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
         # ubican en un día inventado: se cuentan y se dicen.
         sin_fecha = db.query(Consignacion).filter(Consignacion.fecha.is_(None)).all()
 
+    # Los PAGOS EN EFECTIVO del rango, cada uno en su día — informativos, JAMÁS
+    # sumados al saldo: esa plata salió del cajón o de la mano y nunca pasó por
+    # una cuenta. El libro los muestra porque el sistema ya los sabe y el día
+    # tiene que contar su plata completa; sumarlos rompería la invariante
+    # inicial + entra − sale = final contra el extracto.
+    pagos_por_dia: dict[date, list[dict]] = {}
+    for p in (db.query(Pago)
+              .filter(Pago.metodo == "efectivo",
+                      Pago.anulado == False,  # noqa: E712
+                      Pago.fecha_pago >= desde, Pago.fecha_pago <= hasta)
+              .order_by(Pago.fecha_pago.asc(), Pago.id.asc()).all()):
+        pagos_por_dia.setdefault(p.fecha_pago, []).append(_pago_a_dict(db, p))
+
     # ── LA CADENA SE DECIDE POR DÍA, NO POR MES ───────────────────────────────
     # Antes había UNA bandera para todo el rango, calculada mirando solo el
     # primer día. Con el ancla a mitad de mes —que es el caso NORMAL, porque el
@@ -317,6 +331,7 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
             # un saldo que no se conoce no puede estar en negativo.
             "en_rojo": bool(con_cadena and final < 0),
             "movimientos": [_a_dict(m, nombres, categorias) for m in del_dia],
+            "pagos_efectivo": pagos_por_dia.get(d, []),
             "consignaciones": [{
                 "consignacion_id": c.id,
                 "tienda_id": c.tienda_id,
@@ -377,6 +392,29 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
             "fecha_dia_mas_bajo": (
                 min(con_saldo, key=lambda f: f["final"])["fecha"] if con_saldo else None),
         },
+    }
+
+
+def _pago_a_dict(db: Session, p: Pago) -> dict:
+    """Un pago en efectivo, con el nombre de lo que pagó.
+
+    El detalle se resuelve del padre (obligación o factura) porque `Pago` no
+    tiene concepto propio; si el padre ya no existe (las facturas se borran de
+    verdad), se dice el número y no se inventa un nombre.
+    """
+    detalle = None
+    if p.obligacion_id is not None:
+        o = db.get(Obligacion, p.obligacion_id)
+        detalle = o.concepto if o is not None else f"Obligación #{p.obligacion_id}"
+    elif p.factura_id is not None:
+        f = db.get(FacturaCompra, p.factura_id)
+        detalle = (f"Proveedor: {f.proveedor}" if f is not None
+                   else f"Factura #{p.factura_id}")
+    return {
+        "pago_id": p.id,
+        "monto": float(p.monto or 0.0),
+        "detalle": detalle,
+        "nota": p.nota,
     }
 
 
@@ -488,6 +526,48 @@ def registrar(db: Session, fecha: date, cuenta_id: int, tipo: str, monto: float,
     else:
         db.flush()
     return mov
+
+
+def por_categoria_anual(db: Session, anio: int) -> dict:
+    """«Cuánto nos estamos gastando en cada cosa», MES A MES.
+
+    La pregunta del dueño es la SERIE a lo largo de los meses, no un total del
+    mes suelto: el arriendo que sube, la casa que pesa cada vez más, el GMF que
+    nadie veía. Sale de las SALIDAS del libro agrupadas por su categoría; lo
+    tecleado sin categoría va en «Sin clasificar» — un estado dicho, nunca un
+    cero escondido ni una categoría inventada.
+
+    La agregación por mes corre en Python a propósito: extraer el mes de una
+    fecha en SQL es distinto en SQLite y en Postgres, y un año de salidas son
+    cientos de filas, no millones.
+    """
+    filas = (db.query(MovimientoBanco.categoria_id, MovimientoBanco.fecha,
+                      MovimientoBanco.monto)
+             .filter(MovimientoBanco.tipo == SALIDA,
+                     MovimientoBanco.fecha >= date(anio, 1, 1),
+                     MovimientoBanco.fecha <= date(anio, 12, 31)).all())
+    cats = {c.id: c for c in db.query(CostoCategoria).all()}
+
+    acum: dict[int | None, list[float]] = {}
+    for cat_id, fecha, monto in filas:
+        clave = cat_id if cat_id in cats else None
+        meses = acum.setdefault(clave, [0.0] * 12)
+        meses[fecha.month - 1] += float(monto or 0.0)
+
+    salida = []
+    for cat_id, meses in acum.items():
+        c = cats.get(cat_id)
+        salida.append({
+            "categoria_id": cat_id,
+            "clave": c.clave if c else None,
+            "nombre": c.nombre if c else "Sin clasificar",
+            "ambito": (getattr(c, "ambito", None) if c else None),
+            "meses": [round(m, 2) for m in meses],
+            "total": round(sum(meses), 2),
+        })
+    # Por plata, que es como se lee: «qué me está costando más este año».
+    salida.sort(key=lambda x: (-x["total"], x["nombre"]))
+    return {"anio": anio, "categorias": salida}
 
 
 def preview_consignaciones(db: Session, desde: date) -> dict:

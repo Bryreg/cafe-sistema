@@ -1,11 +1,11 @@
 import { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, CalendarClock, ChevronLeft, ChevronRight, Landmark, Plus, Trash2 } from 'lucide-react'
 import api from '../../api/client'
-import { Dato, mapDato } from '../../api/dato'
+import { Dato, datoCargando, datoFalla, datoListo, mapDato } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import { SegunDato, NoSeSabe } from '../ui'
 import {
-  ConsignacionLibro, CuentaBanco, DiaLibro, LibroMes, MovimientoBanco, SerieAnual,
+  ConsignacionLibro, CuentaBanco, DiaLibro, LibroMes, MovimientoBanco, PorCategoriaAnual, SerieAnual,
   MESES, MESES_CORTOS, compacto, detalleDeError, diaSemana, esFinde, fechaCorta, fechaLarga, plata,
 } from './banco'
 import { Agenda, AgendaItem, Categoria } from './tipos'
@@ -406,7 +406,98 @@ export default function BannerLibro({
           }}
         />
       </ComoSeCalcula>
+
+      <EnQueSeVaLaPlata anio={anio} />
     </Banner>
+  )
+}
+
+/**
+ * «CUÁNTO NOS ESTAMOS GASTANDO EN CADA COSA» — y la respuesta es LA SERIE,
+ * mes a mes, no un total del mes suelto: el arriendo que sube, el GMF que
+ * nadie veía. Son las SALIDAS del libro agrupadas por su categoría.
+ *
+ * Va plegado y SE PIDE RECIÉN AL ABRIRSE: es una pregunta de una vez al mes,
+ * no puede costarle un fetch a la pantalla de todos los días. En un servidor
+ * viejo el endpoint no existe y el fetch falla: eso se muestra como falla con
+ * reintento, nunca como un año sin gastos.
+ */
+function EnQueSeVaLaPlata({ anio }: { anio: number }) {
+  const [pedido, setPedido] = useState(false)
+  const [tick, setTick] = useState(0)
+  const [dato, setDato] = useState<Dato<PorCategoriaAnual>>(datoCargando)
+
+  useEffect(() => {
+    if (!pedido) return
+    let vivo = true
+    setDato(datoCargando)
+    api.get<PorCategoriaAnual>('/banco/por-categoria', { params: { anio } })
+      .then(r => { if (vivo) setDato(datoListo(r.data)) })
+      .catch(e => {
+        if (vivo) setDato(datoFalla(detalleDeError(e, 'No se pudo leer el gasto por categoría.')))
+      })
+    return () => { vivo = false }
+  }, [pedido, anio, tick])
+
+  return (
+    <details className="border-t border-warm-100 group"
+      onToggle={e => { if (e.currentTarget.open) setPedido(true) }}>
+      <summary className="cursor-pointer select-none list-none px-4 py-2.5 text-[11px] font-bold text-warm-500 hover:bg-warm-50">
+        <span className="group-open:hidden">▸ </span>
+        <span className="hidden group-open:inline">▾ </span>
+        En qué se va la plata — {anio}, mes a mes
+      </summary>
+      <div className="px-4 pb-3 text-[11px] text-warm-500 leading-relaxed space-y-2">
+        <SegunDato
+          dato={dato}
+          cargando={<p className="text-warm-400 animate-pulse">Leyendo el año…</p>}
+          falla={m => (
+            <NoSeSabe onReintentar={() => setTick(t => t + 1)}
+              mensaje={`${m} — no se sabe en qué se fue la plata este año.`} />
+          )}
+          listo={d => d.categorias.length === 0 ? (
+            <p>Este año el libro no tiene salidas: no hay nada que agrupar todavía.</p>
+          ) : (<>
+            {/* Doce columnas no entran en la tablet: la grilla scrollea de
+                costado ELLA, no la página. El nombre queda primero para que el
+                renglón se reconozca antes de scrollear. */}
+            <div className="overflow-x-auto rounded-xl border border-warm-200 bg-white">
+              <div className="min-w-max">
+                <div className="grid grid-cols-[8rem_repeat(12,3.4rem)_4.6rem] gap-0 px-2 py-1.5 bg-warm-50 border-b border-warm-100 text-[9px] font-bold uppercase tracking-wide text-warm-500">
+                  <span>Categoría</span>
+                  {MESES_CORTOS.map(m => <span key={m} className="text-right pr-1">{m}</span>)}
+                  <span className="text-right pr-1">Año</span>
+                </div>
+                {d.categorias.map(c => (
+                  <div key={c.categoria_id ?? 'sin'}
+                    className="grid grid-cols-[8rem_repeat(12,3.4rem)_4.6rem] gap-0 items-center px-2 py-1.5 border-b border-warm-100 last:border-0">
+                    <span className={`text-[11px] font-semibold truncate pr-1 ${
+                      c.categoria_id === null ? 'text-gold-700'
+                        : c.ambito === 'personal' ? 'text-gold-700' : 'text-warm-700'}`}>
+                      {c.nombre}{c.ambito === 'personal' ? ' (personal)' : ''}
+                    </span>
+                    {c.meses.map((m, i) => (
+                      <span key={i} className={`text-right pr-1 text-[10px] font-mono tabular-nums ${
+                        m > 0 ? 'text-warm-600' : 'text-warm-300'}`}>
+                        {m > 0 ? compacto(m) : '—'}
+                      </span>
+                    ))}
+                    <span className="text-right pr-1 text-[10px] font-mono font-bold tabular-nums text-warm-700">
+                      {compacto(c.total)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p>
+              Son las <b>salidas del libro</b> con su categoría, ordenadas por lo que más pesa en
+              el año. Lo tecleado sin categoría está en <b>«Sin clasificar»</b> — se dice, no se
+              esconde: se le pone categoría cargando el movimiento. Los pagos en efectivo no están
+              acá: no pasan por el banco.
+            </p>
+          </>)} />
+      </div>
+    </details>
   )
 }
 
@@ -730,6 +821,34 @@ function FilaDia({
               {dia.cadena && <>: quedó igual que como arrancó</>}.
             </p>
           ) : null}
+
+          {/* Los pagos EN EFECTIVO del día: se ven acá porque pasaron este día,
+              pero esa plata salió del cajón o de la mano — nunca de la cuenta —
+              así que NO están en «Sale» ni mueven el saldo. Ausente (servidor
+              viejo) no dibuja nada: no se sabe, no se afirma. */}
+          {(dia.pagos_efectivo?.length ?? 0) > 0 && (
+            <div>
+              <div className="divide-y divide-warm-100 border border-warm-200 rounded-xl overflow-hidden bg-warm-50/60">
+                {dia.pagos_efectivo!.map(p => (
+                  <div key={p.pago_id} className="flex items-center gap-2 px-3 py-2">
+                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-warm-100 text-warm-500">
+                      Efectivo
+                    </span>
+                    <p className="min-w-0 flex-1 text-sm text-warm-600 truncate">
+                      {p.detalle || 'Pago en efectivo'}
+                    </p>
+                    <span className="shrink-0 font-mono font-bold text-sm tabular-nums text-warm-500">
+                      − {plata(p.monto)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-warm-400 leading-relaxed mt-1">
+                Pagados <b>en efectivo</b>: la plata salió del cajón o de la mano, no de la
+                cuenta — por eso no están en «Sale» ni tocan el saldo del banco.
+              </p>
+            </div>
+          )}
 
           {/* La segunda puerta al MISMO formulario de arriba: no abre otro, le
               cambia la fecha y sube el foco. */}

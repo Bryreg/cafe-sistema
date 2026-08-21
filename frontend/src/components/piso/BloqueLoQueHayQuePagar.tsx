@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Building2, CalendarPlus, Settings2, Truck } from 'lucide-react'
 import api from '../../api/client'
-import { mapDato } from '../../api/dato'
+import { Dato, datoCargando, datoFalla, datoListo, mapDato } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import { SegunDato, NoSeSabe } from '../ui'
 import { CuentaBanco, detalleDeError, fechaCorta, plata } from '../plata/banco'
-import { Agenda, AgendaItem, AgendaSinFecha } from '../plata/tipos'
+import { Agenda, AgendaItem, AgendaSinFecha, PatronDePago } from '../plata/tipos'
 import { CLS_INPUT, CLS_BOTON_GUARDAR, CLS_BOTON_SUAVE, ErrorCampo, teclas } from '../plata/campos'
 import FormPagoObligacion from '../plata/FormPagoObligacion'
 import { sumarDias } from './calculo'
@@ -337,6 +337,8 @@ export default function BloqueLoQueHayQuePagar({
           </>)}
         </>)} />
 
+      <CostumbresDePago />
+
       <p className="px-4 py-2.5 text-[11px] text-warm-400 leading-relaxed border-t border-warm-100">
         Esta lista es del <b>negocio entero</b> y no tiene filtro por sede a propósito: el arriendo
         y la nómina son corporativos, así que filtrando por sede desaparecen de la lista y todo se
@@ -344,6 +346,80 @@ export default function BloqueLoQueHayQuePagar({
         falta, no el total.
       </p>
     </section>
+  )
+}
+
+/**
+ * EL PATRÓN SE APRENDE, NO SE TECLEA (pedido del dueño): el sistema mira el
+ * historial de pagos y deduce «esto lo pagás los viernes», «esto cerca del 15»
+ * — la columna «FECHA APROX» de su hoja, salida de lo que él mismo hizo.
+ *
+ * Cada costumbre viene con su soporte («4 de 4») para poder descreerle con
+ * fundamento, y la cuenta sin costumbre clara NO viene: el backend prefiere no
+ * proponer nada antes que proponer un patrón dudoso. Va plegado y se pide al
+ * abrirse — es una consulta, no la pregunta de todos los días.
+ */
+function CostumbresDePago() {
+  const [pedido, setPedido] = useState(false)
+  const [tick, setTick] = useState(0)
+  const [dato, setDato] = useState<Dato<{ patrones: PatronDePago[] }>>(datoCargando)
+
+  useEffect(() => {
+    if (!pedido) return
+    let vivo = true
+    setDato(datoCargando)
+    api.get<{ patrones: PatronDePago[] }>('/costos/patrones-de-pago')
+      .then(r => { if (vivo) setDato(datoListo(r.data)) })
+      .catch(e => {
+        if (vivo) setDato(datoFalla(detalleDeError(e, 'No se pudieron leer las costumbres de pago.')))
+      })
+    return () => { vivo = false }
+  }, [pedido, tick])
+
+  return (
+    <details className="border-t border-warm-100 group"
+      onToggle={e => { if (e.currentTarget.open) setPedido(true) }}>
+      <summary className="cursor-pointer select-none list-none px-4 py-2.5 text-[11px] font-bold text-warm-500 hover:bg-warm-50">
+        <span className="group-open:hidden">▸ </span>
+        <span className="hidden group-open:inline">▾ </span>
+        Cuándo solés pagar cada cosa — aprendido de tus pagos
+      </summary>
+      <div className="px-4 pb-3 text-[11px] text-warm-500 leading-relaxed space-y-2">
+        <SegunDato
+          dato={dato}
+          cargando={<p className="text-warm-400 animate-pulse">Mirando el historial…</p>}
+          falla={m => (
+            <NoSeSabe onReintentar={() => setTick(t => t + 1)}
+              mensaje={`${m} — no se sabe qué costumbres hay.`} />
+          )}
+          listo={d => d.patrones.length === 0 ? (
+            <p>
+              Todavía no hay costumbres claras: hacen falta al menos <b>tres pagos</b> de la misma
+              cuenta para que una se pueda deducir sin inventar.
+            </p>
+          ) : (<>
+            <div className="rounded-xl border border-warm-200 bg-white divide-y divide-warm-100 overflow-hidden">
+              {d.patrones.map(p => (
+                <div key={`${p.concepto}-${p.tienda_id ?? 'corp'}`}
+                  className="flex items-baseline gap-2 px-3 py-2">
+                  <p className="min-w-0 flex-1 text-sm font-semibold text-warm-700 truncate">
+                    {p.concepto}
+                    <span className="ml-1.5 text-[10px] font-normal text-warm-400">
+                      {p.tienda_nombre || 'Corporativo'}
+                    </span>
+                  </p>
+                  <span className="shrink-0 text-xs font-bold text-forest">{p.texto}</span>
+                </div>
+              ))}
+            </div>
+            <p>
+              Salen de tu propio historial de pagos, cada una con su soporte — «4 de 4» es en
+              cuántos pagos se cumplió. Son una referencia para ponerle fecha a lo de arriba, no
+              una regla: la cuenta que no tiene una costumbre clara no aparece.
+            </p>
+          </>)} />
+      </div>
+    </details>
   )
 }
 

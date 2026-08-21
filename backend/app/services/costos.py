@@ -23,7 +23,8 @@ from fastapi import HTTPException
 from sqlalchemy import func, not_, or_
 from sqlalchemy.orm import Session
 
-from app.core.tz import dia_col, hoy_col, inicio_dia_col_utc, rango_col_utc
+from app.core.tz import (dia_col, fin_dia_col_utc, hoy_col, inicio_dia_col_utc,
+                         rango_col_utc)
 from app.models.models import (CajaTurno, Configuracion, Consignacion,
                                CostoCategoria, EntregaTurno,
                                EstadoConsignacionEnum, EstadoTurnoEnum,
@@ -4256,6 +4257,25 @@ def get_piso(db: Session, anio: int, mes: int) -> dict:
     cf = rent_svc.costos_fijos_del_mes(db, anio, mes)
     costos_fijos = cf["costos_fijos_devengados"]
 
+    # ── POR SEDE SE EXPONE, NO SE PRORRATEA ──────────────────────────────────
+    # Tres números: lo de Vida, lo de Palmetto, y lo CORPORATIVO que las dos
+    # cubren entre las dos. Si cada sede mirara solo lo suyo, las dos pasarían
+    # su piso y el negocio igual perdería plata (el corporativo pesa más que
+    # las dos juntas); prorratearlo tampoco — cualquier reparto es inventado.
+    # Es la misma decisión que `corporativas_fuera` en el P&L por sede.
+    #
+    # El corporativo sale por DIFERENCIA (global − Σ sedes) a propósito: las
+    # tres cifras usan la misma función con la misma ventana, así que la
+    # descomposición cierra por construcción y no puede desincronizarse del
+    # total que esta misma respuesta publica.
+    sedes_activas = (db.query(Tienda).filter(Tienda.activa == True)  # noqa: E712
+                     .order_by(Tienda.id).all())
+    fijos_por_sede = [
+        (t, rent_svc.costos_fijos_del_mes(db, anio, mes, t.id)["costos_fijos_devengados"])
+        for t in sedes_activas
+    ]
+    fijos_corporativo = round(costos_fijos - sum(v for _, v in fijos_por_sede), 2)
+
     # ── DENOMINADOR: la ventana simétrica con la venta real ──────────────────
     # Del 1 a HOY para el mes en curso; del 1 al último día para un mes cerrado
     # (ahí "hasta hoy" ya es el mes entero, y recortarlo sería mirar el futuro).
@@ -4328,6 +4348,57 @@ def get_piso(db: Session, anio: int, mes: int) -> dict:
 
     n_desechables = db.query(func.count(func.distinct(
         ProductoDesechable.producto_id))).scalar() or 0
+
+    # ── Los tres números del equilibrio, en venta necesaria ──────────────────
+    # Mismo divisor que el piso (el margen del negocio entero): así
+    # Σ(venta_necesaria) == piso_mes exacto y las cifras de la misma pantalla
+    # no se pueden contradecir. Un margen por sede sería otra medición con otra
+    # ventana — dos números para la misma pregunta.
+    def _venta_necesaria(fijos: float):
+        if margen_contribucion is None or margen_contribucion <= 0:
+            return None
+        return round(fijos / margen_contribucion, 2)
+
+    # La venta del mes POR SEDE, con la misma ventana y el mismo criterio que
+    # `ventas_mes` (cero cuando las razones son prestadas del mes anterior).
+    ventas_sede: dict[int, float] = {}
+    if razones is not None and razones_de == "mes_pedido":
+        filas_v = (db.query(Ticket.tienda_id, func.sum(Ticket.total))
+                   .filter(Ticket.fecha >= inicio_dia_col_utc(desde),
+                           Ticket.fecha <= fin_dia_col_utc(hasta_venta),
+                           Ticket.estado.notin_(ESTADOS_ANULADOS))
+                   .group_by(Ticket.tienda_id).all())
+        ventas_sede = {tid: round(float(v or 0.0), 2) for tid, v in filas_v}
+
+    def _fila_sede(t, fijos):
+        necesita = _venta_necesaria(fijos)
+        vendido = ventas_sede.get(t.id, 0.0) if t is not None else None
+        return {
+            "tienda_id": t.id if t is not None else None,
+            "nombre": t.nombre if t is not None else "Corporativo",
+            "costos_fijos": round(fijos, 2),
+            "venta_necesaria": necesita,
+            "ventas_mes": vendido,
+            # El avance es DESCRIPTIVO («va en 62%»), nunca un veredicto del
+            # día. El corporativo no vende: su avance no existe, no es cero.
+            "avance_pct": (round(vendido / necesita * 100, 1)
+                           if necesita and vendido is not None else None),
+        }
+
+    # ── La banda del contador: retefuente y reteica, fuera pero dichas ───────
+    # La clasificación vigente (la del dueño) las deja fuera del costo del mes;
+    # si el contador dice que son GASTO, el punto de equilibrio sube esto. La
+    # diferencia se publica en vez de elegirse en silencio — y menos para el
+    # lado que tranquiliza.
+    retenciones_mes = round(float(
+        db.query(func.sum(Obligacion.monto))
+        .join(CostoCategoria, CostoCategoria.id == Obligacion.categoria_id)
+        .filter(Obligacion.anulada == False,  # noqa: E712
+                Obligacion.fecha_devengo >= desde,
+                Obligacion.fecha_devengo <= fin_mes,
+                CostoCategoria.clave.in_((CLAVE_CATEGORIA_RETEFUENTE,
+                                          CLAVE_CATEGORIA_RETEICA)))
+        .scalar() or 0.0), 2)
 
     return {
         "anio": anio,
@@ -4409,10 +4480,32 @@ def get_piso(db: Session, anio: int, mes: int) -> dict:
         },
         "manda": manda,                     # 'resultado' | 'caja' | None
         "el_otro": otro,
+        # ── Los tres números, expuestos ──────────────────────────────────────
+        # «Vida necesita $X para lo suyo · Palmetto $Y · Corporativo $Z entre
+        # las dos.» Con el mismo divisor, la suma de las tres ventas necesarias
+        # ES piso_mes — la pantalla puede verificarlo a ojo.
+        "por_sede": {
+            "sedes": [_fila_sede(t, v) for t, v in fijos_por_sede],
+            "corporativo": _fila_sede(None, fijos_corporativo),
+        },
         # ── Lo que el número NO sabe ─────────────────────────────────────────
-        "sesgos": (_sesgos_del_piso(razones, int(n_desechables))
-                   if razones is not None else []),
-        # Los cuatro empujan para el mismo lado, así que el rótulo es uno solo y
+        "sesgos": ((_sesgos_del_piso(razones, int(n_desechables))
+                    if razones is not None else [])
+                   + [{
+                       "clave": "retenciones_fuera_del_gasto",
+                       "activo": bool(retenciones_mes > 0),
+                       "texto": ("retefuente y reteica están fuera del costo "
+                                 "del mes (la clasificación vigente; pendiente "
+                                 "confirmar con el contador)"),
+                       "detalle": {
+                           "monto_mes": retenciones_mes,
+                           # Cuánto subiría el punto de equilibrio si el
+                           # contador dice «gasto». None sin margen: no se
+                           # inventa.
+                           "subiria_piso": _venta_necesaria(retenciones_mes),
+                       },
+                   }]),
+        # Los sesgos empujan para el mismo lado, así que el rótulo es uno solo y
         # sale del backend: la pantalla no tiene que inferirlo de la lista.
         "rotulo": "al_menos",
     }

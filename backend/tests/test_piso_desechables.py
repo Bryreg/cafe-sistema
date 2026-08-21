@@ -289,7 +289,8 @@ class ElSesgoSeApagaTest(DesechablesBase):
         claves = [s["clave"] for s in self.piso()["sesgos"]]
         self.assertEqual(claves, ["productos_sin_costo", "costeo_parcial",
                                   "desechables_fuera_del_costo",
-                                  "comision_datafono_sin_cargar"])
+                                  "comision_datafono_sin_cargar",
+                                  "retenciones_fuera_del_gasto"])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

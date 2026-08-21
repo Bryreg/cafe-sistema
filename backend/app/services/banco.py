@@ -319,11 +319,16 @@ def serie_mensual(db: Session, anio: int) -> dict:
 def registrar(db: Session, fecha: date, cuenta_id: int, tipo: str, monto: float,
               concepto: str, usuario_id: int | None = None,
               obligacion_id: int | None = None, nota: str | None = None,
-              automatico: bool = False) -> MovimientoBanco:
+              automatico: bool = False, commit: bool = True) -> MovimientoBanco:
     """Un movimiento. El monto va SIEMPRE positivo: el signo lo pone el tipo.
 
     Aceptar negativos dejaría que una salida de −$100.000 sume plata, y ese
     error no se ve hasta que el saldo del mes no cuadra contra el extracto.
+
+    `commit=False` es para quien compone el movimiento DENTRO de su propia
+    transacción (el pago que descuenta del banco en el mismo gesto): un commit
+    acá partiría esa operación en dos mitades que pueden quedar desparejas —
+    exactamente lo que la composición viene a evitar.
     """
     if tipo not in TIPOS:
         raise ValueError(f"Tipo inválido: {tipo}. Tiene que ser 'entrada' o 'salida'.")
@@ -341,8 +346,11 @@ def registrar(db: Session, fecha: date, cuenta_id: int, tipo: str, monto: float,
         concepto=concepto.strip(), usuario_id=usuario_id,
         obligacion_id=obligacion_id, nota=(nota or None), automatico=automatico)
     db.add(mov)
-    db.commit()
-    db.refresh(mov)
+    if commit:
+        db.commit()
+        db.refresh(mov)
+    else:
+        db.flush()
     return mov
 
 

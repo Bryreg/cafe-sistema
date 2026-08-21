@@ -95,12 +95,21 @@ class PagoCreate(BaseModel):
     # dato que hace útil a todo el módulo.
     fecha_pago: date
     metodo: str = "transferencia"   # efectivo|transferencia|tarjeta|cheque|otro
-    # Exactamente uno de los dos (lo valida el servicio, no el schema, para poder
-    # devolver un 400 con un mensaje entendible en vez de un 422 de pydantic).
     obligacion_id: Optional[int] = None
+    # PUERTA CERRADA: un pago con factura_id contesta 400 SIEMPRE (el servicio
+    # explica por qué). El campo se conserva en el schema a propósito — sin él,
+    # un cliente viejo que lo mande recibiría el 422-lista de pydantic en vez
+    # del motivo legible.
     factura_id: Optional[int] = None
     imagen_soporte_url: Optional[str] = None
     nota: Optional[str] = None
+    # La salida del banco EN el mismo pago (una transacción). Con esto marcado,
+    # `cuenta_id` dice de qué cuenta salió. El backend responde con
+    # `movimiento_banco_id`: un cliente que lo pidió y no ve esa clave está
+    # hablando con un servidor de antes de este campo — ausente no es «no lo
+    # hizo a propósito», es «no pude preguntar».
+    descontar_banco: bool = False
+    cuenta_id: Optional[int] = None
 
 
 class PagoOut(BaseModel):

@@ -42,9 +42,11 @@ import {
  *  - SOLO CON FECHA NO FUTURA. El backend rechaza movimientos futuros a
  *    propósito (el libro es plata que YA se movió). Se apaga la opción en vez
  *    de ofrecerla y que el POST falle.
- *  - EL PAGO Y EL MOVIMIENTO SON DOS ESCRITURAS. Si la segunda falla, la
- *    primera YA pasó: el mensaje lo dice con esas palabras en vez de un «no se
- *    pudo registrar el pago» que mandaría a cargarlo de nuevo y lo duplicaría.
+ *  - EL DESCUENTO VIAJA ADENTRO DEL PAGO (`descontar_banco` + `cuenta_id`):
+ *    una transacción en el servidor, o entran los dos o ninguno. Las dos
+ *    escrituras de antes sobreviven SOLO como fallback para la ventana de
+ *    deploy — un servidor viejo ignora el campo en silencio, y se lo detecta
+ *    porque el nuevo contesta siempre con la clave `movimiento_banco_id`.
  *
  * ═════════════════════════════════════════════════════════════════════════════
  * LA CUARTA GUARDA QUE NO ERA UNA GUARDA, ERA UNA MENTIRA
@@ -131,21 +133,35 @@ export default function FormPagoObligacion({
     if (guardando) return
     if (!listo) return
     setGuardando(true); setError('')
+    // La salida del banco viaja ADENTRO del pago: una transacción en el
+    // servidor, cero ventana en la que el vencimiento quede tachado con el
+    // saldo sin bajar. Las dos escrituras de antes quedan solo como fallback.
+    let respuesta: { movimiento_banco_id?: number | null }
     try {
-      await api.post('/costos/pagos', {
+      const r = await api.post('/costos/pagos', {
         obligacion_id: obligacionId,
         monto: Number(monto),
         fecha_pago: fecha,
         metodo,
         nota: nota.trim() || null,
+        descontar_banco: marcado,
+        cuenta_id: marcado ? Number(cuentaId) : null,
       })
+      respuesta = r.data ?? {}
     } catch (e) {
       setError(detalleDeError(e, 'No se pudo registrar el pago. Reintentá.'))
       setGuardando(false)
       return
     }
     // El pago YA está. De acá en adelante, cualquier error habla del libro.
-    if (marcado) {
+    //
+    // AUSENTE NO ES VACÍO: un servidor que conoce `descontar_banco` contesta
+    // SIEMPRE con la clave `movimiento_banco_id` (número si lo creó, null si no
+    // se pidió). Si la clave no está, este bundle corre contra un servidor de
+    // antes del campo (la ventana de deploy, más larga en la tablet por el
+    // service worker): el pedido se ignoró EN SILENCIO y la salida del banco
+    // hay que hacerla por el camino viejo de las dos escrituras.
+    if (marcado && respuesta.movimiento_banco_id === undefined) {
       try {
         await api.post('/banco/movimientos', {
           fecha,

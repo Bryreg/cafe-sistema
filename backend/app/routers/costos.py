@@ -558,8 +558,11 @@ def registrar_pago(
     admin: Usuario = Depends(require_admin),
     barista: tuple = Depends(get_barista_actor),
 ):
-    """Un pago apunta a una obligación O a una factura, nunca a las dos.
-    `fecha_pago` es obligatoria: es EL DÍA QUE SALIÓ LA PLATA."""
+    """Un pago apunta a una OBLIGACIÓN (`factura_id` es puerta cerrada: contesta
+    400 con el motivo — las facturas se pagan desde su fila, que sí mueve el
+    saldo). `fecha_pago` es obligatoria: es EL DÍA QUE SALIÓ LA PLATA. Con
+    `descontar_banco` + `cuenta_id`, la salida del libro nace en la misma
+    transacción y la respuesta trae `movimiento_banco_id`."""
     return svc.registrar_pago(db, data, admin.id,
                               barista_id=barista[0], barista_nombre=barista[1])
 

@@ -78,6 +78,13 @@ from app.services import rentabilidad as rent_svc
 from app.services import parametros_tributarios as ptsvc
 
 METODOS_PAGO = {"efectivo", "transferencia", "tarjeta", "cheque", "otro"}
+
+# Los métodos cuya plata sale de una CUENTA y pueden descontar del libro del
+# banco en el mismo pago. El efectivo sale del cajón o de la mano — meterlo al
+# libro escribiría una salida que el extracto nunca va a tener. ESPEJADO en el
+# front (components/plata/tipos.ts: METODOS_DE_BANCO). SYNC: si cambia acá,
+# cambiar allá.
+METODOS_BANCO = {"transferencia", "cheque"}
 ESTADOS = {"pendiente", "parcial", "pagada", "anulada"}
 
 
@@ -2424,29 +2431,66 @@ def registrar_pago(db: Session, data, usuario_id: int,
                    barista_id: int | None = None,
                    barista_nombre: str | None = None) -> dict:
     """El pago es lo que hace útil todo el módulo: fecha_pago es EL DÍA QUE SALIÓ
-    LA PLATA, un dato que hoy no existe en ninguna tabla del sistema."""
-    tiene_obligacion = data.obligacion_id is not None
-    tiene_factura = data.factura_id is not None
-    if tiene_obligacion and tiene_factura:
-        raise HTTPException(400, "El pago apunta a una obligación O a una factura, no a las dos")
-    if not tiene_obligacion and not tiene_factura:
-        raise HTTPException(400, "El pago debe apuntar a una obligación o a una factura")
+    LA PLATA, un dato que hoy no existe en ninguna tabla del sistema.
+
+    Con `descontar_banco`, la salida del libro del banco nace EN LA MISMA
+    transacción, enlazada por `obligacion_id`. Antes eran dos escrituras del
+    frontend (el pago y después el movimiento): si la segunda fallaba, el
+    vencimiento quedaba tachado y el saldo del banco no bajaba — la ventana
+    exacta que la composición cierra.
+    """
+    if data.factura_id is not None:
+        # PUERTA CERRADA. Este camino creaba la fila Pago pero JAMÁS tocaba
+        # FacturaCompra.valor_pagado: la factura seguía debiendo lo mismo en la
+        # agenda y en todas las pantallas, con el pago guardado en una tabla que
+        # su saldo no lee. Una puerta que registra sin efecto es peor que un
+        # error: parece que funcionó.
+        raise HTTPException(400, (
+            "El pago de una factura de proveedor no va por acá: esta puerta "
+            "guardaba el pago en una tabla que el saldo de la factura no lee — "
+            "la factura seguía debiendo lo mismo, con tu pago invisible. "
+            "Pagala desde su propia fila en «Lo que baja el margen», que sí "
+            "mueve el saldo."
+        ))
+    if data.obligacion_id is None:
+        raise HTTPException(400, "El pago debe apuntar a una obligación")
     if data.metodo not in METODOS_PAGO:
         raise HTTPException(400, "Método inválido: efectivo | transferencia | tarjeta | cheque | otro")
     monto = _validar_monto(data.monto)
 
-    tienda_id = None
-    if tiene_obligacion:
-        obligacion = db.query(Obligacion).filter(Obligacion.id == data.obligacion_id).first()
-        if not obligacion:
-            raise HTTPException(404, "Obligación no encontrada")
-        if obligacion.anulada:
-            raise HTTPException(400, "La obligación está anulada — no admite pagos")
-        tienda_id = obligacion.tienda_id   # snapshot copiado del padre
+    obligacion = db.query(Obligacion).filter(Obligacion.id == data.obligacion_id).first()
+    if not obligacion:
+        raise HTTPException(404, "Obligación no encontrada")
+    if obligacion.anulada:
+        raise HTTPException(400, "La obligación está anulada — no admite pagos")
+    tienda_id = obligacion.tienda_id   # snapshot copiado del padre
+
+    descontar = bool(getattr(data, "descontar_banco", False))
+    if descontar:
+        # Las mismas cotas que el POST directo al libro (routers/banco.py), con
+        # el texto pensado para este gesto: acá el dueño está PAGANDO, y el
+        # motivo del rechazo tiene que hablar del pago.
+        if data.metodo not in METODOS_BANCO:
+            raise HTTPException(400, (
+                "«Descontar del banco» va solo con un método que salga de la "
+                "cuenta (transferencia o cheque). El efectivo sale del cajón o "
+                "de tu mano: meterlo al libro escribiría una salida que el "
+                "extracto nunca va a tener."
+            ))
+        if data.fecha_pago > hoy_col():
+            raise HTTPException(400, (
+                "El libro del banco es de plata que YA se movió: para "
+                "descontar del banco, la fecha del pago no puede ser futura."
+            ))
+        if data.cuenta_id is None:
+            raise HTTPException(400, (
+                "Elegí de qué cuenta salió la plata (Occidente o Bold) para "
+                "descontarla del banco."
+            ))
 
     pago = Pago(
         obligacion_id=data.obligacion_id,
-        factura_id=data.factura_id,
+        factura_id=None,
         tienda_id=tienda_id,
         monto=monto,
         fecha_pago=data.fecha_pago,
@@ -2459,15 +2503,35 @@ def registrar_pago(db: Session, data, usuario_id: int,
     )
     db.add(pago)
     db.flush()
+
+    movimiento_banco_id = None
+    if descontar:
+        try:
+            mov = banco_svc.registrar(
+                db, data.fecha_pago, data.cuenta_id, "salida", monto,
+                concepto=(obligacion.concepto or "")[:160],
+                usuario_id=usuario_id, obligacion_id=data.obligacion_id,
+                nota=(data.nota or None), commit=False)
+        except ValueError as e:
+            # El texto del servicio del banco ya está escrito para el dueño.
+            # El raise deshace también el pago: o entran los dos, o ninguno.
+            raise HTTPException(400, str(e))
+        movimiento_banco_id = mov.id
+
     audit.registrar(
         db, accion="registrar_pago_costo", tabla="pagos",
         registro_id=pago.id, usuario_id=usuario_id, tienda_id=tienda_id,
-        datos_despues={"obligacion_id": pago.obligacion_id, "factura_id": pago.factura_id,
-                       "monto": monto, "fecha_pago": pago.fecha_pago, "metodo": pago.metodo},
+        datos_despues={"obligacion_id": pago.obligacion_id, "factura_id": None,
+                       "monto": monto, "fecha_pago": pago.fecha_pago,
+                       "metodo": pago.metodo,
+                       "movimiento_banco_id": movimiento_banco_id},
     )
     db.commit()
     db.refresh(pago)
-    return _serializar_pago(pago)
+    # `movimiento_banco_id` viaja SIEMPRE (None cuando no se pidió): un cliente
+    # que pidió descontar y no ve la CLAVE está contra un servidor viejo, y esa
+    # ausencia es su señal para caer al camino de las dos escrituras.
+    return {**_serializar_pago(pago), "movimiento_banco_id": movimiento_banco_id}
 
 
 def anular_pago(db: Session, pago_id: int, usuario_id: int, motivo: str | None = None) -> dict:

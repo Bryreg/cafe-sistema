@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Plus, RefreshCw, X } from 'lucide-react'
 import { Dato } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
@@ -209,43 +209,84 @@ function LibroListo({
   const hayColumnasDeSaldo = l.dias_con_saldo > 0
   const t = l.totales
 
+  // ── EL PANEL DE MOVIMIENTOS SE ALINEA CON EL DÍA SEÑALADO ──────────────────
+  // Antes, al señalar un día de abajo (el 22) sus movimientos aparecían arriba
+  // del todo, lejos del cursor. Ahora el panel se corre para quedar al lado de la
+  // fila señalada. Solo en pantalla ancha (lg+): en celular los paneles van
+  // apilados y el de movimientos ya cae debajo del libro, así que no hay nada que
+  // alinear. El traslado es visual (transform), no toca el layout: la columna del
+  // libro no se mueve y el bloque de abajo tampoco.
+  const gridRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const filasRef = useRef<Map<string, HTMLElement>>(new Map())
+  const [esAncho, setEsAncho] = useState(false)
+  const [alineado, setAlineado] = useState(0)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const leer = () => setEsAncho(mq.matches)
+    leer()
+    mq.addEventListener('change', leer)
+    return () => mq.removeEventListener('change', leer)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!esAncho || !activo || !gridRef.current) { setAlineado(0); return }
+    const fila = filasRef.current.get(activo)
+    if (!fila) return
+    // offsetTop (métrica de LAYOUT) y no getBoundingClientRect: es relativo al
+    // grid (que es `relative`), no depende del scroll ni de la transform que el
+    // propio panel ya tiene puesta — que era lo que descuadraba la medición.
+    const top = fila.offsetTop
+    // El panel se ALINEA con la fila (su borde de arriba a la altura del día). Se
+    // frena solo para que el encabezado no caiga por debajo del libro: el cuerpo
+    // puede pasarse un poco hacia abajo (es flotante, no empuja nada), pero el
+    // título «Movimientos · día N» siempre queda dentro del alto del libro.
+    setAlineado(Math.max(0, Math.min(top, Math.max(0, gridRef.current.offsetHeight - 64))))
+  }, [esAncho, activo, mostrados.length])
+
+  const trasladar = esAncho && !!activo
+
   return (
     <div className="space-y-3">
-      {/* ── HERO: el resultado del mes ─────────────────────────────────────── */}
-      <div className="rounded-2xl bg-forest text-forest-50 p-5 sm:p-6 shadow-lg shadow-forest/20">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div className="flex flex-col gap-1">
-            <span className="text-[11px] font-bold uppercase tracking-wide text-forest-50/80">La plata</span>
+      {/* ── HERO: el resultado del mes ─────────────────────────────────────────
+          Compacto: la etiqueta y el mes en una línea, y abajo el cierre GRANDE a
+          la izquierda con las tres métricas a la derecha, repartidos a lo ancho —
+          sin el hueco muerto que dejaba el título solo. */}
+      <div className="rounded-2xl bg-forest text-forest-50 p-4 sm:p-5 shadow-lg shadow-forest/20">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-forest-50/70">La plata</span>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-white leading-none">
               {MESES[mes - 1]} <span className="text-forest-50/90">{anio}</span>
             </h1>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 shrink-0">
             <button onClick={() => onIrAlMes(-1)} aria-label="Mes anterior"
-              className="w-10 h-10 rounded-xl bg-forest-700 text-forest-50 flex items-center justify-center hover:bg-forest-500">
+              className="w-9 h-9 rounded-xl bg-forest-700 text-forest-50 flex items-center justify-center hover:bg-forest-500">
               <ChevronLeft size={18} />
             </button>
             {!viendoElMesDeHoy && (
               <button onClick={onIrAHoy}
-                className="h-10 px-3 rounded-xl bg-forest-700 text-forest-50 text-xs font-bold hover:bg-forest-500">
+                className="h-9 px-3 rounded-xl bg-forest-700 text-forest-50 text-xs font-bold hover:bg-forest-500">
                 Hoy
               </button>
             )}
             <button onClick={() => onIrAlMes(1)} aria-label="Mes siguiente"
-              className="w-10 h-10 rounded-xl bg-forest-700 text-forest-50 flex items-center justify-center hover:bg-forest-500">
+              className="w-9 h-9 rounded-xl bg-forest-700 text-forest-50 flex items-center justify-center hover:bg-forest-500">
               <ChevronRight size={18} />
             </button>
           </div>
         </div>
 
-        <div className="mt-5 flex flex-wrap items-end justify-between gap-4">
+        <div className="mt-3 flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
           {/* Con cuánto cerró (o el aviso honesto de que no se sabe). */}
           <div className="flex flex-col gap-1">
             {t.final != null ? (<>
-              <span className="text-[11px] font-bold uppercase tracking-wide text-forest-50/80">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-forest-50/70">
                 Con lo cargado, el mes cerró con
               </span>
-              <span className={`font-mono tabular-nums text-3xl sm:text-4xl font-bold leading-none ${
+              <span className={`font-mono tabular-nums text-4xl sm:text-5xl font-bold leading-none ${
                 t.final < 0 ? 'text-gold-200' : 'text-white'}`}>
                 {plata(t.final)}
               </span>
@@ -262,16 +303,16 @@ function LibroListo({
           </div>
 
           <div className="flex gap-2">
-            <div className="rounded-xl bg-forest-700 px-4 py-3 flex flex-col gap-1 min-w-[7.5rem]">
+            <div className="rounded-xl bg-forest-700 px-4 py-2.5 flex flex-col gap-0.5 min-w-[7rem]">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-forest-50/70">Entró</span>
               <span className="font-mono tabular-nums text-base font-semibold text-success-200">+ {plata(t.entradas)}</span>
             </div>
-            <div className="rounded-xl bg-forest-700 px-4 py-3 flex flex-col gap-1 min-w-[7.5rem]">
+            <div className="rounded-xl bg-forest-700 px-4 py-2.5 flex flex-col gap-0.5 min-w-[7rem]">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-forest-50/70">Salió</span>
               <span className="font-mono tabular-nums text-base font-semibold text-gold-200">− {plata(t.salidas)}</span>
             </div>
             {l.dias_con_saldo > 0 && (
-              <div className="rounded-xl bg-forest-700 px-4 py-3 flex flex-col gap-1 min-w-[6rem]">
+              <div className="rounded-xl bg-forest-700 px-4 py-2.5 flex flex-col gap-0.5 min-w-[5.5rem]">
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-forest-50/70">Días en rojo</span>
                 <span className="text-base font-bold text-gold-200">
                   {t.dias_en_rojo}
@@ -290,7 +331,7 @@ function LibroListo({
             recogido. Sin recogidas (el caso de hoy) el hero queda igual. Ausente
             (servidor viejo, antes del modelo banco+mano) no dibuja nada. */}
         {typeof t.mano_final === 'number' && t.mano_final !== 0 && (
-          <div className="mt-4 pt-4 border-t border-forest-700 flex flex-wrap items-center gap-x-6 gap-y-1">
+          <div className="mt-3 pt-3 border-t border-forest-700 flex flex-wrap items-center gap-x-6 gap-y-1">
             <span className="text-sm text-forest-50/80">
               En mano <span className="text-forest-50/60">(efectivo recogido)</span>:{' '}
               <b className="font-mono tabular-nums text-white">{plata(t.mano_final)}</b>
@@ -308,11 +349,11 @@ function LibroListo({
       <p className="text-[13px] text-warm-500 px-1">
         Con el mouse fuera del libro ves <b className="text-warm-600">todos</b> los movimientos, con
         scroll. Poné el cursor sobre un día <span className="text-warm-400">— o tocalo —</span> y el
-        panel muestra <b className="text-warm-600">solo los de ese día</b>.
+        panel se corre <b className="text-warm-600">al lado de ese día</b> con solo sus movimientos.
       </p>
 
       {/* ── LOS DOS PANELES ────────────────────────────────────────────────── */}
-      <div className="grid lg:grid-cols-2 gap-3 items-start">
+      <div ref={gridRef} className="relative grid lg:grid-cols-2 gap-3 items-start">
         {/* Libro */}
         <div className="rounded-2xl border border-warm-200 bg-white overflow-hidden">
           <div className="px-4 py-3 border-b border-warm-100">
@@ -328,13 +369,22 @@ function LibroListo({
           {l.dias.map(d => (
             <FilaDia key={d.fecha} dia={d} hoy={hoy} columnasDeSaldo={hayColumnasDeSaldo}
               activo={activo === d.fecha}
+              innerRef={el => {
+                if (el) filasRef.current.set(d.fecha, el)
+                else filasRef.current.delete(d.fecha)
+              }}
               onEntra={() => onHover(d.fecha)} onSale={() => onHover(null)}
               onTocar={() => onFijar(d.fecha)} />
           ))}
         </div>
 
-        {/* Movimientos */}
-        <div className="rounded-2xl border border-warm-200 bg-white overflow-hidden flex flex-col">
+        {/* Movimientos — se traslada para quedar al lado del día señalado (lg+). */}
+        <div ref={panelRef}
+          style={trasladar ? { transform: `translateY(${alineado}px)` } : undefined}
+          className={`rounded-2xl border bg-white overflow-hidden flex flex-col self-start ${
+            trasladar
+              ? 'border-forest-200 shadow-xl shadow-forest/10 ring-1 ring-forest-100 transition-transform duration-150 ease-out'
+              : 'border-warm-200'}`}>
           <div className="px-4 py-3 border-b border-warm-100 flex items-center justify-between gap-2">
             <p className="text-sm font-bold text-warm-700">Movimientos</p>
             <div className="flex items-center gap-2">
@@ -375,12 +425,14 @@ function LibroListo({
 
 // ── Una fila del libro = un día ──────────────────────────────────────────────
 function FilaDia({
-  dia, hoy, columnasDeSaldo, activo, onEntra, onSale, onTocar,
+  dia, hoy, columnasDeSaldo, activo, innerRef, onEntra, onSale, onTocar,
 }: {
   dia: DiaLibro
   hoy: string
   columnasDeSaldo: boolean
   activo: boolean
+  /** Para medir la posición de la fila y alinear el panel de movimientos. */
+  innerRef?: (el: HTMLButtonElement | null) => void
   onEntra: () => void
   onSale: () => void
   onTocar: () => void
@@ -394,6 +446,7 @@ function FilaDia({
 
   return (
     <button
+      ref={innerRef}
       onMouseEnter={onEntra} onMouseLeave={onSale} onClick={onTocar}
       aria-label={`${fechaLarga(dia.fecha)}${dia.cadena ? `, queda ${plata(dia.final)}` : ''}`}
       className={`w-full text-left border-b border-warm-100 transition-colors ${fondo} ${

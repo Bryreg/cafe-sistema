@@ -1,14 +1,14 @@
-import { ReactNode, useMemo, useRef, useState } from 'react'
-import { AlertCircle, CalendarClock, ChevronLeft, ChevronRight, Plus, Trash2 } from 'lucide-react'
+import { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertCircle, CalendarClock, ChevronLeft, ChevronRight, Landmark, Plus, Trash2 } from 'lucide-react'
 import api from '../../api/client'
 import { Dato, mapDato } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import { SegunDato, NoSeSabe } from '../ui'
 import {
-  CuentaBanco, DiaLibro, LibroMes, MovimientoBanco, SerieAnual,
+  ConsignacionLibro, CuentaBanco, DiaLibro, LibroMes, MovimientoBanco, SerieAnual,
   MESES, MESES_CORTOS, compacto, detalleDeError, diaSemana, esFinde, fechaCorta, fechaLarga, plata,
 } from './banco'
-import { Agenda, AgendaItem } from './tipos'
+import { Agenda, AgendaItem, Categoria } from './tipos'
 import { Banner, ComoSeCalcula, ErrorCampo } from './campos'
 import FormMovimiento from './FormMovimiento'
 import FilaVencimiento from './FilaVencimiento'
@@ -45,7 +45,8 @@ import FilaVencimiento from './FilaVencimiento'
  */
 export default function BannerLibro({
   libro, serie, anio, mes, hoy, viendoElMesDeHoy,
-  cuentas, agenda, onIrAlMes, onIrAHoy, onVerMes, onCambiarAnio,
+  cuentas, agenda, categorias, onCategoriaCreada,
+  onIrAlMes, onIrAHoy, onVerMes, onCambiarAnio,
   onGuardado, onBorrado, onIrAlAncla, onPagar, itemPagando, renderPago, onRecargarLibro,
 }: {
   libro: Dato<LibroMes>
@@ -57,6 +58,9 @@ export default function BannerLibro({
   cuentas: Fuente<CuentaBanco[]>
   /** Los vencimientos NO están en el libro: son compromisos, no plata movida. */
   agenda: Fuente<Agenda>
+  /** El catálogo COMPLETO para rotular movimientos (café + personal + banco). */
+  categorias?: Fuente<Categoria[]>
+  onCategoriaCreada?: () => void
   onIrAlMes: (delta: number) => void
   onIrAHoy: () => void
   onVerMes: (m: number) => void
@@ -168,6 +172,10 @@ export default function BannerLibro({
             opciones en la carga siguiente, que es la señal de que el enlace pegó. */}
         <FormMovimiento key={fechaCarga} fechaInicial={fechaCarga} cuentas={cuentas}
           agenda={agenda} maxFecha={hoy}
+          categorias={categorias} onCategoriaCreada={onCategoriaCreada}
+          /* La tasa viaja con el libro. AUSENTE (servidor viejo o mes caído) es
+             null: la sugerencia del GMF se apaga en vez de inventar una tasa. */
+          tasaGmf={libro.estado === 'listo' ? (libro.valor.tasa_gmf ?? null) : null}
           onGuardado={m => { setDiaAbierto(m.fecha); onGuardado(m) }} />
       </div>
 
@@ -207,6 +215,19 @@ export default function BannerLibro({
           const hayColumnasDeSaldo = l.dias_con_saldo > 0
           const aviso = avisoDeCadena(l)
           return (<>
+            {/* Las consignaciones al libro: ofrecer la activación SOLO cuando el
+                servidor la conoce y no está activada (null). `undefined` es un
+                servidor viejo y el botón llamaría a un endpoint que no existe. */}
+            {l.consignaciones_desde === null && (
+              <ActivarConsignaciones onActivado={onRecargarLibro} />
+            )}
+            {l.consignaciones_sin_fecha && l.consignaciones_sin_fecha.n > 0 && (
+              <p className="px-4 py-2 border-b border-gold-200 bg-gold-50 text-[11px] text-gold-700 leading-relaxed">
+                Hay <b>{l.consignaciones_sin_fecha.n}</b> consignaciones viejas <b>sin fecha</b> por{' '}
+                <b>{plata(l.consignaciones_sin_fecha.total)}</b>: no están en ningún día de este
+                libro — no se les inventa uno. Se corrigen en Consignaciones, poniéndoles su día.
+              </p>
+            )}
             {/* La verdad PARCIAL: desde cuándo hay saldo. Solo cuando no hay
                 ningún día con saldo esto dice «este mes no tiene saldos». */}
             {aviso && (
@@ -390,6 +411,114 @@ export default function BannerLibro({
 }
 
 /**
+ * La activación del régimen: las consignaciones entran SOLAS al libro.
+ *
+ * NUNCA un interruptor a ciegas — el patrón del impoconsumo: primero la vista
+ * previa con las DOS mitades medidas (cuántas consignaciones entrarían y por
+ * cuánto, y qué entradas de Occidente ya tecleadas en ese rango quedarían
+ * contadas DOS veces), y recién ahí el botón, con el monto adentro del rótulo.
+ * El corte se fija UNA vez: el backend rechaza moverlo, y eso también se dice.
+ */
+function ActivarConsignaciones({ onActivado }: { onActivado: () => void }) {
+  const [abierto, setAbierto] = useState(false)
+  const [desde, setDesde] = useState(() => {
+    // El primer día del mes en curso: agosto ya tiene datos reales adentro y
+    // es el mes que el dueño está viviendo. Editable, nunca impuesto.
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+  })
+  type Preview = {
+    consignaciones: { n: number; total: number }
+    tecleadas_en_rango: { n: number; total: number }
+  }
+  const [previa, setPrevia] = useState<Preview | null>(null)
+  const [ocupado, setOcupado] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!abierto) return
+    let vigente = true
+    setPrevia(null); setError('')
+    api.get<Preview>('/banco/consignaciones-preview', { params: { desde } })
+      .then(r => { if (vigente) setPrevia(r.data) })
+      .catch(e => { if (vigente) setError(detalleDeError(e, 'No se pudo medir la vista previa.')) })
+    return () => { vigente = false }
+  }, [abierto, desde])
+
+  const activar = async () => {
+    if (ocupado) return
+    setOcupado(true); setError('')
+    try {
+      await api.post('/banco/consignaciones-desde', { desde })
+      onActivado()
+    } catch (e) {
+      setError(detalleDeError(e, 'No se pudo activar.'))
+      setOcupado(false)
+    }
+  }
+
+  return (
+    <div className="px-4 py-3 border-b border-forest bg-forest-50 space-y-2">
+      <div className="flex items-start gap-2">
+        <Landmark size={15} className="text-forest mt-0.5 shrink-0" />
+        <p className="text-xs text-warm-700 leading-relaxed">
+          <b>Las consignaciones todavía se teclean a mano en este libro.</b> El sistema ya las
+          conoce — cada una con su comprobante y su día — y pueden entrar solas como entradas de
+          Occidente, sin que nadie las copie. Bold sigue tecleado: el datáfono liquida con rezago
+          y con la comisión descontada, y ese número no se adivina.
+        </p>
+      </div>
+      {!abierto ? (
+        <button onClick={() => setAbierto(true)}
+          className="min-h-[42px] px-4 rounded-xl bg-forest text-white text-xs font-bold">
+          Ver qué cambiaría…
+        </button>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex items-end gap-2 flex-wrap">
+            <label className="text-[11px] font-bold text-warm-600">
+              Desde el día
+              <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
+                className="block mt-1 px-3 py-2 rounded-xl border border-warm-300 text-sm" />
+            </label>
+          </div>
+          {error && <ErrorCampo msg={error} />}
+          {!previa && !error && (
+            <p className="text-[11px] text-warm-400 animate-pulse">Midiendo…</p>
+          )}
+          {previa && (
+            <div className="space-y-1.5">
+              <p className="text-xs text-warm-700">
+                Entrarían <b>{previa.consignaciones.n}</b> consignaciones por{' '}
+                <b>{plata(previa.consignaciones.total)}</b>, cada una en su día.
+              </p>
+              {previa.tecleadas_en_rango.n > 0 && (
+                <p className="text-xs text-danger-700 leading-relaxed">
+                  Ojo: en ese rango ya tecleaste <b>{previa.tecleadas_en_rango.n}</b> entradas de
+                  Occidente por <b>{plata(previa.tecleadas_en_rango.total)}</b>. Si son las mismas
+                  consignaciones, quedarían contadas <b>dos veces</b>: revisalas en el libro y
+                  borrá las repetidas después de activar.
+                </p>
+              )}
+              <button onClick={activar} disabled={ocupado}
+                className="min-h-[42px] px-4 rounded-xl bg-forest text-white text-xs font-bold disabled:opacity-50">
+                {ocupado ? 'Activando…'
+                  : `Que entren solas desde el ${fechaCorta(desde)}`}
+              </button>
+              <p className="text-[10px] text-warm-500">
+                El corte se fija una sola vez y no se mueve: hacia atrás duplicaría contra lo
+                tecleado, hacia adelante haría desaparecer plata del libro.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+/**
  * Qué le falta a la cadena EN ESTE MES, dicho con los datos del backend.
  * Tres estados, y ninguno se infiere de la forma del rango.
  *
@@ -532,6 +661,31 @@ function FilaDia({
             )}
           </div>
 
+          {/* Las consignaciones del día: entraron SOLAS, cada una con su
+              comprobante. No llevan botón de borrar — no son filas del libro,
+              se corrigen en Consignaciones. Ausente (servidor viejo) no dibuja
+              nada: los totales del día igual las traen sumadas del backend. */}
+          {(dia.consignaciones?.length ?? 0) > 0 && (
+            <div className="divide-y divide-warm-100 border border-success-500/40 rounded-xl overflow-hidden bg-success-50/40">
+              {dia.consignaciones!.map(c => (
+                <div key={c.consignacion_id} className="flex items-center gap-2 px-3 py-2">
+                  <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-success-100 text-success-700">
+                    Consignación
+                  </span>
+                  <p className="min-w-0 flex-1 text-sm text-warm-700 truncate">
+                    {c.barista_nombre || 'Occidente'}
+                    {c.estado === 'pendiente' && (
+                      <span className="ml-1.5 text-[10px] font-bold text-gold-700">sin confirmar</span>
+                    )}
+                  </p>
+                  <span className="shrink-0 font-mono font-bold text-sm tabular-nums text-success-600">
+                    + {plata(c.valor)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {dia.movimientos.length > 0 ? (
             <div className="divide-y divide-warm-100 border border-warm-200 rounded-xl overflow-hidden">
               {dia.movimientos.map(m => (
@@ -539,7 +693,17 @@ function FilaDia({
                   <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-warm-100 text-warm-600">
                     {m.cuenta}
                   </span>
-                  <p className="min-w-0 flex-1 text-sm text-warm-700 truncate">{m.concepto}</p>
+                  <p className="min-w-0 flex-1 text-sm text-warm-700 truncate">
+                    {m.concepto}
+                    {/* La categoría, si el servidor ya rotula. `null` = sin
+                        clasificar y no se escribe nada: mudo, no inventado. */}
+                    {m.categoria && (
+                      <span className={`ml-1.5 text-[10px] font-semibold ${
+                        m.categoria_ambito === 'personal' ? 'text-gold-700' : 'text-warm-400'}`}>
+                        · {m.categoria}{m.categoria_ambito === 'personal' ? ' (personal)' : ''}
+                      </span>
+                    )}
+                  </p>
                   <span className={`shrink-0 font-mono font-bold text-sm tabular-nums ${
                     m.tipo === 'entrada' ? 'text-success-600' : 'text-danger-600'}`}>
                     {m.tipo === 'entrada' ? '+' : '−'} {plata(m.monto)}
@@ -560,12 +724,12 @@ function FilaDia({
                 </div>
               ))}
             </div>
-          ) : (
+          ) : (dia.consignaciones?.length ?? 0) === 0 ? (
             <p className="text-[11px] text-warm-500 leading-relaxed">
               No se movió plata en el banco este día
               {dia.cadena && <>: quedó igual que como arrancó</>}.
             </p>
-          )}
+          ) : null}
 
           {/* La segunda puerta al MISMO formulario de arriba: no abre otro, le
               cambia la fecha y sube el foco. */}

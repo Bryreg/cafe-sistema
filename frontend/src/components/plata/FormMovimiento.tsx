@@ -6,7 +6,7 @@ import { mapDato } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import { SegunDato, NoSeSabe } from '../ui'
 import { CuentaBanco, MovimientoBanco, detalleDeError, fechaCorta, plata } from './banco'
-import type { Agenda, AgendaItem, AgendaSinFecha } from './tipos'
+import type { Agenda, AgendaItem, AgendaSinFecha, Categoria } from './tipos'
 import { Campo, CLS_INPUT, CLS_INPUT_PLATA, CLS_BOTON_GUARDAR, ErrorCampo, teclas } from './campos'
 
 /** El lugar de un select mientras su catálogo no está: gris y mudo, sin afirmar
@@ -133,7 +133,10 @@ const GRILLA_SM_CON_ENLACE = 'sm:grid-cols-[7.5rem_11rem_9rem_9rem_1fr_1fr_auto]
  *    movimientos seguidos del extracto no pueden depender de un segundo fetch.
  *  - NO PRELLENA EL MONTO (sí el concepto, y solo si está vacío). Ver `elegir`.
  */
-export default function FormMovimiento({ fechaInicial, cuentas, agenda, maxFecha, onGuardado }: {
+export default function FormMovimiento({
+  fechaInicial, cuentas, agenda, maxFecha, onGuardado,
+  categorias, tasaGmf, onCategoriaCreada,
+}: {
   /** Con qué día arranca. El libro precarga hoy, o el día de la fila que lo abrió. */
   fechaInicial: string
   cuentas: Fuente<CuentaBanco[]>
@@ -145,6 +148,21 @@ export default function FormMovimiento({ fechaInicial, cuentas, agenda, maxFecha
    *  se movió), así que el campo no las ofrece en vez de ofrecerlas y fallar. */
   maxFecha: string
   onGuardado: (movimiento: MovimientoBanco) => void
+  /**
+   * El catálogo COMPLETO (`/costos/categorias?ambito=todas`): café, personales
+   * y las del banco. Opcional en dos sentidos: el campo es opcional para el
+   * dueño (un movimiento sin clasificar es válido), y la prop tolera el
+   * servidor viejo que solo devuelve las del café — el select ofrece lo que
+   * haya, sin inventar.
+   */
+  categorias?: Fuente<Categoria[]>
+  /** La tasa del GMF (4×1000) que viaja en el libro. null/undefined = no se
+   *  conoce y la sugerencia no aparece: proponer un monto con tasa inventada
+   *  es la familia de error de la casa. */
+  tasaGmf?: number | null
+  /** Se creó una categoría desde acá: el catálogo de la página tiene que
+   *  repedirse para que el resto de los selects la vean. */
+  onCategoriaCreada?: () => void
 }) {
   /** El catálogo LEÍDO, o `null` mientras no esté en la mano. `null` no es «no
    *  hay cuentas»: es «no se sabe». Solo alimenta el default del efecto. */
@@ -157,9 +175,27 @@ export default function FormMovimiento({ fechaInicial, cuentas, agenda, maxFecha
   const [concepto, setConcepto] = useState('')
   /** '' = sin enlazar, y es un valor legítimo: el enlace es opcional. */
   const [obligacionId, setObligacionId] = useState('')
+  /** '' = sin clasificar, también legítimo: la categoría es un rótulo, no un gate. */
+  const [categoriaId, setCategoriaId] = useState('')
+  // La creación sobre la marcha: cuando cargue «Reteica» o «Cuota del carro»
+  // por primera vez, la categoría nace ACÁ, sin ir a otra pantalla.
+  const [creandoCat, setCreandoCat] = useState(false)
+  const [nuevoNombre, setNuevoNombre] = useState('')
+  const [nuevoAmbito, setNuevoAmbito] = useState<'cafe' | 'personal'>('cafe')
+  const [creandoCatOcupado, setCreandoCatOcupado] = useState(false)
+  /** La salida recién guardada, para ofrecerle su GMF con un toque. */
+  const [gmfPendiente, setGmfPendiente] = useState<
+    { fecha: string; cuentaId: number; monto: number } | null>(null)
   const [error, setError] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [ultimo, setUltimo] = useState('')
+  /** Un aviso del backend sobre lo recién guardado (p.ej. «esa entrada de
+   *  Occidente puede estar contada dos veces»). No es un error: quedó guardado. */
+  const [aviso, setAviso] = useState('')
+
+  const cats = categorias?.dato.estado === 'listo' ? categorias.dato.valor : null
+  const catGmf = cats?.find(c => c.clave === 'gmf')
+  const catElegida = cats?.find(c => String(c.id) === categoriaId)
 
   // El foco vuelve acá después de guardar: es el primer campo que se toca para
   // cargar el siguiente movimiento.
@@ -251,7 +287,16 @@ export default function FormMovimiento({ fechaInicial, cuentas, agenda, maxFecha
         // y quedaría escrito en la base sin efecto — `_salidas_banco_por_obligacion`
         // solo suma salidas. Una fila que dice pagar algo que no paga nada.
         obligacion_id: tipo === 'salida' && obligacionId ? Number(obligacionId) : null,
+        categoria_id: categoriaId ? Number(categoriaId) : null,
       })
+      // El GMF se OFRECE, nunca se escribe solo: el banco lo cobra por débito y
+      // la fila sale con un toque — pero es el dueño el que confirma que este
+      // débito lo paga. Solo con la tasa conocida y la categoría sembrada, y
+      // nunca sobre un GMF (el impuesto no paga impuesto).
+      setGmfPendiente(
+        tipo === 'salida' && tasaGmf && catGmf && catElegida?.clave !== 'gmf'
+          ? { fecha, cuentaId: Number(cuentaId), monto: Number(monto) }
+          : null)
       // Confirmación EN LA FILA. Sin el modal que se cerraba, guardar no tenía
       // ningún gesto propio: la grilla de abajo cambia, pero el ojo está acá.
       // Lo del enlace se lee de la RESPUESTA y no de lo que se mandó: el enlace
@@ -268,13 +313,62 @@ export default function FormMovimiento({ fechaInicial, cuentas, agenda, maxFecha
           : ''))
       // El enlace se limpia por la misma razón que el tipo, y con más urgencia:
       // arrastrarlo al movimiento siguiente cubriría dos veces la misma obligación
-      // y la sacaría de la agenda debiendo plata.
-      setMonto(''); setConcepto(''); setTipo(null); setObligacionId('')
+      // y la sacaría de la agenda debiendo plata. La categoría también: el GMF
+      // del arriendo no es el arriendo siguiente.
+      setMonto(''); setConcepto(''); setTipo(null); setObligacionId(''); setCategoriaId('')
+      setAviso(r.data.advertencia ?? '')
       refMonto.current?.focus()
       onGuardado(r.data)
     } catch (e) {
       setError(detalleDeError(e, 'No se pudo guardar el movimiento. Reintentá.'))
     } finally { setGuardando(false) }
+  }
+
+  /** El GMF de la salida recién guardada, con un toque. */
+  const cargarGmf = async () => {
+    if (!gmfPendiente || !tasaGmf || !catGmf || guardando) return
+    const montoGmf = Math.round(gmfPendiente.monto * tasaGmf * 100) / 100
+    if (montoGmf <= 0) { setGmfPendiente(null); return }
+    setGuardando(true); setError('')
+    try {
+      const r = await api.post<MovimientoBanco>('/banco/movimientos', {
+        fecha: gmfPendiente.fecha,
+        cuenta_id: gmfPendiente.cuentaId,
+        tipo: 'salida',
+        monto: montoGmf,
+        concepto: 'GMF (4×1000)',
+        obligacion_id: null,
+        categoria_id: catGmf.id,
+      })
+      setGmfPendiente(null)
+      setUltimo(`Salió ${conMiles(String(Math.round(montoGmf)))} · GMF (4×1000)`)
+      onGuardado(r.data)
+    } catch (e) {
+      setError(detalleDeError(e, 'No se pudo cargar el GMF. Reintentá.'))
+    } finally { setGuardando(false) }
+  }
+
+  /**
+   * La categoría nueva nace desde el propio formulario — «cuando cargue
+   * RETEICA por primera vez, que pueda crearla ahí mismo». El ámbito es la
+   * única pregunta que importa: ¿es del café o es plata personal? La personal
+   * jamás toca el resultado ni el punto de equilibrio, y eso está dicho en el
+   * propio botón.
+   */
+  const crearCategoria = async () => {
+    const nombre = nuevoNombre.trim()
+    if (!nombre || creandoCatOcupado) return
+    setCreandoCatOcupado(true); setError('')
+    try {
+      const r = await api.post<Categoria>('/costos/categorias', {
+        nombre, ambito: nuevoAmbito,
+      })
+      setCategoriaId(String(r.data.id))
+      setCreandoCat(false); setNuevoNombre(''); setNuevoAmbito('cafe')
+      onCategoriaCreada?.()
+    } catch (e) {
+      setError(detalleDeError(e, 'No se pudo crear la categoría.'))
+    } finally { setCreandoCatOcupado(false) }
   }
 
   return (
@@ -440,6 +534,92 @@ export default function FormMovimiento({ fechaInicial, cuentas, agenda, maxFecha
         </button>
       </div>
 
+      {/* ── LA CATEGORÍA: un rótulo, no un gate ─────────────────────────────
+          Va en su propia fila y no en la grilla de arriba: es opcional, y la
+          fila de carga de las 7am no puede crecer una columna por un campo que
+          no hace falta para guardar. Con ella el mes contesta «cuánto nos
+          estamos gastando en cada cosa»; sin ella el movimiento queda «sin
+          clasificar», que es un estado válido, no un error. Y la categoría
+          nueva se crea ACÁ (el pedido textual: cargar «Reteica» por primera
+          vez sin ir a otra pantalla). */}
+      {categorias && (
+        <div className="flex flex-wrap items-end gap-2">
+          <Campo label="Categoría (opcional)" ancho="w-56 max-w-full">
+            <SegunDato
+              dato={categorias.dato}
+              cargando={<CajaMuda texto="Cargando categorías…" />}
+              falla={() => <CajaMuda texto="No se pudo leer el catálogo" />}
+              listo={lista => (
+                <select value={categoriaId} onChange={e => setCategoriaId(e.target.value)}
+                  className={CLS_INPUT}>
+                  <option value="">Sin clasificar</option>
+                  {lista.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.nombre}{c.ambito === 'personal' ? ' · personal' : ''}
+                    </option>
+                  ))}
+                </select>
+              )}
+            />
+          </Campo>
+          {!creandoCat ? (
+            <button type="button" onClick={() => setCreandoCat(true)}
+              className="min-h-[44px] px-3 rounded-xl border border-warm-300 text-warm-600 text-xs font-bold hover:bg-warm-100">
+              + Nueva categoría
+            </button>
+          ) : (
+            <div className="flex flex-wrap items-end gap-2">
+              <Campo label="Nombre">
+                <input value={nuevoNombre} onChange={e => setNuevoNombre(e.target.value)}
+                  placeholder="Reteica, Cuota del carro…" className={CLS_INPUT} autoFocus />
+              </Campo>
+              <Campo label="¿De quién es esta plata?">
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button type="button" onClick={() => setNuevoAmbito('cafe')}
+                    aria-pressed={nuevoAmbito === 'cafe'}
+                    className={`min-h-[44px] px-2 rounded-xl border-2 text-xs font-bold ${
+                      nuevoAmbito === 'cafe'
+                        ? 'border-forest bg-forest-50 text-forest'
+                        : 'border-warm-200 bg-white text-warm-500'}`}>
+                    Del café
+                  </button>
+                  <button type="button" onClick={() => setNuevoAmbito('personal')}
+                    aria-pressed={nuevoAmbito === 'personal'}
+                    className={`min-h-[44px] px-2 rounded-xl border-2 text-xs font-bold ${
+                      nuevoAmbito === 'personal'
+                        ? 'border-gold-500 bg-gold-50 text-gold-700'
+                        : 'border-warm-200 bg-white text-warm-500'}`}>
+                    Personal
+                  </button>
+                </div>
+              </Campo>
+              <button type="button" onClick={crearCategoria}
+                disabled={creandoCatOcupado || !nuevoNombre.trim()}
+                className={CLS_BOTON_GUARDAR}>
+                {creandoCatOcupado ? 'Creando…' : 'Crear'}
+              </button>
+              <button type="button" onClick={() => setCreandoCat(false)}
+                className="min-h-[44px] px-2 text-xs font-bold text-warm-500">
+                Cancelar
+              </button>
+            </div>
+          )}
+          {nuevoAmbito === 'personal' && creandoCat && (
+            <p className="w-full text-[11px] text-warm-500 leading-snug -mt-1">
+              Una categoría <b>personal</b> (la casa, la cuota del carro) solo rotula filas de este
+              libro: esa plata sale de la cuenta pero <b>nunca</b> entra al resultado ni al punto de
+              equilibrio del café.
+            </p>
+          )}
+          {catElegida?.fuera_del_gasto && (
+            <p className="w-full text-[11px] text-gold-700 leading-snug -mt-1">
+              «{catElegida.nombre}» sale de la caja pero <b>no cuenta como costo del mes</b> (la
+              clasificación vigente, pendiente de confirmar con el contador).
+            </p>
+          )}
+        </div>
+      )}
+
       {/* QUÉ HACE ENLAZAR, en el idioma del dueño y sin pedirle que abra nada.
           Va acá y no como `hint` del campo porque en una columna de 12rem el
           párrafo sale hecho un gusano de una palabra por renglón. Sin esta línea
@@ -465,6 +645,21 @@ export default function FormMovimiento({ fechaInicial, cuentas, agenda, maxFecha
       <ErrorCampo msg={error} />
       {!error && ultimo && (
         <p className="text-[11px] font-semibold text-success-600">Guardado: {ultimo}</p>
+      )}
+      {!error && aviso && (
+        <p className="text-[11px] font-semibold text-gold-700 leading-snug">{aviso}</p>
+      )}
+
+      {/* La sugerencia del GMF, pegada a la confirmación de la salida que lo
+          genera. El 4×1000 salía del banco en cada débito y ningún reporte lo
+          veía ($3,4 millones en siete meses); ahora la fila sale con un toque
+          — pero la confirma el dueño: no todos los débitos lo pagan. */}
+      {!error && gmfPendiente && tasaGmf && catGmf && (
+        <button type="button" onClick={cargarGmf} disabled={guardando}
+          className="flex items-center gap-1.5 min-h-[40px] px-3 rounded-xl border border-gold-500 bg-gold-50 text-gold-700 text-xs font-bold hover:bg-gold-100">
+          <Plus size={13} />
+          ¿Ese débito pagó GMF? Cargar {plata(Math.round(gmfPendiente.monto * tasaGmf))} (4×1000)
+        </button>
       )}
     </div>
   )

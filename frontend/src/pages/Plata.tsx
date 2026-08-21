@@ -14,7 +14,8 @@ import BannerProveedores from '../components/plata/BannerProveedores'
 import BannerObligaciones from '../components/plata/BannerObligaciones'
 import type { Impoconsumo, PalancasData, Piso } from '../components/piso/tipos'
 import { armarRevisiones } from '../components/piso/pendientes'
-import BloqueElPiso from '../components/piso/BloqueElPiso'
+import BloqueEquilibrio from '../components/piso/BloqueEquilibrio'
+import BloqueCajaYResultado from '../components/piso/BloqueCajaYResultado'
 import BloqueHoy from '../components/piso/BloqueHoy'
 import BloqueCuantaPlata from '../components/piso/BloqueCuantaPlata'
 import BloqueLoQueHayQuePagar from '../components/piso/BloqueLoQueHayQuePagar'
@@ -25,15 +26,23 @@ import BloqueElAnio from '../components/piso/BloqueElAnio'
 import UnaVezAlMes from '../components/piso/UnaVezAlMes'
 
 // ═════════════════════════════════════════════════════════════════════════════
-// EL PISO — una página, ocho bloques, un solo scroll
+// LA PLATA — una página que se va llenando día a día, un solo scroll
 // ═════════════════════════════════════════════════════════════════════════════
 // El dueño abre esto temprano, antes de abrir el local, en una tablet. Tiene que
-// saber en treinta segundos si llega a fin de mes. Los ocho bloques contestan
-// sus tres preguntas en orden y sin que tenga que buscar nada:
+// saber en treinta segundos si llega a fin de mes. El protagonista es EL LIBRO
+// —la hoja de su Excel, día por día: arranca + entra − sale = queda— y alrededor
+// los bloques contestan sus tres preguntas en orden:
 //
-//   TENER     1 · el piso        2 · hoy          3 · cuánta plata hay
-//   PROYECTAR 4 · qué hay que pagar               5 · ¿llega a fin de mes?
-//   MANEJAR   6 · lo que sube el piso  7 · lo que lo baja  8 · el año
+//   REGISTRAR 1 · hoy y el libro     2 · cuánta plata hay
+//   PROYECTAR 3 · qué hay que pagar  4 · ¿llega a fin de mes?  5 · dos números
+//   ENTENDER  6 · el equilibrio  7 · lo que lo sube  8 · lo que baja el margen
+//             9 · el año
+//
+// ── EL PISO SE RETIRÓ, EL EQUILIBRIO QUEDÓ (decisión del dueño) ───────────
+// «No quiero manejar más el piso; solo quiero saber el punto de equilibrio para
+// cada sede, pero que no me amarre las ventas a un número». El cálculo es el
+// mismo; lo que se fue es el VEREDICTO diario («hoy tenés que vender $X»). El
+// bloque 6 lo cuenta entero.
 //
 // ── LAS DOS PESTAÑAS SE MURIERON ──────────────────────────────────────────
 // «Resultado» pasó a ser un link al pie (`/plata/mes`). El margen y el piso son
@@ -133,16 +142,9 @@ export default function Plata() {
     () => api.get('/costos/egresos-sin-adoptar'), 'los egresos sin categorizar',
     'No se pudieron leer los egresos sin categorizar.', [refresco])
 
-  /**
-   * LA VENTA DEL DÍA, con el rango de HOY.
-   *
-   * No se deriva de `/rentabilidad/pulso`: ese endpoint es del MES a la fecha, y
-   * rotular sus KPIs como «hoy» sería decidir con un dato que está CERCA del
-   * correcto — la familia de error que este módulo viene arrastrando.
-   */
-  const ventasHoy = useDato<RentabilidadData>(
-    () => api.get('/rentabilidad/', { params: { desde: hoy, hasta: hoy } }),
-    'la venta de hoy', 'No se pudo leer la venta de hoy.')
+  // «La venta de hoy» (rango desde=hasta=hoy) se fue con el veredicto del piso:
+  // era el numerador de «vendido hoy contra el piso de hoy», y sin sentencia
+  // diaria no queda quién la mire. El pulso del mes sigue abajo.
 
   /** Solo por `ventas_diarias`: la venta día por día del mes en curso. */
   const pulso = useDato<PulsoData>(
@@ -191,6 +193,34 @@ export default function Plata() {
     () => api.get('/costos/categorias'), 'las categorías de gasto',
     'No se pudieron leer las categorías.', [refresco])
 
+  /**
+   * El catálogo COMPLETO para el libro: café + personales + banco. Es otra
+   * lectura y no un filtro de la de arriba a propósito: la de arriba alimenta
+   * los formularios de OBLIGACIONES, donde una categoría personal o del banco
+   * no puede aparecer nunca — servir las dos preguntas con una lista y filtrar
+   * en el cliente es exactamente cómo se cuela la que no va. Un servidor viejo
+   * ignora `ambito` y devuelve solo café: el select del libro ofrece menos
+   * opciones un rato, sin mentir.
+   */
+  const categoriasLibro = useDato<Categoria[]>(
+    () => api.get('/costos/categorias', { params: { ambito: 'todas' } }),
+    'las categorías del libro',
+    'No se pudieron leer las categorías del libro.', [refresco])
+
+  /**
+   * EL RESULTADO del mes en curso (del 1 a hoy), para el bloque de los dos
+   * números: la caja sale del libro, esto es la otra mitad — si el café va
+   * ganando o perdiendo. Ventana explícita: `/rentabilidad/` sin parámetros ya
+   * es el mes actual, pero escribirla acá deja el par caja/resultado midiendo
+   * A OJOS VISTA la misma ventana.
+   */
+  const rentMes = useDato<RentabilidadData>(
+    () => api.get('/rentabilidad/', {
+      params: { desde: `${anio}-${String(mes).padStart(2, '0')}-01`, hasta: hoy },
+    }),
+    'el resultado del mes', 'No se pudo leer el resultado del mes.',
+    [refresco, anio, mes])
+
   const tiendas = useDato<Tienda[]>(
     () => api.get('/auth/tiendas'), 'las sedes', 'No se pudieron leer las sedes.')
 
@@ -211,10 +241,10 @@ export default function Plata() {
 
   /** Lo que mira la franja de confianza: si algo de esto falló, el dueño lo sabe. */
   const fuentes = useMemo(
-    () => [piso, flujo, agenda, obligaciones, egresos, ventasHoy, pulso, productos,
-      palancas, impoconsumo, categorias, tiendas, cuentas],
-    [piso, flujo, agenda, obligaciones, egresos, ventasHoy, pulso, productos,
-      palancas, impoconsumo, categorias, tiendas, cuentas])
+    () => [piso, flujo, agenda, obligaciones, egresos, pulso, productos,
+      palancas, impoconsumo, categorias, categoriasLibro, rentMes, tiendas, cuentas],
+    [piso, flujo, agenda, obligaciones, egresos, pulso, productos,
+      palancas, impoconsumo, categorias, categoriasLibro, rentMes, tiendas, cuentas])
 
   // ── Los anclajes: la página no navega, se mueve sola ──────────────────────
   const refHoy = useRef<HTMLDivElement>(null)
@@ -317,7 +347,7 @@ export default function Plata() {
       {/* ── La cabecera ────────────────────────────────────────────────────── */}
       <div className="flex items-baseline justify-between gap-2 flex-wrap">
         <h1 className="text-lg font-bold text-warm-700">
-          El piso · <span className="uppercase">{nombreMes(mes)} {anio}</span>
+          La plata · <span className="uppercase">{nombreMes(mes)} {anio}</span>
         </h1>
         <p className="text-xs text-warm-500">
           {new Date(hoy + 'T00:00:00').toLocaleDateString('es-CO',
@@ -333,16 +363,11 @@ export default function Plata() {
       {/* EL DÍA 1, y solo el día 1, esto va arriba de todo. */}
       {esArranqueDeMes && elPliegue}
 
-      {/* ── 1 · El piso ────────────────────────────────────────────────────── */}
-      <BloqueElPiso
-        piso={piso} ventasHoy={ventasHoy} pulso={pulso}
-        onCargarCosto={irASubeElPiso}
-        onVerProductosSinCosto={irAlDetalleDelMes} />
-
-      {/* ── 2 · Hoy ────────────────────────────────────────────────────────── */}
+      {/* ── 1 · Hoy y el libro — la hoja que se va llenando ────────────────── */}
       <div ref={refHoy}>
         <BloqueHoy
           libro={libro.libroConHoy} hoy={hoy} cuentas={cuentas} agenda={agenda}
+          categorias={categoriasLibro} onCategoriaCreada={refrescarTodo}
           revisiones={revisiones}
           pedidoFocoExtracto={pedidoFocoExtracto}
           onAnclaGuardada={refrescarPlata}
@@ -353,6 +378,7 @@ export default function Plata() {
               libro={libro.libro} serie={libro.serie} anio={libro.anio} mes={libro.mes}
               hoy={libro.hoy} viendoElMesDeHoy={libro.viendoElMesDeHoy}
               cuentas={cuentas} agenda={agenda}
+              categorias={categoriasLibro} onCategoriaCreada={refrescarTodo}
               itemPagando={null}
               onIrAlMes={libro.irAlMes} onIrAHoy={libro.irAHoy} onVerMes={libro.setMes}
               onCambiarAnio={d => libro.setAnio(a => a + d)}
@@ -360,7 +386,7 @@ export default function Plata() {
               onBorrado={refrescarPlata}
               onRecargarLibro={libro.recargar}
               onIrAlAncla={irAlExtracto}
-              /* Los vencimientos se pagan en el bloque 4, que es la ÚNICA lista:
+              /* Los vencimientos se pagan en el bloque 3, que es la ÚNICA lista:
                  dos formularios de pago abiertos con el mismo saldo son la forma
                  más fácil de pagar dos veces, y `registrar_pago` del backend no
                  valida contra el saldo. Desde acá se baja hasta la fila. */
@@ -369,13 +395,13 @@ export default function Plata() {
           } />
       </div>
 
-      {/* ── 3 · Cuánta plata hay ───────────────────────────────────────────── */}
+      {/* ── 2 · Cuánta plata hay ───────────────────────────────────────────── */}
       <BloqueCuantaPlata
         flujo={flujo} agenda={agenda} tiendas={tiendas} hoy={hoy}
         onVerDondeEsta={irAlExtracto}
         onVerLaLista={irAPagar} />
 
-      {/* ── 4 · Lo que hay que pagar ───────────────────────────────────────── */}
+      {/* ── 3 · Lo que hay que pagar ───────────────────────────────────────── */}
       <div ref={refPagar}>
         <BloqueLoQueHayQuePagar
           agenda={agenda} cuentas={cuentas} hoy={hoy} finDeMes={finDeMes}
@@ -384,7 +410,7 @@ export default function Plata() {
           onVerNomina={irANominaAbierta} />
       </div>
 
-      {/* ── 5 · ¿Llega a fin de mes? ───────────────────────────────────────── */}
+      {/* ── 4 · ¿Llega a fin de mes? ───────────────────────────────────────── */}
       <div ref={refFinDeMes}>
         <BloqueFinDeMes
           flujo={flujo} agenda={agenda} piso={piso} pulso={pulso}
@@ -393,7 +419,15 @@ export default function Plata() {
           onASinFecha={irAPagar} />
       </div>
 
-      {/* ── 6 · Lo que sube el piso ────────────────────────────────────────── */}
+      {/* ── 5 · El mes en dos números: la caja y el resultado ──────────────── */}
+      <BloqueCajaYResultado
+        libro={libro.libroConHoy} rentMes={rentMes}
+        onRecargarLibro={libro.recargar} />
+
+      {/* ── 6 · El punto de equilibrio ─────────────────────────────────────── */}
+      <BloqueEquilibrio piso={piso} onCargarCosto={irASubeElPiso} />
+
+      {/* ── 7 · Lo que sube el equilibrio ──────────────────────────────────── */}
       <div ref={refSubeElPiso}>
         <BloqueSubeElPiso
           piso={piso} obligaciones={obligaciones} egresos={egresos}
@@ -411,12 +445,12 @@ export default function Plata() {
           } />
       </div>
 
-      {/* ── 7 · Lo que baja el margen ──────────────────────────────────────
+      {/* ── 8 · Lo que baja el margen ──────────────────────────────────────
              El bloque de proveedores va ADENTRO: a quién se le compra es la
-             misma pregunta que qué está bajando el margen, y era el ÚNICO
+             misma pregunta que qué está bajando el margen, y es el ÚNICO
              camino real para pagarle a un proveedor (`PATCH /facturas/{id}/pago`
-             — `POST /costos/pagos` con `factura_id` guarda el pago pero no mueve
-             el saldo de la factura). Se mueve entero, no se reescribe. */}
+             — `POST /costos/pagos` con `factura_id` ahora contesta 400 con el
+             motivo). Se mueve entero, no se reescribe. */}
       <BloqueBajaElMargen
         piso={piso} palancas={palancas}
         onCargarComision={irAlMensual}>
@@ -429,7 +463,7 @@ export default function Plata() {
         </div>
       </BloqueBajaElMargen>
 
-      {/* ── 8 · El año, contra el piso ─────────────────────────────────────
+      {/* ── 9 · El año, contra el equilibrio ───────────────────────────────
              Plegado y con su propia lectura: son dos pedidos por mes y eso no
              puede salir con la página. */}
       <BloqueElAnio anio={anio} hastaMes={mes} />
@@ -444,8 +478,9 @@ export default function Plata() {
       </button>
 
       <p className="text-[11px] text-warm-400 px-1 leading-relaxed">
-        El piso es del <b>negocio entero</b>. Nunca hay un piso por sede: el arriendo y la nómina
-        no son de ninguna sede, y partirlos daría un piso más chico que el real en las dos sedes a
+        El equilibrio se muestra en <b>tres números</b> — lo de Vida, lo de Palmetto y lo
+        corporativo que las dos cubren entre las dos — y nunca se prorratea: repartir el arriendo
+        de la nómina corporativa entre sedes daría un número más chico que el real en las dos a
         la vez.
       </p>
     </div>

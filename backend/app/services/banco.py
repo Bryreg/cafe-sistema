@@ -358,6 +358,12 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
             "n": len(sin_fecha),
             "total": round(sum(float(c.valor or 0.0) for c in sin_fecha), 2),
         },
+        # La tasa del GMF (4×1000) con vigencia, para que la pantalla pueda
+        # SUGERIR la fila al registrar una salida. Es el primer consumidor real
+        # del parámetro: estaba sembrado desde el arranque y ningún cálculo lo
+        # miraba, mientras el impuesto salía del banco igual — $3,4 millones en
+        # siete meses que ningún reporte veía.
+        "tasa_gmf": _tasa_gmf(db, hasta),
         "dias": filas,
         "totales": {
             "entradas": round(sum(f["total_entradas"] for f in filas), 2),
@@ -372,6 +378,17 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
                 min(con_saldo, key=lambda f: f["final"])["fecha"] if con_saldo else None),
         },
     }
+
+
+def _tasa_gmf(db: Session, al_dia: date) -> float | None:
+    """La tasa vigente del 4×1000, o None si no se puede leer: la sugerencia
+    del GMF se apaga antes que proponer un monto con una tasa inventada."""
+    from app.services import parametros_tributarios as ptsvc   # local: sin ciclo
+    try:
+        tasa = float(ptsvc.para(db, al_dia).gmf or 0.0)
+    except Exception:
+        return None
+    return tasa if 0 < tasa < 1 else None
 
 
 def _a_dict(m: MovimientoBanco, nombres: dict[int, str],

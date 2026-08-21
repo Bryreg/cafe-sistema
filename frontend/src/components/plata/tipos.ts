@@ -11,7 +11,18 @@
 // API": cada traducción es un lugar donde se recalcula plata con otra regla.
 
 // ── Catálogos ────────────────────────────────────────────────────────────────
-export interface Categoria { id: number; clave: string; nombre: string; grupo: string }
+export interface Categoria {
+  id: number
+  clave: string
+  nombre: string
+  grupo: string
+  /** 'cafe' | 'personal' | 'banco'. Con `?` por la ventana de deploy: ausente
+   *  se trata como café (es lo que un servidor viejo devuelve: solo café). */
+  ambito?: string
+  /** true = se elige pero su plata NO cuenta como costo del mes (retefuente,
+   *  reteica, prima, cesantías). El trato viaja dicho, no descubierto después. */
+  fuera_del_gasto?: boolean
+}
 export interface Tienda { id: number; nombre: string }
 
 // ── Obligaciones (los costos fijos: arriendo, nómina, servicios) ─────────────

@@ -27,7 +27,38 @@ export interface MovimientoBanco {
   /** Lo marcó el sistema (GMF, comisión), no el dueño. Hoy nada lo prende. */
   automatico: boolean
   obligacion_id: number | null
+  /**
+   * La categoría del movimiento, ya resuelta a display por el backend. Los
+   * cuatro van con `?` por la ventana de deploy (frontend y backend salen por
+   * separado, y en la tablet la PWA la alarga): AUSENTE es «este servidor no
+   * clasifica todavía», null es «sin clasificar» — y las dos se dibujan mudas,
+   * nunca como una categoría inventada.
+   */
+  categoria_id?: number | null
+  categoria?: string | null
+  categoria_clave?: string | null
+  categoria_ambito?: string | null
+  /** Solo en la respuesta del POST: un aviso del backend (p.ej. una entrada de
+   *  Occidente tecleada cuando las consignaciones ya entran solas). */
+  advertencia?: string
   nota: string | null
+}
+
+/**
+ * Una consignación PROYECTADA en el libro: entró al banco ese día, con su
+ * comprobante, sin que nadie la tecleara. No es un movimiento del libro (no se
+ * borra desde acá — se corrige en Consignaciones) y por eso viaja en su propia
+ * lista, no adentro de `movimientos`.
+ */
+export interface ConsignacionLibro {
+  consignacion_id: number
+  tienda_id: number
+  valor: number
+  /** 'pendiente' = la barista la registró y el admin no la confirmó; la plata
+   *  YA está en el banco igual (el comprobante es la boleta del depósito). */
+  estado: 'pendiente' | 'realizada'
+  barista_nombre: string | null
+  imagen_url: string | null
 }
 
 /**
@@ -61,6 +92,13 @@ interface DiaComun {
    */
   en_rojo: boolean
   movimientos: MovimientoBanco[]
+  /**
+   * Las consignaciones del día, YA sumadas en `entradas`/`total_entradas` por
+   * el backend. Con `?`: un servidor de antes de la proyección no manda la
+   * clave, y esa ausencia es «no sé si este día tuvo consignaciones
+   * proyectadas», nunca «no tuvo».
+   */
+  consignaciones?: ConsignacionLibro[]
 }
 
 /** Un día del ancla en adelante: el saldo es exacto. */
@@ -98,6 +136,19 @@ export interface LibroMes {
   dias_con_saldo: number
   /** Desde qué día se conoce el saldo (ISO). null = ninguno del rango. */
   primer_dia_con_saldo: string | null
+  /**
+   * Desde cuándo las consignaciones entran SOLAS al libro. null = el régimen
+   * no se activó (todo tecleado, como siempre). AUSENTE (`undefined`) = el
+   * servidor no conoce el régimen: no se ofrece activarlo, porque el botón
+   * llamaría a un endpoint que no existe.
+   */
+  consignaciones_desde?: string | null
+  /** Filas legacy sin fecha: NO están en ningún día del libro y se dicen. */
+  consignaciones_sin_fecha?: { n: number; total: number }
+  /** La tasa del GMF (4×1000) vigente, para SUGERIR la fila al cargar una
+   *  salida. null/ausente = no se pudo leer: la sugerencia se apaga, no se
+   *  inventa una tasa. */
+  tasa_gmf?: number | null
   dias: DiaLibro[]
   totales: {
     entradas: number

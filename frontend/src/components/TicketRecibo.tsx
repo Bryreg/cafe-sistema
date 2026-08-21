@@ -162,7 +162,7 @@ export default function TicketRecibo({
           {telefono && <div style={{ fontSize: '10px', marginTop: '1px' }}>Tel: {telefono}</div>}
           {direccion && <div style={{ fontSize: '9px', marginTop: '1px', color: '#000' }}>{direccion}</div>}
           <div style={{ fontSize: '9px', color: '#000', marginTop: '2px' }}>
-            Documento de Ingreso — NO reemplaza la factura
+            Recibo de mercancía — NO reemplaza la factura
           </div>
         </div>
 

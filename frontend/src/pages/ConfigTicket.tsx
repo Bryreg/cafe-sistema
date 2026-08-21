@@ -421,7 +421,7 @@ export default function ConfigTicketPage() {
             {cfg.telefono && <div style={{ fontSize: 10 }}>Tel: {cfg.telefono}</div>}
             {cfg.direccion && <div style={{ fontSize: 10 }}>{cfg.direccion}</div>}
             <div style={{ borderBottom: '1px dashed #000', margin: '6px 0' }} />
-            <div style={{ fontSize: 9, color: '#555' }}>Documento de Ingreso — NO reemplaza la factura</div>
+            <div style={{ fontSize: 9, color: '#555' }}>Recibo de mercancía — NO reemplaza la factura</div>
           </div>
         </div>
       </div>

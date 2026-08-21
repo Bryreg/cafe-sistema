@@ -86,12 +86,37 @@ CLAVE_CATEGORIA_NOMINA = "nomina"
 # dos fórmulas: sumarlo otra vez como gasto lo cobra dos veces.
 CLAVE_CATEGORIA_IMPOCONSUMO = "impoconsumo"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# LO QUE SALE DE LA CAJA Y **NO** ES COSTO DEL MES (la clasificación del dueño)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Retefuente y reteica: las carga ÉL a mano («antes del 18», su lista de gastos)
+# y por eso, a diferencia del impoconsumo, SÍ son elegibles en el formulario —
+# ver la nota sobre CLAVES_NO_ELEGIBLES en costos.py. En la caja son salida en
+# cualquier caso; si el contador confirma que son GASTO y no anticipo, sacarlas
+# de esta tupla las mete al P&L y al piso de una ($770.000/mes de diferencia en
+# el punto de equilibrio — la advertencia del piso lo dice mientras tanto).
+CLAVE_CATEGORIA_RETEFUENTE = "retefuente"
+CLAVE_CATEGORIA_RETEICA = "reteica"
+
+# La prima (junio y diciembre) y las cesantías (febrero) EL DÍA QUE SE GIRAN.
+# services/nomina.py ya las PROVISIONA mes a mes («las prestaciones son la
+# PROVISIÓN del mes, no un pago»): sumarlas también cuando se giran las contaría
+# dos veces. Pero el giro es plata que sale, con fecha — va a la agenda y al
+# libro por estas claves, nunca al gasto. Es el caso más limpio de la
+# diferencia caja/resultado.
+CLAVE_CATEGORIA_PRIMA = "prima"
+CLAVE_CATEGORIA_CESANTIAS = "cesantias"
+
 # Las categorías cuya plata NO es un gasto del período, cada una por su motivo
 # —la de proveedores porque ya entra por FacturaCompra, la del impoconsumo porque
-# ya está restado de la venta neta— pero con la MISMA consecuencia: sus filas no
-# pueden entrar a `oblig_rows`. Van en una tupla y no en dos filtros sueltos para
-# que agregar la tercera sea una línea acá y no una cacería por el archivo.
-CLAVES_FUERA_DEL_GASTO = (CLAVE_CATEGORIA_PROVEEDORES, CLAVE_CATEGORIA_IMPOCONSUMO)
+# ya está restado de la venta neta, las retenciones porque el dueño las clasificó
+# como anticipo (pendiente el contador), la prima y las cesantías porque la
+# provisión mensual ya las contó— pero con la MISMA consecuencia: sus filas no
+# pueden entrar a `oblig_rows`. Van en una tupla y no en filtros sueltos para
+# que agregar la próxima sea una línea acá y no una cacería por el archivo.
+CLAVES_FUERA_DEL_GASTO = (CLAVE_CATEGORIA_PROVEEDORES, CLAVE_CATEGORIA_IMPOCONSUMO,
+                          CLAVE_CATEGORIA_RETEFUENTE, CLAVE_CATEGORIA_RETEICA,
+                          CLAVE_CATEGORIA_PRIMA, CLAVE_CATEGORIA_CESANTIAS)
 
 ESTADOS_ANULADOS = ("anulado", "reversado")
 

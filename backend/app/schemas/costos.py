@@ -31,6 +31,11 @@ class CategoriaCreate(BaseModel):
     # None = FIJO. El default no es neutral: casi todo lo que falta cargar
     # (publicidad, internet, domicilios, seguros, el contador) es del mes.
     grupo: Optional[str] = None
+    # None = CAFÉ (costo del negocio, lo de siempre). «personal» crea una
+    # categoría de la plata del dueño: solo etiqueta filas del libro del banco
+    # y jamás toca el resultado ni el punto de equilibrio. Lo valida el
+    # servicio con 400 legible, no pydantic.
+    ambito: Optional[str] = None
 
 
 class CategoriaUpdate(BaseModel):

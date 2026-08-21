@@ -30,7 +30,8 @@ from datetime import date, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.models import CuentaBancaria, Configuracion, MovimientoBanco
+from app.models.models import (CostoCategoria, CuentaBancaria, Configuracion,
+                               MovimientoBanco)
 
 CLAVE_SALDO = "saldo_banco"
 CLAVE_SALDO_FECHA = "saldo_banco_fecha"
@@ -176,6 +177,10 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
     base, fecha_ancla = ancla(db)
     cta = cuentas(db, solo_activas=False)
     nombres = {c.id: c.nombre for c in cta}
+    # El catálogo entero en una query: el libro etiqueta con categorías de
+    # cualquier ámbito (café, personal, banco) y resolverlas fila por fila
+    # serían N queries por pintar un mes.
+    categorias = {c.id: c for c in db.query(CostoCategoria).all()}
 
     movs = (db.query(MovimientoBanco)
             .filter(MovimientoBanco.fecha >= desde, MovimientoBanco.fecha <= hasta)
@@ -234,7 +239,7 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
             # Para pintar en rojo sin recalcular. Sin cadena no hay rojo posible:
             # un saldo que no se conoce no puede estar en negativo.
             "en_rojo": bool(con_cadena and final < 0),
-            "movimientos": [_a_dict(m, nombres) for m in del_dia],
+            "movimientos": [_a_dict(m, nombres, categorias) for m in del_dia],
         })
         saldo = final
         d += delta
@@ -274,7 +279,9 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
     }
 
 
-def _a_dict(m: MovimientoBanco, nombres: dict[int, str]) -> dict:
+def _a_dict(m: MovimientoBanco, nombres: dict[int, str],
+            categorias: dict | None = None) -> dict:
+    cat = (categorias or {}).get(m.categoria_id)
     return {
         "id": m.id,
         "fecha": m.fecha.isoformat(),
@@ -285,6 +292,12 @@ def _a_dict(m: MovimientoBanco, nombres: dict[int, str]) -> dict:
         "concepto": m.concepto,
         "automatico": bool(m.automatico),
         "obligacion_id": m.obligacion_id,
+        # La categoría, resuelta a display: null = «sin clasificar», que es un
+        # estado válido del libro, no un error.
+        "categoria_id": m.categoria_id,
+        "categoria": cat.nombre if cat else None,
+        "categoria_clave": cat.clave if cat else None,
+        "categoria_ambito": (getattr(cat, "ambito", None) if cat else None),
         "nota": m.nota,
     }
 
@@ -319,7 +332,8 @@ def serie_mensual(db: Session, anio: int) -> dict:
 def registrar(db: Session, fecha: date, cuenta_id: int, tipo: str, monto: float,
               concepto: str, usuario_id: int | None = None,
               obligacion_id: int | None = None, nota: str | None = None,
-              automatico: bool = False, commit: bool = True) -> MovimientoBanco:
+              automatico: bool = False, commit: bool = True,
+              categoria_id: int | None = None) -> MovimientoBanco:
     """Un movimiento. El monto va SIEMPRE positivo: el signo lo pone el tipo.
 
     Aceptar negativos dejaría que una salida de −$100.000 sume plata, y ese
@@ -341,10 +355,16 @@ def registrar(db: Session, fecha: date, cuenta_id: int, tipo: str, monto: float,
                          "después contra el extracto.")
     if db.query(CuentaBancaria).filter(CuentaBancaria.id == cuenta_id).first() is None:
         raise ValueError("Esa cuenta no existe.")
+    if (categoria_id is not None and
+            db.query(CostoCategoria).filter(
+                CostoCategoria.id == categoria_id).first() is None):
+        raise ValueError("Esa categoría no existe — recargá la pantalla y "
+                         "volvé a elegir.")
     mov = MovimientoBanco(
         fecha=fecha, cuenta_id=cuenta_id, tipo=tipo, monto=m,
         concepto=concepto.strip(), usuario_id=usuario_id,
-        obligacion_id=obligacion_id, nota=(nota or None), automatico=automatico)
+        obligacion_id=obligacion_id, categoria_id=categoria_id,
+        nota=(nota or None), automatico=automatico)
     db.add(mov)
     if commit:
         db.commit()

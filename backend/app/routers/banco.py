@@ -94,6 +94,9 @@ class MovimientoIn(BaseModel):
     # Si el movimiento paga una obligación ya cargada, se enlaza: así el
     # calendario puede tachar ese vencimiento en vez de mostrarlo pendiente.
     obligacion_id: Optional[int] = None
+    # La categoría del movimiento (cualquier ámbito: café, personal, banco).
+    # Opcional: un movimiento sin clasificar es válido, no un error.
+    categoria_id: Optional[int] = None
     nota: Optional[str] = None
 
 
@@ -213,7 +216,8 @@ def crear_movimiento(
     try:
         mov = banco.registrar(
             db, data.fecha, data.cuenta_id, data.tipo, data.monto, data.concepto,
-            usuario_id=admin.id, obligacion_id=data.obligacion_id, nota=data.nota)
+            usuario_id=admin.id, obligacion_id=data.obligacion_id, nota=data.nota,
+            categoria_id=data.categoria_id)
     except ValueError as e:
         # El texto del servicio ya está escrito para que lo lea el dueño.
         raise HTTPException(400, str(e))

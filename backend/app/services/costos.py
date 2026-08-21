@@ -63,9 +63,13 @@ from app.services.producto_alias import normalizar_alias
 # Misma razón para la clave de categoría prohibida: el P&L la excluye del término
 # de obligaciones y este servicio la rechaza en la entrada — las dos mitades tienen
 # que hablar de la MISMA constante.
-from app.services.rentabilidad import (CLAVE_CATEGORIA_IMPOCONSUMO,
+from app.services.rentabilidad import (CLAVE_CATEGORIA_CESANTIAS,
+                                       CLAVE_CATEGORIA_IMPOCONSUMO,
                                        CLAVE_CATEGORIA_NOMINA,
+                                       CLAVE_CATEGORIA_PRIMA,
                                        CLAVE_CATEGORIA_PROVEEDORES,
+                                       CLAVE_CATEGORIA_RETEFUENTE,
+                                       CLAVE_CATEGORIA_RETEICA,
                                        CLAVES_FUERA_DEL_GASTO,
                                        ESTADOS_ANULADOS, _CONCEPTOS_COMPRA)
 # El piso de venta necesita el P&L entero (para MEDIR las razones de la venta) y
@@ -169,15 +173,48 @@ CATEGORIAS_INICIALES: list[dict] = [
     {"clave": "otros",         "nombre": "Otros",         "grupo": "fijo"},
     {"clave": CLAVE_CATEGORIA_IMPOCONSUMO,
      "nombre": "Impoconsumo (DIAN)", "grupo": "variable"},
+    # Lo que sale de la caja y NO es costo del mes (decisión del dueño; el
+    # detalle en rentabilidad.py, junto a CLAVES_FUERA_DEL_GASTO). Nacen en
+    # 'variable' por la misma razón que el impoconsumo: el grupo es la segunda
+    # puerta — si alguien rompiera la exclusión por clave, en 'fijo' además
+    # inflarían el numerador del piso. Elegibles a mano (las carga él), con el
+    # trato dicho en el catálogo (`fuera_del_gasto`).
+    {"clave": CLAVE_CATEGORIA_RETEFUENTE, "nombre": "Retefuente", "grupo": "variable"},
+    {"clave": CLAVE_CATEGORIA_RETEICA,    "nombre": "Reteica",    "grupo": "variable"},
+    {"clave": CLAVE_CATEGORIA_PRIMA,
+     "nombre": "Prima (giro jun/dic)", "grupo": "variable"},
+    {"clave": CLAVE_CATEGORIA_CESANTIAS,
+     "nombre": "Cesantías (giro feb)", "grupo": "variable"},
+    # Los costos del propio banco: solo etiquetan filas del LIBRO (ambito
+    # 'banco'), jamás obligaciones. Julio real: $191.196 de GMF y $11.567 de
+    # comisión que ningún reporte veía.
+    {"clave": "gmf", "nombre": "GMF (4×1000)", "grupo": "variable",
+     "ambito": "banco"},
+    {"clave": "comision_banco", "nombre": "Comisión bancaria", "grupo": "variable",
+     "ambito": "banco"},
 ]
 
-# Las categorías que el formulario NO puede elegir. Es EXACTAMENTE la lista que
-# el P&L excluye del gasto, y no una segunda lista que se le parezca: son la
-# misma regla mirada de los dos lados. Una categoría cuya plata el P&L no cuenta
-# como gasto tiene que ser inelegible a mano, o el dueño se fabrica obligaciones
-# que no aparecen en ningún margen y nadie le avisa. Que el alias sea una
-# asignación y no una tupla nueva es el candado: no se pueden desincronizar.
-CLAVES_NO_ELEGIBLES = CLAVES_FUERA_DEL_GASTO
+# Las categorías que el formulario de OBLIGACIONES no puede elegir. Ya no es un
+# alias de CLAVES_FUERA_DEL_GASTO: retefuente, reteica, prima y cesantías están
+# FUERA del gasto (el P&L no las cuenta) pero las carga el dueño A MANO — están
+# en su lista de pagos con fecha («antes del 18»), y bloquearlas lo dejaría sin
+# dónde ponerlas. La regla nueva tiene dos partes y un invariante:
+#   · NO ELEGIBLE = tiene una puerta del sistema que la carga mejor (el botón
+#     del impoconsumo, la factura del proveedor); elegirla a mano duplicaría.
+#   · FUERA DEL GASTO pero elegible = el trato viaja DICHO en el catálogo
+#     (`fuera_del_gasto` en la serialización) para que la pantalla lo muestre,
+#     en vez de esconder la categoría.
+#   · INVARIANTE (fijado por test): NO_ELEGIBLES ⊆ FUERA_DEL_GASTO — una
+#     categoría con puerta del sistema jamás puede contar en el gasto, o la
+#     puerta y el formulario contarían la misma plata dos veces.
+CLAVES_NO_ELEGIBLES = (CLAVE_CATEGORIA_PROVEEDORES, CLAVE_CATEGORIA_IMPOCONSUMO)
+
+# Los tres mundos de una categoría. 'cafe' es el único que puede colgar
+# obligaciones; 'personal' y 'banco' solo etiquetan filas del libro del banco.
+# Cerrado acá y validado en la entrada: un ámbito inventado no es una opinión,
+# es un typo.
+AMBITOS = ("cafe", "personal", "banco")
+AMBITO_DEFAULT = "cafe"
 
 # Marca en `configuracion` de que la corrección de grupos ya se aplicó.
 RECLASIFICACION_GRUPOS_V1 = "migracion_grupo_categorias_v1"
@@ -200,7 +237,9 @@ def sembrar_categorias(db: Session) -> int:
         if c["clave"] in existentes:
             continue
         db.add(CostoCategoria(clave=c["clave"], nombre=c["nombre"],
-                              grupo=c["grupo"], orden=i, activa=True))
+                              grupo=c["grupo"],
+                              ambito=c.get("ambito", AMBITO_DEFAULT),
+                              orden=i, activa=True))
         creadas += 1
     db.commit()
     return creadas
@@ -284,16 +323,38 @@ def _slug(nombre: str) -> str:
     return slug
 
 
-def crear_categoria(db: Session, nombre, grupo=None, usuario_id: int | None = None) -> dict:
+def _validar_ambito(ambito) -> str:
+    """None cae al café: es el caso de siempre y el de todos los clientes viejos."""
+    if ambito is None:
+        return AMBITO_DEFAULT
+    if ambito == "banco":
+        # Las de banco son DOS y las siembra el sistema (gmf, comision_banco):
+        # crear una tercera a mano diría que hay otro costo bancario que el
+        # extracto conoce y el sistema no — eso se agrega acá, no por API.
+        raise HTTPException(400, "Las categorías del banco (GMF, comisión) ya "
+                                 "existen: elegilas en el libro en vez de crear "
+                                 "una nueva.")
+    if ambito not in AMBITOS:
+        raise HTTPException(400, "El ámbito tiene que ser «cafe» o «personal».")
+    return ambito
+
+
+def crear_categoria(db: Session, nombre, grupo=None, usuario_id: int | None = None,
+                    ambito=None) -> dict:
     """Crea una categoría de costo. El grupo por defecto es FIJO.
 
     Existe porque el catálogo eran seis filas quemadas en el arranque, y hoy
     publicidad, internet, domicilios, seguros y el contador caen todos en
     «Otros» — cinco costos distintos en una sola línea del P&L, que es lo mismo
     que no tener desglose.
+
+    `ambito="personal"` crea una categoría de la plata del dueño (la cuota del
+    carro, la casa): solo etiqueta filas del libro del banco y jamás cuelga
+    obligaciones ni toca el resultado o el punto de equilibrio.
     """
     limpio = _validar_nombre_categoria(nombre)
     grupo_ok = _validar_grupo(grupo)
+    ambito_ok = _validar_ambito(ambito)
     clave = _slug(limpio)
     if clave == CLAVE_CATEGORIA_PROVEEDORES:
         raise HTTPException(
@@ -322,13 +383,14 @@ def crear_categoria(db: Session, nombre, grupo=None, usuario_id: int | None = No
 
     ultimo = db.query(func.max(CostoCategoria.orden)).scalar()
     fila = CostoCategoria(clave=clave, nombre=limpio, grupo=grupo_ok,
-                          orden=(ultimo or 0) + 1, activa=True)
+                          ambito=ambito_ok, orden=(ultimo or 0) + 1, activa=True)
     db.add(fila)
     db.flush()
     audit.registrar(
         db, accion="crear_categoria_costo", tabla="costos_categorias",
         registro_id=fila.id, usuario_id=usuario_id,
-        datos_despues={"clave": fila.clave, "nombre": fila.nombre, "grupo": fila.grupo},
+        datos_despues={"clave": fila.clave, "nombre": fila.nombre,
+                       "grupo": fila.grupo, "ambito": fila.ambito},
     )
     db.commit()
     db.refresh(fila)
@@ -378,14 +440,29 @@ def _serializar_categoria(c: CostoCategoria) -> dict:
     pantalla pueda mostrarla DESPUÉS de guardar, que es cuando el dueño todavía
     está mirando lo que acaba de hacer."""
     return {"id": c.id, "clave": c.clave, "nombre": c.nombre,
-            "grupo": c.grupo, "orden": c.orden, "activa": bool(c.activa),
+            "grupo": c.grupo, "ambito": getattr(c, "ambito", AMBITO_DEFAULT),
+            "fuera_del_gasto": c.clave in CLAVES_FUERA_DEL_GASTO,
+            "orden": c.orden, "activa": bool(c.activa),
             "advertencia": GRUPOS.get(c.grupo, {}).get("advertencia")}
 
 
-def listar_categorias(db: Session, incluir_inactivas: bool = False) -> list:
+def listar_categorias(db: Session, incluir_inactivas: bool = False,
+                      ambito: str | None = AMBITO_DEFAULT) -> list:
+    """El catálogo, filtrado por ámbito. El default es «cafe» A PROPÓSITO: los
+    consumidores de siempre son los formularios de obligaciones, y ahí una
+    categoría personal o del banco no puede aparecer. `ambito=None` trae todas
+    (el libro del banco etiqueta con cualquiera).
+
+    `fuera_del_gasto` viaja en cada fila: retefuente, reteica, prima y cesantías
+    SÍ se eligen pero su plata no cuenta como costo del mes, y ese trato tiene
+    que estar dicho donde el dueño elige — no descubierto meses después en un
+    margen que no cuadra.
+    """
     q = db.query(CostoCategoria)
     if not incluir_inactivas:
         q = q.filter(CostoCategoria.activa == True)  # noqa: E712
+    if ambito is not None:
+        q = q.filter(CostoCategoria.ambito == ambito)
     # NI 'proveedores' NI 'impoconsumo' se ofrecen nunca, ni siquiera con
     # incluir_inactivas: una categoría que `_validar_categoria` rechaza no puede
     # estar en el desplegable del formulario. Las FILAS se conservan (hay
@@ -395,7 +472,9 @@ def listar_categorias(db: Session, incluir_inactivas: bool = False) -> list:
     q = q.filter(CostoCategoria.clave.notin_(CLAVES_NO_ELEGIBLES))
     cats = q.order_by(CostoCategoria.orden, CostoCategoria.nombre).all()
     return [{"id": c.id, "clave": c.clave, "nombre": c.nombre,
-             "grupo": c.grupo, "orden": c.orden} for c in cats]
+             "grupo": c.grupo, "ambito": getattr(c, "ambito", AMBITO_DEFAULT),
+             "fuera_del_gasto": c.clave in CLAVES_FUERA_DEL_GASTO,
+             "orden": c.orden} for c in cats]
 
 
 # ── Estado derivado ─────────────────────────────────────────────────────────
@@ -566,6 +645,22 @@ def _validar_categoria(db: Session, categoria_id: int) -> CostoCategoria:
         raise HTTPException(400, "Categoría de costo inexistente")
     if not cat.activa:
         raise HTTPException(400, f"La categoría «{cat.nombre}» está desactivada — elegí otra")
+    # El ámbito manda antes que la clave: una categoría personal o del banco no
+    # puede colgar obligaciones NUNCA. La personal es plata del dueño como
+    # persona natural — si entrara acá, terminaría en la agenda del café y a un
+    # grupo de distancia de ensuciarle el punto de equilibrio.
+    ambito = getattr(cat, "ambito", AMBITO_DEFAULT) or AMBITO_DEFAULT
+    if ambito == "personal":
+        raise HTTPException(
+            400, f"«{cat.nombre}» es una categoría de plata personal: no entra a "
+                 "las cuentas del café. Los gastos personales se anotan directo "
+                 "en el libro del banco, y no tocan el resultado ni el punto de "
+                 "equilibrio.")
+    if ambito == "banco":
+        raise HTTPException(
+            400, f"«{cat.nombre}» es un costo del propio banco: se anota directo "
+                 "en el libro (el sistema lo sugiere al registrar salidas), no "
+                 "como una cuenta por pagar.")
     # DECISIÓN (opción a de la revisión): la categoría se BLOQUEA en la entrada en
     # vez de marcarse "no computa en el P&L". El doble conteo no era solo del P&L:
     # una obligación de proveedor también aparece en la Agenda y en el Flujo al

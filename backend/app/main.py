@@ -271,6 +271,18 @@ with engine.connect() as _conn:
         # que no lleva ALTER; esta columna sí, porque contratos_barista ya
         # existe en producción y el loop corre antes de create_all.
         "ALTER TABLE contratos_barista ADD COLUMN salario_en_smmlv FLOAT",
+        # El libro del banco con categoría: es lo que contesta «cuánto nos
+        # estamos gastando en cada cosa» mes a mes, y lo que separa la plata
+        # personal de la del café. Plana la migración, FK real en el modelo
+        # (costos_categorias nunca borra filas — baja lógica).
+        "ALTER TABLE movimientos_banco ADD COLUMN categoria_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_movimientos_banco_categoria "
+        "ON movimientos_banco (categoria_id)",
+        # Ámbito de la categoría: 'cafe' (costo del negocio) | 'personal' (la
+        # plata del dueño como persona natural, solo libro) | 'banco' (GMF y
+        # comisión, solo libro). Las existentes son todas del café.
+        "ALTER TABLE costos_categorias ADD COLUMN ambito VARCHAR(20) DEFAULT 'cafe'",
+        "UPDATE costos_categorias SET ambito = 'cafe' WHERE ambito IS NULL",
     ]:
         try:
             _conn.execute(_text(_sql))

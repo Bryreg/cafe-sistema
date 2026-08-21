@@ -141,6 +141,12 @@ function AppRoutes() {
       <Route path="/pedido"         element={hasSession ? <SolicitudPedido />: <KioskSetup />} />
       <Route path="/sencilla"       element={hasSession ? <SolicitudSencilla /> : <KioskSetup />} />
       <Route path="/inventario-mensual" element={hasSession ? <InventarioMensual /> : <KioskSetup />} />
+      {/* «Recibir»: el nombre que la navegación ya usaba. `/ingresos` era la
+          peor colisión del sistema — la pantalla donde se cargan las FACTURAS
+          (plata que SALE) llamada con la palabra de la plata que ENTRA, en el
+          camino diario de la barista. La ruta vieja queda como alias porque la
+          PWA cachea bundles con el link viejo. */}
+      <Route path="/recibir"        element={hasSession ? <Ingresos />       : <KioskSetup />} />
       <Route path="/ingresos"       element={hasSession ? <Ingresos />       : <KioskSetup />} />
       <Route path="/historial-ventas" element={hasSession ? <HistorialVentas /> : <KioskSetup />} />
       {/* Mi horario: lo ve la barista (kiosko o celular). Un admin que entre acá
@@ -200,8 +206,10 @@ function AppRoutes() {
       <Route path="/informe-contador" element={<RequireAdmin><Layout><InformeContador /></Layout></RequireAdmin>} />
       {/* Pagos a proveedores se mudó adentro del módulo de la plata (fase 5, y de
           nuevo con la fusión). La ruta vieja se conserva como redirect: nadie con
-          un bookmark se queda colgado. */}
-      <Route path="/pagos-proveedores" element={<Navigate to="/plata#plata" replace />} />
+          un bookmark se queda colgado. SIN hash: `#plata` dejó de anclar nada y
+          un redirect a un ancla muerta aterriza en el tope igual — mejor decirlo
+          con la URL limpia. */}
+      <Route path="/pagos-proveedores" element={<Navigate to="/plata" replace />} />
       <Route path="/conciliacion-inventario" element={<RequireAdmin><Layout><ConciliacionInventario /></Layout></RequireAdmin>} />
       <Route path="/conteos-admin"    element={<RequireAdmin><Layout><ConteosAdmin /></Layout></RequireAdmin>} />
       <Route path="/lotes"            element={<RequireAdmin><Layout><LotesTrazabilidad /></Layout></RequireAdmin>} />

@@ -22,12 +22,16 @@ from app.models.models import (Consignacion, EstadoConsignacionEnum,
 # mal escrito, no es un ajuste.
 
 def _precargar_sede(db: Session, tienda_id: int) -> dict:
-    """Movimientos y consignaciones de una sede, agrupados por turno.
+    """Movimientos, consignaciones y recogidas de una sede, agrupados por turno.
 
     Se filtra por SEDE y no por una lista de `turno_id`: un `IN (...)` con los
     turnos de un año revienta el tope de variables de SQLite (mismo motivo que
     documenta `_subquery_adoptados` en services/costos.py).
     """
+    # Import local: costos importa cosas de otros módulos y un import de módulo
+    # acá armaría el ciclo (el mismo motivo por el que `registrar_recogida` lo
+    # importa adentro).
+    from app.services.costos import desde_recogidas
     movs: dict[int, list] = {}
     filas_mov = (
         db.query(MovimientoCaja)
@@ -65,10 +69,29 @@ def _precargar_sede(db: Session, tienda_id: int) -> dict:
         Consignacion.caja_turno_id.is_(None),
     ).all()
 
+    # Desde que existe el régimen de recogidas, una consignación huérfana nueva
+    # es LA DEL DUEÑO: plata que ya salió del cajón en una recogida y que él
+    # deposita desde su mano. La frontera del régimen se precarga acá para que
+    # `_consigs_del_turno` no la empareje con ningún turno (ver el porqué allá).
+    d = desde_recogidas(db)
+    mano_desde_utc = inicio_dia_col_utc(d) if d is not None else None
+
+    recogidas = (
+        db.query(RecogidaEfectivo)
+        .filter(RecogidaEfectivo.tienda_id == tienda_id)
+        # `id` como desempate por el mismo motivo que los movimientos: la
+        # cobertura recorre las recogidas en orden y ese orden decide a qué día
+        # se le acredita cada peso.
+        .order_by(RecogidaEfectivo.fecha.asc(), RecogidaEfectivo.id.asc())
+        .all()
+    )
+
     return {
         "movs": movs,
         "consigs": consigs,
         "consigs_huerfanas": huerfanas,
+        "recogidas": recogidas,
+        "mano_desde_utc": mano_desde_utc,
     }
 
 
@@ -181,6 +204,60 @@ def _aplicar_cascada(saldos: list[dict]) -> None:
         saldos[i]["faltante_sin_cubrir"] = round(deficit, 2)
 
 
+def _aplicar_recogidas(saldos: list[dict], recogidas: list) -> None:
+    """Lo que el dueño RECOGIÓ cubre los días pendientes, del más viejo al más nuevo.
+
+    El error medido que esto corrige: él pasaba por la sede, se llevaba el
+    efectivo, y el día seguía pidiendo «consigná $X» — la barista veía una deuda
+    de plata que ya no estaba en el cajón. La recogida bajaba el efectivo en
+    registradora (services/costos.py) pero esta cuenta, la del pendiente por
+    consignar, no la leía.
+
+    DEL MÁS VIEJO PRIMERO, al revés que la cascada de déficits. No se contradicen:
+    la cascada reconstruye de qué día salió la plata que tapó un hueco (y esa es
+    físicamente la del día anterior); la recogida es él llevándose los fajos que
+    más días llevan esperando el banco — el mismo criterio con el que `registrar`
+    imputa una consignación nueva al turno pendiente más antiguo.
+
+    CADA RECOGIDA SOLO CUBRE DÍAS QUE YA HABÍAN CERRADO CUANDO ÉL PASÓ. Sin ese
+    tope, una recogida con sobrante (llevarse la base de más, un conteo impreciso)
+    dejaría pre-cubierto un día que todavía no existía, y ese día nacería sin
+    pedir consignación: pendiente subestimado, para el lado que tranquiliza.
+
+    Y EL SOBRANTE DE UNA RECOGIDA SE DESCARTA, no se arrastra. Si recogió más de
+    lo que los días pendientes sumaban, la diferencia es un problema de conteo o
+    de base — vive en el «efectivo en mano» de costos, no acá. Arrastrarlo sería
+    inventar cobertura futura con plata cuyo origen no se midió.
+
+    Corre DESPUÉS de la cascada: los déficits son hechos de la caja y se cobran
+    entre turnos como siempre; la recogida solo consume los saldos que quedaron
+    en positivo. Muta la lista in-place, igual que `_aplicar_cascada`.
+    """
+    for r in recogidas:
+        restante = float(r.monto or 0)
+        if restante <= 0:
+            continue
+        tope = fin_dia_col_utc(r.fecha)
+        for s in saldos:
+            if restante <= 0:
+                break
+            fc = s["turno"].fecha_cierre
+            # Sin fecha de cierre no se puede saber si el día ya existía cuando
+            # él pasó: se saltea y el día sigue pidiendo lo suyo (el lado que no
+            # inventa calma). `> tope` corta el resto: la lista viene ordenada
+            # por cierre ascendente, lo que sigue es aún más nuevo.
+            if fc is None:
+                continue
+            if fc > tope:
+                break
+            if s["saldo"] <= 0:
+                continue
+            take = min(s["saldo"], restante)
+            s["saldo"] -= take
+            s["recogido"] += take
+            restante -= take
+
+
 def _saldos_consignacion(db: Session, tienda_id: int, pre: dict | None = None) -> list[dict]:
     """Saldo pendiente por consignar por turno cerrado, con CASCADA hacia días anteriores.
 
@@ -195,6 +272,9 @@ def _saldos_consignacion(db: Session, tienda_id: int, pre: dict | None = None) -
     Por turno devuelve:
       turno, esperado, consignado          — la cuenta cruda (ver `_esperado_del_turno`)
       saldo                                — lo que de verdad falta consignar, post-cascada
+                                             y post-recogidas
+      recogido                             — cuánto de este día se llevó el dueño en mano
+                                             (ver `_aplicar_recogidas`)
       cubrio / cubierto_por                — la procedencia (ver `_aplicar_cascada`)
       cubrio_faltante                      — cuánto de este turno se comió otro día
       faltante_sin_cubrir                  — el déficit que no encontró de dónde cobrarse
@@ -229,11 +309,13 @@ def _saldos_consignacion(db: Session, tienda_id: int, pre: dict | None = None) -
         saldos.append({
             "turno": t, "esperado": esperado, "consignado": consignado,
             "saldo": esperado - consignado,
+            "recogido": 0.0,
             "cubrio": [], "cubierto_por": [],
             "cubrio_faltante": 0.0, "faltante_sin_cubrir": 0.0,
         })
 
     _aplicar_cascada(saldos)
+    _aplicar_recogidas(saldos, pre["recogidas"])
     return saldos
 
 
@@ -288,6 +370,16 @@ def _consigs_del_turno(db: Session, turno: CajaTurno, pre: dict | None = None) -
     Con `pre` (la precarga de la sede) no toca la base: las mismas filas ya están
     en memoria y el emparejamiento es el mismo, incluido el orden de precedencia
     —si el turno tiene consignaciones con FK, las legacy no se miran—.
+
+    LA VENTANA ES SOLO PARA EL MUNDO VIEJO. Una huérfana anterior al régimen de
+    recogidas es una consignación de barista sin FK (registros legacy): la
+    ventana la devuelve al turno que le corresponde. Una huérfana DESDE el
+    régimen es otra cosa: la del DUEÑO, plata que ya salió del cajón en una
+    recogida y que él deposita desde su mano. Si la ventana la emparejara con un
+    turno, ese día quedaría cubierto DOS veces —una por la recogida, otra por el
+    depósito— y el pendiente por consignar se evaporaría para el lado que
+    tranquiliza. Mismo NULL, dos significados; la frontera es la fecha del
+    régimen (`desde_recogidas`), la misma que usa el efectivo en mano.
     """
     if pre is not None:
         fk = pre["consigs"].get(turno.id, [])
@@ -296,12 +388,15 @@ def _consigs_del_turno(db: Session, turno: CajaTurno, pre: dict | None = None) -
         if turno.fecha_cierre is None or turno.fecha_apertura is None:
             return []
         ventana_fin = turno.fecha_cierre + timedelta(hours=20)
+        mano_desde = pre["mano_desde_utc"]
         # `c.fecha is None` se descarta igual que en SQL, donde una comparación
         # contra NULL no matchea: en Python compararla reventaría con TypeError.
         return [c for c in pre["consigs_huerfanas"]
                 if c.fecha is not None
+                and (mano_desde is None or c.fecha < mano_desde)
                 and turno.fecha_apertura <= c.fecha <= ventana_fin]
 
+    from app.services.costos import desde_recogidas   # local: evita el ciclo
     fk = db.query(Consignacion).filter(Consignacion.caja_turno_id == turno.id).all()
     if fk:
         return fk
@@ -309,12 +404,16 @@ def _consigs_del_turno(db: Session, turno: CajaTurno, pre: dict | None = None) -
     if turno.fecha_cierre is None:
         return []
     ventana_fin = turno.fecha_cierre + timedelta(hours=20)
-    return db.query(Consignacion).filter(
+    q = db.query(Consignacion).filter(
         Consignacion.tienda_id == turno.tienda_id,
         Consignacion.caja_turno_id.is_(None),
         Consignacion.fecha >= turno.fecha_apertura,
         Consignacion.fecha <= ventana_fin,
-    ).all()
+    )
+    d = desde_recogidas(db)
+    if d is not None:
+        q = q.filter(Consignacion.fecha < inicio_dia_col_utc(d))
+    return q.all()
 
 
 def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, hasta=None):
@@ -449,6 +548,10 @@ def get_resumen_admin(db: Session, tienda_id: int | None = None, desde=None, has
             "cubrio": s["cubrio"],
             "cubierto_por": s["cubierto_por"],
             "faltante_sin_cubrir": s["faltante_sin_cubrir"],
+            # recogido: la parte del día que el dueño se llevó en mano. Sin este
+            # campo el saldo baja y la fila no sabe explicar por qué — y un
+            # número que baja sin decir por qué se lee como un bug.
+            "recogido": round(s["recogido"], 2),
             "saldo_pendiente": round(s["saldo"], 2),
             "egresos_detalle": [
                 {"concepto": m.concepto, "valor": m.valor, "fecha": m.fecha}
@@ -486,6 +589,7 @@ def get_pendiente(db: Session, tienda_id: int):
                 "fecha_cierre": t.fecha_cierre,
                 "esperado": round(s["esperado"], 2),
                 "consignado": round(s["consignado"], 2),
+                "recogido": round(s["recogido"], 2),
                 "pendiente": pendiente,
             })
     items.reverse()                     # más reciente primero para la UI
@@ -508,52 +612,32 @@ def confirmar(db: Session, consignacion_id: int):
 
 
 def recoger(db: Session, tienda_id: int, turno_ids: list[int], usuario_id: int):
-    """El admin pasó por la tienda y se llevó el efectivo pendiente de esos días.
+    """PUERTA CERRADA. Era el flujo viejo: saldar días creando una `Consignacion`
+    sin comprobante — o sea afirmando que la plata llegó al banco cuando en
+    realidad quedó en la mano del dueño.
 
-    Reemplaza al flujo viejo (la barista sube la foto del comprobante bancario y
-    el admin la aprueba): ahora la plata la recoge el admin en persona, así que
-    no hay comprobante que fotografiar y la consignación nace ya `realizada`.
+    El aviso de que esta puerta y la recogida descuentan el mismo cajón vivió
+    meses como comentario, y un comentario no detiene un dedo sobre una tablet:
+    usar las dos para la misma pasada descontaba el cajón dos veces. Desde que
+    la recogida cubre el pendiente por consignar (`_aplicar_recogidas`), este
+    camino no hace falta para nada — la pasada real ya deja los días en cero y
+    la plata contada donde de verdad está.
 
-    El valor NUNCA llega del cliente: se recalcula acá con `_saldos_consignacion`
-    (mismo criterio que todo el módulo, con la cascada FIFO ya aplicada). Si un
-    turno dejó de tener saldo entre que se pintó la pantalla y se apretó el botón,
-    se omite en silencio en vez de duplicar plata.
+    Se cierra con 400 y no borrando la función: las consignaciones que este
+    flujo creó siguen vivas en la base y los docstrings del módulo cuentan la
+    historia contra este nombre. La firma se conserva por el mismo motivo.
     """
-    from app.services import audit
-
-    if not turno_ids:
-        raise HTTPException(status_code=400, detail="No se indicó ningún turno")
-
-    pendientes = {
-        s["turno"].id: round(s["saldo"], 2)
-        for s in _saldos_consignacion(db, tienda_id)
-        if round(s["saldo"], 2) > 0
-    }
-
-    creadas: list[dict] = []
-    for tid in turno_ids:
-        saldo = pendientes.get(tid)
-        if not saldo:
-            continue
-        db.add(Consignacion(
-            tienda_id=tienda_id, caja_turno_id=tid, valor=saldo,
-            imagen_url=None, usuario_id=usuario_id,
-            estado=EstadoConsignacionEnum.realizada,
-        ))
-        creadas.append({"turno_id": tid, "valor": saldo})
-
-    if not creadas:
-        raise HTTPException(status_code=400,
-                            detail="Esos turnos ya no tienen saldo pendiente")
-
-    total = round(sum(c["valor"] for c in creadas), 2)
-    audit.registrar(
-        db, accion="recoger_efectivo", tabla="consignaciones",
-        usuario_id=usuario_id, tienda_id=tienda_id,
-        datos_despues={"turnos": creadas, "total": total},
+    del db, tienda_id, turno_ids, usuario_id
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "Esta puerta se cerró. Marcar el día como saldado creaba una "
+            "consignación sin comprobante: afirmaba que la plata llegó al banco "
+            "cuando en realidad quedó en tu mano, y si además registrabas la "
+            "recogida, el cajón se descontaba dos veces. Registrá la pasada en "
+            "«Recogí efectivo», en La Plata: el día pendiente se descuenta solo."
+        ),
     )
-    db.commit()
-    return {"recogidas": creadas, "total": total}
 
 
 def editar(db: Session, consignacion_id: int, usuario_id: int,
@@ -629,6 +713,11 @@ def eliminar(db: Session, consignacion_id: int, usuario_id: int):
 # cajón por su cuenta. Registrar la MISMA pasada por los dos caminos descontaría
 # el cajón dos veces. Son excluyentes: o el dueño usa el flujo viejo, o registra
 # recogidas.
+#
+# La recogida cubre el pendiente por consignar (`_aplicar_recogidas`): el día que
+# él pasó deja de pedirle a la barista una plata que ya no está en el cajón. Por
+# eso mismo su depósito posterior —la huérfana del régimen— NO empareja turnos
+# (ver `_consigs_del_turno`): la cobertura ya la hizo la recogida.
 
 
 def _serializar_recogida(r: RecogidaEfectivo) -> dict:

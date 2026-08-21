@@ -1572,6 +1572,14 @@ class CostoCategoria(Base):
     clave = Column(String(40), unique=True, index=True, nullable=False)
     nombre = Column(String(100), nullable=False)
     grupo = Column(String(20), nullable=False)   # 'fijo' | 'variable'
+    # A qué mundo pertenece la plata de esta categoría. 'cafe' = costo del
+    # negocio (elegible para obligaciones, entra al P&L salvo clave excluida);
+    # 'personal' = plata del dueño como persona natural (cuota del carro, la
+    # casa): SOLO etiqueta filas del libro del banco y JAMÁS toca resultado ni
+    # punto de equilibrio — el dueño dirige el café desde la misma cuenta que su
+    # casa y esa plata necesita dónde vivir sin ensuciar los números del café;
+    # 'banco' = costos del propio banco (GMF, comisión), sembradas, solo libro.
+    ambito = Column(String(20), nullable=False, default="cafe")
     orden = Column(Integer, nullable=True)
     activa = Column(Boolean, default=True)       # baja lógica, nunca DELETE
 
@@ -1863,19 +1871,27 @@ class MovimientoBanco(Base):
     # Marca los que el sistema puede sugerir solo (GMF, comisión) para poder
     # distinguirlos de lo que el dueño escribió a mano.
     automatico = Column(Boolean, nullable=False, default=False)
-    # Enlace a la obligación que este movimiento paga. HOY NO LO CONSUME NADIE:
-    # la columna existe para poder descontar de la agenda lo que ya salió del
-    # banco —que es el único modo de cerrar el doble conteo de una obligación
-    # pagada y todavía viva ahí— pero ese consumo está sin escribir. Se deja
-    # dicho para que nadie lea la columna como una guarda que ya funciona: una
-    # promesa sin cumplir es peor que un campo ausente, porque parece seguridad.
+    # Enlace a la obligación que este movimiento paga. Lo consumen
+    # `costos._salidas_banco_por_obligacion` y `cubierto_de` (descuentan de la
+    # agenda lo ya debitado, combinando con los pagos por MÁXIMO y no por suma),
+    # y lo escriben el formulario del libro y el pago que descuenta del banco en
+    # la misma transacción (`costos.registrar_pago` con `descontar_banco`).
     obligacion_id = Column(Integer, ForeignKey("obligaciones.id", ondelete="SET NULL"),
                            nullable=True, index=True)
+    # La categoría del movimiento (misma tabla que las obligaciones, con su
+    # `ambito`): es lo que permite contestar «cuánto nos estamos gastando en
+    # cada cosa» a lo largo de los meses, y separar la plata personal de la del
+    # café sin inventar un segundo catálogo. Nullable: el concepto libre sigue
+    # siendo válido — un movimiento sin categoría es «sin clasificar», no un
+    # error.
+    categoria_id = Column(Integer, ForeignKey("costos_categorias.id", ondelete="SET NULL"),
+                          nullable=True, index=True)
     nota = Column(String(300), nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     cuenta = relationship("CuentaBancaria")
+    categoria = relationship("CostoCategoria")
 
 
 class ParametroTributario(Base):

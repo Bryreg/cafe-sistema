@@ -53,7 +53,7 @@ import tempfile
 import unittest
 from datetime import date, datetime, timedelta
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -489,20 +489,43 @@ class LaMismaCuentaParaTodosTest(CascadaBase):
         self.assertEqual(self.cruces(filas[self.lun.id], "cubierto_por"),
                          [(self.dom.id, 177_700)])
 
-    def test_lo_que_se_cobra_al_recoger_es_el_numero_de_la_pantalla(self):
-        """El cierre del círculo: el dueño mira la fila, aprieta «Recogí $X» y el
-        servicio recalcula el valor por su cuenta (jamás confía en el cliente). Si
-        la pantalla dijera otra cosa que la imputación, el botón cobraría un número
-        distinto del que él vio un segundo antes."""
+    def test_la_puerta_vieja_de_recoger_esta_cerrada_y_no_cobra_nada(self):
+        """El botón «marcar saldado» creaba una consignación sin comprobante:
+        afirmaba que la plata llegó al banco cuando quedó en la mano del dueño, y
+        junto con la recogida descontaba el cajón dos veces. El aviso vivió meses
+        como comentario; ahora es candado, y el candado tiene que ser TOTAL: si
+        cobrara «solo a veces», la pantalla y la imputación volverían a poder
+        discrepar según por qué puerta se entró."""
         antes = self.resumen(self.palmetto)
-        r = consig_svc.recoger(self.db, self.palmetto.id,
+        with self.assertRaises(HTTPException) as ctx:
+            consig_svc.recoger(self.db, self.palmetto.id,
                                [self.sab.id, self.dom.id], self.admin.id)
-        cobrado = {c["turno_id"]: c["valor"] for c in r["recogidas"]}
-        self.assertEqual(cobrado[self.sab.id], antes[self.sab.id]["saldo_pendiente"])
-        self.assertEqual(cobrado[self.dom.id], antes[self.dom.id]["saldo_pendiente"])
-        self.assertEqual(r["total"], 22_300 + 400_000)
+        self.assertEqual(ctx.exception.status_code, 400)
+        # `detail` STRING con la salida nombrada: el dueño tiene que saber a
+        # dónde ir, no solo que algo se negó.
+        self.assertIsInstance(ctx.exception.detail, str)
+        self.assertIn("Recogí efectivo", ctx.exception.detail)
 
-        # Y después de cobrar, la pantalla queda en cero para esos días.
+        # No se cobró un peso: la pantalla sigue diciendo lo mismo.
+        despues = self.resumen(self.palmetto)
+        self.assertEqual(despues[self.sab.id]["saldo_pendiente"],
+                         antes[self.sab.id]["saldo_pendiente"])
+        self.assertEqual(despues[self.dom.id]["saldo_pendiente"],
+                         antes[self.dom.id]["saldo_pendiente"])
+
+    def test_la_recogida_cierra_el_circulo_que_cerraba_el_boton_viejo(self):
+        """La garantía que el botón viejo daba —«lo que se cobra es el número de
+        la pantalla»— no se pierde con la puerta: la da la pasada real. Registrar
+        la recogida por el total que la pantalla muestra deja esos mismos días en
+        cero, con la misma cuenta que usa toda la imputación."""
+        antes = self.resumen(self.palmetto)
+        total = round(antes[self.sab.id]["saldo_pendiente"]
+                      + antes[self.dom.id]["saldo_pendiente"], 2)
+        self.assertEqual(total, 22_300 + 400_000)
+
+        consig_svc.registrar_recogida(self.db, self.palmetto.id, hoy_col(),
+                                      total, self.admin.id)
+
         despues = self.resumen(self.palmetto)
         self.assertEqual(despues[self.sab.id]["saldo_pendiente"], 0)
         self.assertEqual(despues[self.dom.id]["saldo_pendiente"], 0)

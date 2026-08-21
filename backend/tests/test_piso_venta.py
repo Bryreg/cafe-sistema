@@ -351,7 +351,11 @@ class PuertasTest(PisoBase):
         self.assertIsNone(d["razones"])
         self.assertIsNone(d["margen_contribucion"])
         self.assertIsNone(d["piso_mes"])
-        self.assertEqual(d["sesgos"], [])
+        # Sin razones no hay sesgos DE LA VENTA que declarar; el de las
+        # retenciones viaja igual (no depende del margen) y viaja apagado.
+        self.assertEqual([s["clave"] for s in d["sesgos"]],
+                         ["retenciones_fuera_del_gasto"])
+        self.assertFalse(d["sesgos"][0]["activo"])
         self.assertIsNotNone(d["piso_caja"]["por_dia"])
         self.assertEqual(d["manda"], "caja")
 
@@ -402,8 +406,13 @@ class PuertasTest(PisoBase):
         claves = {s["clave"] for s in d["sesgos"]}
         self.assertEqual(claves, {"productos_sin_costo", "costeo_parcial",
                                   "desechables_fuera_del_costo",
-                                  "comision_datafono_sin_cargar"})
-        self.assertTrue(all(s["activo"] for s in d["sesgos"]))
+                                  "comision_datafono_sin_cargar",
+                                  "retenciones_fuera_del_gasto"})
+        # Los cuatro de la venta, vivos; el de las retenciones viaja apagado
+        # (no hay retefuente ni reteica cargadas en este escenario).
+        self.assertTrue(all(
+            s["activo"] for s in d["sesgos"]
+            if s["clave"] != "retenciones_fuera_del_gasto"))
         # La comisión no cargada se puede nombrar con su tamaño: la mitad de la
         # venta entró por datáfono y esa comisión no está adentro del margen.
         comision = next(s for s in d["sesgos"]

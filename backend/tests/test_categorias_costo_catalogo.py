@@ -122,16 +122,29 @@ class _BaseApi(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class CatalogoSembradoTest(_BaseApi):
-    def test_las_seis_categorias_que_el_dueno_elige_nacen_todas_en_fijo(self):
-        """Las ELEGIBLES son seis y son todas fijas. La séptima fila que siembra
-        el catálogo —'impoconsumo'— no cuenta acá y no es un descuido: no está
-        en el desplegable, no la puede cargar nadie a mano, y nace en 'variable'
-        porque el impuesto SÍ sube con la venta. Contarla entre las que el dueño
-        clasifica mezclaría una categoría del sistema con las suyas."""
-        self.assertEqual(self.sembrar(), 7)
-        elegibles = {c["clave"]: c["grupo"] for c in svc.listar_categorias(self.db)}
-        self.assertEqual(len(elegibles), 6)
-        self.assertEqual(set(elegibles.values()), {"fijo"})
+    def test_las_seis_categorias_comunes_nacen_todas_en_fijo(self):
+        """Las del gasto común son seis y son todas fijas. Las demás filas que
+        siembra el catálogo no cuentan acá y no es un descuido:
+
+        · 'impoconsumo' no está en el desplegable, no la carga nadie a mano, y
+          nace en 'variable' porque el impuesto SÍ sube con la venta;
+        · retefuente, reteica, prima y cesantías SÍ se ofrecen —las carga el
+          dueño con su fecha— pero su plata no es costo del mes (viajan con
+          `fuera_del_gasto` en True) y nacen en 'variable' por la misma segunda
+          puerta que el impoconsumo;
+        · gmf y comision_banco son del ámbito 'banco': solo etiquetan filas del
+          libro y no aparecen en este desplegable.
+        """
+        self.assertEqual(self.sembrar(), 13)
+        elegibles = {c["clave"]: c for c in svc.listar_categorias(self.db)}
+        comunes = {k: v["grupo"] for k, v in elegibles.items()
+                   if not v["fuera_del_gasto"]}
+        self.assertEqual(len(comunes), 6)
+        self.assertEqual(set(comunes.values()), {"fijo"})
+        # Las excluidas-pero-elegibles, marcadas todas.
+        self.assertEqual(
+            {k for k, v in elegibles.items() if v["fuera_del_gasto"]},
+            {"retefuente", "reteica", "prima", "cesantias"})
 
     def test_la_categoria_del_impoconsumo_se_siembra_pero_no_se_ofrece(self):
         """La necesita `agendar_impoconsumo` existiendo —si no, el botón no puede
@@ -366,11 +379,17 @@ class ElFormularioExplicaLaDiferenciaTest(_BaseApi):
 
     def test_la_lista_del_desplegable_no_cambio_de_forma(self):
         """La pantalla de Plata consume una LISTA pelada. Agregar la explicación
-        no puede romperla: por eso vive en su propio endpoint."""
+        no puede romperla: por eso vive en su propio endpoint. Las claves solo
+        pueden CRECER (aditivo — el cliente viejo las ignora); sacar una rompería
+        el bundle desplegado."""
         self.sembrar()
         cats = self.client.get("/api/v1/costos/categorias").json()
         self.assertIsInstance(cats, list)
-        self.assertEqual(set(cats[0]), {"id", "clave", "nombre", "grupo", "orden"})
+        self.assertLessEqual({"id", "clave", "nombre", "grupo", "orden"},
+                             set(cats[0]))
+        # Las dos nuevas, presentes: el trato de la plata viaja dicho.
+        self.assertIn("ambito", cats[0])
+        self.assertIn("fuera_del_gasto", cats[0])
 
 
 class EditarCategoriaTest(_BaseApi):

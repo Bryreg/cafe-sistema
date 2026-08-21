@@ -503,7 +503,6 @@ export default function ConsignacionesAdmin() {
   const [loading, setLoading] = useState(false)
   const [fotoModal, setFotoModal] = useState<string | null>(null)
   const [confirmando, setConfirmando] = useState<number | null>(null)
-  const [recogiendo, setRecogiendo] = useState<string | null>(null)
   // expandido = clave de DÍA (YYYY-MM-DD), no turno_id: la lista ahora es por día.
   const [expandido, setExpandido] = useState<string | null>(null)
   const [desde, setDesde] = useState('')
@@ -583,27 +582,6 @@ export default function ConsignacionesAdmin() {
     } catch (e: any) {
       alert(e.response?.data?.detail || 'No se pudo editar')
     } finally { setConfirmando(null) }
-  }
-
-  // El admin pasó por la tienda y se llevó el efectivo del día: salda esos turnos
-  // sin comprobante (ya no hay foto que aprobar, la plata la recogió él en persona).
-  // El monto lo recalcula el backend desde el saldo real; acá sólo mandamos los turnos.
-  const recoger = async (dia: DiaAgrupado, monto: number) => {
-    if (tiendaId === null) return
-    if (!window.confirm(
-      `¿Confirmás que recogiste ${fmt(monto)} de ${fmtFecha(dia.fecha_apertura)}?\n\n` +
-      `El día queda saldado sin comprobante. Se puede revertir borrando la consignación.`
-    )) return
-    setRecogiendo(dia.key)
-    try {
-      const fd = new FormData()
-      fd.append('tienda_id', String(tiendaId))
-      fd.append('turno_ids', JSON.stringify(dia.turno_ids))
-      await api.post('/consignaciones/recoger', fd)
-      await load(tiendaId)
-    } catch (e: any) {
-      alert(e.response?.data?.detail || 'No se pudo registrar la recogida')
-    } finally { setRecogiendo(null) }
   }
 
   // Cómo se nombra el día del OTRO lado de un cruce de la cascada.
@@ -1095,18 +1073,16 @@ export default function ConsignacionesAdmin() {
                     )}
                   </div>
 
-                  {/* Recogida por el admin — reemplaza la foto del comprobante */}
+                  {/* El botón «marcar saldado» se cerró: saldaba el día creando una
+                      consignación sin comprobante —afirmaba banco donde había mano— y
+                      junto con la recogida descontaba el cajón dos veces. La pasada se
+                      registra UNA vez, en La Plata, y este pendiente se descuenta solo. */}
                   {porConsignar > 0.5 && (
-                    <button
-                      onClick={() => recoger(dia, porConsignar)}
-                      disabled={recogiendo === dia.key}
-                      className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-bold px-4 py-3 rounded-xl transition-colors"
-                    >
-                      <Banknote size={16} />
-                      {recogiendo === dia.key
-                        ? 'Registrando...'
-                        : `Recogí ${fmt(porConsignar)} — marcar saldado`}
-                    </button>
+                    <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+                      ¿Te llevaste esta plata? Registrá la pasada en{' '}
+                      <span className="font-semibold">La Plata → «Recogí efectivo»</span>:
+                      el día se descuenta solo, sin marcar nada acá.
+                    </p>
                   )}
 
                   {/* Consignaciones */}

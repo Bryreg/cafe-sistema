@@ -1,0 +1,1028 @@
+{
+ "mes": "2026-07",
+ "inicial": 2025023.44,
+ "movimientos": [
+  {
+   "dia": 1,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 790700,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 442100,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 190300,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 849500,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 658150,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 770500,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "bold",
+   "tipo": "entrada",
+   "monto": 1552000,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "bold",
+   "tipo": "entrada",
+   "monto": 1637000,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 929964,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 985062,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 944699,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 943645,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 983323,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 787914,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 676001,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 947903,
+   "item": null
+  },
+  {
+   "dia": 1,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 1011874,
+   "item": null
+  },
+  {
+   "dia": 2,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 1011050,
+   "item": null
+  },
+  {
+   "dia": 2,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 597200,
+   "item": null
+  },
+  {
+   "dia": 2,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 593850,
+   "item": null
+  },
+  {
+   "dia": 2,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 449.82,
+   "item": null
+  },
+  {
+   "dia": 2,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 17955,
+   "item": null
+  },
+  {
+   "dia": 2,
+   "cuenta": "occidente",
+   "tipo": "salida",
+   "monto": 94500.0,
+   "item": null
+  },
+  {
+   "dia": 3,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 1163700,
+   "item": null
+  },
+  {
+   "dia": 3,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 989200,
+   "item": null
+  },
+  {
+   "dia": 3,
+   "cuenta": "bold",
+   "tipo": "entrada",
+   "monto": 1410000,
+   "item": null
+  },
+  {
+   "dia": 3,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 8320.0,
+   "item": null
+  },
+  {
+   "dia": 3,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 2500000,
+   "item": null
+  },
+  {
+   "dia": 3,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 1346340,
+   "item": "ADMINISTRACION PALMETTO"
+  },
+  {
+   "dia": 5,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 17332.0,
+   "item": null
+  },
+  {
+   "dia": 6,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 360800,
+   "item": null
+  },
+  {
+   "dia": 6,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 673550,
+   "item": null
+  },
+  {
+   "dia": 6,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 874500,
+   "item": null
+  },
+  {
+   "dia": 6,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 725200,
+   "item": null
+  },
+  {
+   "dia": 6,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 900.43,
+   "item": null
+  },
+  {
+   "dia": 6,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 30014,
+   "item": null
+  },
+  {
+   "dia": 6,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 35000,
+   "item": null
+  },
+  {
+   "dia": 7,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 638250,
+   "item": null
+  },
+  {
+   "dia": 7,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 663400,
+   "item": null
+  },
+  {
+   "dia": 7,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 175200,
+   "item": null
+  },
+  {
+   "dia": 8,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 837900,
+   "item": null
+  },
+  {
+   "dia": 8,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 452100,
+   "item": null
+  },
+  {
+   "dia": 8,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 781800,
+   "item": null
+  },
+  {
+   "dia": 8,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 223850,
+   "item": null
+  },
+  {
+   "dia": 8,
+   "cuenta": "bold",
+   "tipo": "entrada",
+   "monto": 1200000.0,
+   "item": null
+  },
+  {
+   "dia": 8,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 5880,
+   "item": null
+  },
+  {
+   "dia": 8,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 35.6,
+   "item": null
+  },
+  {
+   "dia": 8,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 3940.25,
+   "item": null
+  },
+  {
+   "dia": 8,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 348.4,
+   "item": null
+  },
+  {
+   "dia": 8,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 7280421,
+   "item": null
+  },
+  {
+   "dia": 8,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 8900,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 723050,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 992600,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 1057150,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 891100,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "bold",
+   "tipo": "entrada",
+   "monto": 1645000.0,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 23744.4,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 9672.14,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 3719.89,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 1357,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 1400,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "occidente",
+   "tipo": "salida",
+   "monto": 3876100,
+   "item": "PLANILLA"
+  },
+  {
+   "dia": 10,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 2418034,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 929964,
+   "item": null
+  },
+  {
+   "dia": 10,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 339250,
+   "item": "ZINKO"
+  },
+  {
+   "dia": 10,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 350000,
+   "item": null
+  },
+  {
+   "dia": 14,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 373700,
+   "item": null
+  },
+  {
+   "dia": 14,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 777500,
+   "item": null
+  },
+  {
+   "dia": 14,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 258200,
+   "item": null
+  },
+  {
+   "dia": 14,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 777350,
+   "item": null
+  },
+  {
+   "dia": 14,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 209400,
+   "item": null
+  },
+  {
+   "dia": 14,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 383600,
+   "item": null
+  },
+  {
+   "dia": 14,
+   "cuenta": "bold",
+   "tipo": "entrada",
+   "monto": 3000000,
+   "item": null
+  },
+  {
+   "dia": 14,
+   "cuenta": "bold",
+   "tipo": "entrada",
+   "monto": 3000000,
+   "item": null
+  },
+  {
+   "dia": 14,
+   "cuenta": "bold",
+   "tipo": "entrada",
+   "monto": 983000,
+   "item": null
+  },
+  {
+   "dia": 15,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 11080.0,
+   "item": null
+  },
+  {
+   "dia": 16,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 885400,
+   "item": null
+  },
+  {
+   "dia": 16,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 760200,
+   "item": null
+  },
+  {
+   "dia": 16,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 213650,
+   "item": null
+  },
+  {
+   "dia": 16,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 1199350,
+   "item": null
+  },
+  {
+   "dia": 16,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 476600,
+   "item": null
+  },
+  {
+   "dia": 16,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 4768253,
+   "item": "DJL"
+  },
+  {
+   "dia": 16,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 4292453,
+   "item": "ARRIENDO VIDA"
+  },
+  {
+   "dia": 16,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 326928,
+   "item": null
+  },
+  {
+   "dia": 16,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 1398601,
+   "item": "GE CASA AMARILLA"
+  },
+  {
+   "dia": 16,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 588394,
+   "item": "BODEGA PALMETTO"
+  },
+  {
+   "dia": 16,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 43339,
+   "item": null
+  },
+  {
+   "dia": 17,
+   "cuenta": "bold",
+   "tipo": "entrada",
+   "monto": 4185000,
+   "item": null
+  },
+  {
+   "dia": 17,
+   "cuenta": "bold",
+   "tipo": "entrada",
+   "monto": 2210000,
+   "item": null
+  },
+  {
+   "dia": 17,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 11040,
+   "item": null
+  },
+  {
+   "dia": 17,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 2500,
+   "item": null
+  },
+  {
+   "dia": 17,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 21037,
+   "item": null
+  },
+  {
+   "dia": 17,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 3420,
+   "item": null
+  },
+  {
+   "dia": 17,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 2760000,
+   "item": "IMPOCONSUMO"
+  },
+  {
+   "dia": 17,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 625000,
+   "item": "RETEFUENTE"
+  },
+  {
+   "dia": 17,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 5259250,
+   "item": "ARRIENDO PALMETTO"
+  },
+  {
+   "dia": 20,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 100150.0,
+   "item": null
+  },
+  {
+   "dia": 21,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 916900,
+   "item": null
+  },
+  {
+   "dia": 21,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 1226800,
+   "item": null
+  },
+  {
+   "dia": 21,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 296100,
+   "item": null
+  },
+  {
+   "dia": 21,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 856350,
+   "item": null
+  },
+  {
+   "dia": 21,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 499200,
+   "item": null
+  },
+  {
+   "dia": 21,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 149500,
+   "item": null
+  },
+  {
+   "dia": 21,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 752800,
+   "item": null
+  },
+  {
+   "dia": 21,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 1075300,
+   "item": null
+  },
+  {
+   "dia": 21,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 409300,
+   "item": null
+  },
+  {
+   "dia": 21,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 763550,
+   "item": null
+  },
+  {
+   "dia": 21,
+   "cuenta": "bold",
+   "tipo": "comision",
+   "monto": 2392.45,
+   "item": null
+  },
+  {
+   "dia": 21,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 9.57,
+   "item": null
+  },
+  {
+   "dia": 22,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 14238.47,
+   "item": null
+  },
+  {
+   "dia": 22,
+   "cuenta": "occidente",
+   "tipo": "salida",
+   "monto": 411139,
+   "item": null
+  },
+  {
+   "dia": 22,
+   "cuenta": "occidente",
+   "tipo": "salida",
+   "monto": 1467367,
+   "item": "EMCALI VIDA"
+  },
+  {
+   "dia": 22,
+   "cuenta": "occidente",
+   "tipo": "salida",
+   "monto": 259630,
+   "item": "CLARO TIENDAS"
+  },
+  {
+   "dia": 22,
+   "cuenta": "occidente",
+   "tipo": "salida",
+   "monto": 1421480,
+   "item": "EMCALI PALMETTO"
+  },
+  {
+   "dia": 23,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 954400,
+   "item": null
+  },
+  {
+   "dia": 23,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 811050,
+   "item": null
+  },
+  {
+   "dia": 23,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 1079500,
+   "item": null
+  },
+  {
+   "dia": 23,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 21340,
+   "item": null
+  },
+  {
+   "dia": 23,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 8000,
+   "item": null
+  },
+  {
+   "dia": 23,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 2000000.0,
+   "item": null
+  },
+  {
+   "dia": 24,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 592700.0,
+   "item": null
+  },
+  {
+   "dia": 24,
+   "cuenta": "bold",
+   "tipo": "comision",
+   "monto": 9175.03,
+   "item": null
+  },
+  {
+   "dia": 24,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 12000,
+   "item": null
+  },
+  {
+   "dia": 24,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 1260.04,
+   "item": null
+  },
+  {
+   "dia": 24,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 3000000,
+   "item": "DFT"
+  },
+  {
+   "dia": 24,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 305834.45,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 1357900,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 488150,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 379900,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "occidente",
+   "tipo": "entrada",
+   "monto": 7400,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 80.59,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 263.95,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 166.26,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 247.5,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 344.95,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 4,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 20148,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 65987,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 41566,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 61874,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 86237,
+   "item": null
+  },
+  {
+   "dia": 27,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 1000,
+   "item": null
+  },
+  {
+   "dia": 29,
+   "cuenta": "bold",
+   "tipo": "entrada",
+   "monto": 1376437.0,
+   "item": null
+  },
+  {
+   "dia": 30,
+   "cuenta": "bold",
+   "tipo": "entrada",
+   "monto": 1675000.0,
+   "item": null
+  },
+  {
+   "dia": 30,
+   "cuenta": "banco",
+   "tipo": "gmf",
+   "monto": 6441.0,
+   "item": null
+  },
+  {
+   "dia": 30,
+   "cuenta": "bold",
+   "tipo": "salida",
+   "monto": 1610249.0,
+   "item": null
+  }
+ ]
+}

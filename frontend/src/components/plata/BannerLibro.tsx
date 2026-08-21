@@ -1,14 +1,14 @@
-import { ReactNode, useMemo, useRef, useState } from 'react'
-import { AlertCircle, CalendarClock, ChevronLeft, ChevronRight, Plus, Trash2 } from 'lucide-react'
+import { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertCircle, CalendarClock, ChevronLeft, ChevronRight, Landmark, Plus, Trash2 } from 'lucide-react'
 import api from '../../api/client'
-import { Dato, mapDato } from '../../api/dato'
+import { Dato, datoCargando, datoFalla, datoListo, mapDato } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import { SegunDato, NoSeSabe } from '../ui'
 import {
-  CuentaBanco, DiaLibro, LibroMes, MovimientoBanco, SerieAnual,
+  ConsignacionLibro, CuentaBanco, DiaLibro, LibroMes, MovimientoBanco, PorCategoriaAnual, SerieAnual,
   MESES, MESES_CORTOS, compacto, detalleDeError, diaSemana, esFinde, fechaCorta, fechaLarga, plata,
 } from './banco'
-import { Agenda, AgendaItem } from './tipos'
+import { Agenda, AgendaItem, Categoria } from './tipos'
 import { Banner, ComoSeCalcula, ErrorCampo } from './campos'
 import FormMovimiento from './FormMovimiento'
 import FilaVencimiento from './FilaVencimiento'
@@ -45,7 +45,8 @@ import FilaVencimiento from './FilaVencimiento'
  */
 export default function BannerLibro({
   libro, serie, anio, mes, hoy, viendoElMesDeHoy,
-  cuentas, agenda, onIrAlMes, onIrAHoy, onVerMes, onCambiarAnio,
+  cuentas, agenda, categorias, onCategoriaCreada,
+  onIrAlMes, onIrAHoy, onVerMes, onCambiarAnio,
   onGuardado, onBorrado, onIrAlAncla, onPagar, itemPagando, renderPago, onRecargarLibro,
 }: {
   libro: Dato<LibroMes>
@@ -57,6 +58,9 @@ export default function BannerLibro({
   cuentas: Fuente<CuentaBanco[]>
   /** Los vencimientos NO están en el libro: son compromisos, no plata movida. */
   agenda: Fuente<Agenda>
+  /** El catálogo COMPLETO para rotular movimientos (café + personal + banco). */
+  categorias?: Fuente<Categoria[]>
+  onCategoriaCreada?: () => void
   onIrAlMes: (delta: number) => void
   onIrAHoy: () => void
   onVerMes: (m: number) => void
@@ -168,6 +172,10 @@ export default function BannerLibro({
             opciones en la carga siguiente, que es la señal de que el enlace pegó. */}
         <FormMovimiento key={fechaCarga} fechaInicial={fechaCarga} cuentas={cuentas}
           agenda={agenda} maxFecha={hoy}
+          categorias={categorias} onCategoriaCreada={onCategoriaCreada}
+          /* La tasa viaja con el libro. AUSENTE (servidor viejo o mes caído) es
+             null: la sugerencia del GMF se apaga en vez de inventar una tasa. */
+          tasaGmf={libro.estado === 'listo' ? (libro.valor.tasa_gmf ?? null) : null}
           onGuardado={m => { setDiaAbierto(m.fecha); onGuardado(m) }} />
       </div>
 
@@ -207,6 +215,19 @@ export default function BannerLibro({
           const hayColumnasDeSaldo = l.dias_con_saldo > 0
           const aviso = avisoDeCadena(l)
           return (<>
+            {/* Las consignaciones al libro: ofrecer la activación SOLO cuando el
+                servidor la conoce y no está activada (null). `undefined` es un
+                servidor viejo y el botón llamaría a un endpoint que no existe. */}
+            {l.consignaciones_desde === null && (
+              <ActivarConsignaciones onActivado={onRecargarLibro} />
+            )}
+            {l.consignaciones_sin_fecha && l.consignaciones_sin_fecha.n > 0 && (
+              <p className="px-4 py-2 border-b border-gold-200 bg-gold-50 text-[11px] text-gold-700 leading-relaxed">
+                Hay <b>{l.consignaciones_sin_fecha.n}</b> consignaciones viejas <b>sin fecha</b> por{' '}
+                <b>{plata(l.consignaciones_sin_fecha.total)}</b>: no están en ningún día de este
+                libro — no se les inventa uno. Se corrigen en Consignaciones, poniéndoles su día.
+              </p>
+            )}
             {/* La verdad PARCIAL: desde cuándo hay saldo. Solo cuando no hay
                 ningún día con saldo esto dice «este mes no tiene saldos». */}
             {aviso && (
@@ -385,9 +406,208 @@ export default function BannerLibro({
           }}
         />
       </ComoSeCalcula>
+
+      <EnQueSeVaLaPlata anio={anio} />
     </Banner>
   )
 }
+
+/**
+ * «CUÁNTO NOS ESTAMOS GASTANDO EN CADA COSA» — y la respuesta es LA SERIE,
+ * mes a mes, no un total del mes suelto: el arriendo que sube, el GMF que
+ * nadie veía. Son las SALIDAS del libro agrupadas por su categoría.
+ *
+ * Va plegado y SE PIDE RECIÉN AL ABRIRSE: es una pregunta de una vez al mes,
+ * no puede costarle un fetch a la pantalla de todos los días. En un servidor
+ * viejo el endpoint no existe y el fetch falla: eso se muestra como falla con
+ * reintento, nunca como un año sin gastos.
+ */
+function EnQueSeVaLaPlata({ anio }: { anio: number }) {
+  const [pedido, setPedido] = useState(false)
+  const [tick, setTick] = useState(0)
+  const [dato, setDato] = useState<Dato<PorCategoriaAnual>>(datoCargando)
+
+  useEffect(() => {
+    if (!pedido) return
+    let vivo = true
+    setDato(datoCargando)
+    api.get<PorCategoriaAnual>('/banco/por-categoria', { params: { anio } })
+      .then(r => { if (vivo) setDato(datoListo(r.data)) })
+      .catch(e => {
+        if (vivo) setDato(datoFalla(detalleDeError(e, 'No se pudo leer el gasto por categoría.')))
+      })
+    return () => { vivo = false }
+  }, [pedido, anio, tick])
+
+  return (
+    <details className="border-t border-warm-100 group"
+      onToggle={e => { if (e.currentTarget.open) setPedido(true) }}>
+      <summary className="cursor-pointer select-none list-none px-4 py-2.5 text-[11px] font-bold text-warm-500 hover:bg-warm-50">
+        <span className="group-open:hidden">▸ </span>
+        <span className="hidden group-open:inline">▾ </span>
+        En qué se va la plata — {anio}, mes a mes
+      </summary>
+      <div className="px-4 pb-3 text-[11px] text-warm-500 leading-relaxed space-y-2">
+        <SegunDato
+          dato={dato}
+          cargando={<p className="text-warm-400 animate-pulse">Leyendo el año…</p>}
+          falla={m => (
+            <NoSeSabe onReintentar={() => setTick(t => t + 1)}
+              mensaje={`${m} — no se sabe en qué se fue la plata este año.`} />
+          )}
+          listo={d => d.categorias.length === 0 ? (
+            <p>Este año el libro no tiene salidas: no hay nada que agrupar todavía.</p>
+          ) : (<>
+            {/* Doce columnas no entran en la tablet: la grilla scrollea de
+                costado ELLA, no la página. El nombre queda primero para que el
+                renglón se reconozca antes de scrollear. */}
+            <div className="overflow-x-auto rounded-xl border border-warm-200 bg-white">
+              <div className="min-w-max">
+                <div className="grid grid-cols-[8rem_repeat(12,3.4rem)_4.6rem] gap-0 px-2 py-1.5 bg-warm-50 border-b border-warm-100 text-[9px] font-bold uppercase tracking-wide text-warm-500">
+                  <span>Categoría</span>
+                  {MESES_CORTOS.map(m => <span key={m} className="text-right pr-1">{m}</span>)}
+                  <span className="text-right pr-1">Año</span>
+                </div>
+                {d.categorias.map(c => (
+                  <div key={c.categoria_id ?? 'sin'}
+                    className="grid grid-cols-[8rem_repeat(12,3.4rem)_4.6rem] gap-0 items-center px-2 py-1.5 border-b border-warm-100 last:border-0">
+                    <span className={`text-[11px] font-semibold truncate pr-1 ${
+                      c.categoria_id === null ? 'text-gold-700'
+                        : c.ambito === 'personal' ? 'text-gold-700' : 'text-warm-700'}`}>
+                      {c.nombre}{c.ambito === 'personal' ? ' (personal)' : ''}
+                    </span>
+                    {c.meses.map((m, i) => (
+                      <span key={i} className={`text-right pr-1 text-[10px] font-mono tabular-nums ${
+                        m > 0 ? 'text-warm-600' : 'text-warm-300'}`}>
+                        {m > 0 ? compacto(m) : '—'}
+                      </span>
+                    ))}
+                    <span className="text-right pr-1 text-[10px] font-mono font-bold tabular-nums text-warm-700">
+                      {compacto(c.total)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p>
+              Son las <b>salidas del libro</b> con su categoría, ordenadas por lo que más pesa en
+              el año. Lo tecleado sin categoría está en <b>«Sin clasificar»</b> — se dice, no se
+              esconde: se le pone categoría cargando el movimiento. Los pagos en efectivo no están
+              acá: no pasan por el banco.
+            </p>
+          </>)} />
+      </div>
+    </details>
+  )
+}
+
+/**
+ * La activación del régimen: las consignaciones entran SOLAS al libro.
+ *
+ * NUNCA un interruptor a ciegas — el patrón del impoconsumo: primero la vista
+ * previa con las DOS mitades medidas (cuántas consignaciones entrarían y por
+ * cuánto, y qué entradas de Occidente ya tecleadas en ese rango quedarían
+ * contadas DOS veces), y recién ahí el botón, con el monto adentro del rótulo.
+ * El corte se fija UNA vez: el backend rechaza moverlo, y eso también se dice.
+ */
+function ActivarConsignaciones({ onActivado }: { onActivado: () => void }) {
+  const [abierto, setAbierto] = useState(false)
+  const [desde, setDesde] = useState(() => {
+    // El primer día del mes en curso: agosto ya tiene datos reales adentro y
+    // es el mes que el dueño está viviendo. Editable, nunca impuesto.
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+  })
+  type Preview = {
+    consignaciones: { n: number; total: number }
+    tecleadas_en_rango: { n: number; total: number }
+  }
+  const [previa, setPrevia] = useState<Preview | null>(null)
+  const [ocupado, setOcupado] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!abierto) return
+    let vigente = true
+    setPrevia(null); setError('')
+    api.get<Preview>('/banco/consignaciones-preview', { params: { desde } })
+      .then(r => { if (vigente) setPrevia(r.data) })
+      .catch(e => { if (vigente) setError(detalleDeError(e, 'No se pudo medir la vista previa.')) })
+    return () => { vigente = false }
+  }, [abierto, desde])
+
+  const activar = async () => {
+    if (ocupado) return
+    setOcupado(true); setError('')
+    try {
+      await api.post('/banco/consignaciones-desde', { desde })
+      onActivado()
+    } catch (e) {
+      setError(detalleDeError(e, 'No se pudo activar.'))
+      setOcupado(false)
+    }
+  }
+
+  return (
+    <div className="px-4 py-3 border-b border-forest bg-forest-50 space-y-2">
+      <div className="flex items-start gap-2">
+        <Landmark size={15} className="text-forest mt-0.5 shrink-0" />
+        <p className="text-xs text-warm-700 leading-relaxed">
+          <b>Las consignaciones todavía se teclean a mano en este libro.</b> El sistema ya las
+          conoce — cada una con su comprobante y su día — y pueden entrar solas como entradas de
+          Occidente, sin que nadie las copie. Bold sigue tecleado: el datáfono liquida con rezago
+          y con la comisión descontada, y ese número no se adivina.
+        </p>
+      </div>
+      {!abierto ? (
+        <button onClick={() => setAbierto(true)}
+          className="min-h-[42px] px-4 rounded-xl bg-forest text-white text-xs font-bold">
+          Ver qué cambiaría…
+        </button>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex items-end gap-2 flex-wrap">
+            <label className="text-[11px] font-bold text-warm-600">
+              Desde el día
+              <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
+                className="block mt-1 px-3 py-2 rounded-xl border border-warm-300 text-sm" />
+            </label>
+          </div>
+          {error && <ErrorCampo msg={error} />}
+          {!previa && !error && (
+            <p className="text-[11px] text-warm-400 animate-pulse">Midiendo…</p>
+          )}
+          {previa && (
+            <div className="space-y-1.5">
+              <p className="text-xs text-warm-700">
+                Entrarían <b>{previa.consignaciones.n}</b> consignaciones por{' '}
+                <b>{plata(previa.consignaciones.total)}</b>, cada una en su día.
+              </p>
+              {previa.tecleadas_en_rango.n > 0 && (
+                <p className="text-xs text-danger-700 leading-relaxed">
+                  Ojo: en ese rango ya tecleaste <b>{previa.tecleadas_en_rango.n}</b> entradas de
+                  Occidente por <b>{plata(previa.tecleadas_en_rango.total)}</b>. Si son las mismas
+                  consignaciones, quedarían contadas <b>dos veces</b>: revisalas en el libro y
+                  borrá las repetidas después de activar.
+                </p>
+              )}
+              <button onClick={activar} disabled={ocupado}
+                className="min-h-[42px] px-4 rounded-xl bg-forest text-white text-xs font-bold disabled:opacity-50">
+                {ocupado ? 'Activando…'
+                  : `Que entren solas desde el ${fechaCorta(desde)}`}
+              </button>
+              <p className="text-[10px] text-warm-500">
+                El corte se fija una sola vez y no se mueve: hacia atrás duplicaría contra lo
+                tecleado, hacia adelante haría desaparecer plata del libro.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 
 /**
  * Qué le falta a la cadena EN ESTE MES, dicho con los datos del backend.
@@ -532,6 +752,31 @@ function FilaDia({
             )}
           </div>
 
+          {/* Las consignaciones del día: entraron SOLAS, cada una con su
+              comprobante. No llevan botón de borrar — no son filas del libro,
+              se corrigen en Consignaciones. Ausente (servidor viejo) no dibuja
+              nada: los totales del día igual las traen sumadas del backend. */}
+          {(dia.consignaciones?.length ?? 0) > 0 && (
+            <div className="divide-y divide-warm-100 border border-success-500/40 rounded-xl overflow-hidden bg-success-50/40">
+              {dia.consignaciones!.map(c => (
+                <div key={c.consignacion_id} className="flex items-center gap-2 px-3 py-2">
+                  <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-success-100 text-success-700">
+                    Consignación
+                  </span>
+                  <p className="min-w-0 flex-1 text-sm text-warm-700 truncate">
+                    {c.barista_nombre || 'Occidente'}
+                    {c.estado === 'pendiente' && (
+                      <span className="ml-1.5 text-[10px] font-bold text-gold-700">sin confirmar</span>
+                    )}
+                  </p>
+                  <span className="shrink-0 font-mono font-bold text-sm tabular-nums text-success-600">
+                    + {plata(c.valor)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {dia.movimientos.length > 0 ? (
             <div className="divide-y divide-warm-100 border border-warm-200 rounded-xl overflow-hidden">
               {dia.movimientos.map(m => (
@@ -539,7 +784,17 @@ function FilaDia({
                   <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-warm-100 text-warm-600">
                     {m.cuenta}
                   </span>
-                  <p className="min-w-0 flex-1 text-sm text-warm-700 truncate">{m.concepto}</p>
+                  <p className="min-w-0 flex-1 text-sm text-warm-700 truncate">
+                    {m.concepto}
+                    {/* La categoría, si el servidor ya rotula. `null` = sin
+                        clasificar y no se escribe nada: mudo, no inventado. */}
+                    {m.categoria && (
+                      <span className={`ml-1.5 text-[10px] font-semibold ${
+                        m.categoria_ambito === 'personal' ? 'text-gold-700' : 'text-warm-400'}`}>
+                        · {m.categoria}{m.categoria_ambito === 'personal' ? ' (personal)' : ''}
+                      </span>
+                    )}
+                  </p>
                   <span className={`shrink-0 font-mono font-bold text-sm tabular-nums ${
                     m.tipo === 'entrada' ? 'text-success-600' : 'text-danger-600'}`}>
                     {m.tipo === 'entrada' ? '+' : '−'} {plata(m.monto)}
@@ -560,11 +815,39 @@ function FilaDia({
                 </div>
               ))}
             </div>
-          ) : (
+          ) : (dia.consignaciones?.length ?? 0) === 0 ? (
             <p className="text-[11px] text-warm-500 leading-relaxed">
               No se movió plata en el banco este día
               {dia.cadena && <>: quedó igual que como arrancó</>}.
             </p>
+          ) : null}
+
+          {/* Los pagos EN EFECTIVO del día: se ven acá porque pasaron este día,
+              pero esa plata salió del cajón o de la mano — nunca de la cuenta —
+              así que NO están en «Sale» ni mueven el saldo. Ausente (servidor
+              viejo) no dibuja nada: no se sabe, no se afirma. */}
+          {(dia.pagos_efectivo?.length ?? 0) > 0 && (
+            <div>
+              <div className="divide-y divide-warm-100 border border-warm-200 rounded-xl overflow-hidden bg-warm-50/60">
+                {dia.pagos_efectivo!.map(p => (
+                  <div key={p.pago_id} className="flex items-center gap-2 px-3 py-2">
+                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-lg bg-warm-100 text-warm-500">
+                      Efectivo
+                    </span>
+                    <p className="min-w-0 flex-1 text-sm text-warm-600 truncate">
+                      {p.detalle || 'Pago en efectivo'}
+                    </p>
+                    <span className="shrink-0 font-mono font-bold text-sm tabular-nums text-warm-500">
+                      − {plata(p.monto)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-warm-400 leading-relaxed mt-1">
+                Pagados <b>en efectivo</b>: la plata salió del cajón o de la mano, no de la
+                cuenta — por eso no están en «Sale» ni tocan el saldo del banco.
+              </p>
+            </div>
           )}
 
           {/* La segunda puerta al MISMO formulario de arriba: no abre otro, le

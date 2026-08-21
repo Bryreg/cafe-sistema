@@ -34,7 +34,7 @@ interface Novedad {
 const QUICK = [
   { label: 'Ventas',          to: '/historial-ventas', icon: Receipt },
   { label: 'Ventas del mes',  to: '/ventas-mes',     icon: TrendingUp },
-  { label: 'Recibir',         to: '/ingresos',       icon: Truck },
+  { label: 'Recibir',         to: '/recibir',        icon: Truck },
   { label: 'Merma',           to: '/mermas',         icon: Trash2 },
   { label: 'Preparaciones',   to: '/preparaciones',  icon: FlaskConical },
   { label: 'Inventario',      to: '/inventario',     icon: Package },

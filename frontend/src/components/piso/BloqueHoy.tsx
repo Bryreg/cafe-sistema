@@ -4,7 +4,7 @@ import { Dato } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import { SegunDato, NoSeSabe } from '../ui'
 import { CuentaBanco, LibroMes, MovimientoBanco } from '../plata/banco'
-import { Agenda } from '../plata/tipos'
+import { Agenda, Categoria } from '../plata/tipos'
 import FormMovimiento from '../plata/FormMovimiento'
 import ExtractoDelBanco from './ExtractoDelBanco'
 import type { Pendiente, Revision } from './pendientes'
@@ -73,7 +73,7 @@ function NoSePudoMirar({ r }: { r: Revision }) {
 }
 
 export default function BloqueHoy({
-  libro, hoy, cuentas, agenda, revisiones,
+  libro, hoy, cuentas, agenda, categorias, onCategoriaCreada, revisiones,
   pedidoFocoExtracto, onAnclaGuardada, onMovimientoGuardado, onRecargarLibro,
   elLibro, id,
 }: {
@@ -82,6 +82,9 @@ export default function BloqueHoy({
   cuentas: Fuente<CuentaBanco[]>
   /** Para el select de «enlazar a una obligación» del formulario de movimiento. */
   agenda: Fuente<Agenda>
+  /** El catálogo COMPLETO (café + personal + banco) para rotular movimientos. */
+  categorias?: Fuente<Categoria[]>
+  onCategoriaCreada?: () => void
   revisiones: Revision[]
   pedidoFocoExtracto: number
   onAnclaGuardada: () => void
@@ -100,7 +103,10 @@ export default function BloqueHoy({
   id?: string
 }) {
   const [verTodas, setVerTodas] = useState(false)
-  const [verLibro, setVerLibro] = useState(false)
+  // ABIERTO por defecto: el libro día a día ES la pantalla — la hoja del dueño
+  // que se va llenando. Plegado, la página volvía a ser un tablero de números
+  // con la hoja escondida atrás de un toque que nadie daba.
+  const [verLibro, setVerLibro] = useState(true)
 
   /**
    * Las tres cuentas de la lista, cada una honesta sobre lo que sabe.
@@ -138,7 +144,9 @@ export default function BloqueHoy({
             onGuardado={onAnclaGuardada} onRecargarLibro={onRecargarLibro} />
 
           <FormMovimiento fechaInicial={hoy} cuentas={cuentas} agenda={agenda}
-            maxFecha={hoy} onGuardado={onMovimientoGuardado} />
+            maxFecha={hoy} onGuardado={onMovimientoGuardado}
+            categorias={categorias} onCategoriaCreada={onCategoriaCreada}
+            tasaGmf={libro.estado === 'listo' ? (libro.valor.tasa_gmf ?? null) : null} />
 
           <div className="px-4 py-2.5">
             <button onClick={() => setVerLibro(v => !v)}

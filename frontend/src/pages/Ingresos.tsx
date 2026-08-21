@@ -559,7 +559,7 @@ export default function Ingresos() {
           )}
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-widest text-amber-600">
-              Ingreso · Mercancía
+              Recibir mercancía
             </p>
             <button
               onClick={() => setShowPickerProv(true)}
@@ -990,7 +990,7 @@ export default function Ingresos() {
           )}
           {exito && (
             <div className="mx-4 mt-3 px-3 py-2.5 bg-green-50 border border-green-100 rounded-xl flex items-center gap-2 text-sm font-semibold text-green-700">
-              <Check size={15} /> Ingreso registrado correctamente
+              <Check size={15} /> Mercancía recibida y registrada
             </div>
           )}
 
@@ -1018,7 +1018,7 @@ export default function Ingresos() {
             }}
           >
             <Check size={16} strokeWidth={2.5} />
-            {saving ? 'Guardando…' : valorTotal ? `Registrar · ${fmt(Number(valorTotal))}` : 'Registrar ingreso'}
+            {saving ? 'Guardando…' : valorTotal ? `Registrar · ${fmt(Number(valorTotal))}` : 'Registrar el recibo'}
           </button>
         </div>
       </div>

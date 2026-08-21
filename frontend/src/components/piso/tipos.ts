@@ -170,6 +170,29 @@ export interface Piso {
   /** [] con puerta `sin_razones`. Nunca `undefined`. */
   sesgos: SesgoPiso[]
   rotulo: 'al_menos'
+  /**
+   * Los TRES números del equilibrio: lo de cada sede y lo corporativo que las
+   * dos cubren entre las dos — expuesto, jamás prorrateado. Con el mismo
+   * divisor que el piso, la suma de las tres `venta_necesaria` ES `piso_mes`.
+   * Con `?` por la ventana de deploy: ausente = el servidor no lo desglosa
+   * todavía, y el bloque lo dice en vez de inventar tres ceros.
+   */
+  por_sede?: {
+    sedes: EquilibrioSede[]
+    corporativo: EquilibrioSede
+  }
+}
+
+/** Una fila del equilibrio por sede. En la corporativa `tienda_id`,
+ *  `ventas_mes` y `avance_pct` van en null: lo corporativo no vende. */
+export interface EquilibrioSede {
+  tienda_id: number | null
+  nombre: string
+  costos_fijos: number
+  /** null sin margen positivo: no se inventa una venta necesaria. */
+  venta_necesaria: number | null
+  ventas_mes: number | null
+  avance_pct: number | null
 }
 
 // ─── La forma EXACTA de `GET /costos/palancas` ───────────────────────────────

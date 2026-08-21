@@ -94,6 +94,9 @@ class MovimientoIn(BaseModel):
     # Si el movimiento paga una obligación ya cargada, se enlaza: así el
     # calendario puede tachar ese vencimiento en vez de mostrarlo pendiente.
     obligacion_id: Optional[int] = None
+    # La categoría del movimiento (cualquier ámbito: café, personal, banco).
+    # Opcional: un movimiento sin clasificar es válido, no un error.
+    categoria_id: Optional[int] = None
     nota: Optional[str] = None
 
 
@@ -134,6 +137,56 @@ def libro_del_mes(
     return banco.libro(db, desde, hasta)
 
 
+@router.get("/por-categoria")
+def por_categoria(
+    anio: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Cuánto se está yendo en cada cosa, mes a mes: las salidas del libro
+    agrupadas por categoría, los doce meses del año. Lo sin categoría viaja
+    como «Sin clasificar» — dicho, no escondido."""
+    a, _ = _anio_mes(anio, None)
+    return banco.por_categoria_anual(db, a)
+
+
+@router.get("/consignaciones-preview")
+def preview_consignaciones(
+    desde: date = Query(...),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Qué cambiaría si las consignaciones entraran solas al libro desde esa
+    fecha: cuántas son y cuánta plata, y qué entradas de Occidente ya tecleadas
+    en ese rango quedarían contadas DOS veces. Es la vista previa con la que se
+    decide la activación — nunca un interruptor a ciegas."""
+    if desde < LIBRO_DESDE:
+        raise HTTPException(400, "Esa fecha es anterior al año 2000: revisá lo "
+                                 "que tecleaste.")
+    return banco.preview_consignaciones(db, desde)
+
+
+class ConsignacionesDesdeIn(BaseModel):
+    desde: date
+
+
+@router.post("/consignaciones-desde")
+def activar_consignaciones(
+    data: ConsignacionesDesdeIn,
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Activa el régimen: desde `desde`, cada consignación entra al libro en SU
+    día, como entrada de Occidente, sin que nadie la teclee. Se fija UNA vez."""
+    if data.desde < LIBRO_DESDE:
+        raise HTTPException(400, "Esa fecha es anterior al año 2000: revisá lo "
+                                 "que tecleaste.")
+    try:
+        return banco.activar_consignaciones(db, data.desde)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/serie")
 def serie_del_anio(
     anio: Optional[int] = Query(None),
@@ -146,6 +199,22 @@ def serie_del_anio(
     ese mes (falta el saldo del extracto): no es un cierre de cero.
     """
     return banco.serie_mensual(db, _anio(anio))
+
+
+@router.get("/proyeccion")
+def proyeccion_de_meses(
+    meses: int = Query(3, ge=1, le=12),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """«Lo que viene»: el cierre ESTIMADO de los próximos meses, aprendido del
+    ritmo del libro. Es una guía para prepararse, no una promesa.
+
+    `base` en null con un `motivo` es una respuesta, no una falla: no hay
+    historial suficiente (o falta el saldo del extracto) para estimar sin
+    inventar. La pantalla lo dice y no dibuja números.
+    """
+    return banco.proyeccion(db, hoy_col(), meses)
 
 
 @router.get("/cuentas")
@@ -213,7 +282,8 @@ def crear_movimiento(
     try:
         mov = banco.registrar(
             db, data.fecha, data.cuenta_id, data.tipo, data.monto, data.concepto,
-            usuario_id=admin.id, obligacion_id=data.obligacion_id, nota=data.nota)
+            usuario_id=admin.id, obligacion_id=data.obligacion_id, nota=data.nota,
+            categoria_id=data.categoria_id)
     except ValueError as e:
         # El texto del servicio ya está escrito para que lo lea el dueño.
         raise HTTPException(400, str(e))
@@ -223,7 +293,19 @@ def crear_movimiento(
     # que vienen adentro de `dias[].movimientos`, y la pantalla no necesita
     # aprender dos formas del mismo objeto.
     fila = banco.libro(db, mov.fecha, mov.fecha)["dias"][0]
-    return next(m for m in fila["movimientos"] if m["id"] == mov.id)
+    out = next(m for m in fila["movimientos"] if m["id"] == mov.id)
+    # Bajo el régimen de consignaciones-al-libro, una entrada de Occidente
+    # tecleada puede ser la MISMA plata que una consignación ya proyectada.
+    # No se bloquea (una transferencia recibida es legítima) pero se dice, con
+    # la clave aditiva que el bundle viejo ignora.
+    corte = banco.consignaciones_desde(db)
+    if (corte is not None and data.tipo == "entrada" and data.fecha >= corte
+            and out.get("cuenta") == "Occidente"):
+        out["advertencia"] = (
+            "Ojo: desde el " + corte.isoformat() + " las consignaciones entran "
+            "solas al libro. Si esta entrada es una consignación, ya está "
+            "contada y quedaría dos veces — borrala si es el caso.")
+    return out
 
 
 @router.delete("/movimientos/{movimiento_id}")

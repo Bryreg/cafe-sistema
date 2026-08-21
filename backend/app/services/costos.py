@@ -23,7 +23,8 @@ from fastapi import HTTPException
 from sqlalchemy import func, not_, or_
 from sqlalchemy.orm import Session
 
-from app.core.tz import dia_col, hoy_col, inicio_dia_col_utc, rango_col_utc
+from app.core.tz import (dia_col, fin_dia_col_utc, hoy_col, inicio_dia_col_utc,
+                         rango_col_utc)
 from app.models.models import (CajaTurno, Configuracion, Consignacion,
                                CostoCategoria, EntregaTurno,
                                EstadoConsignacionEnum, EstadoTurnoEnum,
@@ -63,9 +64,13 @@ from app.services.producto_alias import normalizar_alias
 # Misma razón para la clave de categoría prohibida: el P&L la excluye del término
 # de obligaciones y este servicio la rechaza en la entrada — las dos mitades tienen
 # que hablar de la MISMA constante.
-from app.services.rentabilidad import (CLAVE_CATEGORIA_IMPOCONSUMO,
+from app.services.rentabilidad import (CLAVE_CATEGORIA_CESANTIAS,
+                                       CLAVE_CATEGORIA_IMPOCONSUMO,
                                        CLAVE_CATEGORIA_NOMINA,
+                                       CLAVE_CATEGORIA_PRIMA,
                                        CLAVE_CATEGORIA_PROVEEDORES,
+                                       CLAVE_CATEGORIA_RETEFUENTE,
+                                       CLAVE_CATEGORIA_RETEICA,
                                        CLAVES_FUERA_DEL_GASTO,
                                        ESTADOS_ANULADOS, _CONCEPTOS_COMPRA)
 # El piso de venta necesita el P&L entero (para MEDIR las razones de la venta) y
@@ -78,6 +83,13 @@ from app.services import rentabilidad as rent_svc
 from app.services import parametros_tributarios as ptsvc
 
 METODOS_PAGO = {"efectivo", "transferencia", "tarjeta", "cheque", "otro"}
+
+# Los métodos cuya plata sale de una CUENTA y pueden descontar del libro del
+# banco en el mismo pago. El efectivo sale del cajón o de la mano — meterlo al
+# libro escribiría una salida que el extracto nunca va a tener. ESPEJADO en el
+# front (components/plata/tipos.ts: METODOS_DE_BANCO). SYNC: si cambia acá,
+# cambiar allá.
+METODOS_BANCO = {"transferencia", "cheque"}
 ESTADOS = {"pendiente", "parcial", "pagada", "anulada"}
 
 
@@ -162,15 +174,48 @@ CATEGORIAS_INICIALES: list[dict] = [
     {"clave": "otros",         "nombre": "Otros",         "grupo": "fijo"},
     {"clave": CLAVE_CATEGORIA_IMPOCONSUMO,
      "nombre": "Impoconsumo (DIAN)", "grupo": "variable"},
+    # Lo que sale de la caja y NO es costo del mes (decisión del dueño; el
+    # detalle en rentabilidad.py, junto a CLAVES_FUERA_DEL_GASTO). Nacen en
+    # 'variable' por la misma razón que el impoconsumo: el grupo es la segunda
+    # puerta — si alguien rompiera la exclusión por clave, en 'fijo' además
+    # inflarían el numerador del piso. Elegibles a mano (las carga él), con el
+    # trato dicho en el catálogo (`fuera_del_gasto`).
+    {"clave": CLAVE_CATEGORIA_RETEFUENTE, "nombre": "Retefuente", "grupo": "variable"},
+    {"clave": CLAVE_CATEGORIA_RETEICA,    "nombre": "Reteica",    "grupo": "variable"},
+    {"clave": CLAVE_CATEGORIA_PRIMA,
+     "nombre": "Prima (giro jun/dic)", "grupo": "variable"},
+    {"clave": CLAVE_CATEGORIA_CESANTIAS,
+     "nombre": "Cesantías (giro feb)", "grupo": "variable"},
+    # Los costos del propio banco: solo etiquetan filas del LIBRO (ambito
+    # 'banco'), jamás obligaciones. Julio real: $191.196 de GMF y $11.567 de
+    # comisión que ningún reporte veía.
+    {"clave": "gmf", "nombre": "GMF (4×1000)", "grupo": "variable",
+     "ambito": "banco"},
+    {"clave": "comision_banco", "nombre": "Comisión bancaria", "grupo": "variable",
+     "ambito": "banco"},
 ]
 
-# Las categorías que el formulario NO puede elegir. Es EXACTAMENTE la lista que
-# el P&L excluye del gasto, y no una segunda lista que se le parezca: son la
-# misma regla mirada de los dos lados. Una categoría cuya plata el P&L no cuenta
-# como gasto tiene que ser inelegible a mano, o el dueño se fabrica obligaciones
-# que no aparecen en ningún margen y nadie le avisa. Que el alias sea una
-# asignación y no una tupla nueva es el candado: no se pueden desincronizar.
-CLAVES_NO_ELEGIBLES = CLAVES_FUERA_DEL_GASTO
+# Las categorías que el formulario de OBLIGACIONES no puede elegir. Ya no es un
+# alias de CLAVES_FUERA_DEL_GASTO: retefuente, reteica, prima y cesantías están
+# FUERA del gasto (el P&L no las cuenta) pero las carga el dueño A MANO — están
+# en su lista de pagos con fecha («antes del 18»), y bloquearlas lo dejaría sin
+# dónde ponerlas. La regla nueva tiene dos partes y un invariante:
+#   · NO ELEGIBLE = tiene una puerta del sistema que la carga mejor (el botón
+#     del impoconsumo, la factura del proveedor); elegirla a mano duplicaría.
+#   · FUERA DEL GASTO pero elegible = el trato viaja DICHO en el catálogo
+#     (`fuera_del_gasto` en la serialización) para que la pantalla lo muestre,
+#     en vez de esconder la categoría.
+#   · INVARIANTE (fijado por test): NO_ELEGIBLES ⊆ FUERA_DEL_GASTO — una
+#     categoría con puerta del sistema jamás puede contar en el gasto, o la
+#     puerta y el formulario contarían la misma plata dos veces.
+CLAVES_NO_ELEGIBLES = (CLAVE_CATEGORIA_PROVEEDORES, CLAVE_CATEGORIA_IMPOCONSUMO)
+
+# Los tres mundos de una categoría. 'cafe' es el único que puede colgar
+# obligaciones; 'personal' y 'banco' solo etiquetan filas del libro del banco.
+# Cerrado acá y validado en la entrada: un ámbito inventado no es una opinión,
+# es un typo.
+AMBITOS = ("cafe", "personal", "banco")
+AMBITO_DEFAULT = "cafe"
 
 # Marca en `configuracion` de que la corrección de grupos ya se aplicó.
 RECLASIFICACION_GRUPOS_V1 = "migracion_grupo_categorias_v1"
@@ -193,7 +238,9 @@ def sembrar_categorias(db: Session) -> int:
         if c["clave"] in existentes:
             continue
         db.add(CostoCategoria(clave=c["clave"], nombre=c["nombre"],
-                              grupo=c["grupo"], orden=i, activa=True))
+                              grupo=c["grupo"],
+                              ambito=c.get("ambito", AMBITO_DEFAULT),
+                              orden=i, activa=True))
         creadas += 1
     db.commit()
     return creadas
@@ -277,16 +324,38 @@ def _slug(nombre: str) -> str:
     return slug
 
 
-def crear_categoria(db: Session, nombre, grupo=None, usuario_id: int | None = None) -> dict:
+def _validar_ambito(ambito) -> str:
+    """None cae al café: es el caso de siempre y el de todos los clientes viejos."""
+    if ambito is None:
+        return AMBITO_DEFAULT
+    if ambito == "banco":
+        # Las de banco son DOS y las siembra el sistema (gmf, comision_banco):
+        # crear una tercera a mano diría que hay otro costo bancario que el
+        # extracto conoce y el sistema no — eso se agrega acá, no por API.
+        raise HTTPException(400, "Las categorías del banco (GMF, comisión) ya "
+                                 "existen: elegilas en el libro en vez de crear "
+                                 "una nueva.")
+    if ambito not in AMBITOS:
+        raise HTTPException(400, "El ámbito tiene que ser «cafe» o «personal».")
+    return ambito
+
+
+def crear_categoria(db: Session, nombre, grupo=None, usuario_id: int | None = None,
+                    ambito=None) -> dict:
     """Crea una categoría de costo. El grupo por defecto es FIJO.
 
     Existe porque el catálogo eran seis filas quemadas en el arranque, y hoy
     publicidad, internet, domicilios, seguros y el contador caen todos en
     «Otros» — cinco costos distintos en una sola línea del P&L, que es lo mismo
     que no tener desglose.
+
+    `ambito="personal"` crea una categoría de la plata del dueño (la cuota del
+    carro, la casa): solo etiqueta filas del libro del banco y jamás cuelga
+    obligaciones ni toca el resultado o el punto de equilibrio.
     """
     limpio = _validar_nombre_categoria(nombre)
     grupo_ok = _validar_grupo(grupo)
+    ambito_ok = _validar_ambito(ambito)
     clave = _slug(limpio)
     if clave == CLAVE_CATEGORIA_PROVEEDORES:
         raise HTTPException(
@@ -315,13 +384,14 @@ def crear_categoria(db: Session, nombre, grupo=None, usuario_id: int | None = No
 
     ultimo = db.query(func.max(CostoCategoria.orden)).scalar()
     fila = CostoCategoria(clave=clave, nombre=limpio, grupo=grupo_ok,
-                          orden=(ultimo or 0) + 1, activa=True)
+                          ambito=ambito_ok, orden=(ultimo or 0) + 1, activa=True)
     db.add(fila)
     db.flush()
     audit.registrar(
         db, accion="crear_categoria_costo", tabla="costos_categorias",
         registro_id=fila.id, usuario_id=usuario_id,
-        datos_despues={"clave": fila.clave, "nombre": fila.nombre, "grupo": fila.grupo},
+        datos_despues={"clave": fila.clave, "nombre": fila.nombre,
+                       "grupo": fila.grupo, "ambito": fila.ambito},
     )
     db.commit()
     db.refresh(fila)
@@ -371,14 +441,29 @@ def _serializar_categoria(c: CostoCategoria) -> dict:
     pantalla pueda mostrarla DESPUÉS de guardar, que es cuando el dueño todavía
     está mirando lo que acaba de hacer."""
     return {"id": c.id, "clave": c.clave, "nombre": c.nombre,
-            "grupo": c.grupo, "orden": c.orden, "activa": bool(c.activa),
+            "grupo": c.grupo, "ambito": getattr(c, "ambito", AMBITO_DEFAULT),
+            "fuera_del_gasto": c.clave in CLAVES_FUERA_DEL_GASTO,
+            "orden": c.orden, "activa": bool(c.activa),
             "advertencia": GRUPOS.get(c.grupo, {}).get("advertencia")}
 
 
-def listar_categorias(db: Session, incluir_inactivas: bool = False) -> list:
+def listar_categorias(db: Session, incluir_inactivas: bool = False,
+                      ambito: str | None = AMBITO_DEFAULT) -> list:
+    """El catálogo, filtrado por ámbito. El default es «cafe» A PROPÓSITO: los
+    consumidores de siempre son los formularios de obligaciones, y ahí una
+    categoría personal o del banco no puede aparecer. `ambito=None` trae todas
+    (el libro del banco etiqueta con cualquiera).
+
+    `fuera_del_gasto` viaja en cada fila: retefuente, reteica, prima y cesantías
+    SÍ se eligen pero su plata no cuenta como costo del mes, y ese trato tiene
+    que estar dicho donde el dueño elige — no descubierto meses después en un
+    margen que no cuadra.
+    """
     q = db.query(CostoCategoria)
     if not incluir_inactivas:
         q = q.filter(CostoCategoria.activa == True)  # noqa: E712
+    if ambito is not None:
+        q = q.filter(CostoCategoria.ambito == ambito)
     # NI 'proveedores' NI 'impoconsumo' se ofrecen nunca, ni siquiera con
     # incluir_inactivas: una categoría que `_validar_categoria` rechaza no puede
     # estar en el desplegable del formulario. Las FILAS se conservan (hay
@@ -388,7 +473,9 @@ def listar_categorias(db: Session, incluir_inactivas: bool = False) -> list:
     q = q.filter(CostoCategoria.clave.notin_(CLAVES_NO_ELEGIBLES))
     cats = q.order_by(CostoCategoria.orden, CostoCategoria.nombre).all()
     return [{"id": c.id, "clave": c.clave, "nombre": c.nombre,
-             "grupo": c.grupo, "orden": c.orden} for c in cats]
+             "grupo": c.grupo, "ambito": getattr(c, "ambito", AMBITO_DEFAULT),
+             "fuera_del_gasto": c.clave in CLAVES_FUERA_DEL_GASTO,
+             "orden": c.orden} for c in cats]
 
 
 # ── Estado derivado ─────────────────────────────────────────────────────────
@@ -559,6 +646,22 @@ def _validar_categoria(db: Session, categoria_id: int) -> CostoCategoria:
         raise HTTPException(400, "Categoría de costo inexistente")
     if not cat.activa:
         raise HTTPException(400, f"La categoría «{cat.nombre}» está desactivada — elegí otra")
+    # El ámbito manda antes que la clave: una categoría personal o del banco no
+    # puede colgar obligaciones NUNCA. La personal es plata del dueño como
+    # persona natural — si entrara acá, terminaría en la agenda del café y a un
+    # grupo de distancia de ensuciarle el punto de equilibrio.
+    ambito = getattr(cat, "ambito", AMBITO_DEFAULT) or AMBITO_DEFAULT
+    if ambito == "personal":
+        raise HTTPException(
+            400, f"«{cat.nombre}» es una categoría de plata personal: no entra a "
+                 "las cuentas del café. Los gastos personales se anotan directo "
+                 "en el libro del banco, y no tocan el resultado ni el punto de "
+                 "equilibrio.")
+    if ambito == "banco":
+        raise HTTPException(
+            400, f"«{cat.nombre}» es un costo del propio banco: se anota directo "
+                 "en el libro (el sistema lo sugiere al registrar salidas), no "
+                 "como una cuenta por pagar.")
     # DECISIÓN (opción a de la revisión): la categoría se BLOQUEA en la entrada en
     # vez de marcarse "no computa en el P&L". El doble conteo no era solo del P&L:
     # una obligación de proveedor también aparece en la Agenda y en el Flujo al
@@ -688,12 +791,14 @@ def crear_obligacion(db: Session, data, usuario_id: int,
                      barista_nombre: str | None = None) -> dict:
     _validar_categoria(db, data.categoria_id)
     _validar_tienda(db, data.tienda_id)
+    monto = _validar_monto(data.monto)
+    _validar_nomina_a_mano(db, data.categoria_id, monto, data.fecha_devengo)
     obligacion = Obligacion(
         tienda_id=data.tienda_id,
         categoria_id=data.categoria_id,
         concepto=_validar_concepto(data.concepto),
         beneficiario=(data.beneficiario or "").strip() or None,
-        monto=_validar_monto(data.monto),
+        monto=monto,
         fecha_devengo=data.fecha_devengo,
         fecha_vencimiento=data.fecha_vencimiento,
         nota=data.nota,
@@ -751,6 +856,15 @@ def editar_obligacion(db: Session, obligacion_id: int, data, usuario_id: int) ->
         obligacion.nota = campos["nota"]
     if "imagen_url" in campos:
         obligacion.imagen_url = campos["imagen_url"]
+
+    # Con los campos ya aplicados y ANTES del commit: la edición también puede
+    # convertir una fila en «la nómina del mes» (cambiando la categoría, el
+    # devengo o bajando el monto a una quincena), y esa fila apaga el cálculo
+    # igual que una creada de cero. Solo se recalcula si se tocó algo que pesa:
+    # liquidar el mes por editar una nota sería castigar la edición inocente.
+    if {"monto", "categoria_id", "fecha_devengo"} & campos.keys():
+        _validar_nomina_a_mano(db, obligacion.categoria_id,
+                               float(obligacion.monto), obligacion.fecha_devengo)
 
     audit.registrar(
         db, accion="editar_obligacion", tabla="obligaciones",
@@ -1997,6 +2111,62 @@ def _obligacion_de_nomina_del_mes(db: Session, desde: date, hasta: date):
     )
 
 
+# Una quincena es la MITAD del mes, y la liquidación real del contador difiere
+# del cálculo por puntos (retención en la fuente, embargos, el redondeo de
+# PILA), no por mitades: el corte en 3/5 deja pasar cualquier liquidación
+# completa y rebota la quincena. Más alta que el cálculo entra siempre — el
+# mismo criterio asimétrico que el quinto del impoconsumo.
+FRACCION_MINIMA_NOMINA = 0.6
+
+
+def _nomina_calculada_del_mes(db: Session, anio: int, mes: int) -> float:
+    """El costo laboral que el sistema calcula para ese mes, con la MISMA regla
+    de fuente que el agendado: mes terminado → horas reales (consolidada); en
+    curso o futuro → contratos (proyectada)."""
+    _desde, hasta = nomina_svc.rango_mes(anio, mes)
+    calculo = (nomina_svc.consolidada(db, anio, mes) if hasta < hoy_col()
+               else nomina_svc.proyectada(db, anio, mes))
+    return round(float(calculo["totales"]["total_costo_empleador"]), 2)
+
+
+def _validar_nomina_a_mano(db: Session, categoria_id: int, monto: float,
+                           fecha_devengo) -> None:
+    """El candado de la nómina parcial.
+
+    Una obligación de nómina devengada en un mes APAGA el cálculo del mes
+    ENTERO (`rentabilidad._nomina_del_periodo`: «si el mes tiene nómina cargada
+    a mano, gana la mano») sin mirar el monto: una «Nómina quincena» de la
+    mitad dejaba el costo laboral del mes en la mitad y el margen se veía mejor
+    de lo que está, sin ningún aviso. El error es MUDO y tranquilizador — la
+    familia entera de este repo.
+
+    Se compara contra el cálculo del mes del DEVENGO. Sin cálculo (>0) no hay
+    contra qué comparar y la mano es la única fuente: pasa.
+    """
+    cat = db.get(CostoCategoria, categoria_id)
+    if cat is None or cat.clave != CLAVE_CATEGORIA_NOMINA or fecha_devengo is None:
+        return
+    calculada = _nomina_calculada_del_mes(db, fecha_devengo.year, fecha_devengo.month)
+    if calculada <= 0 or float(monto) >= calculada * FRACCION_MINIMA_NOMINA:
+        return
+    raise HTTPException(400, _mensaje_nomina_parcial(
+        float(monto), calculada,
+        f"{MESES_ES[fecha_devengo.month - 1]} {fecha_devengo.year}"))
+
+
+def _mensaje_nomina_parcial(valor: float, calculada: float, mes_nombre: str) -> str:
+    return (
+        f"Escribiste ${valor:,.0f} de nómina para {mes_nombre} y el sistema "
+        f"calcula ${calculada:,.0f} con los contratos y turnos cargados. Una "
+        "nómina cargada a mano apaga el cálculo del mes ENTERO: con esa cifra "
+        "el costo laboral del mes quedaría en menos de la mitad y el margen se "
+        "vería mejor de lo que está, sin ningún aviso. Si es una quincena, no "
+        "va sola: cargá el mes completo (el monto se corrige después si hace "
+        "falta). Si es la liquidación completa de tu contador, fijate si no le "
+        "falta un dígito — parecida al cálculo entra, y más alta entra siempre."
+    )
+
+
 def _con_pagos(db: Session, obligacion: Obligacion) -> dict:
     """Serializa una obligación con sus pagos vivos y lo ya salido del banco.
     Tres líneas que se repetían en cada retorno de este módulo."""
@@ -2091,6 +2261,15 @@ def agendar_nomina(db: Session, anio: int, mes: int, usuario_id: int,
     # el papel.
     valor = (_validar_monto(monto) if monto is not None
              else round(float(totales["total_costo_empleador"]), 2))
+    # El monto a mano del agendado pasa por el MISMO candado que la obligación
+    # manual: una quincena entra igual de callada por este botón que por el
+    # formulario, y apaga el mismo mes. El cálculo ya está hecho — se compara
+    # contra él sin liquidar de nuevo.
+    calculada = round(float(totales["total_costo_empleador"]), 2)
+    if (monto is not None and calculada > 0
+            and valor < calculada * FRACCION_MINIMA_NOMINA):
+        raise HTTPException(400, _mensaje_nomina_parcial(
+            valor, calculada, f"{MESES_ES[int(mes) - 1]} {int(anio)}"))
     if valor <= 0:
         # Un cero acá es «nadie cargó los sueldos», no «la nómina no cuesta».
         # Crear la obligación en $0 la dejaría marcada como cargada y APAGARÍA el
@@ -2342,35 +2521,162 @@ def _agenda_por_categoria(items: list) -> list:
     return sorted(acc.values(), key=lambda g: (-g["monto"], g["clave"]))
 
 
+# ── Patrones de pago ────────────────────────────────────────────────────────
+
+# Los nombres de los días, para el texto del patrón («los viernes»). Lunes = 0,
+# como date.weekday().
+_DIAS_SEMANA_ES = ("los lunes", "los martes", "los miércoles", "los jueves",
+                   "los viernes", "los sábados", "los domingos")
+
+# Cuántos pagos hacen un patrón. Con dos, cualquier coincidencia es casualidad;
+# con tres ya es una costumbre que vale la pena proponer.
+_MIN_PAGOS_PATRON = 3
+
+
+def get_patrones_de_pago(db: Session) -> dict:
+    """«Esto lo pagás todos los viernes», «esto siempre antes del 15».
+
+    EL PATRÓN SE APRENDE, NO SE TECLEA (pedido del dueño): el sistema ya tiene
+    el historial —`Pago.fecha_pago` es el día que salió la plata— así que la
+    costumbre se DERIVA de ahí y se propone, en vez de pedirle que la escriba.
+    Es la columna «FECHA APROX» de su hoja, deducida de lo que él mismo hizo.
+
+    La cuenta se agrupa con `_llave_de_cuenta` (concepto normalizado + sede),
+    la MISMA llave de «armar el mes»: dos escrituras del mismo arriendo son una
+    sola costumbre. Tres reglas, de la más específica a la más laxa, y la que
+    no matchea ninguna NO SE PUBLICA — proponer un patrón dudoso es peor que no
+    proponer nada:
+
+      · mismo día de semana en ≥ 70% de los pagos → «los viernes»
+      · días del mes en una ventana de ±4        → «cerca del día 14»
+      · todos a más tardar el 18                 → «siempre antes del 19»
+
+    Cada patrón viaja con su soporte («4 de 5») para que el dueño pueda
+    descreerle con fundamento.
+    """
+    filas = (db.query(Pago, Obligacion)
+             .join(Obligacion, Obligacion.id == Pago.obligacion_id)
+             .filter(Pago.anulado == False,  # noqa: E712
+                     Pago.obligacion_id.isnot(None),
+                     Obligacion.anulada == False)  # noqa: E712
+             .all())
+
+    grupos: dict[tuple, dict] = {}
+    for pago, ob in filas:
+        g = grupos.setdefault(_llave_de_cuenta(ob), {
+            "concepto": ob.concepto, "tienda_id": ob.tienda_id, "fechas": []})
+        g["fechas"].append(pago.fecha_pago)
+
+    tiendas = {t.id: t.nombre for t in db.query(Tienda).all()}
+    patrones = []
+    for g in grupos.values():
+        fechas = sorted(g["fechas"])
+        n = len(fechas)
+        if n < _MIN_PAGOS_PATRON:
+            continue
+        patron = _detectar_patron(fechas)
+        if patron is None:
+            continue
+        patrones.append({
+            "concepto": g["concepto"],
+            "tienda_id": g["tienda_id"],
+            "tienda_nombre": tiendas.get(g["tienda_id"]),
+            "n_pagos": n,
+            **patron,
+        })
+    patrones.sort(key=lambda p: (-p["n_pagos"], p["concepto"]))
+    return {"patrones": patrones}
+
+
+def _detectar_patron(fechas: list) -> dict | None:
+    """El patrón de una lista de fechas de pago, o None si no hay uno claro."""
+    n = len(fechas)
+    dias_semana = [f.weekday() for f in fechas]
+    moda = max(set(dias_semana), key=dias_semana.count)
+    soporte_semana = dias_semana.count(moda)
+    if soporte_semana / n >= 0.7:
+        return {"tipo": "dia_semana", "dia": moda,
+                "soporte": soporte_semana,
+                "texto": f"{_DIAS_SEMANA_ES[moda]} ({soporte_semana} de {n})"}
+
+    dias_mes = sorted(f.day for f in fechas)
+    if dias_mes[-1] - dias_mes[0] <= 4:
+        centro = dias_mes[len(dias_mes) // 2]
+        return {"tipo": "dia_del_mes", "dia": centro, "soporte": n,
+                "texto": f"cerca del día {centro} ({n} de {n})"}
+
+    if dias_mes[-1] <= 18:
+        return {"tipo": "antes_del", "dia": dias_mes[-1] + 1, "soporte": n,
+                "texto": f"siempre antes del {dias_mes[-1] + 1} ({n} de {n})"}
+    return None
+
+
 # ── Pagos ───────────────────────────────────────────────────────────────────
 
 def registrar_pago(db: Session, data, usuario_id: int,
                    barista_id: int | None = None,
                    barista_nombre: str | None = None) -> dict:
     """El pago es lo que hace útil todo el módulo: fecha_pago es EL DÍA QUE SALIÓ
-    LA PLATA, un dato que hoy no existe en ninguna tabla del sistema."""
-    tiene_obligacion = data.obligacion_id is not None
-    tiene_factura = data.factura_id is not None
-    if tiene_obligacion and tiene_factura:
-        raise HTTPException(400, "El pago apunta a una obligación O a una factura, no a las dos")
-    if not tiene_obligacion and not tiene_factura:
-        raise HTTPException(400, "El pago debe apuntar a una obligación o a una factura")
+    LA PLATA, un dato que hoy no existe en ninguna tabla del sistema.
+
+    Con `descontar_banco`, la salida del libro del banco nace EN LA MISMA
+    transacción, enlazada por `obligacion_id`. Antes eran dos escrituras del
+    frontend (el pago y después el movimiento): si la segunda fallaba, el
+    vencimiento quedaba tachado y el saldo del banco no bajaba — la ventana
+    exacta que la composición cierra.
+    """
+    if data.factura_id is not None:
+        # PUERTA CERRADA. Este camino creaba la fila Pago pero JAMÁS tocaba
+        # FacturaCompra.valor_pagado: la factura seguía debiendo lo mismo en la
+        # agenda y en todas las pantallas, con el pago guardado en una tabla que
+        # su saldo no lee. Una puerta que registra sin efecto es peor que un
+        # error: parece que funcionó.
+        raise HTTPException(400, (
+            "El pago de una factura de proveedor no va por acá: esta puerta "
+            "guardaba el pago en una tabla que el saldo de la factura no lee — "
+            "la factura seguía debiendo lo mismo, con tu pago invisible. "
+            "Pagala desde su propia fila en «Lo que baja el margen», que sí "
+            "mueve el saldo."
+        ))
+    if data.obligacion_id is None:
+        raise HTTPException(400, "El pago debe apuntar a una obligación")
     if data.metodo not in METODOS_PAGO:
         raise HTTPException(400, "Método inválido: efectivo | transferencia | tarjeta | cheque | otro")
     monto = _validar_monto(data.monto)
 
-    tienda_id = None
-    if tiene_obligacion:
-        obligacion = db.query(Obligacion).filter(Obligacion.id == data.obligacion_id).first()
-        if not obligacion:
-            raise HTTPException(404, "Obligación no encontrada")
-        if obligacion.anulada:
-            raise HTTPException(400, "La obligación está anulada — no admite pagos")
-        tienda_id = obligacion.tienda_id   # snapshot copiado del padre
+    obligacion = db.query(Obligacion).filter(Obligacion.id == data.obligacion_id).first()
+    if not obligacion:
+        raise HTTPException(404, "Obligación no encontrada")
+    if obligacion.anulada:
+        raise HTTPException(400, "La obligación está anulada — no admite pagos")
+    tienda_id = obligacion.tienda_id   # snapshot copiado del padre
+
+    descontar = bool(getattr(data, "descontar_banco", False))
+    if descontar:
+        # Las mismas cotas que el POST directo al libro (routers/banco.py), con
+        # el texto pensado para este gesto: acá el dueño está PAGANDO, y el
+        # motivo del rechazo tiene que hablar del pago.
+        if data.metodo not in METODOS_BANCO:
+            raise HTTPException(400, (
+                "«Descontar del banco» va solo con un método que salga de la "
+                "cuenta (transferencia o cheque). El efectivo sale del cajón o "
+                "de tu mano: meterlo al libro escribiría una salida que el "
+                "extracto nunca va a tener."
+            ))
+        if data.fecha_pago > hoy_col():
+            raise HTTPException(400, (
+                "El libro del banco es de plata que YA se movió: para "
+                "descontar del banco, la fecha del pago no puede ser futura."
+            ))
+        if data.cuenta_id is None:
+            raise HTTPException(400, (
+                "Elegí de qué cuenta salió la plata (Occidente o Bold) para "
+                "descontarla del banco."
+            ))
 
     pago = Pago(
         obligacion_id=data.obligacion_id,
-        factura_id=data.factura_id,
+        factura_id=None,
         tienda_id=tienda_id,
         monto=monto,
         fecha_pago=data.fecha_pago,
@@ -2383,15 +2689,35 @@ def registrar_pago(db: Session, data, usuario_id: int,
     )
     db.add(pago)
     db.flush()
+
+    movimiento_banco_id = None
+    if descontar:
+        try:
+            mov = banco_svc.registrar(
+                db, data.fecha_pago, data.cuenta_id, "salida", monto,
+                concepto=(obligacion.concepto or "")[:160],
+                usuario_id=usuario_id, obligacion_id=data.obligacion_id,
+                nota=(data.nota or None), commit=False)
+        except ValueError as e:
+            # El texto del servicio del banco ya está escrito para el dueño.
+            # El raise deshace también el pago: o entran los dos, o ninguno.
+            raise HTTPException(400, str(e))
+        movimiento_banco_id = mov.id
+
     audit.registrar(
         db, accion="registrar_pago_costo", tabla="pagos",
         registro_id=pago.id, usuario_id=usuario_id, tienda_id=tienda_id,
-        datos_despues={"obligacion_id": pago.obligacion_id, "factura_id": pago.factura_id,
-                       "monto": monto, "fecha_pago": pago.fecha_pago, "metodo": pago.metodo},
+        datos_despues={"obligacion_id": pago.obligacion_id, "factura_id": None,
+                       "monto": monto, "fecha_pago": pago.fecha_pago,
+                       "metodo": pago.metodo,
+                       "movimiento_banco_id": movimiento_banco_id},
     )
     db.commit()
     db.refresh(pago)
-    return _serializar_pago(pago)
+    # `movimiento_banco_id` viaja SIEMPRE (None cuando no se pidió): un cliente
+    # que pidió descontar y no ve la CLAVE está contra un servidor viejo, y esa
+    # ausencia es su señal para caer al camino de las dos escrituras.
+    return {**_serializar_pago(pago), "movimiento_banco_id": movimiento_banco_id}
 
 
 def anular_pago(db: Session, pago_id: int, usuario_id: int, motivo: str | None = None) -> dict:
@@ -4021,6 +4347,25 @@ def get_piso(db: Session, anio: int, mes: int) -> dict:
     cf = rent_svc.costos_fijos_del_mes(db, anio, mes)
     costos_fijos = cf["costos_fijos_devengados"]
 
+    # ── POR SEDE SE EXPONE, NO SE PRORRATEA ──────────────────────────────────
+    # Tres números: lo de Vida, lo de Palmetto, y lo CORPORATIVO que las dos
+    # cubren entre las dos. Si cada sede mirara solo lo suyo, las dos pasarían
+    # su piso y el negocio igual perdería plata (el corporativo pesa más que
+    # las dos juntas); prorratearlo tampoco — cualquier reparto es inventado.
+    # Es la misma decisión que `corporativas_fuera` en el P&L por sede.
+    #
+    # El corporativo sale por DIFERENCIA (global − Σ sedes) a propósito: las
+    # tres cifras usan la misma función con la misma ventana, así que la
+    # descomposición cierra por construcción y no puede desincronizarse del
+    # total que esta misma respuesta publica.
+    sedes_activas = (db.query(Tienda).filter(Tienda.activa == True)  # noqa: E712
+                     .order_by(Tienda.id).all())
+    fijos_por_sede = [
+        (t, rent_svc.costos_fijos_del_mes(db, anio, mes, t.id)["costos_fijos_devengados"])
+        for t in sedes_activas
+    ]
+    fijos_corporativo = round(costos_fijos - sum(v for _, v in fijos_por_sede), 2)
+
     # ── DENOMINADOR: la ventana simétrica con la venta real ──────────────────
     # Del 1 a HOY para el mes en curso; del 1 al último día para un mes cerrado
     # (ahí "hasta hoy" ya es el mes entero, y recortarlo sería mirar el futuro).
@@ -4093,6 +4438,57 @@ def get_piso(db: Session, anio: int, mes: int) -> dict:
 
     n_desechables = db.query(func.count(func.distinct(
         ProductoDesechable.producto_id))).scalar() or 0
+
+    # ── Los tres números del equilibrio, en venta necesaria ──────────────────
+    # Mismo divisor que el piso (el margen del negocio entero): así
+    # Σ(venta_necesaria) == piso_mes exacto y las cifras de la misma pantalla
+    # no se pueden contradecir. Un margen por sede sería otra medición con otra
+    # ventana — dos números para la misma pregunta.
+    def _venta_necesaria(fijos: float):
+        if margen_contribucion is None or margen_contribucion <= 0:
+            return None
+        return round(fijos / margen_contribucion, 2)
+
+    # La venta del mes POR SEDE, con la misma ventana y el mismo criterio que
+    # `ventas_mes` (cero cuando las razones son prestadas del mes anterior).
+    ventas_sede: dict[int, float] = {}
+    if razones is not None and razones_de == "mes_pedido":
+        filas_v = (db.query(Ticket.tienda_id, func.sum(Ticket.total))
+                   .filter(Ticket.fecha >= inicio_dia_col_utc(desde),
+                           Ticket.fecha <= fin_dia_col_utc(hasta_venta),
+                           Ticket.estado.notin_(ESTADOS_ANULADOS))
+                   .group_by(Ticket.tienda_id).all())
+        ventas_sede = {tid: round(float(v or 0.0), 2) for tid, v in filas_v}
+
+    def _fila_sede(t, fijos):
+        necesita = _venta_necesaria(fijos)
+        vendido = ventas_sede.get(t.id, 0.0) if t is not None else None
+        return {
+            "tienda_id": t.id if t is not None else None,
+            "nombre": t.nombre if t is not None else "Corporativo",
+            "costos_fijos": round(fijos, 2),
+            "venta_necesaria": necesita,
+            "ventas_mes": vendido,
+            # El avance es DESCRIPTIVO («va en 62%»), nunca un veredicto del
+            # día. El corporativo no vende: su avance no existe, no es cero.
+            "avance_pct": (round(vendido / necesita * 100, 1)
+                           if necesita and vendido is not None else None),
+        }
+
+    # ── La banda del contador: retefuente y reteica, fuera pero dichas ───────
+    # La clasificación vigente (la del dueño) las deja fuera del costo del mes;
+    # si el contador dice que son GASTO, el punto de equilibrio sube esto. La
+    # diferencia se publica en vez de elegirse en silencio — y menos para el
+    # lado que tranquiliza.
+    retenciones_mes = round(float(
+        db.query(func.sum(Obligacion.monto))
+        .join(CostoCategoria, CostoCategoria.id == Obligacion.categoria_id)
+        .filter(Obligacion.anulada == False,  # noqa: E712
+                Obligacion.fecha_devengo >= desde,
+                Obligacion.fecha_devengo <= fin_mes,
+                CostoCategoria.clave.in_((CLAVE_CATEGORIA_RETEFUENTE,
+                                          CLAVE_CATEGORIA_RETEICA)))
+        .scalar() or 0.0), 2)
 
     return {
         "anio": anio,
@@ -4174,10 +4570,32 @@ def get_piso(db: Session, anio: int, mes: int) -> dict:
         },
         "manda": manda,                     # 'resultado' | 'caja' | None
         "el_otro": otro,
+        # ── Los tres números, expuestos ──────────────────────────────────────
+        # «Vida necesita $X para lo suyo · Palmetto $Y · Corporativo $Z entre
+        # las dos.» Con el mismo divisor, la suma de las tres ventas necesarias
+        # ES piso_mes — la pantalla puede verificarlo a ojo.
+        "por_sede": {
+            "sedes": [_fila_sede(t, v) for t, v in fijos_por_sede],
+            "corporativo": _fila_sede(None, fijos_corporativo),
+        },
         # ── Lo que el número NO sabe ─────────────────────────────────────────
-        "sesgos": (_sesgos_del_piso(razones, int(n_desechables))
-                   if razones is not None else []),
-        # Los cuatro empujan para el mismo lado, así que el rótulo es uno solo y
+        "sesgos": ((_sesgos_del_piso(razones, int(n_desechables))
+                    if razones is not None else [])
+                   + [{
+                       "clave": "retenciones_fuera_del_gasto",
+                       "activo": bool(retenciones_mes > 0),
+                       "texto": ("retefuente y reteica están fuera del costo "
+                                 "del mes (la clasificación vigente; pendiente "
+                                 "confirmar con el contador)"),
+                       "detalle": {
+                           "monto_mes": retenciones_mes,
+                           # Cuánto subiría el punto de equilibrio si el
+                           # contador dice «gasto». None sin margen: no se
+                           # inventa.
+                           "subiria_piso": _venta_necesaria(retenciones_mes),
+                       },
+                   }]),
+        # Los sesgos empujan para el mismo lado, así que el rótulo es uno solo y
         # sale del backend: la pantalla no tiene que inferirlo de la lista.
         "rotulo": "al_menos",
     }

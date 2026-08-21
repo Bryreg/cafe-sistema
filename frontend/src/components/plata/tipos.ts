@@ -11,8 +11,37 @@
 // API": cada traducción es un lugar donde se recalcula plata con otra regla.
 
 // ── Catálogos ────────────────────────────────────────────────────────────────
-export interface Categoria { id: number; clave: string; nombre: string; grupo: string }
+export interface Categoria {
+  id: number
+  clave: string
+  nombre: string
+  grupo: string
+  /** 'cafe' | 'personal' | 'banco'. Con `?` por la ventana de deploy: ausente
+   *  se trata como café (es lo que un servidor viejo devuelve: solo café). */
+  ambito?: string
+  /** true = se elige pero su plata NO cuenta como costo del mes (retefuente,
+   *  reteica, prima, cesantías). El trato viaja dicho, no descubierto después. */
+  fuera_del_gasto?: boolean
+}
 export interface Tienda { id: number; nombre: string }
+
+/**
+ * Una costumbre de pago APRENDIDA del historial (`GET /costos/patrones-de-pago`).
+ * El backend solo publica la que es clara y la manda con su soporte («4 de 5»):
+ * la cuenta sin costumbre clara NO viene — proponer un patrón dudoso es peor
+ * que no proponer nada.
+ */
+export interface PatronDePago {
+  concepto: string
+  tienda_id: number | null
+  tienda_nombre: string | null
+  n_pagos: number
+  tipo: 'dia_semana' | 'dia_del_mes' | 'antes_del'
+  dia: number
+  soporte: number
+  /** Ya armado por el backend: «los viernes (4 de 4)», «cerca del día 14 (3 de 3)». */
+  texto: string
+}
 
 // ── Obligaciones (los costos fijos: arriendo, nómina, servicios) ─────────────
 export interface Pago {

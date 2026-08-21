@@ -7,7 +7,7 @@ from datetime import datetime
 from app.core.tz import dia_col, hoy_col, inicio_dia_col_utc
 from app.models.models import (FacturaCompra, FacturaCompraItem, TipoPagoEnum,
                                CajaTurno, MovimientoCaja, EstadoTurnoEnum,
-                               LoteInventario, Producto, Inventario)
+                               LoteInventario, Producto, Inventario, Pago)
 from app.services import inventario as inv_svc
 from app.services import audit
 from app.services import producto_alias as alias_svc
@@ -19,6 +19,39 @@ logger = logging.getLogger(__name__)
 # que manda sobre todas las demás en la agenda. Mismo criterio que el exclude_unset
 # de services/costos.py::editar_obligacion.
 _SIN_CAMBIO = object()
+
+# La forma de pago cuando el efectivo NO salió del cajón sino de la mano del
+# dueño. Sin turno abierto no hay cajón al que anotarle un egreso —el cierre ya
+# contó esa plata— así que el único origen físico posible es la mano (la plata
+# recogida); si en realidad la sacó del cajón cerrado, el cuadre de apertura
+# siguiente lo detecta como faltante, que es el candado que ya existe.
+#
+# El valor NO está en ("efectivo", "contado") a propósito: la reconciliación de
+# caja de `editar_factura` compara contra ese par para decidir si compensa el
+# cajón, y un pago que nunca lo tocó no puede generarle reembolsos fantasma.
+FORMA_EFECTIVO_MANO = "efectivo (de tu mano)"
+
+
+def _pago_desde_la_mano(db: Session, f: FacturaCompra, monto: float,
+                        usuario_id: int, barista_id: int | None = None,
+                        barista_nombre: str | None = None) -> None:
+    """El registro que faltaba cuando se paga en efectivo SIN turno abierto.
+
+    Antes este caso era un `if turno_activo:` sin else: `valor_pagado` subía
+    igual pero la salida física de la plata no quedaba en ninguna parte — ni
+    cajón ni mano—, y el sistema nunca se enteraba. El `Pago` con método
+    "efectivo" es exactamente la fila que el efectivo en mano ya resta
+    (`_efectivo_en_mano` en services/costos.py), así que la bolsa correcta baja
+    sola, con la fecha real del día.
+    """
+    db.add(Pago(
+        factura_id=f.id, tienda_id=f.tienda_id, monto=round(float(monto), 2),
+        fecha_pago=hoy_col(), metodo="efectivo",
+        nota="Pagada sin turno abierto: salió de la mano, no del cajón.",
+        usuario_id=usuario_id, barista_id=barista_id,
+        barista_nombre=barista_nombre,
+    ))
+    f.forma_pago_real = FORMA_EFECTIVO_MANO
 
 
 def eliminar_factura(db: Session, factura_id: int, usuario_id: int) -> dict:
@@ -92,6 +125,29 @@ def eliminar_factura(db: Session, factura_id: int, usuario_id: int) -> dict:
                     concepto=f"Reverso {concepto}", valor=mov.valor,
                     usuario_id=usuario_id, factura_id=f.id,
                 ))
+            else:
+                # Sin turno abierto no hay cajón que reciba el reverso. Antes
+                # esta rama no existía: la respuesta reportaba la plata como
+                # revertida y el ingreso compensatorio jamás se creaba — el
+                # cuadre quedaba mintiendo en silencio. El raise deshace TODO
+                # (inventario incluido): la transacción es una sola.
+                raise HTTPException(status_code=400, detail=(
+                    f"Esta factura se pagó en efectivo del cajón "
+                    f"(${float(mov.valor):,.0f}) en un turno que ya cerró: "
+                    "borrarla tiene que devolverle esa plata al cajón, y sin un "
+                    "turno abierto en la sede no hay cajón que la reciba. "
+                    "Borrala cuando la sede tenga un turno abierto."
+                ))
+
+    # Los pagos registrados contra esta factura se ANULAN (baja lógica, no
+    # DELETE): la traza queda para auditoría y el efectivo en mano se recompone
+    # solo — esa cuenta suma pagos VIVOS, así que anular el pago le devuelve al
+    # dueño la plata de una compra que resultó no existir.
+    pagos_anulados = 0
+    for p in db.query(Pago).filter(Pago.factura_id == factura_id,
+                                   Pago.anulado == False).all():  # noqa: E712
+        p.anulado = True
+        pagos_anulados += 1
 
     audit.registrar(
         db, accion="eliminar_factura", tabla="facturas_compra",
@@ -99,13 +155,15 @@ def eliminar_factura(db: Session, factura_id: int, usuario_id: int) -> dict:
         datos_antes={"proveedor": f.proveedor, "numero_factura": f.numero_factura,
                      "valor_total": float(f.valor_total or 0),
                      "valor_pagado": float(f.valor_pagado or 0),
-                     "items": len(items), "egresos_revertidos": revertidos},
+                     "items": len(items), "egresos_revertidos": revertidos,
+                     "pagos_anulados": pagos_anulados},
     )
     for it in items:
         db.delete(it)
     db.delete(f)
     db.commit()
-    return {"ok": True, "items_revertidos": len(items), "egresos_revertidos": revertidos}
+    return {"ok": True, "items_revertidos": len(items), "egresos_revertidos": revertidos,
+            "pagos_anulados": pagos_anulados}
 
 
 def _origen_alias_derivado(db: Session, clave: str, producto_id_guardado: int,
@@ -249,7 +307,11 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
             numero_lote=numero_lote_item, proveedor=data.proveedor, factura_id=factura.id,
         )
 
-    # Si el pago es en efectivo, registrar el egreso en el turno activo
+    # El pago en efectivo con turno abierto sale del CAJÓN (egreso de caja, que
+    # además descuenta de consignaciones); sin turno abierto solo puede haber
+    # salido de la MANO del dueño, y se registra ahí (ver `_pago_desde_la_mano`).
+    # Este `if` fue durante meses un `if` sin else: la plata salía en la vida
+    # real y el sistema no se enteraba por ningún lado.
     if data.tipo_pago == "contado" and data.valor_total > 0:
         turno_activo = db.query(CajaTurno).filter(
             CajaTurno.tienda_id == data.tienda_id,
@@ -269,6 +331,9 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
                 barista_nombre=barista_nombre,
                 factura_id=factura.id,
             ))
+        else:
+            _pago_desde_la_mano(db, factura, data.valor_total, usuario_id,
+                                barista_id, barista_nombre)
 
     audit.registrar(
         db, accion="crear_factura_compra", tabla="facturas_compra",
@@ -551,6 +616,31 @@ def editar_factura(db: Session, factura_id: int, usuario_id: int, *,
                 concepto=concepto, valor=abs(delta_caja), usuario_id=usuario_id,
                 factura_id=f.id,
             ))
+        else:
+            # Antes esta rama no existía: valor_pagado y la forma quedaban
+            # cambiados pero el cajón no se compensaba — la corrección «entraba»
+            # y el cuadre quedaba corrido en silencio. El raise deshace la
+            # edición entera; corregir puede esperar a que haya turno.
+            verbo = "sacarle" if delta_caja > 0 else "devolverle"
+            raise HTTPException(status_code=400, detail=(
+                f"Esta corrección tiene que {verbo} ${abs(delta_caja):,.0f} al "
+                "cajón y no hay turno abierto en la sede: sin el movimiento, el "
+                "cuadre de caja quedaría corrido en silencio. Hacé la "
+                "corrección cuando la sede tenga un turno abierto."
+            ))
+
+    # Si el pago dejó de ser «de la mano» (se corrigió a transferencia, o a
+    # contado del cajón), los pagos que lo registraban en la mano se anulan: la
+    # plata vuelve a la bolsa de la que se afirmó que salió. Sin esto, la mano
+    # quedaba descontada por un pago que la factura ya no dice haber hecho así.
+    forma_antes_cruda = (antes.get("forma_pago_real") or "").lower()
+    if (forma_antes_cruda == FORMA_EFECTIVO_MANO.lower()
+            and forma_despues != FORMA_EFECTIVO_MANO.lower()):
+        for p in db.query(Pago).filter(Pago.factura_id == f.id,
+                                       Pago.metodo == "efectivo",
+                                       Pago.movimiento_caja_id.is_(None),
+                                       Pago.anulado == False).all():  # noqa: E712
+            p.anulado = True
 
     audit.registrar(
         db, accion="editar_factura", tabla="facturas_compra", registro_id=f.id,
@@ -583,6 +673,8 @@ def registrar_pago(db: Session, factura_id: int, monto: float, forma_pago: str |
 
     # Solo el pago en EFECTIVO sale del cajón → egreso de caja (descuenta de consignaciones).
     # Bancos/crédito/cheque se manejan por el banco: quedan solo como registro de la factura.
+    # Sin turno abierto no hay cajón: el efectivo salió de la MANO del dueño y se
+    # registra ahí — antes esta rama no existía y la salida se perdía en silencio.
     if (forma_pago or "").lower() in ("efectivo", "contado"):
         turno_activo = db.query(CajaTurno).filter(
             CajaTurno.tienda_id == f.tienda_id,
@@ -600,6 +692,8 @@ def registrar_pago(db: Session, factura_id: int, monto: float, forma_pago: str |
                 usuario_id=usuario_id,
                 factura_id=f.id,
             ))
+        else:
+            _pago_desde_la_mano(db, f, monto, usuario_id)
 
     audit.registrar(
         db, accion="pago_proveedor", tabla="facturas_compra", registro_id=f.id,

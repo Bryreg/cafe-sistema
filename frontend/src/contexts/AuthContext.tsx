@@ -22,24 +22,29 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType)
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null)
+/** La sesión guardada, leída SINCRÓNICO. localStorage es sincrónico, así que
+ *  no hay ningún motivo para hidratarla en un efecto — y hacerlo costaba caro:
+ *  en el primer render `user` era null, `RequireAdmin` redirigía a
+ *  /admin-login, y para cuando el efecto corría el login veía al admin y lo
+ *  mandaba a /dashboard. Resultado: NINGUNA URL admin se podía abrir directo
+ *  — el bookmark de La Plata en la tablet aterrizaba siempre en el dashboard. */
+function sesionGuardada(): AuthUser | null {
+  const token = localStorage.getItem('token')
+  const rol = localStorage.getItem('rol')
+  const nombre = localStorage.getItem('nombre')
+  const tienda_id = localStorage.getItem('tienda_id')
+  const user_id = localStorage.getItem('user_id')
+  const kiosk = localStorage.getItem('kiosk') === 'true'
+  if (!(token && rol && nombre && user_id)) return null
+  return {
+    token, rol, nombre, kiosk,
+    tienda_id: tienda_id ? Number(tienda_id) : null,
+    user_id: Number(user_id),
+  }
+}
 
-  useEffect(() => {
-    const token = localStorage.getItem('token')
-    const rol = localStorage.getItem('rol')
-    const nombre = localStorage.getItem('nombre')
-    const tienda_id = localStorage.getItem('tienda_id')
-    const user_id = localStorage.getItem('user_id')
-    const kiosk = localStorage.getItem('kiosk') === 'true'
-    if (token && rol && nombre && user_id) {
-      setUser({
-        token, rol, nombre, kiosk,
-        tienda_id: tienda_id ? Number(tienda_id) : null,
-        user_id: Number(user_id),
-      })
-    }
-  }, [])
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AuthUser | null>(sesionGuardada)
 
   const login = (data: AuthUser) => {
     localStorage.setItem('token', data.token)

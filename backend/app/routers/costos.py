@@ -24,6 +24,7 @@ router = APIRouter(prefix="/costos", tags=["costos"])
 
 @router.get("/categorias")
 def listar_categorias(
+    ambito: Optional[str] = Query("cafe"),
     db: Session = Depends(get_db),
     admin: Usuario = Depends(require_admin),
 ):
@@ -32,8 +33,17 @@ def listar_categorias(
     Devuelve una LISTA pelada y así se queda: es la forma que consume la
     pantalla de Plata. Lo que hacía falta agregar —la explicación de los
     grupos— vive en `/categorias/grupos` justamente para no cambiarla.
+
+    `ambito` filtra el catálogo: «cafe» (default — los formularios de
+    obligaciones no pueden ver categorías personales ni del banco), «personal»,
+    «banco», o «todas» para el libro.
     """
-    return svc.listar_categorias(db)
+    if ambito == "todas":
+        ambito = None
+    elif ambito is not None and ambito not in svc.AMBITOS:
+        raise HTTPException(400, "El ámbito tiene que ser «cafe», «personal», "
+                                 "«banco» o «todas».")
+    return svc.listar_categorias(db, ambito=ambito)
 
 
 # Declarado ANTES del PATCH de `/categorias/{categoria_id}` por prolijidad de
@@ -70,7 +80,8 @@ def crear_categoria(
     variable, para que la pantalla pueda decir por qué eso cambia el piso del
     mes en vez de guardar en silencio.
     """
-    return svc.crear_categoria(db, data.nombre, data.grupo, admin.id)
+    return svc.crear_categoria(db, data.nombre, data.grupo, admin.id,
+                               ambito=data.ambito)
 
 
 @router.patch("/categorias/{categoria_id}")
@@ -551,6 +562,17 @@ def listar_pagos(
                             desde=desde, hasta=hasta)
 
 
+@router.get("/patrones-de-pago")
+def patrones_de_pago(
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """Las costumbres de pago, APRENDIDAS del historial: «el arriendo lo pagás
+    cerca del 15», «proveedores los viernes». Cada una con su soporte («4 de
+    5») — se proponen, jamás se afirman sin decir de cuántos pagos salen."""
+    return svc.get_patrones_de_pago(db)
+
+
 @router.post("/pagos")
 def registrar_pago(
     data: PagoCreate,
@@ -558,8 +580,11 @@ def registrar_pago(
     admin: Usuario = Depends(require_admin),
     barista: tuple = Depends(get_barista_actor),
 ):
-    """Un pago apunta a una obligación O a una factura, nunca a las dos.
-    `fecha_pago` es obligatoria: es EL DÍA QUE SALIÓ LA PLATA."""
+    """Un pago apunta a una OBLIGACIÓN (`factura_id` es puerta cerrada: contesta
+    400 con el motivo — las facturas se pagan desde su fila, que sí mueve el
+    saldo). `fecha_pago` es obligatoria: es EL DÍA QUE SALIÓ LA PLATA. Con
+    `descontar_banco` + `cuenta_id`, la salida del libro nace en la misma
+    transacción y la respuesta trae `movimiento_banco_id`."""
     return svc.registrar_pago(db, data, admin.id,
                               barista_id=barista[0], barista_nombre=barista[1])
 

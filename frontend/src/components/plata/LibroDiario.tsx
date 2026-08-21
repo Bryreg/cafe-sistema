@@ -33,7 +33,7 @@ import FormMovimiento from './FormMovimiento'
  */
 
 // ── Un movimiento aplanado, listo para pintar en el panel ────────────────────
-type Clase = 'consig' | 'banco' | 'personal' | 'cafe' | 'efectivo' | 'cuenta'
+type Clase = 'consig' | 'banco' | 'personal' | 'cafe' | 'efectivo' | 'cuenta' | 'recogido'
 
 interface MovFila {
   key: string
@@ -52,7 +52,7 @@ interface MovFila {
  *  las cuentas van en warm — el color distingue lo que importa (consignación
  *  verde, personal dorado), no cada categoría. */
 const TONO: Record<Clase, 'success' | 'warm' | 'gold'> = {
-  consig: 'success', personal: 'gold',
+  consig: 'success', personal: 'gold', recogido: 'success',
   banco: 'warm', cafe: 'warm', cuenta: 'warm', efectivo: 'warm',
 }
 
@@ -93,6 +93,13 @@ function aplanar(dias: DiaLibro[]): MovFila[] {
         key: `e-${p.pago_id}`, fecha: d.fecha, dia: n, clase: 'efectivo',
         tag: 'Efectivo', label: p.detalle || 'Pago en efectivo',
         monto: p.monto, entra: false, auto: false,
+      })
+    }
+    for (const r of d.recogido ?? []) {
+      filas.push({
+        key: `r-${r.id}`, fecha: d.fecha, dia: n, clase: 'recogido',
+        tag: 'Recogí', label: r.nota || 'Efectivo recogido',
+        monto: r.monto, entra: true, auto: false,
       })
     }
   }
@@ -274,6 +281,24 @@ function LibroListo({
             )}
           </div>
         </div>
+
+        {/* La mano del dueño y el total (banco + mano) — SOLO cuando hay efectivo
+            recogido. Sin recogidas (el caso de hoy) el hero queda igual. Ausente
+            (servidor viejo, antes del modelo banco+mano) no dibuja nada. */}
+        {typeof t.mano_final === 'number' && t.mano_final !== 0 && (
+          <div className="mt-4 pt-4 border-t border-forest-700 flex flex-wrap items-center gap-x-6 gap-y-1">
+            <span className="text-sm text-forest-50/80">
+              En mano <span className="text-forest-50/60">(efectivo recogido)</span>:{' '}
+              <b className="font-mono tabular-nums text-white">{plata(t.mano_final)}</b>
+            </span>
+            {t.total_final != null && (
+              <span className="text-sm text-forest-50/80">
+                Toda la plata <span className="text-forest-50/60">(banco + mano)</span>:{' '}
+                <b className="font-mono tabular-nums text-white">{plata(t.total_final)}</b>
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       <p className="text-[13px] text-warm-500 px-1">

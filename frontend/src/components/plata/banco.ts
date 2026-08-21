@@ -133,12 +133,33 @@ interface DiaComun {
    */
   consignaciones?: ConsignacionLibro[]
   /**
-   * Los pagos EN EFECTIVO del día, para que la plata que salió del cajón o de
-   * la mano se vea donde pasó. NO están en `salidas` ni en `total_salidas` y
-   * no mueven el saldo. Con `?` por la ventana de deploy: ausente = «este
-   * servidor no los cuenta», y no se dibuja nada.
+   * Los pagos EN EFECTIVO del día. Son las SALIDAS de la mano del dueño: no
+   * tocan el saldo del BANCO, pero sí el de la mano (y por eso el total). Con
+   * `?` por la ventana de deploy: ausente = «este servidor no los cuenta».
    */
   pagos_efectivo?: PagoEfectivoLibro[]
+  /**
+   * ── LA MANO DEL DUEÑO, DENTRO DEL LIBRO ────────────────────────────────
+   * El libro es «toda la plata»: banco + mano. Estos campos son el sub-saldo
+   * de la mano (recogí = entrada, pago en efectivo = salida), 100% derivado.
+   * Todos con `?`: un servidor de antes del modelo banco+mano no los manda, y
+   * esa ausencia se dibuja muda (se cae al libro «solo banco» de siempre).
+   */
+  recogido?: RecogidoLibro[]
+  mano_entradas?: number
+  mano_salidas?: number
+  mano_saldo?: number
+  /** banco `final` + `mano_saldo`. null donde el banco no tiene cadena: sin el
+   *  saldo del banco no hay total, y un número ahí sería inventado. */
+  total_final?: number | null
+}
+
+/** Un «recogí $X» del día: la entrada de la mano del dueño. */
+export interface RecogidoLibro {
+  id: number
+  tienda_id: number
+  monto: number
+  nota: string | null
 }
 
 /** Un día del ancla en adelante: el saldo es exacto. */
@@ -195,6 +216,13 @@ export interface LibroMes {
     salidas: number
     /** null cuando el ÚLTIMO día del rango no tiene saldo: no se sabe. */
     final: number | null
+    /** La mano del dueño en el mes (banco+mano). Con `?` por deploy: un servidor
+     *  viejo no los manda y la pantalla se cae al «solo banco». `total_final` es
+     *  null donde el banco no tiene cadena. */
+    mano_entradas?: number
+    mano_salidas?: number
+    mano_final?: number | null
+    total_final?: number | null
     dias_en_rojo: number
     /** El cierre más bajo ENTRE LOS DÍAS CON SALDO. null si no hay ninguno. */
     dia_mas_bajo: number | null

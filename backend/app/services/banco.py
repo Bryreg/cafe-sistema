@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 from app.core.tz import dia_col, fin_dia_col_utc, inicio_dia_col_utc
 from app.models.models import (Consignacion, CostoCategoria, CuentaBancaria,
                                Configuracion, FacturaCompra, MovimientoBanco,
-                               Obligacion, Pago)
+                               Obligacion, Pago, RecogidaEfectivo)
 
 CLAVE_SALDO = "saldo_banco"
 CLAVE_SALDO_FECHA = "saldo_banco_fecha"
@@ -274,6 +274,29 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
               .order_by(Pago.fecha_pago.asc(), Pago.id.asc()).all()):
         pagos_por_dia.setdefault(p.fecha_pago, []).append(_pago_a_dict(db, p))
 
+    # ── LA MANO DEL DUEÑO: la tercera bolsa, ahora DENTRO del libro ────────────
+    # El efectivo que el dueño RECOGE es plata que entró (recogí = entrada), y lo
+    # que paga en efectivo desde esa mano es plata que salió. El sub-saldo de la
+    # mano es 100% DERIVADO —Σ recogidas − Σ pagos en efectivo— así que no
+    # necesita ancla: la bolsa arrancó vacía y cada recogida y cada pago quedan
+    # registrados. El banco sigue con su propia cadena contra el extracto; el
+    # total del libro es banco + mano, y solo se conoce donde el banco tiene cadena.
+    recogidas_por_dia: dict[date, list] = {}
+    for r in (db.query(RecogidaEfectivo)
+              .filter(RecogidaEfectivo.fecha >= desde, RecogidaEfectivo.fecha <= hasta)
+              .order_by(RecogidaEfectivo.fecha.asc(), RecogidaEfectivo.id.asc()).all()):
+        recogidas_por_dia.setdefault(r.fecha, []).append(r)
+
+    # La mano que viene de ANTES del rango: lo recogido menos lo pagado en
+    # efectivo hasta la víspera. Sin esto, un mes mirado suelto arrancaría la mano
+    # en cero y perdería el efectivo recogido en los meses anteriores.
+    rec_antes = (db.query(func.coalesce(func.sum(RecogidaEfectivo.monto), 0.0))
+                 .filter(RecogidaEfectivo.fecha < desde).scalar() or 0.0)
+    pag_antes = (db.query(func.coalesce(func.sum(Pago.monto), 0.0))
+                 .filter(Pago.metodo == "efectivo", Pago.anulado == False,  # noqa: E712
+                         Pago.fecha_pago < desde).scalar() or 0.0)
+    mano_saldo = round(float(rec_antes) - float(pag_antes), 2)
+
     # ── LA CADENA SE DECIDE POR DÍA, NO POR MES ───────────────────────────────
     # Antes había UNA bandera para todo el rango, calculada mirando solo el
     # primer día. Con el ancla a mitad de mes —que es el caso NORMAL, porque el
@@ -318,6 +341,18 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
         con_cadena = saldo is not None
         inicial = round(saldo, 2) if con_cadena else None
         final = round(inicial + tot_e - tot_s, 2) if con_cadena else None
+
+        # La mano del día: lo recogido entra, lo pagado en efectivo sale. El
+        # sub-saldo corre solo (derivado), exista o no la cadena del banco.
+        pagos_dia = pagos_por_dia.get(d, [])
+        recog_dia = recogidas_por_dia.get(d, [])
+        mano_e = round(sum(float(r.monto or 0.0) for r in recog_dia), 2)
+        mano_s = round(sum(float(p["monto"] or 0.0) for p in pagos_dia), 2)
+        mano_saldo = round(mano_saldo + mano_e - mano_s, 2)
+        # El total (banco + mano) solo se conoce donde el banco tiene cadena: sin
+        # el saldo del banco no hay total, y un número ahí sería inventado.
+        total_final = round(final + mano_saldo, 2) if con_cadena else None
+
         filas.append({
             "fecha": d.isoformat(),
             "cadena": con_cadena,
@@ -330,8 +365,17 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
             # Para pintar en rojo sin recalcular. Sin cadena no hay rojo posible:
             # un saldo que no se conoce no puede estar en negativo.
             "en_rojo": bool(con_cadena and final < 0),
+            # La mano del dueño, DENTRO del libro: recogido (entradas), pagos en
+            # efectivo (salidas) y el sub-saldo derivado. `total_final` = banco + mano.
+            "recogido": [{"id": r.id, "tienda_id": r.tienda_id,
+                          "monto": float(r.monto or 0.0), "nota": r.nota}
+                         for r in recog_dia],
+            "mano_entradas": mano_e,
+            "mano_salidas": mano_s,
+            "mano_saldo": mano_saldo,
+            "total_final": total_final,
             "movimientos": [_a_dict(m, nombres, categorias) for m in del_dia],
-            "pagos_efectivo": pagos_por_dia.get(d, []),
+            "pagos_efectivo": pagos_dia,
             "consignaciones": [{
                 "consignacion_id": c.id,
                 "tienda_id": c.tienda_id,
@@ -384,6 +428,13 @@ def libro(db: Session, desde: date, hasta: date) -> dict:
             "entradas": round(sum(f["total_entradas"] for f in filas), 2),
             "salidas": round(sum(f["total_salidas"] for f in filas), 2),
             "final": filas[-1]["final"] if filas else None,
+            # La mano del dueño: lo que entró y salió en efectivo este mes, y con
+            # cuánto queda la bolsa (derivada, siempre conocida). El total del
+            # libro (banco + mano) solo se sabe donde el banco tiene cadena.
+            "mano_entradas": round(sum(f["mano_entradas"] for f in filas), 2),
+            "mano_salidas": round(sum(f["mano_salidas"] for f in filas), 2),
+            "mano_final": filas[-1]["mano_saldo"] if filas else None,
+            "total_final": filas[-1]["total_final"] if filas else None,
             "dias_en_rojo": sum(1 for f in filas if f["en_rojo"]),
             # Solo entre los días CON saldo: el mínimo de una lista que incluye
             # nulos no significa nada, y el día más bajo es justo el número que

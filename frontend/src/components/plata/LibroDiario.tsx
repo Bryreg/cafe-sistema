@@ -460,16 +460,16 @@ function FilaDia({
         </span>
         <span className={`text-right font-mono tabular-nums text-[13px] font-semibold ${
           dia.total_entradas > 0 ? 'text-success-600' : 'text-warm-300'}`}>
-          {dia.total_entradas > 0 ? `+ ${compacto(dia.total_entradas)}` : '—'}
+          {dia.total_entradas > 0 ? `+ ${plata(dia.total_entradas)}` : '—'}
         </span>
         <span className={`text-right font-mono tabular-nums text-[13px] font-semibold ${
           dia.total_salidas > 0 ? 'text-danger-600' : 'text-warm-300'}`}>
-          {dia.total_salidas > 0 ? `− ${compacto(dia.total_salidas)}` : '—'}
+          {dia.total_salidas > 0 ? `− ${plata(dia.total_salidas)}` : '—'}
         </span>
         {columnasDeSaldo && (
           <span className={`text-right font-mono tabular-nums text-[13px] font-bold ${
             !dia.cadena ? 'text-warm-300' : rojo ? 'text-danger-700' : 'text-warm-700'}`}>
-            {dia.cadena ? compacto(dia.final) : '—'}
+            {dia.cadena ? plata(dia.final) : '—'}
           </span>
         )}
       </div>

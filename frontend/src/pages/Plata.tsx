@@ -9,7 +9,6 @@ import { CuentaBanco, Sede } from '../components/plata/banco'
 import { Agenda, Categoria } from '../components/plata/tipos'
 import { useLibro } from '../components/plata/useLibro'
 import LibroDiario from '../components/plata/LibroDiario'
-import FormRecogida from '../components/plata/FormRecogida'
 import LoQueViene from '../components/plata/LoQueViene'
 import type { Piso } from '../components/piso/tipos'
 import BloqueEquilibrio from '../components/piso/BloqueEquilibrio'
@@ -122,21 +121,6 @@ export default function Plata() {
         onIrAlMes={libro.irAlMes} onIrAHoy={libro.irAHoy}
         onGuardado={fecha => { libro.irALaFechaDe(fecha); refrescarPlata() }}
         onIrAlAncla={irAlExtracto} />
-
-      {/* 2.5 · Recogí efectivo: la pasada del dueño. Entra a «la mano» del libro
-          y descuenta solo el día de esa sede en Consignaciones. Es lo que el
-          candado de Consignaciones («Registrá la pasada en La Plata → Recogí
-          efectivo») manda a hacer acá. */}
-      <div className="rounded-2xl border border-warm-200 bg-white overflow-hidden">
-        <div className="px-4 py-3 border-b border-warm-100">
-          <p className="text-sm font-bold text-warm-700">Recogí efectivo</p>
-          <p className="text-[11px] text-warm-500 mt-0.5">
-            Cuando te llevás el efectivo de una sede, registralo acá: entra a <b>la mano</b> y el
-            día de esa sede se descuenta solo en Consignaciones — sin marcar nada allá.
-          </p>
-        </div>
-        <FormRecogida tiendas={tiendas} hoy={hoy} pedidoFoco={0} onGuardado={refrescarPlata} />
-      </div>
 
       {/* 3 · El saldo del extracto: el ancla de la cadena del libro. */}
       <div ref={refExtracto}>

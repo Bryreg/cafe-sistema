@@ -9,7 +9,9 @@ from app.models.models import (
     FacturaCompra, FacturaCompraItem, Producto,
 )
 from app.services import preparables as preparables_svc
+from app.services import consumo_ventas
 from app.services.producto_alias import normalizar_alias
+from app.core.tz import hoy_col
 
 
 def _proveedores_por_compras(db: Session) -> dict[int, str]:
@@ -87,6 +89,11 @@ def _items_base(db: Session, tienda_id: int) -> tuple[list[dict], dict[int, floa
     for s in salidas:
         salidas_por_prod[s.producto_id] += s.cantidad
 
+    # El consumo aprendido de las VENTAS reales (histórico por día de semana). Se
+    # calcula una sola vez para toda la sede; el llamado por-producto es un lookup.
+    # Ver `consumo_ventas`: por qué venta y no solo salidas, y por qué la mediana.
+    ventas_rate = consumo_ventas.tasa_diaria_por_producto(db, tienda_id, hoy_col())
+
     # Productos que el barista marcó como urgentes (solicitudes pendientes)
     barista_alerto: set[int] = set(
         item.producto_id
@@ -124,7 +131,13 @@ def _items_base(db: Session, tienda_id: int) -> tuple[list[dict], dict[int, floa
 
         stock = inv.stock_actual
         lead_time = p.lead_time_dias or 2
-        consumo_diario = round(salidas_por_prod.get(p.id, 0.0) / DIAS_ANALISIS, 3)
+        # El consumo es lo que dice la VENTA real (histórico por día de semana),
+        # pero NUNCA por debajo de lo que físicamente salió del estante en 14 días
+        # —mermas, preparación, correcciones—: así no se subestima ni se queda sin
+        # stock. Sin ventas en la ventana, `ventas_rate` no lo trae y manda la salida
+        # (comportamiento idéntico al de antes para un producto que no se vende por POS).
+        consumo_salidas = salidas_por_prod.get(p.id, 0.0) / DIAS_ANALISIS
+        consumo_diario = round(max(ventas_rate.get(p.id, 0.0), consumo_salidas), 3)
 
         dias_restantes: float | None = None
         if consumo_diario > 0:

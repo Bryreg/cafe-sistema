@@ -16,6 +16,7 @@ margen_bruto = ventas - compras;  margen_neto = margen_bruto - gastos.
 """
 import calendar
 import logging
+import statistics
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
@@ -37,6 +38,23 @@ from app.services import producto_alias as alias_svc
 # el número que se publica y el que se filtra salen de acá, porque dos
 # constantes que tienen que coincidir terminan sin coincidir.
 _MESES_REFERENCIA_PRECIO = 12
+
+# PISO ANTI-TIPEO PARA LA REFERENCIA. La referencia es el precio MÁS BARATO de la
+# ventana (ver `_costos_insumos`), y esa elección tiene un costo conocido: una
+# factura vieja con el precio mal digitado —un dígito o una coma de menos, o sea
+# un precio 5 a 20 veces más bajo que el real— quedaba anclada como referencia
+# para siempre, y CADA compra normal posterior se leía como una suba de 400% a
+# 1800%. La pulpa a $11.300 con una factura vieja de $1.130 «subió 900%», la torta
+# a $53.000 contra un $2.750 tipeado «subió 1.827%»: alertas falsas que tapaban
+# las de verdad. El piso descarta como error de tipeo cualquier precio por debajo
+# de esta fracción de la MEDIANA de la ventana —la mediana no la mueve un dato
+# suelto—, así que la referencia vuelve a ser el más barato REAL. A 0,5 corta los
+# errores de orden de magnitud (mitad o menos de lo típico) sin tocar una rebaja
+# real ni una referencia legítimamente baja, y —clave— NO apaga la alerta de una
+# suba de verdad: un precio viejo a la mitad del nuevo sigue por encima del piso y
+# sigue siendo la referencia (el bloqueante de «60 compras al precio nuevo no
+# apagan la alerta» se mantiene, porque el viejo nunca es el outlier).
+_REF_PISO_FRACCION_MEDIANA = 0.5
 
 # Patrones de concepto que crea services/facturas.py para pagos a proveedor.
 # Si esos strings cambian allá, hay que actualizarlos acá (no hay FK).
@@ -1062,6 +1080,37 @@ def get_rentabilidad(db, desde: date, hasta: date, tienda_id: int | None = None)
 
 # ─── Margen por producto ──────────────────────────────────────────────────────
 
+def _referencia_robusta(cands: list[dict]) -> dict | None:
+    """El precio de REFERENCIA: el más barato de la ventana, descartando tipeos.
+
+    Cada candidato es {precio, proveedor, fecha, clave}. Devuelve el dict del
+    elegido —sin la `clave`, que es interna— o None si la lista viene vacía.
+
+    El piso es `_REF_PISO_FRACCION_MEDIANA` de la MEDIANA de los precios: la
+    mediana no la corre un dato suelto, así que un precio 5-20 veces más bajo que
+    lo típico (un dígito o una coma de menos) cae debajo del piso y se descarta,
+    y la referencia vuelve al barato REAL. Un precio bajo legítimo queda por
+    encima y sigue eligible. La mediana nunca cae bajo su propio piso (fracción
+    < 1), así que SIEMPRE sobrevive al menos un candidato.
+
+    Empate de precio lo gana el MÁS RECIENTE (clave mayor): «esto me cobraste la
+    semana pasada» pesa más en una negociación que la misma cifra de hace once
+    meses, y el desempate tiene que ser DETERMINISTA para que el proveedor y la
+    fecha no dependan del orden del SELECT."""
+    if not cands:
+        return None
+    piso = statistics.median(c["precio"] for c in cands) * _REF_PISO_FRACCION_MEDIANA
+    mejor = None
+    for c in cands:
+        if c["precio"] < piso:
+            continue  # tipeo freak-low: no ancla la referencia
+        if (mejor is None or c["precio"] < mejor["precio"]
+                or (c["precio"] == mejor["precio"] and c["clave"] > mejor["clave"])):
+            mejor = c
+    return {"precio": mejor["precio"], "proveedor": mejor["proveedor"],
+            "fecha": mejor["fecha"]}
+
+
 def _costos_insumos(db) -> tuple[dict, dict]:
     """Costo por unidad de inventario de cada producto. Prioridad:
       1) Producto.precio_costo (costo OFICIAL fijado a mano) — si existe, MANDA.
@@ -1078,11 +1127,22 @@ def _costos_insumos(db) -> tuple[dict, dict]:
     precio, y ese es el error de "un dato cerca del correcto" que este módulo ya
     pagó caro.
 
-    ── `ref`: LA REFERENCIA QUE NO SE MUEVE SOLA ───────────────────────────────
-    El precio más BARATO por unidad que ese insumo tuvo en los últimos 12 meses,
-    con el proveedor y la fecha de ESA factura. Existe porque el promedio
-    ponderado (`costo`) NO sirve como punto de comparación: se acerca al precio
-    nuevo con cada compra, así que comparar contra él apaga la alerta sola.
+    ── `ref`: LA REFERENCIA QUE NO SE MUEVE SOLA (NI LA ANCLA UN TIPEO) ─────────
+    El precio más BARATO por unidad que ese insumo tuvo en los últimos 12 meses
+    —descartando los tipeos freak-low—, con el proveedor y la fecha de ESA
+    factura. Existe porque el promedio ponderado (`costo`) NO sirve como punto de
+    comparación: se acerca al precio nuevo con cada compra, así que comparar
+    contra él apaga la alerta sola.
+
+    EL «MÁS BARATO» ES EL MÁS BARATO REAL, NO EL MÁS BARATO A SECAS. Una sola
+    factura vieja con el precio mal digitado (un dígito o una coma de menos)
+    anclaba la referencia 5 a 20 veces abajo y prendía una alerta de +400% a
+    +1800% contra cada compra normal. Por eso el más barato se toma SOLO entre
+    los precios que no caen por debajo de `_REF_PISO_FRACCION_MEDIANA` de la
+    MEDIANA de la ventana: la mediana no la mueve un dato suelto, así que el piso
+    descarta el tipeo y deja la referencia en el barato de verdad. Un precio bajo
+    LEGÍTIMO (una rebaja real, o el viejo de una suba de verdad) queda por encima
+    del piso y sigue siendo la referencia —la alerta de una suba real no se apaga—.
     MEDIDO sobre 10 compras de leche a $2,00 y una a $2,80 —el promedio arranca
     en $2,0727 y sube—:
 
@@ -1103,9 +1163,11 @@ def _costos_insumos(db) -> tuple[dict, dict]:
         ningún papel y el proveedor lo desconoce;
       · si se equivoca, se equivoca alertando de más, que es el lado contrario
         al que este módulo se equivocó siempre.
-    El costo: una factura barata rara ancla la referencia abajo. Por eso `ref`
-    viaja con `proveedor` y `fecha` — la afirmación queda verificable en el papel
-    en vez de ser un número que hay que creer. Y a los 12 meses envejece sola.
+    El costo que ese mínimo TENÍA —una factura barata rara anclaba la referencia
+    abajo— lo ataja ahora el piso anti-tipeo (`_referencia_robusta`): el mínimo se
+    busca solo entre los precios que no son freak-low contra la mediana. Igual
+    `ref` viaja con `proveedor` y `fecha` — la afirmación queda verificable en el
+    papel en vez de ser un número que hay que creer. Y a los 12 meses envejece sola.
 
     EL ÚLTIMO PRECIO SIEMPRE ES CANDIDATO A REFERENCIA, aunque sea más viejo que
     la ventana: sin eso, un insumo que no se compra hace más de un año se
@@ -1134,8 +1196,7 @@ def _costos_insumos(db) -> tuple[dict, dict]:
     corte_ref, _ = rango_col_utc(hoy_col() - timedelta(days=dias_ref), hoy_col())
 
     acum: dict[int, dict] = defaultdict(lambda: {"plata": 0.0, "cant": 0.0, "ultimo": None,
-                                                 "ultima_clave": None, "ref": None,
-                                                 "ref_clave": None})
+                                                 "ultima_clave": None, "ref_cands": []})
     for pid, cant, precio, fecha, item_id, proveedor in rows:
         a = acum[pid]
         a["plata"] += float(cant) * float(precio)
@@ -1147,19 +1208,16 @@ def _costos_insumos(db) -> tuple[dict, dict]:
             a["ultima_clave"] = clave
             a["ultimo"] = {"precio": float(precio), "proveedor": proveedor,
                            "fecha": fecha}
-        # Referencia = el MÁS BARATO adentro de la ventana. Empate de precio lo
-        # gana el MÁS RECIENTE (misma `clave` que arriba): «esto me cobraste la
-        # semana pasada» pesa más en una negociación que la misma cifra de hace
-        # once meses, y el desempate tiene que ser DETERMINISTA — con un `<` a
-        # secas el nombre del proveedor dependería del orden del SELECT.
+        # Candidatos a referencia = todos los precios de la ventana. El más
+        # barato REAL sale DESPUÉS del piso anti-tipeo (necesita la mediana de
+        # todos, que no existe hasta terminar el barrido); acá solo se juntan.
+        # Una factura SIN fecha entra igual (mismo criterio que el último).
         if fecha is None or fecha >= corte_ref:
-            mejor = a["ref"]
-            if (mejor is None or float(precio) < mejor["precio"]
-                    or (float(precio) == mejor["precio"] and clave > a["ref_clave"])):
-                a["ref_clave"] = clave
-                a["ref"] = {"precio": float(precio), "proveedor": proveedor,
-                            "fecha": fecha}
+            a["ref_cands"].append({"precio": float(precio), "proveedor": proveedor,
+                                   "fecha": fecha, "clave": clave})
     costo = {pid: a["plata"] / a["cant"] for pid, a in acum.items() if a["cant"] > 0}
+    for a in acum.values():
+        a["ref"] = _referencia_robusta(a["ref_cands"])
     ultimo = {}
     for pid, a in acum.items():
         if a["ultimo"] is None:

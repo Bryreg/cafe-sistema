@@ -349,6 +349,42 @@ class LaSubaTieneNombreTest(PalancasBase):
         # El precio nuevo y el nombre salen de LA MISMA fila, siempre.
         self.assertAlmostEqual(a["costo_ultimo"], self.PRECIO_NUEVO)
 
+    def test_un_tipeo_freak_low_no_ancla_la_referencia(self):
+        """Una factura vieja con el precio mal digitado NO puede volverse la
+        referencia y prender una alerta falsa de +900%.
+
+        La leche vale $3,00 en tres facturas y una vieja quedó tipeada en $0,30
+        —un cero de menos, un décimo del real—. Con el «más barato a secas» esa
+        factura anclaba la referencia en $0,30 y CADA compra normal se leía como
+        «subió 900%». El piso anti-tipeo (mitad de la mediana = $1,50) la descarta:
+        la referencia vuelve al $3,00 real y no hay suba que reportar."""
+        self.leche = self.insumo()
+        self.compra(self.leche, 1000, 3.0, "Lácteos Andina", dias_atras=40)
+        self.compra(self.leche, 1000, 3.0, "Lácteos Andina", dias_atras=30)
+        self.compra(self.leche, 1000, 0.30, "Lácteos Andina", dias_atras=60)  # TIPEO
+        self.compra(self.leche, 1000, 3.0, "Lácteos Andina", dias_atras=2)
+        _, ultimo = _costos_insumos(self.db)
+        # La referencia es el barato REAL, no el tipeo.
+        self.assertAlmostEqual(ultimo[self.leche.id]["ref"]["precio"], 3.0)
+        self.assertIsNotNone(ultimo[self.leche.id]["ref"]["fecha"])
+        # Y por lo tanto no hay alerta falsa: el último ($3,00) no supera a la
+        # referencia real ($3,00) por más del 10%.
+        con_alerta = {a["insumo_id"] for a in alertas_de_costo(self.db)}
+        self.assertNotIn(self.leche.id, con_alerta)
+
+    def test_un_precio_bajo_legitimo_si_es_la_referencia(self):
+        """El piso descarta tipeos, NO rebajas reales. La leche estuvo a $2,00
+        (mitad o más de la mediana, no un tipeo) y ahora está a $3,00: esa suba
+        del 50% tiene que seguir prendida, medida contra los $2,00 de verdad."""
+        self.leche = self.insumo()
+        self.compra(self.leche, 1000, 2.0, "Lácteos del Valle", dias_atras=40)  # barato REAL
+        self.compra(self.leche, 1000, 3.0, "Lácteos Andina", dias_atras=30)
+        self.compra(self.leche, 1000, 3.0, "Lácteos Andina", dias_atras=2)
+        _, ultimo = _costos_insumos(self.db)
+        # mediana de [2,3,3] = 3 → piso 1,5 → el 2,0 sobrevive y es la referencia.
+        self.assertAlmostEqual(ultimo[self.leche.id]["ref"]["precio"], 2.0)
+        self.assertEqual(ultimo[self.leche.id]["ref"]["proveedor"], "Lácteos del Valle")
+
     def test_la_alerta_del_piso_es_la_misma_lista_que_la_de_productos(self):
         """Dos definiciones de «subió más de 10%» terminan en dos pantallas que
         se contradicen. Hay una sola función."""

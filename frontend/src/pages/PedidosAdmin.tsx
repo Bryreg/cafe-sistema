@@ -238,6 +238,15 @@ function FilaPedido({
       </div>
 
       <div className="flex flex-col items-end gap-0.5">
+        {/* La cantidad viene pre-cargada con la SUGERIDA, pero antes eso era
+            invisible: el input mostraba un número sin decir que era una propuesta.
+            El rótulo la hace explícita — y si la cambiás, sigue diciendo cuánto
+            proponía el sistema. */}
+        {p.cantidad_sugerida > 0 && (
+          <span className="text-[10px] text-gray-400 tabular-nums">
+            sugerido {numero(p.cantidad_sugerida)}
+          </span>
+        )}
         <div className="flex items-center gap-1">
           <input
             type="number" min={0} step={1} value={cantidad}
@@ -299,6 +308,13 @@ function CardProveedor({
     p => p.en_alerta_sin_sugerencia && p.titular && !enPedidoIds.has(p.producto_id)).length
   const visiblesIds = new Set(visibles.map(p => p.producto_id))
   const resto = grupo.productos.filter(p => !visiblesIds.has(p.producto_id))
+
+  // Costo estimado de ESTE pedido, con el último precio de cada producto. `≈`
+  // porque es el último precio y no el de hoy; si a alguna línea le falta precio,
+  // se dice, para que el número no afirme más de lo que sabe.
+  const subtotal = enPedido.reduce(
+    (s, p) => s + (p.ultimo_precio ?? 0) * (cantidades[claveCantidad(grupo.clave, p.producto_id)] ?? 0), 0)
+  const faltanPrecio = enPedido.some(p => p.ultimo_precio == null)
 
   const copiarPedido = () => {
     const texto = textoWhatsApp(grupo, cantidades, sede)
@@ -402,20 +418,28 @@ function CardProveedor({
             </div>
           )}
 
-          <button
-            onClick={copiarPedido}
-            disabled={enPedido.length === 0}
-            className={`mt-3 flex items-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-2 transition-colors ${
-              enPedido.length
-                ? 'bg-green-600 text-white hover:bg-green-700'
-                : 'bg-gray-100 text-gray-300 cursor-not-allowed'
-            }`}
-          >
-            <Copy size={12} />
-            {enPedido.length
-              ? `Copiar pedido para WhatsApp (${enPedido.length} producto${enPedido.length !== 1 ? 's' : ''})`
-              : 'Sin nada que pedir'}
-          </button>
+          <div className="mt-3 flex items-center gap-3 flex-wrap">
+            <button
+              onClick={copiarPedido}
+              disabled={enPedido.length === 0}
+              className={`flex items-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-2 transition-colors ${
+                enPedido.length
+                  ? 'bg-green-600 text-white hover:bg-green-700'
+                  : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+              }`}
+            >
+              <Copy size={12} />
+              {enPedido.length
+                ? `Copiar pedido para WhatsApp (${enPedido.length} producto${enPedido.length !== 1 ? 's' : ''})`
+                : 'Sin nada que pedir'}
+            </button>
+            {enPedido.length > 0 && (
+              <span className="text-xs text-gray-500 tabular-nums">
+                ≈ <strong className="text-gray-700">{money(subtotal)}</strong>
+                {faltanPrecio && <span className="text-gray-400 font-normal"> · faltan precios</span>}
+              </span>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -612,6 +636,21 @@ function TabPedidos({ tiendaId, sedeNombre }: { tiendaId: number | null; sedeNom
     [data, cantidades],
   )
 
+  // El costo ESTIMADO del pedido completo, con el último precio de cada producto.
+  // Es lo que esta pantalla nunca decía —cuánto va a salir— y se mueve en vivo con
+  // cada cantidad. `≈` y «sin precio» porque es el último precio conocido y alguna
+  // línea puede no tenerlo: el número no afirma más de lo que sabe.
+  const { totalEstimado, faltanPrecios } = useMemo(() => {
+    let total = 0, faltan = 0
+    for (const g of data?.proveedores ?? [])
+      for (const p of lineasPedido(g, cantidades)) {
+        const q = cantidades[claveCantidad(g.clave, p.producto_id)] ?? 0
+        if (p.ultimo_precio != null) total += q * p.ultimo_precio
+        else faltan++
+      }
+    return { totalEstimado: total, faltanPrecios: faltan }
+  }, [data, cantidades])
+
   if (loading) return (
     <p className="text-sm text-gray-400 animate-pulse py-8 text-center">Leyendo el catálogo de proveedores…</p>
   )
@@ -626,22 +665,36 @@ function TabPedidos({ tiendaId, sedeNombre }: { tiendaId: number | null; sedeNom
 
   return (
     <div className="space-y-3">
-      {/* Resumen de trabajo: cuántas líneas y a cuántos teléfonos. */}
-      <div className="flex items-center gap-3 flex-wrap bg-white border border-gray-200 rounded-xl px-4 py-2.5">
-        <p className="text-sm text-gray-700">
-          <strong className="text-amber-600">{totalLineas}</strong> producto{totalLineas !== 1 ? 's' : ''} en el pedido
-          {conPedido.length > 0 && <> · <strong>{conPedido.length}</strong> proveedor{conPedido.length !== 1 ? 'es' : ''} a quien llamar</>}
-          {totalAlertas > 0 && (
-            <span className="text-gray-400"> · {totalAlertas} en rojo esperando cantidad</span>
+      {/* Resumen de trabajo: cuántas líneas, a cuántos teléfonos y —lo nuevo—
+          cuánto sale, estimado, moviéndose en vivo con cada cantidad. */}
+      <div className="flex items-center gap-3 flex-wrap bg-white border border-gray-200 rounded-xl px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-sm text-gray-700">
+            <strong className="text-amber-600">{totalLineas}</strong> producto{totalLineas !== 1 ? 's' : ''} en el pedido
+            {conPedido.length > 0 && <> · <strong>{conPedido.length}</strong> proveedor{conPedido.length !== 1 ? 'es' : ''} a quien llamar</>}
+            {totalAlertas > 0 && (
+              <span className="text-gray-400"> · {totalAlertas} en rojo esperando cantidad</span>
+            )}
+          </p>
+          {(data.total_urgentes > 0 || data.total_pronto > 0 || data.total_bajo > 0) && (
+            <p className="text-xs text-gray-400 mt-0.5">
+              {data.total_urgentes > 0 && <span className="text-red-500 font-semibold">{data.total_urgentes} urgente{data.total_urgentes !== 1 ? 's' : ''}</span>}
+              {data.total_urgentes > 0 && (data.total_pronto > 0 || data.total_bajo > 0) && ' · '}
+              {data.total_pronto > 0 && `${data.total_pronto} para pedir`}
+              {data.total_pronto > 0 && data.total_bajo > 0 && ' · '}
+              {data.total_bajo > 0 && `${data.total_bajo} bajo`}
+            </p>
           )}
-        </p>
-        <span className="ml-auto text-xs text-gray-400">
-          {data.total_urgentes > 0 && <span className="text-red-500 font-semibold">{data.total_urgentes} urgente{data.total_urgentes !== 1 ? 's' : ''}</span>}
-          {data.total_urgentes > 0 && (data.total_pronto > 0 || data.total_bajo > 0) && ' · '}
-          {data.total_pronto > 0 && `${data.total_pronto} para pedir`}
-          {data.total_pronto > 0 && data.total_bajo > 0 && ' · '}
-          {data.total_bajo > 0 && `${data.total_bajo} bajo`}
-        </span>
+        </div>
+        {totalLineas > 0 && (
+          <div className="ml-auto text-right">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Estimado</p>
+            <p className="text-xl font-bold text-gray-800 tabular-nums">≈ {money(totalEstimado)}</p>
+            {faltanPrecios > 0 && (
+              <p className="text-[10px] text-gray-400">{faltanPrecios} sin precio</p>
+            )}
+          </div>
+        )}
       </div>
 
       {data.proveedores.length === 0 && data.sin_proveedor.length === 0 && (

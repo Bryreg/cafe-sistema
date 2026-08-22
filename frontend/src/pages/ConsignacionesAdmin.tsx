@@ -4,7 +4,7 @@ import api from '../api/client'
 import {
   Banknote, User, ImageIcon, Check, X, ZoomIn,
   ChevronDown, ChevronUp, AlertTriangle, CheckCircle2,
-  Download, FileText, TrendingUp, Trash2, Pencil, CornerDownRight,
+  Download, FileText, TrendingUp, Trash2, Pencil, CornerDownRight, HandCoins,
 } from 'lucide-react'
 import {
   cascadaDelDia, faltaConsignar, diferenciaEfectiva, diaCuadrado,
@@ -59,6 +59,7 @@ interface DiaAgrupado {
   turno_ids: number[]
   /** La cascada del día, ya sumada y rotulada. Es lo que decide el número grande. */
   cascada: Cascada
+  tienda_id: number
   tienda_nombre: string
   fecha_apertura: string
   fecha_cierre: string | null
@@ -95,14 +96,18 @@ const parseUTC = (f: string) => {
   return new Date(s.endsWith('Z') ? s : s + 'Z')
 }
 
-// Día calendario LOCAL (YYYY-MM-DD) de APERTURA — el día en que el turno vendió.
-// Se agrupa por apertura (no por cierre) porque un turno puede abrir a la mañana y
-// cerrarse recién a la mañana siguiente (cierre demorado / turno huérfano): su plata
-// es del día que abrió. Por cierre, ese día "desaparecía" dentro del día siguiente.
-const dayKeyOf = (d: ResumenDia) => {
-  const dt = parseUTC(d.fecha_apertura)
+// Día calendario LOCAL (YYYY-MM-DD) de un timestamp UTC. En la tablet del local
+// (Colombia, UTC−5) «local» ES Colombia, que es como lee la fecha el backend.
+const calDay = (f: string) => {
+  const dt = parseUTC(f)
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
 }
+
+// Día calendario de APERTURA — el día en que el turno vendió. Se agrupa por apertura
+// (no por cierre) porque un turno puede abrir a la mañana y cerrarse recién a la
+// mañana siguiente (cierre demorado / turno huérfano): su plata es del día que abrió.
+// Por cierre, ese día "desaparecía" dentro del día siguiente.
+const dayKeyOf = (d: ResumenDia) => calDay(d.fecha_apertura)
 
 // Tolerantes a null/'' — un turno cerrado puede no tener fecha_cierre cargada.
 const fmtFecha = (f: string | null | undefined) =>
@@ -558,6 +563,47 @@ export default function ConsignacionesAdmin() {
     } finally { setConfirmando(null) }
   }
 
+  // ── «Recogí»: el dueño se llevó el efectivo del día en vez de consignarlo ─────
+  // Registra una RECOGIDA (no una consignación): esa plata entra a «la mano» en
+  // La Plata y ESTE día se descuenta solo del pendiente por consignar. Es el
+  // reemplazo correcto del viejo «marcar saldado», que creaba una consignación
+  // falsa (afirmaba banco donde había mano) y descontaba el cajón dos veces.
+  const [recogiendo, setRecogiendo] = useState<string | null>(null)
+  const [errorRecogi, setErrorRecogi] = useState<{ key: string; msg: string } | null>(null)
+  // Días de los que YA se registró la pasada en esta sesión. El pendiente se salda
+  // del día más viejo primero (regla de la cuenta), así que un día recién marcado
+  // puede seguir mostrando «por consignar» un rato; sin este candado el dueño lo
+  // volvería a tocar y registraría la recogida dos veces (mano inflada).
+  const [recogidosLocal, setRecogidosLocal] = useState<Set<string>>(new Set())
+
+  const registrarRecogida = async (dia: DiaAgrupado, monto: number) => {
+    if (recogiendo) return
+    const ok = window.confirm(
+      `¿Registrar que recogiste ${fmt(monto)} de ${dia.tienda_nombre}, del `
+      + `${fmtFecha(dia.fecha_apertura)}?\n\nEsa plata entra a «la mano» en La Plata y `
+      + 'baja lo pendiente por consignar (del día más viejo primero). No crea una consignación.')
+    if (!ok) return
+    setRecogiendo(dia.key); setErrorRecogi(null)
+    try {
+      // La recogida se fecha al CIERRE del día, no a la apertura (`dia.key`). El
+      // backend solo aplica una recogida a turnos con `fecha_cierre <= fin del día
+      // de la recogida`: con la apertura, un turno cerrado pasada la medianoche
+      // quedaría FUERA de esa ventana —la recogida no taparía nada y su monto
+      // igual entraría a «la mano», inflándola—. Con el cierre siempre alcanza al
+      // menos a este día. La agrupación sigue siendo por apertura; esto es solo la
+      // fecha del registro. Sin cierre cargado, cae a la apertura.
+      const fechaRecogida = dia.fecha_cierre ? calDay(dia.fecha_cierre) : dia.key
+      await api.post('/consignaciones/recogidas', {
+        tienda_id: dia.tienda_id, fecha: fechaRecogida, monto, nota: null,
+      })
+      setRecogidosLocal(s => new Set(s).add(dia.key))
+      if (tiendaId !== null) await load(tiendaId)
+    } catch (e: any) {
+      setErrorRecogi({ key: dia.key,
+        msg: e?.response?.data?.detail || 'No se pudo registrar la recogida. Reintentá.' })
+    } finally { setRecogiendo(null) }
+  }
+
   const eliminar = async (c: ConsignacionItem) => {
     if (!window.confirm(`¿Revertir la consignación de $${Math.round(c.valor).toLocaleString('es-CO')}? El saldo por consignar del turno se recalcula.`)) return
     setConfirmando(c.id)
@@ -619,7 +665,7 @@ export default function ConsignacionesAdmin() {
       let g = map.get(key)
       if (!g) {
         g = {
-          key, turno_ids: [], turnos: [], tienda_nombre: d.tienda_nombre,
+          key, turno_ids: [], turnos: [], tienda_id: d.tienda_id, tienda_nombre: d.tienda_nombre,
           fecha_apertura: d.fecha_apertura, fecha_cierre: d.fecha_cierre,
           n_turnos: 0, total_efectivo: 0, total_ingresos_mov: 0, total_egresos: 0,
           diferencia_cierre: 0, esperado_consignar: 0, total_consignado: 0,
@@ -861,6 +907,10 @@ export default function ConsignacionesAdmin() {
           const porConsignar = faltaConsignar(cascada, dia.esperado_consignar, dia.total_consignado)
           const dif = diferenciaEfectiva(cascada, dia.esperado_consignar, dia.total_consignado)
           const ok = diaCuadrado(cascada, dia.esperado_consignar, dia.total_consignado)
+          // Este día ya se recogió en ESTA sesión. Como la recogida salda el día
+          // más viejo primero, el día tocado puede seguir mostrando saldo tras el
+          // reload: sin este candado el dueño lo re-toca y duplica la mano.
+          const yaRecogido = recogidosLocal.has(dia.key)
 
           return (
             <div key={dia.key}
@@ -1073,16 +1123,43 @@ export default function ConsignacionesAdmin() {
                     )}
                   </div>
 
-                  {/* El botón «marcar saldado» se cerró: saldaba el día creando una
-                      consignación sin comprobante —afirmaba banco donde había mano— y
-                      junto con la recogida descontaba el cajón dos veces. La pasada se
-                      registra UNA vez, en La Plata, y este pendiente se descuenta solo. */}
+                  {/* «RECOGÍ» — el dueño se llevó el efectivo en vez de consignarlo.
+                      Registra una RECOGIDA (no una consignación): entra a «la mano»
+                      en La Plata y este día se descuenta solo. Es el reemplazo del
+                      viejo «marcar saldado», que creaba una consignación falsa y
+                      descontaba el cajón dos veces. */}
                   {porConsignar > 0.5 && (
-                    <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
-                      ¿Te llevaste esta plata? Registrá la pasada en{' '}
-                      <span className="font-semibold">La Plata → «Recogí efectivo»</span>:
-                      el día se descuenta solo, sin marcar nada acá.
-                    </p>
+                    <div className="space-y-1.5">
+                      {yaRecogido ? (
+                        <div className="w-full min-h-[44px] flex items-center justify-center gap-2 rounded-xl bg-forest-50 border-2 border-forest-100 text-forest-700 text-sm font-bold">
+                          <CheckCircle2 size={16} /> Recogida registrada
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => registrarRecogida(dia, porConsignar)}
+                          disabled={recogiendo === dia.key}
+                          className="w-full min-h-[44px] flex items-center justify-center gap-2 rounded-xl bg-forest text-white text-sm font-bold hover:bg-forest-700 disabled:opacity-50 transition-colors">
+                          <HandCoins size={16} />
+                          {recogiendo === dia.key
+                            ? 'Registrando…'
+                            : `Recogí esta plata (${fmt(porConsignar)})`}
+                        </button>
+                      )}
+                      <p className="text-[11px] text-gray-500 leading-snug px-1">
+                        {yaRecogido ? (
+                          <>Ya registraste esta pasada. La plata entró a <b>«la mano»</b> en La Plata
+                          y baja el pendiente <b>del día más viejo primero</b>, así que este día puede
+                          seguir mostrando saldo un rato. No la registres de nuevo.</>
+                        ) : (
+                          <>Si te llevaste el efectivo en vez de consignarlo, tocá acá: entra a
+                          <b> «la mano»</b> en La Plata y baja el pendiente <b>del día más viejo
+                          primero</b>. <b>No</b> crea una consignación.</>
+                        )}
+                      </p>
+                      {errorRecogi?.key === dia.key && (
+                        <p className="text-[11px] text-red-600 font-semibold px-1">{errorRecogi.msg}</p>
+                      )}
+                    </div>
                   )}
 
                   {/* Consignaciones */}

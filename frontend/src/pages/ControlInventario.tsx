@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
   Layers, Search, RotateCcw, Download, Check, Package, AlertTriangle,
+  ShoppingCart, CheckCircle2,
 } from 'lucide-react'
 import SidePanel from '../components/SidePanel'
 import NivelEnvase from '../components/NivelEnvase'
@@ -1644,6 +1645,45 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
           seleccionado || verMinimos ? 'lg:mr-[420px]' : ''}`}
         style={{ background: MC.hoja }}>
 
+        {/* EL HERO: enmarca la mañana con lo único que decide el pedido —cuántos
+            piden acción— y sube «Armar pedido» de un link perdido a un botón. En
+            oliva (acento de marca), no en el fondo, que el dueño quiso blanco. El
+            número es `atencion`, el MISMO de la pastilla y de la lista con la que
+            abre la pantalla: una sola cuenta, no puede divergir. */}
+        {sugerencia && (() => {
+          const atencion = cuentas['atencion'] ?? 0
+          return (
+            <div className="rounded-2xl px-4 py-3.5 sm:px-5 flex items-center justify-between gap-4 flex-wrap"
+              style={{ background: MC.oliva, color: MC.crema }}>
+              <div className="flex flex-col gap-0.5 min-w-0">
+                {atencion === 0 ? (
+                  <span className="text-2xl font-extrabold leading-none inline-flex items-center gap-2">
+                    <CheckCircle2 size={22} /> Todo al día
+                  </span>
+                ) : (
+                  <span className="text-3xl font-extrabold leading-none tabular-nums">
+                    {atencion}
+                    <span className="text-base font-bold"> {atencion === 1 ? 'producto pide' : 'productos piden'} acción</span>
+                  </span>
+                )}
+                <span className="text-[12px]" style={{ color: '#CBD4BC' }}>
+                  {atencion === 0
+                    ? `los ${allItems.length} productos de la sede alcanzan`
+                    : `de ${allItems.length} en la sede · el resto alcanza`}
+                </span>
+              </div>
+              <button onClick={irAPedido}
+                className="shrink-0 rounded-xl px-4 py-2.5 flex flex-col items-start justify-center gap-0.5 hover:brightness-105 transition"
+                style={{ background: MC.terracota, color: '#fff' }}>
+                <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ opacity: .85 }}>Cuánto pedir y a quién</span>
+                <span className="text-sm font-extrabold inline-flex items-center gap-1.5">
+                  <ShoppingCart size={15} /> Armar pedido →
+                </span>
+              </button>
+            </div>
+          )
+        })()}
+
         {/* LAS PASTILLAS: cada montón con su tamaño, y cada una es el filtro que
             lo muestra. Tocar la que está puesta vuelve a TODO. Una pastilla en
             cero no lleva a ningún lado: queda punteada y gris, fuera del barrido.
@@ -1700,10 +1740,9 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
           </select>
         </div>
 
-        {/* UNA línea: cuántos se están viendo, de cuántos, y dónde vive lo que ya
-            no vive acá. El link al pedido es la única puerta que queda a la capa
-            derivada (cuánto pedir, por proveedor): sin él, sacarla de esta
-            pantalla sería perderla. */}
+        {/* UNA línea: cuántos se están viendo, de cuántos, y volver a todo. La
+            puerta al pedido (cuánto pedir, por proveedor) subió al hero de arriba
+            —de un link perdido acá a un botón—, así que ya no vive en este renglón. */}
         {sugerencia && (
           <p className="text-[11.5px] flex flex-wrap items-baseline gap-x-1.5" style={{ color: MC.tinta45 }}>
             <span>
@@ -1716,12 +1755,6 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
                 Ver todo
               </button>
             )}
-            <span className="ml-auto">
-              Cuánto pedir y de qué proveedor:{' '}
-              <button onClick={irAPedido} className="font-semibold underline" style={{ color: MC.terracota }}>
-                Armar pedido →
-              </button>
-            </span>
           </p>
         )}
 

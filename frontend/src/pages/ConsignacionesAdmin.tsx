@@ -45,6 +45,9 @@ interface ResumenDia extends CamposCascada {
    * `diferenciaEfectiva(cascada, …)`.
    */
   diferencia: number
+  /** Cuánto de este turno se llevó el dueño en mano (recogí) — lo salda sin ir
+   *  al banco. Opcional: un backend viejo no lo manda, y ahí es 0 (no recogido). */
+  recogido?: number
   egresos_detalle: MovDetalle[]
   ingresos_detalle: MovDetalle[]
   consignaciones: ConsignacionItem[]
@@ -76,6 +79,9 @@ interface DiaAgrupado {
   en_cajon_no_es_venta?: number
   esperado_consignar: number
   total_consignado: number
+  /** Suma de lo recogido en mano en los turnos del día. Salda el día sin ir al
+   *  banco: un día con `porConsignar≈0` y `recogido>0` está saldado por recogida. */
+  recogido: number
   // NO hay `diferencia` acá a propósito. La había —`consignado − esperado`— y
   // era la cuenta PRE-CASCADA: dejarla sumada y guardada es dejar servida la
   // cifra equivocada para el próximo que agregue una fila a esta tarjeta. La
@@ -668,7 +674,7 @@ export default function ConsignacionesAdmin() {
           key, turno_ids: [], turnos: [], tienda_id: d.tienda_id, tienda_nombre: d.tienda_nombre,
           fecha_apertura: d.fecha_apertura, fecha_cierre: d.fecha_cierre,
           n_turnos: 0, total_efectivo: 0, total_ingresos_mov: 0, total_egresos: 0,
-          diferencia_cierre: 0, esperado_consignar: 0, total_consignado: 0,
+          diferencia_cierre: 0, esperado_consignar: 0, total_consignado: 0, recogido: 0,
           egresos_detalle: [], ingresos_detalle: [], consignaciones: [],
         }
         map.set(key, g)
@@ -682,6 +688,7 @@ export default function ConsignacionesAdmin() {
       g.diferencia_cierre += d.diferencia_cierre ?? 0
       g.esperado_consignar += d.esperado_consignar
       g.total_consignado += d.total_consignado
+      g.recogido += d.recogido ?? 0
       g.egresos_detalle.push(...d.egresos_detalle)
       g.ingresos_detalle.push(...d.ingresos_detalle)
       g.consignaciones.push(...d.consignaciones)
@@ -907,6 +914,12 @@ export default function ConsignacionesAdmin() {
           const porConsignar = faltaConsignar(cascada, dia.esperado_consignar, dia.total_consignado)
           const dif = diferenciaEfectiva(cascada, dia.esperado_consignar, dia.total_consignado)
           const ok = diaCuadrado(cascada, dia.esperado_consignar, dia.total_consignado)
+          // SALDADO POR RECOGIDA, no por consignación: el dueño se llevó el
+          // efectivo (recogí), así que no falta plata (porConsignar≈0) pero
+          // tampoco fue al banco. `diaCuadrado` lo daba en rojo porque mira
+          // «consignado vs esperado» y no cuenta la recogida. Acá se marca aparte
+          // —«recogido, lo tenés vos»—: no es un faltante, es plata en la mano.
+          const soloRecogido = !ok && porConsignar <= 0.5 && dia.recogido > 0.5
           // Este día ya se recogió en ESTA sesión. Como la recogida salda el día
           // más viejo primero, el día tocado puede seguir mostrando saldo tras el
           // reload: sin este candado el dueño lo re-toca y duplica la mano.
@@ -915,7 +928,7 @@ export default function ConsignacionesAdmin() {
           return (
             <div key={dia.key}
               className={`bg-white rounded-2xl border-2 overflow-hidden transition-all ${
-                !ok ? 'border-red-200' : pendientes.length > 0 ? 'border-amber-200' : 'border-gray-200'
+                soloRecogido ? 'border-indigo-200' : !ok ? 'border-red-200' : pendientes.length > 0 ? 'border-amber-200' : 'border-gray-200'
               }`}>
 
               {/* Cabecera del día — siempre visible */}
@@ -925,7 +938,7 @@ export default function ConsignacionesAdmin() {
               >
                 {/* Indicador estado */}
                 <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                  !ok ? 'bg-red-500' : pendientes.length > 0 ? 'bg-amber-400' : 'bg-green-400'
+                  soloRecogido ? 'bg-indigo-400' : !ok ? 'bg-red-500' : pendientes.length > 0 ? 'bg-amber-400' : 'bg-green-400'
                 }`} />
 
                 {/* Fecha + sede */}
@@ -977,6 +990,11 @@ export default function ConsignacionesAdmin() {
                     <>
                       <p className="text-base font-bold text-amber-600">{fmt(porConsignar)}</p>
                       <p className="text-xs text-amber-500">por consignar</p>
+                    </>
+                  ) : soloRecogido ? (
+                    <>
+                      <p className="text-base font-bold text-indigo-600">✓ Recogido</p>
+                      <p className="text-xs text-indigo-400">{fmt(dia.recogido)} · lo tenés vos</p>
                     </>
                   ) : (
                     <p className={`text-base font-bold ${ok ? 'text-green-600' : 'text-red-600'}`}>

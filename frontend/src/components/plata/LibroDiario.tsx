@@ -482,6 +482,19 @@ function FilaDia({
           </span>
         )}
       </div>
+      {/* La MANO del día (recogí) — abajo del renglón del banco, en otro color:
+          ENTRA/SALE/QUEDA son el BANCO; esto es efectivo que el dueño se llevó,
+          que no viaja al banco. Sin él, un día en que solo se recogió se veía
+          vacío («—» en las tres columnas) aunque hubiera movimiento de plata.
+          Ausente (servidor viejo) no dibuja nada. */}
+      {typeof dia.mano_entradas === 'number' && dia.mano_entradas > 0 && (
+        <div className="px-4 pb-2 -mt-1.5 pl-[3.9rem]">
+          <span className="text-[11px] font-mono tabular-nums font-semibold text-indigo-500">
+            + {plata(dia.mano_entradas)} recogí
+            <span className="font-sans font-normal text-indigo-400/80"> · en mano, no al banco</span>
+          </span>
+        </div>
+      )}
     </button>
   )
 }

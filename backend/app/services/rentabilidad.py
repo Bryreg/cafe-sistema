@@ -56,6 +56,19 @@ _MESES_REFERENCIA_PRECIO = 12
 # apagan la alerta» se mantiene, porque el viejo nunca es el outlier).
 _REF_PISO_FRACCION_MEDIANA = 0.5
 
+# TOPE DE SENSATEZ PARA LA ALERTA «SUBIÓ DE PRECIO». Ningún proveedor sube un
+# precio +150%: un "aumento" así no es una suba para ir a negociar, es un DATO
+# MAL CARGADO —y a diferencia del tipeo suelto (que ataja el piso de arriba),
+# acá el precio 10x más bajo está REPETIDO en varias facturas viejas, así que la
+# mediana no lo distingue del normal—. La pulpa que "subió 900%", la torta que
+# "subió 1.827%": son el mismo error de una coma, cargado muchas veces. Por
+# encima de este tope la alerta NO se tira a la basura —eso sería inventar calma
+# sobre un dato que está mal— sino que sale de la lista de subas (que es una
+# herramienta de negociación) y va a `precios_sospechosos`, la lista de "revisá
+# este dato". Debajo del tope, una suba real (Baileys +41%, una duplicación) se
+# reporta como siempre.
+_SUBA_SOSPECHOSA_PCT = 150.0
+
 # Patrones de concepto que crea services/facturas.py para pagos a proveedor.
 # Si esos strings cambian allá, hay que actualizarlos acá (no hay FK).
 _CONCEPTOS_COMPRA = ("Pago proveedor:%", "Reverso Pago proveedor:%", "Ajuste factura%")
@@ -1258,7 +1271,8 @@ def _ventas_30d(db) -> dict[int, dict]:
 
 
 def alertas_de_costo(db, *, costo_prom=None, costo_ult=None, recetas=None,
-                     por_id=None, ventas_30d=None) -> list[dict]:
+                     por_id=None, ventas_30d=None,
+                     solo_sospechosas: bool = False) -> list[dict]:
     """LO QUE SUBIÓ, CON NOMBRE Y APELLIDO.
 
     Un insumo cuyo ÚLTIMO precio de factura supera en >10% a la REFERENCIA —el
@@ -1327,6 +1341,14 @@ def alertas_de_costo(db, *, costo_prom=None, costo_ult=None, recetas=None,
         # ningún consumidor tenga que acordarse de chequearlo.
         if not usado or usado <= 0 or not ref or ref <= 0 or ultimo <= ref * 1.10:
             continue
+        # PARTICIÓN SUBA REAL vs DATO SOSPECHOSO. Un aumento por encima del tope
+        # no es una suba de proveedor (nadie sube +150%) sino un dato mal cargado;
+        # va a `precios_sospechosos`, no a la lista de subas. `solo_sospechosas`
+        # decide de qué lado del tope se queda esta llamada — el mismo barrido
+        # sirve para las dos listas sin recalcular nada.
+        pct = (ultimo / ref - 1) * 100
+        if (pct > _SUBA_SOSPECHOSA_PCT) != solo_sospechosas:
+            continue
         afectados = set(usa_insumo.get(iid, set()))
         ins = por_id.get(iid)
         if ins is not None and float(ins.precio_venta or 0) > 0:
@@ -1371,7 +1393,10 @@ def alertas_de_costo(db, *, costo_prom=None, costo_ult=None, recetas=None,
             # su propia factura: medido contra el promedio ponderado daba 35%
             # donde el papel decía 40%, y el proveedor lo desmiente en dos
             # segundos.
-            "pct_suba": round((ultimo / ref - 1) * 100, 1),
+            "pct_suba": round(pct, 1),
+            # Marca del lado del tope en que cayó: la pantalla la usa para
+            # rotularla como «revisá el dato» en vez de «subió de precio».
+            "sospechosa": pct > _SUBA_SOSPECHOSA_PCT,
             # CUÁNTO DE ESA SUBA YA ESTÁ ADENTRO DEL COSTO CON EL QUE SE COSTEA.
             # Es lo que explica por qué recuperar el precio viejo devuelve mucho
             # menos de lo que la suba promete: con el 9% absorbido, el resto de
@@ -1670,12 +1695,22 @@ def get_rentabilidad_productos(db) -> dict:
     alertas_costo = alertas_de_costo(db, costo_prom=costo_prom, costo_ult=costo_ult,
                                      recetas=recetas, por_id=por_id,
                                      ventas_30d=ventas_30d)
+    # Los "aumentos" desmesurados (>+150%) NO son subas de proveedor sino datos
+    # mal cargados; salen de la lista de subas y van a su propia lista de "revisá
+    # el dato", con los mismos mapas ya calculados (no repite consultas).
+    precios_sospechosos = alertas_de_costo(db, costo_prom=costo_prom, costo_ult=costo_ult,
+                                           recetas=recetas, por_id=por_id,
+                                           ventas_30d=ventas_30d, solo_sospechosas=True)
 
     from app.services.factura_ocr import facturas_pendientes_de_costos
     from app.services.producto_alias import contar_aliases
     return {
         "productos": out,
         "alertas_costo": alertas_costo[:10],
+        # Datos de precio a revisar (un "+900%" es una coma mal puesta, repetida
+        # en varias facturas viejas — no una suba real). Se muestran aparte para
+        # que se corrijan, sin ensuciar la lista de subas que se lleva a negociar.
+        "precios_sospechosos": precios_sospechosos[:10],
         "facturas_pendientes_de_costos": facturas_pendientes_de_costos(db),
         # Fase 2 del OCR: cuántos aliases proveedor→producto conoce el sistema
         # (visible en "Salud de datos").

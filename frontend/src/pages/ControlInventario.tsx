@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
   Layers, Search, RotateCcw, Download, Check, Package, AlertTriangle,
-  ShoppingCart, CheckCircle2,
+  ShoppingCart, CheckCircle2, Clock, ArrowRight,
 } from 'lucide-react'
 import SidePanel from '../components/SidePanel'
 import NivelEnvase from '../components/NivelEnvase'
@@ -505,7 +505,10 @@ function grupoMerma(motivo: string | null): string | null {
 // El color de estado es la REGLA izquierda y sale del mismo ESTADO_CFG que la
 // leyenda: si divergieran, la leyenda dejaría de explicar lo que se ve. Una fila
 // sana queda casi monocroma; el color se gasta solo donde hay señal.
-function ProductRow({ p, venc, activo, empaque, corte, onSelect }: {
+// Fila del rediseño Claude Design: nombre arriba, categoría + chips debajo, y a
+// la derecha «cuánto hay» y «alcanza» con su punto de estado. Más limpia que la
+// vieja tira con regla lateral. `onHover` alimenta la ficha del panel derecho.
+function ProductRow({ p, venc, activo, empaque, corte, onSelect, onHover }: {
   p: ProductoInventario
   venc?: VencInfo
   activo: boolean
@@ -517,114 +520,178 @@ function ProductRow({ p, venc, activo, empaque, corte, onSelect }: {
   // dice nada, porque un factor inventado es peor que ninguno.
   empaque?: number
   onSelect: () => void
+  onHover?: () => void
 }) {
   const cfg = ESTADO_CFG[p.estado] ?? ESTADO_CFG.ok
   const enNegativo = p.stock_actual < 0
-  // El stock se pinta en rojo también cuando está en cero o menos. Antes dependía
-  // solo de los días restantes, que son NULL sin consumo medido: un producto en 0
-  // sin salidas registradas mostraba su cero en gris.
+  // El stock se pinta en rojo también cuando está en cero o menos.
   const critico = p.stock_actual <= 0 ||
     (p.dias_restantes !== null && p.dias_restantes <= p.lead_time_dias)
-  // Lo que se arma con receta en la barra. `hayQueReponer` evita el otro extremo:
-  // un preparable con stock de sobra no tiene por qué gritar «preparar».
   const esPreparable = p.accion === 'preparar'
   const hayQueReponer = p.cantidad_sugerida > 0 || p.stock_actual <= 0
-  // «a ojo»: se acabó Y el sistema no tiene ni mínimo ni consumo medido para
-  // decir cuánto. Un preparable nunca lo lleva: su verbo ya es otro.
   const aOjo = !esPreparable && p.stock_actual <= 0 && p.cantidad_sugerida <= 0
-  const sano = p.estado === 'ok'
-  const caps = esCaps(p.nombre)
-  // «24 und ≈ 2 empaques de 12». Con factor 1 el empaque y la unidad son lo
-  // mismo y la frase no diría nada. Y por debajo de UN empaque tampoco se dice:
-  // «≈ 0,2 empaques de 10» no es un refuerzo de «2 und», es ruido — la cantidad
-  // en unidades ya es la lectura más clara ahí.
+  // «24 und ≈ 2 empaques de 12»: el mismo número en la unidad en que se compra.
   const enEmpaques = empaque && empaque > 1 && p.stock_actual >= empaque
     ? Math.round((p.stock_actual / empaque) * 10) / 10
     : null
 
-  const chip = 'shrink-0 text-[10px] font-bold uppercase tracking-[.06em] px-1.5 py-px rounded'
+  const chip = 'shrink-0 text-[10px] font-bold px-1.5 py-px rounded-[7px]'
 
   return (
     <button
-      onClick={onSelect}
+      onClick={onSelect} onMouseEnter={onHover}
       title={`${p.categoria}${p.proveedor ? ` · ${p.proveedor}` : ''}`}
-      // En el celular la fila son DOS renglones: el nombre entero arriba y la
-      // evidencia abajo. En una sola línea, con los chips y las dos columnas
-      // peleando por 390px, el nombre —lo único que el dueño está buscando— se
-      // comía en «MEZCLA GRAN…». Desde `sm` vuelve a ser una sola línea.
-      className="w-full flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-0.5 text-left border-t py-[5px] pr-3 pl-3 hover:bg-[#F4F4F5] transition-colors"
+      className="w-full flex items-center gap-3 text-left px-4 py-2.5 transition-colors"
       style={{
-        borderTopColor: corte ? MC.lineaFte : MC.linea,
-        borderTopWidth: corte ? 2 : 1,
-        borderLeft: `3px solid ${cfg.mc}`,
-        background: activo ? '#F4F4F5' : MC.papel,
+        borderTop: `${corte ? 2 : 1}px solid ${corte ? DS.borde : DS.bordeSuave}`,
+        background: activo ? DS.verdeClaro : DS.card,
       }}
     >
-      <span
-        className={`w-full sm:w-auto sm:flex-1 min-w-0 truncate ${caps ? 'text-[13px] tracking-[0.012em]' : 'text-sm'} ${sano ? 'font-medium' : 'font-semibold'}`}
-        style={{ color: MC.negro }}
-      >
-        {p.barista_alerto && '🔔 '}{p.nombre}
+      {/* Producto: nombre + (categoría · chips) */}
+      <span className="flex-1 min-w-0 flex flex-col gap-0.5">
+        <span className="inline-flex items-center gap-1.5 min-w-0">
+          {p.barista_alerto && <span title="La pidió una barista" style={{ fontSize: 12 }}>🔔</span>}
+          <span className="truncate text-[14px] font-bold" style={{ color: DS.tinta }}>{p.nombre}</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5 flex-wrap min-w-0">
+          <span className="text-[11px]" style={{ color: DS.tinta30 }}>{p.categoria}</span>
+          {enNegativo && (
+            <span className={chip} title="Se descontó más de lo que se registró que entró: falta cargar una entrada."
+              style={{ background: 'oklch(97% 0.02 30)', color: '#8a3325' }}>en negativo</span>
+          )}
+          {esPreparable && hayQueReponer && (
+            <span className={chip} title="No se compra: se prepara en la barra."
+              style={{ background: 'oklch(95% 0.03 135)', color: 'oklch(40% 0.06 135)' }}>preparar</span>
+          )}
+          {aOjo && (
+            <span className={chip} title="Se acabó y no hay mínimo ni consumo medido: la cantidad la ponés vos."
+              style={{ background: DS.bg, color: DS.tinta45 }}>a ojo</span>
+          )}
+          {venc && (
+            <span className={`${chip} tabular-nums`}
+              style={{ background: 'oklch(97% 0.025 65)', color: venc.estado === 'vencido' ? '#8a3325' : DS.vence }}>
+              {venc.estado === 'vencido' ? 'venció' : 'vence'} {ddmm(venc.fecha)}
+            </span>
+          )}
+        </span>
       </span>
-      {/* Un cero y un -0,2 se pintaban los dos en rojo, y son dos problemas
-          distintos con dos acciones distintas. El signo menos solo no alcanza:
-          es un píxel. El chip usa la MISMA palabra que la pastilla, que es donde
-          se explica qué significa. */}
-      {enNegativo && (
-        <span className={chip} title="El sistema descontó más de lo que se registró que entró: falta cargar una entrada."
-          style={{ color: MC.negativo, boxShadow: `inset 0 0 0 1.4px ${MC.negativo}` }}>
-          en negativo
-        </span>
-      )}
-      {/* No se compra: se arma en la barra con la receta. Sin este rótulo, un
-          faltante de mezcla de granizado se lee como una orden de compra a un
-          proveedor que no existe. Cuánto preparar lo dice el panel. */}
-      {esPreparable && hayQueReponer && (
-        <span className={chip} title="Esto no se compra: se prepara en la barra. Cuánto, en el panel del producto."
-          style={{ color: MC.oliva, boxShadow: `inset 0 0 0 1.4px ${MC.oliva}` }}>
-          preparar
-        </span>
-      )}
-      {aOjo && (
-        <span className={chip} title="Se acabó y el sistema no tiene mínimo ni consumo medido: la cantidad a pedir la ponés vos."
-          style={{ color: ESTADO_CFG.bajo.mc, boxShadow: `inset 0 0 0 1.4px ${ESTADO_CFG.bajo.mc}` }}>
-          a ojo
-        </span>
-      )}
-      {/* «⚠ 15-08» solo se explicaba en un `title`, que en el celular no existe.
-          El verbo cabe en el mismo nodo. */}
-      {venc && (
-        <span className={`${chip} tabular-nums`}
-          style={{
-            color: venc.estado === 'vencido' ? ESTADO_CFG.agotado.mc : MC.vence,
-            background: '#F6E7C9',
-          }}>
-          {venc.estado === 'vencido' ? 'venció' : 'vence'} {ddmm(venc.fecha)}
-        </span>
-      )}
-      {/* El stock dicho en la unidad en que se COMPRA, que es como el dueño
-          piensa el pedido («las tortas vienen de 12 porciones, la pulpa de 10»).
-          Va pegado al número de stock porque es el mismo número en otra unidad,
-          no un dato nuevo. Sale de `contenido_por_empaque` y solo aparece cuando
-          ese factor está cargado. */}
-      {enEmpaques !== null && (
-        <span className="shrink-0 text-[10px] tabular-nums" style={{ color: MC.tinta28 }}
-          title={`Un empaque de compra trae ${num(empaque!)} ${p.unidad}.`}>
-          ≈ {num(enEmpaques)} {enEmpaques === 1 ? 'empaque' : 'empaques'} de {num(empaque!)}
-        </span>
-      )}
-      <span className="shrink-0 ml-auto sm:ml-0 w-auto sm:w-[74px] text-right text-sm font-semibold tabular-nums"
-        style={{ color: critico ? ESTADO_CFG.agotado.mc : (sano ? MC.tinta70 : MC.negro) }}>
-        {num(p.stock_actual)}
-        <span className="font-normal text-[11px]" style={{ color: MC.tinta45 }}> {p.unidad}</span>
+      {/* Cuánto hay */}
+      <span className="shrink-0 w-[86px] text-right">
+        <span className="tabular-nums text-[15px] font-bold" style={{ color: critico ? '#c64a3a' : DS.tinta }}>{num(p.stock_actual)}</span>
+        <span className="text-[11px]" style={{ color: DS.tinta30 }}> {p.unidad}</span>
+        {enEmpaques !== null && (
+          <span className="block text-[10px] tabular-nums" style={{ color: DS.tinta30 }}
+            title={`Un empaque de compra trae ${num(empaque!)} ${p.unidad}.`}>
+            ≈ {num(enEmpaques)} de {num(empaque!)}
+          </span>
+        )}
       </span>
-      {/* «se acabó» no se esconde en el celular: es justo el rótulo que distingue
-          el cero del negativo, y en el renglón de evidencia cabe. */}
-      <span className="shrink-0 w-auto sm:w-16 text-right text-[11px] tabular-nums"
-        style={{ color: sano ? MC.tinta45 : MC.tinta70 }}>
-        {alcanzaLabel(p)}
+      {/* Alcanza: punto de estado + texto */}
+      <span className="shrink-0 w-16 flex items-center justify-end gap-1.5">
+        <span className="w-2 h-2 rounded-[3px] shrink-0" style={{ background: cfg.mc }} />
+        <span className="text-[12px] font-bold tabular-nums" style={{ color: cfg.mc }}>{alcanzaLabel(p)}</span>
       </span>
     </button>
+  )
+}
+
+// Ficha del producto señalado (hover o click) para el panel derecho — SOLO
+// LECTURA, con el estilo del mockup. Umbrales, ritmo y acción salen de la lista
+// (instantáneo); los últimos movimientos se piden aparte. El botón «Ajustar /
+// editar» abre el panel de siempre, que es donde se registra y se corrige.
+function FichaPanel({ producto: p, tiendaId, onEditar }: {
+  producto: ProductoInventario; tiendaId: number; onEditar: () => void
+}) {
+  const [movs, setMovs] = useState<FichaMovimiento[] | null>(null)
+  useEffect(() => {
+    let vivo = true; setMovs(null)
+    api.get<Ficha>(`/inventario/producto/${p.producto_id}/ficha`, { params: { tienda_id: tiendaId } })
+      .then(r => { if (vivo) setMovs(r.data.movimientos ?? []) })
+      .catch(() => { if (vivo) setMovs([]) })
+    return () => { vivo = false }
+  }, [p.producto_id, tiendaId])
+
+  const cfg = ESTADO_CFG[p.estado] ?? ESTADO_CFG.ok
+  const critico = p.stock_actual <= 0 || (p.dias_restantes !== null && p.dias_restantes <= p.lead_time_dias)
+  const consume = p.consumo_diario > 0 ? `Consume ~${num(p.consumo_diario)} ${p.unidad}/día` : 'Sin ritmo medido todavía'
+  const esCompra = p.accion === 'comprar', esPrep = p.accion === 'preparar'
+  const buy = esCompra || esPrep
+  const accion = esCompra ? `Pedí ${num(p.cantidad_sugerida)} ${p.unidad}${p.proveedor ? ` a ${p.proveedor}` : ''}`
+    : esPrep ? `Preparás ${num(p.tandas_sugeridas ?? 0)} ${(p.tandas_sugeridas ?? 0) === 1 ? 'tanda' : 'tandas'} en la barra`
+    : p.stock_actual <= 0 ? 'Contá una vez: no hay consumo cargado' : 'Nada por ahora — alcanza'
+
+  const umbral = (lbl: string, val: number | null, fuerte = false) => (
+    <div className="rounded-[13px] px-3 py-2.5 flex flex-col gap-0.5"
+      style={{ border: `${fuerte ? 1.5 : 1}px solid ${fuerte && critico ? 'oklch(88% 0.06 30)' : DS.borde}`,
+               background: fuerte && critico ? 'oklch(97% 0.02 30 / 0.5)' : DS.card }}>
+      <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: DS.tinta45 }}>{lbl}</span>
+      <span className="tabular-nums text-[18px] font-bold" style={{ color: fuerte ? (critico ? '#c64a3a' : DS.tinta) : DS.tinta60 }}>
+        {val == null ? '—' : num(val)}
+      </span>
+    </div>
+  )
+  const TAG: Record<string, { bg: string; col: string }> = {
+    entrada: { bg: 'oklch(96% 0.018 145)', col: 'oklch(30% 0.10 145)' },
+    salida:  { bg: 'oklch(97% 0.02 30)',   col: '#8a3325' },
+    ajuste:  { bg: 'oklch(96% 0.008 75)',  col: 'oklch(40% 0.01 60)' },
+  }
+  return (
+    <div className="p-4">
+      <div className="flex items-baseline justify-between gap-2 mb-3">
+        <span className="text-[13px] truncate" style={{ color: DS.tinta45 }}>{p.categoria}{p.proveedor ? ` · ${p.proveedor}` : ''}</span>
+        <span className="shrink-0 inline-flex items-center gap-1.5 text-[12px] font-bold" style={{ color: cfg.mc }}>
+          <span className="w-2 h-2 rounded-[3px]" style={{ background: cfg.mc }} />{cfg.label.toLowerCase()}
+        </span>
+      </div>
+      <div className="grid grid-cols-4 gap-2 mb-3">
+        {umbral('Hay', p.stock_actual, true)}
+        {umbral('Crítico', p.stock_critico)}
+        {umbral('Mínimo', p.stock_minimo)}
+        {umbral('Ideal', p.stock_ideal)}
+      </div>
+      <div className="flex flex-col gap-2 mb-4">
+        <div className="rounded-[13px] px-3.5 py-3 flex items-center gap-2.5" style={{ background: DS.bg }}>
+          <Clock size={17} style={{ color: DS.tinta45, flexShrink: 0 }} />
+          <span className="flex-1 text-[13px]" style={{ color: DS.tinta60 }}>{consume}</span>
+          <span className="text-[14px] font-extrabold" style={{ color: cfg.mc }}>{alcanzaLabel(p)}</span>
+        </div>
+        <div className="rounded-[13px] px-3.5 py-3 flex items-center gap-2.5"
+          style={{ background: buy ? 'oklch(97% 0.02 50)' : 'oklch(96% 0.018 145)',
+                   border: `1px solid ${buy ? 'oklch(88% 0.07 50)' : 'oklch(85% 0.10 145)'}` }}>
+          <ArrowRight size={17} style={{ color: buy ? 'oklch(54% 0.16 45)' : 'oklch(30% 0.10 145)', flexShrink: 0 }} />
+          <span className="flex-1 text-[13px] font-bold" style={{ color: buy ? 'oklch(54% 0.16 45)' : 'oklch(30% 0.10 145)' }}>{accion}</span>
+        </div>
+      </div>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: DS.tinta30 }}>Últimos movimientos</span>
+        <button onClick={onEditar} className="text-[12px] font-bold inline-flex items-center gap-1 hover:underline" style={{ color: DS.terracota }}>
+          Ajustar / editar →
+        </button>
+      </div>
+      {movs == null ? (
+        <p className="text-[12px] py-2" style={{ color: DS.tinta30 }}>Cargando…</p>
+      ) : movs.length === 0 ? (
+        <p className="text-[12px] py-2" style={{ color: DS.tinta30 }}>Sin movimientos registrados.</p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {movs.slice(0, 5).map(m => {
+            const t = TAG[m.tipo] ?? TAG.ajuste
+            const signo = m.tipo === 'entrada' ? '+' : m.tipo === 'salida' ? '−' : '='
+            return (
+              <div key={m.id} className="flex items-center gap-2.5 px-3 py-2 rounded-[11px]" style={{ border: `1px solid ${DS.bordeSuave}` }}>
+                <span className="shrink-0 text-[11px] w-11" style={{ color: DS.tinta30 }}>{m.fecha ? ddmm(m.fecha) : '—'}</span>
+                <span className="shrink-0 px-2 py-0.5 rounded-[8px] text-[10px] font-bold capitalize" style={{ background: t.bg, color: t.col }}>{m.tipo}</span>
+                <span className="flex-1 min-w-0 truncate text-[12px]" style={{ color: DS.tinta60 }}>{m.motivo ?? m.barista ?? '—'}</span>
+                <span className="shrink-0 tabular-nums text-[12px] font-bold"
+                  style={{ color: m.tipo === 'entrada' ? 'oklch(40% 0.14 145)' : m.tipo === 'salida' ? '#c64a3a' : DS.tinta60 }}>
+                  {signo} {num(Math.abs(m.cantidad))}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1430,6 +1497,12 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
   // un deep-link (la propuesta depende del consumo de HOY) y compartir un link
   // que abre una pantalla de escritura no es lo que nadie quiere compartir.
   const [verMinimos, setVerMinimos] = useState(false)
+  // Hover/pin señalan el producto de la FICHA (panel derecho del rediseño).
+  // `hoverId` es transitorio (mouse en escritorio); el pin vive en la URL (?p=)
+  // y es la vía en tablet, donde no hay hover. `editando` abre el panel de
+  // siempre —el que registra movimientos y corrige umbrales— desde la ficha.
+  const [hoverId, setHoverId] = useState<number | null>(null)
+  const [editando, setEditando] = useState<number | null>(null)
   const navigate = useNavigate()
 
   // Filtro y selección viven en la URL: ?estado=urgente&p=42&tab=lotes es un
@@ -1633,6 +1706,11 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
   }, [base, venc])
 
   const seleccionado = selId !== null ? allItems.find(i => i.producto_id === selId) ?? null : null
+  // El producto de la ficha: lo que el mouse señala, o el que quedó fijado (pin).
+  const activeId = hoverId ?? selId
+  const activo = activeId !== null ? allItems.find(i => i.producto_id === activeId) ?? null : null
+  // El producto en edición (panel de siempre), abierto desde la ficha.
+  const editandoProd = editando !== null ? allItems.find(i => i.producto_id === editando) ?? null : null
 
   // Se está viendo menos que la sede entera (por estado, por categoría o por
   // búsqueda). Es lo que decide si la línea de conteo ofrece volver a todo.
@@ -1664,7 +1742,7 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
           pastillas sticky necesitan un fondo que las respalde al scrollear. */}
       <div
         className={`space-y-2 transition-all rounded-2xl p-3 sm:p-4 ${
-          seleccionado || verMinimos ? 'lg:mr-[420px]' : ''}`}
+          editando || verMinimos ? 'lg:mr-[420px]' : ''}`}
         style={{ background: MC.hoja }}>
 
         {/* EL HERO: enmarca la mañana con lo único que decide el pedido —cuántos
@@ -1867,20 +1945,21 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
                 <>
                   <div className="hidden sm:flex items-center gap-x-2 px-4 py-2.5 text-[10px] font-bold uppercase tracking-[.1em]"
                     style={{ color: DS.tinta30, background: DS.bg, borderBottom: `1px solid ${DS.bordeSuave}` }}>
-                    <span className="flex-1 min-w-0" style={{ paddingLeft: 11 }}>Producto</span>
-                    <span className="shrink-0 w-[74px] text-right">Cuánto hay</span>
+                    <span className="flex-1 min-w-0">Producto</span>
+                    <span className="shrink-0 w-[86px] text-right">Cuánto hay</span>
                     <span className="shrink-0 w-16 text-right">Alcanza</span>
                   </div>
-                  <div className="max-h-[74vh] overflow-y-auto">
+                  <div className="max-h-[74vh] overflow-y-auto" onMouseLeave={() => setHoverId(null)}>
                     {filtrados.map((p, i) => (
                       <ProductRow
                         key={p.producto_id}
                         p={p}
                         venc={venc[p.producto_id]}
                         empaque={empaques.get(p.producto_id)}
-                        activo={selId === p.producto_id}
+                        activo={activeId === p.producto_id}
                         corte={i > 0 && filtrados[i - 1].estado !== p.estado}
-                        onSelect={() => setSp2({ p: String(p.producto_id), tab: 'hoy' }, true)}
+                        onHover={() => setHoverId(p.producto_id)}
+                        onSelect={() => setSp2({ p: selId === p.producto_id ? null : String(p.producto_id) })}
                       />
                     ))}
                   </div>
@@ -1888,52 +1967,36 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
               )}
             </div>
 
-            {/* Derecha: lo que pide acción */}
+            {/* Derecha: LA FICHA del producto señalado (hover o click). Sin
+                worklist —la lista de la izquierda ya viene ordenada por lo que
+                falta primero, así que repetirla no sumaba (pedido del dueño). */}
             <div className="rounded-[22px] overflow-hidden"
               style={{ background: DS.card, border: `1px solid ${DS.borde}`,
                        boxShadow: '0 1px 2px oklch(22% 0.01 60 / 0.04), 0 10px 28px oklch(22% 0.01 60 / 0.05)' }}>
-              {(() => {
-                const work = base.filter(i => pasaFiltro(i, 'atencion', venc))
-                  .sort((a, b) => (ESTADO_ORDER[a.estado] ?? 5) - (ESTADO_ORDER[b.estado] ?? 5) || a.nombre.localeCompare(b.nombre))
-                return (
-                  <>
-                    <div className="px-4 py-3 flex items-center justify-between gap-2" style={{ borderBottom: `1px solid ${DS.bordeSuave}` }}>
-                      <span className="text-[15px] font-extrabold" style={{ color: DS.tinta }}>Lo que pide acción</span>
-                      <span className="text-[12px] tabular-nums" style={{ color: DS.tinta30 }}>{work.length}</span>
-                    </div>
-                    {work.length === 0 ? (
-                      <div className="px-4 py-10 flex flex-col items-center gap-2 text-center">
-                        <CheckCircle2 size={26} style={{ color: DS.verde }} />
-                        <span className="text-sm font-semibold" style={{ color: DS.tinta }}>Todo al día</span>
-                        <span className="text-[12px]" style={{ color: DS.tinta45 }}>Ningún producto necesita acción ahora mismo.</span>
-                      </div>
-                    ) : (
-                      <div className="p-3 flex flex-col gap-2 max-h-[64vh] overflow-y-auto">
-                        {work.map(p => {
-                          const cfg = ESTADO_CFG[p.estado]
-                          return (
-                            <button key={p.producto_id} onClick={() => setSp2({ p: String(p.producto_id), tab: 'hoy' }, true)}
-                              className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-left hover:brightness-[.98] transition"
-                              style={{ border: `1px solid ${DS.bordeSuave}`, background: DS.card }}>
-                              <span className="w-2.5 h-2.5 rounded-[3px] shrink-0" style={{ background: cfg.mc }} />
-                              <span className="flex-1 min-w-0 flex flex-col">
-                                <span className="text-[14px] font-bold truncate" style={{ color: DS.tinta }}>{p.nombre}</span>
-                                <span className="text-[11px]" style={{ color: DS.tinta30 }}>{p.categoria} · hay {num(p.stock_actual)} {p.unidad}</span>
-                              </span>
-                              <span className="shrink-0 text-[12px] font-bold" style={{ color: cfg.mc }}>{alcanzaLabel(p)}</span>
-                            </button>
-                          )
-                        })}
-                      </div>
-                    )}
-                    <div className="px-4 py-3 flex items-center gap-2" style={{ borderTop: `1px solid ${DS.bordeSuave}`, background: DS.bg }}>
-                      <span className="text-[12px] leading-snug" style={{ color: DS.tinta30 }}>
-                        Tocá un producto <span style={{ color: DS.tinta45 }}>— de esta lista o de la izquierda —</span> y se abre su ficha: umbrales, para cuánto alcanza y sus últimos movimientos.
-                      </span>
-                    </div>
-                  </>
-                )
-              })()}
+              <div className="px-4 py-3 flex items-center justify-between gap-2" style={{ borderBottom: `1px solid ${DS.bordeSuave}` }}>
+                <span className="text-[15px] font-extrabold truncate" style={{ color: DS.tinta }}>
+                  {activo ? activo.nombre : 'Ficha del producto'}
+                </span>
+                {selId !== null && (
+                  <button onClick={() => setSp2({ p: null })}
+                    className="shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold"
+                    style={{ border: `1px solid ${DS.borde}`, color: DS.tinta45 }}>
+                    ✕ quitar
+                  </button>
+                )}
+              </div>
+              {activo ? (
+                <FichaPanel producto={activo} tiendaId={tiendaId} onEditar={() => setEditando(activo.producto_id)} />
+              ) : (
+                <div className="px-5 py-14 flex flex-col items-center gap-2.5 text-center">
+                  <span className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: DS.bg, color: DS.tinta30 }}>
+                    <Package size={22} />
+                  </span>
+                  <span className="text-[13px] leading-snug" style={{ color: DS.tinta45, maxWidth: 250 }}>
+                    Pasá el cursor por un producto <span style={{ color: DS.tinta30 }}>— o tocalo —</span> y acá aparece su ficha: umbrales, para cuántos días alcanza y sus últimos movimientos.
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2023,17 +2086,17 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
         })()}
       </div>
 
-      {seleccionado && (
+      {editandoProd && (
         <PanelProducto
-          key={seleccionado.producto_id}
-          producto={seleccionado}
+          key={editandoProd.producto_id}
+          producto={editandoProd}
           tiendaId={tiendaId}
           tab={tab}
           onTab={t => setSp2({ tab: t })}
-          onClose={() => setSp2({ p: null, tab: null })}
-          sinConsumidor={sinConsumidor.has(seleccionado.producto_id)}
-          negativo={negativosPorProducto.get(seleccionado.producto_id)}
-          recetasSospechosas={sospechaPorInsumo.get(seleccionado.producto_id) ?? []}
+          onClose={() => { setEditando(null); setSp2({ tab: null }) }}
+          sinConsumidor={sinConsumidor.has(editandoProd.producto_id)}
+          negativo={negativosPorProducto.get(editandoProd.producto_id)}
+          recetasSospechosas={sospechaPorInsumo.get(editandoProd.producto_id) ?? []}
           onSaved={() => { cargar(); setDiagTick(t => t + 1) }}
         />
       )}

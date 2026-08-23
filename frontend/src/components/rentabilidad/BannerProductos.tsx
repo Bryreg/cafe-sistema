@@ -1,5 +1,5 @@
 import { ReactNode, useMemo } from 'react'
-import { ArrowRight, TrendingDown, TrendingUp } from 'lucide-react'
+import { ArrowRight, TrendingDown, TrendingUp, AlertTriangle } from 'lucide-react'
 import { Dato, datoListo } from '../../api/dato'
 import type { Fuente } from '../../api/useDato'
 import { NoSeSabe, SegunDato } from '../ui'
@@ -12,6 +12,7 @@ interface Lectura {
   fondo: ProdMargen[]
   excluidos: number
   alertas: AlertaCosto[]
+  sospechosos: AlertaCosto[]
 }
 
 /**
@@ -76,6 +77,10 @@ export default function BannerProductos({ prodData }: { prodData: Fuente<PorProd
       // significado a un campo ausente, y abajo el `alertas.length === 0`
       // convertía eso en un banner que no está.
       alertas: d.valor.alertas_costo.slice(0, 3),
+      // Aumentos imposibles (>150%): datos mal cargados, NO subas. Con `?? []`
+      // porque el campo es nuevo y el backend viejo (durante el deploy) no lo
+      // manda — ahí «no está esa versión», no «no hay ninguno».
+      sospechosos: (d.valor.precios_sospechosos ?? []).slice(0, 6),
     })
   }, [prodData.dato])
 
@@ -119,10 +124,10 @@ export default function BannerProductos({ prodData }: { prodData: Fuente<PorProd
           <NoSeSabe bloque mensaje={m} onReintentar={prodData.recargar} />
         </div>,
       )}
-      listo={({ top, fondo, excluidos, alertas }) => {
+      listo={({ top, fondo, excluidos, alertas, sospechosos }) => {
         // ACÁ SÍ: el backend contestó, se miraron los productos y no hay ni un
         // ranking ni una alerta que mostrar. Ese vacío está medido.
-        if (top.length === 0 && alertas.length === 0) return null
+        if (top.length === 0 && alertas.length === 0 && sospechosos.length === 0) return null
         return marco(<>
           {top.length > 0 && (
             <>
@@ -183,6 +188,34 @@ export default function BannerProductos({ prodData }: { prodData: Fuente<PorProd
                   <span className="text-sm font-bold tabular-nums text-danger-700 shrink-0">
                     +{a.pct_suba}%
                   </span>
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* ── Precios raros para revisar ──────────────────────────────────────
+              Un «aumento» de +400% a +1.800% no es una suba de proveedor: es un
+              dato mal cargado (un precio viejo con una coma de menos, repetido).
+              No van con las subas reales de arriba —esa lista es para negociar—
+              sino acá, en tono de «revisá el dato», sin gritar un porcentaje que
+              no significa nada. */}
+          {sospechosos.length > 0 && (
+            <>
+              <p className="px-4 py-2 text-[10px] font-bold uppercase tracking-wide text-warm-500 bg-warm-50 border-y border-warm-100 flex items-center gap-1">
+                <AlertTriangle size={11} className="text-warm-400" /> Precios raros para revisar — un dato mal cargado, no una suba
+              </p>
+              {sospechosos.map(a => (
+                <div key={a.insumo_id} className="flex items-center gap-3 px-4 py-2 border-b border-warm-100 last:border-0">
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-semibold text-warm-700 truncate">
+                      {a.nombre}
+                      {a.proveedor && <span className="font-normal text-warm-500"> · {a.proveedor}</span>}
+                    </span>
+                    <span className="block text-[11px] text-warm-500">
+                      {fmtUnit(a.costo_ref)} → {fmtUnit(a.costo_ultimo)} · la referencia vieja parece un tipeo
+                    </span>
+                  </span>
+                  <span className="text-[11px] font-semibold tabular-nums text-warm-400 shrink-0">revisar</span>
                 </div>
               ))}
             </>

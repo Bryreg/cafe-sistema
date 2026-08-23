@@ -280,6 +280,9 @@ export interface AlertaCosto {
    */
   pct_absorbido: number | null
   productos_afectados: string[]; venta_30d_afectada: number
+  /** `true` = el «aumento» es tan grande (>150%) que es un dato mal cargado, no
+   *  una suba de proveedor. Va en `precios_sospechosos`, no en `alertas_costo`. */
+  sospechosa?: boolean
 }
 export interface PorProductoData {
   productos: ProdMargen[]
@@ -300,6 +303,14 @@ export interface PorProductoData {
    * quien edite dentro de seis meses.
    */
   alertas_costo: AlertaCosto[]
+  /**
+   * Aumentos IMPOSIBLES (>150%): no son subas de proveedor sino datos mal
+   * cargados —un precio viejo con una coma de menos, repetido—. Salen de
+   * `alertas_costo` (la lista de negociación) y viajan acá para revisarlos.
+   * OPCIONAL a propósito: durante la ventana de deploy el backend viejo no lo
+   * manda, y `?? []` acá significa «todavía no está esa versión», no «no hay».
+   */
+  precios_sospechosos?: AlertaCosto[]
   facturas_pendientes_de_costos: number
   // Fase 2 del OCR: aliases proveedor→producto que el sistema aprendió.
   aliases_conocidos?: number

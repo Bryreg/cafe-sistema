@@ -280,6 +280,28 @@ const MC = {
 // se agrega acá, y no en un objeto aparte, para que no puedan divergir. Los
 // campos viejos (label/color/bg/bar/dot) siguen intactos: los usan la leyenda
 // histórica y PedidosAdmin.
+// Paleta del rediseño de Claude Design para esta pantalla (verde/terracota sobre
+// papel cálido, números monoespaciados). Vive junto a MC —la piel del resto del
+// admin— pero manda ACÁ: el dueño pidió que Inventario se viera como el mockup.
+const DS = {
+  bg:        'oklch(98% 0.006 75)',   // papel cálido de fondo
+  card:      '#ffffff',
+  borde:     'oklch(92% 0.006 75)',
+  bordeSuave:'oklch(96% 0.008 75)',
+  tinta:     'oklch(22% 0.01 60)',    // texto fuerte
+  tinta60:   'oklch(48% 0.01 60)',
+  tinta45:   'oklch(58% 0.01 60)',
+  tinta30:   'oklch(72% 0.008 60)',
+  verde:     'oklch(35% 0.05 155)',   // hero, pastilla activa
+  verdeHondo:'oklch(30% 0.05 155)',   // tarjetas dentro del hero
+  verdeClaro:'oklch(95% 0.015 155)',
+  verdeTxt:  'oklch(35% 0.05 155)',
+  cremaVerde:'oklch(95% 0.015 155)',
+  terracota: 'oklch(60% 0.16 50)',    // botón Armar pedido
+  vence:     'oklch(38% 0.12 65)',
+  venceBg:   'oklch(97% 0.025 65 / 0.55)',
+} as const
+
 const ESTADO_CFG = {
   agotado: { label: 'AGOTADO', color: 'text-red-700',    bg: 'bg-red-100',    bar: 'bg-red-500',    dot: 'bg-red-500',    mc: '#8C2A16' },
   urgente: { label: 'URGENTE', color: 'text-red-600',    bg: 'bg-red-50',     bar: 'bg-red-400',    dot: 'bg-red-400',    mc: '#B5622A' },
@@ -1652,34 +1674,52 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
             abre la pantalla: una sola cuenta, no puede divergir. */}
         {sugerencia && (() => {
           const atencion = cuentas['atencion'] ?? 0
+          const nAgotado = base.filter(i => i.estado === 'agotado').length
+          const nUrgente = base.filter(i => i.estado === 'urgente').length
+          const nPronto  = cuentas['pronto'] ?? 0
           return (
-            <div className="rounded-2xl px-4 py-3.5 sm:px-5 flex items-center justify-between gap-4 flex-wrap"
-              style={{ background: MC.oliva, color: MC.crema }}>
-              <div className="flex flex-col gap-0.5 min-w-0">
-                {atencion === 0 ? (
-                  <span className="text-2xl font-extrabold leading-none inline-flex items-center gap-2">
-                    <CheckCircle2 size={22} /> Todo al día
+            <div className="rounded-3xl px-5 py-5 sm:px-7"
+              style={{ background: DS.verde, color: DS.cremaVerde, boxShadow: '0 16px 40px oklch(35% 0.05 155 / 0.2)' }}>
+              <div className="flex items-center justify-between gap-5 flex-wrap">
+                <div className="flex flex-col gap-1 min-w-0">
+                  <span className="text-[11px] font-bold uppercase tracking-[0.1em]" style={{ color: 'oklch(90% 0.025 155 / 0.85)' }}>
+                    Hoy, antes de que se corte la venta
                   </span>
-                ) : (
-                  <span className="text-3xl font-extrabold leading-none tabular-nums">
-                    {atencion}
-                    <span className="text-base font-bold"> {atencion === 1 ? 'producto pide' : 'productos piden'} acción</span>
+                  {atencion === 0 ? (
+                    <span className="text-3xl font-extrabold leading-none inline-flex items-center gap-2" style={{ color: '#fff' }}>
+                      <CheckCircle2 size={26} /> Todo al día
+                    </span>
+                  ) : (
+                    <span className="leading-none tabular-nums" style={{ color: '#fff' }}>
+                      <span className="text-[40px] font-extrabold">{atencion}</span>
+                      <span className="text-[22px] font-bold"> {atencion === 1 ? 'pide' : 'piden'} acción</span>
+                    </span>
+                  )}
+                  <span className="text-[13px]" style={{ color: 'oklch(90% 0.025 155 / 0.7)' }}>
+                    {atencion === 0
+                      ? `los ${allItems.length} productos de la sede alcanzan`
+                      : `de ${allItems.length} productos · el resto alcanza`}
                   </span>
-                )}
-                <span className="text-[12px]" style={{ color: '#CBD4BC' }}>
-                  {atencion === 0
-                    ? `los ${allItems.length} productos de la sede alcanzan`
-                    : `de ${allItems.length} en la sede · el resto alcanza`}
-                </span>
+                </div>
+                <div className="flex gap-2.5 items-stretch flex-wrap">
+                  {([['Se acabó', nAgotado, 'oklch(80% 0.09 30)'],
+                     ['Urgente', nUrgente, 'oklch(82% 0.11 52)'],
+                     ['Pedir hoy', nPronto, 'oklch(80% 0.10 78)']] as const).map(([lbl, n, col]) => (
+                    <div key={lbl} className="rounded-2xl px-4 py-3 flex flex-col gap-1 min-w-[88px]" style={{ background: DS.verdeHondo }}>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'oklch(90% 0.025 155 / 0.75)' }}>{lbl}</span>
+                      <span className="text-[22px] font-bold tabular-nums" style={{ color: col }}>{n}</span>
+                    </div>
+                  ))}
+                  <button onClick={irAPedido}
+                    className="rounded-2xl px-5 py-3 flex flex-col items-start justify-center gap-0.5 hover:brightness-105 transition self-stretch"
+                    style={{ background: DS.terracota, color: '#fff' }}>
+                    <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ opacity: .85 }}>De un toque</span>
+                    <span className="text-[15px] font-extrabold inline-flex items-center gap-1.5">
+                      <ShoppingCart size={16} /> Armar pedido →
+                    </span>
+                  </button>
+                </div>
               </div>
-              <button onClick={irAPedido}
-                className="shrink-0 rounded-xl px-4 py-2.5 flex flex-col items-start justify-center gap-0.5 hover:brightness-105 transition"
-                style={{ background: MC.terracota, color: '#fff' }}>
-                <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ opacity: .85 }}>Cuánto pedir y a quién</span>
-                <span className="text-sm font-extrabold inline-flex items-center gap-1.5">
-                  <ShoppingCart size={15} /> Armar pedido →
-                </span>
-              </button>
             </div>
           )
         })()}
@@ -1799,68 +1839,188 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
 
         {loading && <p className="text-sm text-center py-8 animate-pulse" style={{ color: MC.tinta45 }}>Cargando…</p>}
 
-        {!loading && sugerencia && filtrados.length === 0 && (
-          <p className="text-sm text-center py-6" style={{ color: MC.tinta45 }}>
-            {busqueda.trim() ? <>Ningún producto se llama así.</> : <>Nada con este filtro.</>}{' '}
-            <button onClick={verTodo} className="font-semibold underline" style={{ color: MC.terracota }}>
-              Ver todo
-            </button>
-          </p>
-        )}
+        {/* DOS PANELES ENLAZADOS (rediseño Claude Design). Izquierda: el
+            inventario producto por producto. Derecha: lo que pide acción. En el
+            mockup la ficha aparecía al pasar el cursor; acá la abre el TOQUE (el
+            panel de siempre, que además edita) porque el dueño trabaja en tablet
+            y el hover no existe. La derecha no queda vacía: muestra la lista de
+            pendientes, que abre la misma ficha. */}
+        {!loading && sugerencia && (
+          <div className="grid grid-cols-1 lg:grid-cols-[1.15fr_1fr] gap-4 items-start">
 
-        {/* La leyenda va UNA vez acá arriba en lugar de repetir la palabra en las
-            56 filas. DERIVA de ESTADO_CFG —el mismo tono que pinta la regla
-            izquierda de cada fila—, jamás un color tipeado a mano: una leyenda
-            que no coincide con lo que explica es peor que no tenerla.
-            Los anchos (w-[74px] / w-16, gap-x-2, pl-[15px] = 3px de regla + 12px
-            de padding) son los MISMOS que los de ProductRow; si cambian allá,
-            cambian acá o el título deja de estar sobre su columna. */}
-        {!loading && filtrados.length > 0 && (
-          <div className="pt-1">
-            <p className="flex gap-x-3 gap-y-0.5 flex-wrap text-[10px] px-1" style={{ color: MC.tinta45 }}>
-              {([['agotado', 'se acabó'], ['urgente', 'urgente'], ['pronto', 'pedir hoy'],
-                 ['bajo', 'bajo'], ['ok', 'al día']] as const).map(([k, label]) => (
-                <span key={k} className="inline-flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full" style={{ background: ESTADO_CFG[k].mc }} />{label}
+            {/* Izquierda: la lista */}
+            <div className="rounded-[22px] overflow-hidden"
+              style={{ background: DS.card, border: `1px solid ${DS.borde}`,
+                       boxShadow: '0 1px 2px oklch(22% 0.01 60 / 0.04), 0 10px 28px oklch(22% 0.01 60 / 0.05)' }}>
+              <div className="px-4 py-3 flex items-baseline justify-between gap-2" style={{ borderBottom: `1px solid ${DS.bordeSuave}` }}>
+                <span className="text-[15px] font-extrabold" style={{ color: DS.tinta }}>El inventario, producto por producto</span>
+                <span className="text-[12px] tabular-nums" style={{ color: DS.tinta30 }}>
+                  {filtrados.length} de {allItems.length}{filtro !== 'todos' ? ` · ${FILTROS.find(f => f.id === filtro)?.label}` : ''}
                 </span>
-              ))}
-              <span>🔔 la pidió una barista</span>
-              <span>«en negativo» = falta registrar una entrada</span>
-            </p>
-            {/* Solo en escritorio: en el celular la fila son dos renglones y unos
-                títulos de columna sobre un layout que ya no es una tabla serían
-                un rótulo apuntando al lugar equivocado. */}
-            <div className="hidden sm:flex items-center gap-x-2 pl-[15px] pr-3 pt-1 text-[10px] font-bold uppercase tracking-[.14em]"
-              style={{ color: MC.tinta45 }}>
-              <span className="flex-1 min-w-0">Producto</span>
-              <span className="shrink-0 w-[74px] text-right" style={{ color: MC.tinta70 }}>Cuánto hay</span>
-              <span className="shrink-0 w-16 text-right">Alcanza</span>
+              </div>
+              {filtrados.length === 0 ? (
+                <p className="text-sm text-center py-10" style={{ color: DS.tinta45 }}>
+                  {busqueda.trim() ? 'Ningún producto se llama así.' : 'Nada con este filtro.'}{' '}
+                  <button onClick={verTodo} className="font-semibold underline" style={{ color: DS.terracota }}>Ver todo</button>
+                </p>
+              ) : (
+                <>
+                  <div className="hidden sm:flex items-center gap-x-2 px-4 py-2.5 text-[10px] font-bold uppercase tracking-[.1em]"
+                    style={{ color: DS.tinta30, background: DS.bg, borderBottom: `1px solid ${DS.bordeSuave}` }}>
+                    <span className="flex-1 min-w-0" style={{ paddingLeft: 11 }}>Producto</span>
+                    <span className="shrink-0 w-[74px] text-right">Cuánto hay</span>
+                    <span className="shrink-0 w-16 text-right">Alcanza</span>
+                  </div>
+                  <div className="max-h-[74vh] overflow-y-auto">
+                    {filtrados.map((p, i) => (
+                      <ProductRow
+                        key={p.producto_id}
+                        p={p}
+                        venc={venc[p.producto_id]}
+                        empaque={empaques.get(p.producto_id)}
+                        activo={selId === p.producto_id}
+                        corte={i > 0 && filtrados[i - 1].estado !== p.estado}
+                        onSelect={() => setSp2({ p: String(p.producto_id), tab: 'hoy' }, true)}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Derecha: lo que pide acción */}
+            <div className="rounded-[22px] overflow-hidden"
+              style={{ background: DS.card, border: `1px solid ${DS.borde}`,
+                       boxShadow: '0 1px 2px oklch(22% 0.01 60 / 0.04), 0 10px 28px oklch(22% 0.01 60 / 0.05)' }}>
+              {(() => {
+                const work = base.filter(i => pasaFiltro(i, 'atencion', venc))
+                  .sort((a, b) => (ESTADO_ORDER[a.estado] ?? 5) - (ESTADO_ORDER[b.estado] ?? 5) || a.nombre.localeCompare(b.nombre))
+                return (
+                  <>
+                    <div className="px-4 py-3 flex items-center justify-between gap-2" style={{ borderBottom: `1px solid ${DS.bordeSuave}` }}>
+                      <span className="text-[15px] font-extrabold" style={{ color: DS.tinta }}>Lo que pide acción</span>
+                      <span className="text-[12px] tabular-nums" style={{ color: DS.tinta30 }}>{work.length}</span>
+                    </div>
+                    {work.length === 0 ? (
+                      <div className="px-4 py-10 flex flex-col items-center gap-2 text-center">
+                        <CheckCircle2 size={26} style={{ color: DS.verde }} />
+                        <span className="text-sm font-semibold" style={{ color: DS.tinta }}>Todo al día</span>
+                        <span className="text-[12px]" style={{ color: DS.tinta45 }}>Ningún producto necesita acción ahora mismo.</span>
+                      </div>
+                    ) : (
+                      <div className="p-3 flex flex-col gap-2 max-h-[64vh] overflow-y-auto">
+                        {work.map(p => {
+                          const cfg = ESTADO_CFG[p.estado]
+                          return (
+                            <button key={p.producto_id} onClick={() => setSp2({ p: String(p.producto_id), tab: 'hoy' }, true)}
+                              className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-left hover:brightness-[.98] transition"
+                              style={{ border: `1px solid ${DS.bordeSuave}`, background: DS.card }}>
+                              <span className="w-2.5 h-2.5 rounded-[3px] shrink-0" style={{ background: cfg.mc }} />
+                              <span className="flex-1 min-w-0 flex flex-col">
+                                <span className="text-[14px] font-bold truncate" style={{ color: DS.tinta }}>{p.nombre}</span>
+                                <span className="text-[11px]" style={{ color: DS.tinta30 }}>{p.categoria} · hay {num(p.stock_actual)} {p.unidad}</span>
+                              </span>
+                              <span className="shrink-0 text-[12px] font-bold" style={{ color: cfg.mc }}>{alcanzaLabel(p)}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                    <div className="px-4 py-3 flex items-center gap-2" style={{ borderTop: `1px solid ${DS.bordeSuave}`, background: DS.bg }}>
+                      <span className="text-[12px] leading-snug" style={{ color: DS.tinta30 }}>
+                        Tocá un producto <span style={{ color: DS.tinta45 }}>— de esta lista o de la izquierda —</span> y se abre su ficha: umbrales, para cuánto alcanza y sus últimos movimientos.
+                      </span>
+                    </div>
+                  </>
+                )
+              })()}
             </div>
           </div>
         )}
 
-        {/* LA LISTA. Plana, entera, sin acordeón.
+        {/* ── QUÉ PEDIR Y DE QUÉ PROVEEDOR ─────────────────────────────
+            Sale de `sugerencia.grupos_fijos`, que YA viene agrupado por proveedor
+            (la misma fuente que arma /pedidos-admin). Solo lo que se COMPRA con
+            sugerido > 0 — la mezcla que se prepara no es una orden de compra. */}
+        {sugerencia && (() => {
+          const grupos = sugerencia.grupos_fijos
+            .map(g => ({ prov: g.proveedor, items: g.productos.filter(p => p.accion !== 'preparar' && p.cantidad_sugerida > 0) }))
+            .filter(g => g.items.length > 0)
+          if (grupos.length === 0) return null
+          return (
+            <div className="mt-2">
+              <div className="flex items-baseline justify-between px-1 mb-3">
+                <span className="text-[16px] font-extrabold" style={{ color: DS.tinta }}>Qué pedir y de qué proveedor</span>
+                <span className="text-[13px]" style={{ color: DS.tinta45 }}>agrupado como sale el pedido</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {grupos.slice(0, 6).map(g => (
+                  <div key={g.prov} className="rounded-[20px] p-4 flex flex-col" style={{ background: DS.card, border: `1px solid ${DS.borde}` }}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="shrink-0 w-8 h-8 rounded-[10px] flex items-center justify-center" style={{ background: 'oklch(97% 0.02 50)', color: DS.terracota }}>
+                        <ShoppingCart size={16} />
+                      </span>
+                      <span className="flex flex-col min-w-0">
+                        <span className="text-[14px] font-extrabold truncate" style={{ color: DS.tinta }}>{g.prov || 'Sin proveedor'}</span>
+                        <span className="text-[11px]" style={{ color: DS.tinta30 }}>{g.items.length} {g.items.length === 1 ? 'producto' : 'productos'}</span>
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-2 flex-1">
+                      {g.items.slice(0, 6).map(it => (
+                        <div key={it.producto_id} className="flex items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-1.5 text-[13px] min-w-0" style={{ color: DS.tinta60 }}>
+                            <span className="w-1.5 h-1.5 rounded-[2px] shrink-0" style={{ background: ESTADO_CFG[it.estado].mc }} />
+                            <span className="truncate">{it.nombre}</span>
+                          </span>
+                          <span className="tabular-nums text-[13px] font-bold shrink-0" style={{ color: DS.tinta }}>{num(it.cantidad_sugerida)} {it.unidad}</span>
+                        </div>
+                      ))}
+                      {g.items.length > 6 && <span className="text-[11px]" style={{ color: DS.tinta30 }}>+{g.items.length - 6} más</span>}
+                    </div>
+                    <button onClick={irAPedido} className="mt-3 h-10 rounded-xl inline-flex items-center justify-center gap-1.5 text-[13px] font-bold hover:brightness-95 transition"
+                      style={{ background: DS.verdeClaro, color: DS.verdeTxt, border: '1px solid oklch(90% 0.025 155)' }}>
+                      Armar pedido →
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
 
-            El hairline fuerte marca el CAMBIO DE ESTADO: el orden es
-            estado→alfabético, así que el alfabeto se reinicia varias veces
-            adentro y sin esta línea alguien lee «Azúcar · 0» arriba y concluye
-            que no hay, sin llegar al «Azucar a Granel · 3.466» doce filas más
-            abajo. Cuesta un borde condicional, cero nodos. */}
-        {!loading && filtrados.length > 0 && (
-          <div className="rounded-xl border overflow-hidden" style={{ borderColor: MC.linea }}>
-            {filtrados.map((p, i) => (
-              <ProductRow
-                key={p.producto_id}
-                p={p}
-                venc={venc[p.producto_id]}
-                empaque={empaques.get(p.producto_id)}
-                activo={selId === p.producto_id}
-                corte={i > 0 && filtrados[i - 1].estado !== p.estado}
-                onSelect={() => setSp2({ p: String(p.producto_id), tab: 'hoy' }, true)}
-              />
-            ))}
-          </div>
-        )}
+        {/* ── SE VENCE PRONTO ──────────────────────────────────────────
+            Cruce por producto del mapa de vencimientos (los mismos lotes que ya
+            se leen para el chip de cada fila). Abre la ficha en la pestaña Lotes. */}
+        {sugerencia && (() => {
+          const porVencer = allItems
+            .filter(i => venc[i.producto_id])
+            .map(i => ({ p: i, v: venc[i.producto_id] }))
+            .sort((a, b) => a.v.fecha.localeCompare(b.v.fecha))
+          if (porVencer.length === 0) return null
+          return (
+            <div className="mt-2 rounded-[20px] p-4 sm:p-5" style={{ background: DS.card, border: `1px solid ${DS.borde}` }}>
+              <div className="flex items-baseline justify-between gap-2 mb-3">
+                <span className="text-[16px] font-extrabold" style={{ color: DS.tinta }}>Se vence pronto</span>
+                <span className="text-[13px]" style={{ color: DS.tinta45 }}>lo primero que hay que mover</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {porVencer.slice(0, 6).map(({ p, v }) => (
+                  <button key={p.producto_id} onClick={() => setSp2({ p: String(p.producto_id), tab: 'lotes' }, true)}
+                    className="flex items-center justify-between gap-2 px-4 py-3 rounded-[13px] text-left hover:brightness-[.99] transition"
+                    style={{ background: DS.venceBg }}>
+                    <span className="flex flex-col min-w-0">
+                      <span className="text-[14px] font-bold truncate" style={{ color: DS.tinta }}>{p.nombre}</span>
+                      <span className="text-[11px]" style={{ color: DS.tinta45 }}>{num(p.stock_actual)} {p.unidad} · {p.categoria}</span>
+                    </span>
+                    <span className="shrink-0 text-[13px] font-extrabold" style={{ color: DS.vence }}>
+                      {v.estado === 'vencido' ? 'vencido' : `vence ${ddmm(v.fecha)}`}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       {seleccionado && (

@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
   Layers, Search, RotateCcw, Download, Check, Package, AlertTriangle,
-  ShoppingCart, CheckCircle2, Clock, ArrowRight,
+  ShoppingCart, CheckCircle2, Clock, ArrowRight, Bell,
 } from 'lucide-react'
 import SidePanel from '../components/SidePanel'
 import NivelEnvase from '../components/NivelEnvase'
@@ -302,19 +302,22 @@ const DS = {
   venceBg:   'oklch(97% 0.025 65 / 0.55)',
 } as const
 
+// Los campos viejos (color/bg/bar/dot/mc) quedan intactos por si la leyenda
+// histórica los usa; los nuevos (dotCls/txtCls/softCls) son las clases del
+// sistema de diseño y son los que esta pantalla consume.
 const ESTADO_CFG = {
-  agotado: { label: 'AGOTADO', color: 'text-red-700',    bg: 'bg-red-100',    bar: 'bg-red-500',    dot: 'bg-red-500',    mc: '#8C2A16' },
-  urgente: { label: 'URGENTE', color: 'text-red-600',    bg: 'bg-red-50',     bar: 'bg-red-400',    dot: 'bg-red-400',    mc: '#B5622A' },
-  pronto:  { label: 'PEDIR',   color: 'text-amber-700',  bg: 'bg-amber-50',   bar: 'bg-amber-400',  dot: 'bg-amber-400',  mc: '#C98A2E' },
-  bajo:    { label: 'BAJO',    color: 'text-yellow-700', bg: 'bg-yellow-50',  bar: 'bg-yellow-400', dot: 'bg-yellow-400', mc: '#A99433' },
-  ok:      { label: 'OK',      color: 'text-green-700',  bg: 'bg-green-50',   bar: 'bg-green-500',  dot: 'bg-green-500',  mc: '#4B5A3E' },
+  agotado: { label: 'AGOTADO', color: 'text-red-700',    bg: 'bg-red-100',    bar: 'bg-red-500',    dot: 'bg-red-500',    mc: '#8C2A16', dotCls: 'bg-danger-500',  txtCls: 'text-danger-700',  softCls: 'bg-danger-50'  },
+  urgente: { label: 'URGENTE', color: 'text-red-600',    bg: 'bg-red-50',     bar: 'bg-red-400',    dot: 'bg-red-400',    mc: '#B5622A', dotCls: 'bg-danger-400',  txtCls: 'text-danger-600',  softCls: 'bg-danger-50'  },
+  pronto:  { label: 'PEDIR',   color: 'text-amber-700',  bg: 'bg-amber-50',   bar: 'bg-amber-400',  dot: 'bg-amber-400',  mc: '#C98A2E', dotCls: 'bg-gold-500',    txtCls: 'text-gold-700',    softCls: 'bg-gold-50'    },
+  bajo:    { label: 'BAJO',    color: 'text-yellow-700', bg: 'bg-yellow-50',  bar: 'bg-yellow-400', dot: 'bg-yellow-400', mc: '#A99433', dotCls: 'bg-gold-400',    txtCls: 'text-gold-700',    softCls: 'bg-gold-50'    },
+  ok:      { label: 'OK',      color: 'text-green-700',  bg: 'bg-green-50',   bar: 'bg-green-500',  dot: 'bg-green-500',  mc: '#4B5A3E', dotCls: 'bg-success-500', txtCls: 'text-success-700', softCls: 'bg-success-50' },
 }
 
-const ROT_CFG: Record<string, { label: string; bg: string; text: string }> = {
-  activo:         { label: 'Activo',        bg: 'oklch(93% 0.015 155)', text: 'oklch(30% 0.10 155)' },
-  estancado:      { label: 'Estancado',     bg: 'oklch(95% 0.015 60)',  text: 'oklch(38% 0.12 55)'  },
-  agotado:        { label: 'Agotado',       bg: 'oklch(96% 0.015 20)',  text: 'oklch(38% 0.16 25)'  },
-  sin_movimiento: { label: 'Sin movimiento',bg: 'oklch(95% 0.005 60)',  text: 'oklch(55% 0.01 60)'  },
+const ROT_CFG: Record<string, { label: string; chip: string }> = {
+  activo:         { label: 'Activo',         chip: 'bg-success-50 text-success-700' },
+  estancado:      { label: 'Estancado',      chip: 'bg-gold-50 text-gold-700'       },
+  agotado:        { label: 'Agotado',        chip: 'bg-danger-50 text-danger-700'   },
+  sin_movimiento: { label: 'Sin movimiento', chip: 'bg-warm-100 text-warm-500'      },
 }
 
 const ESTADO_ORDER: Record<string, number> = { agotado: 0, urgente: 1, pronto: 2, bajo: 3, ok: 4 }
@@ -380,28 +383,30 @@ function pasaFiltro(p: ProductoInventario, f: FiltroId, venc: MapaVenc) {
 //
 // El color es el de la regla izquierda de las filas que van a quedar, salvo los
 // dos ejes que no son stock: `negativo` (falta un registro) y `vence` (tiempo).
-const PASTILLAS: { id: FiltroId; corto: string; c: string; ayuda: string }[] = [
-  { id: 'todos',    corto: 'Todo',               c: MC.negro,
+// `accent` es la regla izquierda (shadow inset) y `txt` el color de la cuenta:
+// el mismo tono del sistema de diseño que pinta el estado de la fila.
+const PASTILLAS: { id: FiltroId; corto: string; accent: string; txt: string; ayuda: string }[] = [
+  { id: 'todos',    corto: 'Todo',               accent: 'shadow-warm-500',   txt: 'text-warm-700',
     ayuda: 'Todos los productos de la sede, con su cantidad.' },
-  { id: 'atencion', corto: 'Necesita atención',  c: MC.terracota,
+  { id: 'atencion', corto: 'Necesita atención',  accent: 'shadow-clay-500',   txt: 'text-clay-600',
     ayuda: 'Todo lo que no está al día, más lo que tiene un lote por vencer.' },
-  { id: 'negativo', corto: 'En negativo',        c: MC.negativo,
+  { id: 'negativo', corto: 'En negativo',        accent: 'shadow-warm-500',   txt: 'text-warm-600',
     ayuda: 'El sistema descontó más de lo que se registró que entró: falta cargar una entrada.' },
-  { id: 'urgente',  corto: 'Se acabó o urgente', c: ESTADO_CFG.agotado.mc,
+  { id: 'urgente',  corto: 'Se acabó o urgente', accent: 'shadow-danger-500', txt: 'text-danger-600',
     ayuda: 'Se acabó, o no llega a la próxima entrega.' },
-  { id: 'pronto',   corto: 'Pedir hoy',          c: ESTADO_CFG.pronto.mc,
+  { id: 'pronto',   corto: 'Pedir hoy',          accent: 'shadow-gold-500',   txt: 'text-gold-700',
     ayuda: 'Todavía hay, pero no alcanza para el próximo ciclo de pedido.' },
-  { id: 'bajo',     corto: 'Bajo',               c: ESTADO_CFG.bajo.mc,
+  { id: 'bajo',     corto: 'Bajo',               accent: 'shadow-gold-400',   txt: 'text-gold-700',
     ayuda: 'Quedó por debajo del mínimo cargado.' },
-  { id: 'vence',    corto: 'Se vence',           c: MC.vence,
+  { id: 'vence',    corto: 'Se vence',           accent: 'shadow-gold-500',   txt: 'text-gold-700',
     ayuda: 'Tiene un lote vencido o por vencer. No se pide: se vende o se saca.' },
   // «ok» filtra por estado de STOCK a secas: un producto con stock sano y lote
   // por vencer entra acá Y en «Se vence» (las pastillas se pisan a propósito).
   // Por eso la ayuda no puede decir «sin novedades» — el Croissant con lote del
   // 15-08 es la primera fila de este filtro y tiene una novedad gritando.
-  { id: 'ok',       corto: 'Al día',             c: ESTADO_CFG.ok.mc,
+  { id: 'ok',       corto: 'Al día',             accent: 'shadow-success-500', txt: 'text-success-700',
     ayuda: 'Con stock sano. Los lotes con fecha se ven en su chip y en «Se vence».' },
-  { id: 'sinmin',   corto: 'Sin mínimo',         c: MC.tinta45,
+  { id: 'sinmin',   corto: 'Sin mínimo',         accent: 'shadow-warm-400',   txt: 'text-warm-500',
     ayuda: 'No tiene mínimo cargado: el sistema no puede avisar por umbral.' },
 ]
 
@@ -535,41 +540,38 @@ function ProductRow({ p, venc, activo, empaque, corte, onSelect, onHover }: {
     ? Math.round((p.stock_actual / empaque) * 10) / 10
     : null
 
-  const chip = 'shrink-0 text-[10px] font-bold px-1.5 py-px rounded-[7px]'
+  const chip = 'shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md'
 
   return (
     <button
       onClick={onSelect} onMouseEnter={onHover}
       title={`${p.categoria}${p.proveedor ? ` · ${p.proveedor}` : ''}`}
-      className="w-full flex items-center gap-3 text-left px-4 py-2.5 transition-colors"
-      style={{
-        borderTop: `${corte ? 2 : 1}px solid ${corte ? DS.borde : DS.bordeSuave}`,
-        background: activo ? DS.verdeClaro : DS.card,
-      }}
+      className={`w-full flex items-center gap-3 text-left px-4 py-2.5 transition-colors border-t ${
+        corte ? 'border-t-2 border-warm-200' : 'border-warm-100'} ${activo ? 'bg-forest-50' : 'bg-white'}`}
     >
       {/* Producto: nombre + (categoría · chips) */}
       <span className="flex-1 min-w-0 flex flex-col gap-0.5">
         <span className="inline-flex items-center gap-1.5 min-w-0">
-          {p.barista_alerto && <span title="La pidió una barista" style={{ fontSize: 12 }}>🔔</span>}
-          <span className="truncate text-[14px] font-bold" style={{ color: DS.tinta }}>{p.nombre}</span>
+          {p.barista_alerto && (
+            <span title="La pidió una barista" className="inline-flex shrink-0">
+              <Bell size={13} className="text-clay-500" />
+            </span>
+          )}
+          <span className="truncate text-sm font-bold text-warm-700">{p.nombre}</span>
         </span>
         <span className="inline-flex items-center gap-1.5 flex-wrap min-w-0">
-          <span className="text-[11px]" style={{ color: DS.tinta30 }}>{p.categoria}</span>
+          <span className="text-[11px] text-warm-400">{p.categoria}</span>
           {enNegativo && (
-            <span className={chip} title="Se descontó más de lo que se registró que entró: falta cargar una entrada."
-              style={{ background: 'oklch(97% 0.02 30)', color: '#8a3325' }}>en negativo</span>
+            <span className={`${chip} bg-danger-50 text-danger-700`} title="Se descontó más de lo que se registró que entró: falta cargar una entrada.">en negativo</span>
           )}
           {esPreparable && hayQueReponer && (
-            <span className={chip} title="No se compra: se prepara en la barra."
-              style={{ background: 'oklch(95% 0.03 135)', color: 'oklch(40% 0.06 135)' }}>preparar</span>
+            <span className={`${chip} bg-success-50 text-success-700`} title="No se compra: se prepara en la barra.">preparar</span>
           )}
           {aOjo && (
-            <span className={chip} title="Se acabó y no hay mínimo ni consumo medido: la cantidad la ponés vos."
-              style={{ background: DS.bg, color: DS.tinta45 }}>a ojo</span>
+            <span className={`${chip} bg-warm-100 text-warm-500`} title="Se acabó y no hay mínimo ni consumo medido: la cantidad la ponés vos.">a ojo</span>
           )}
           {venc && (
-            <span className={`${chip} tabular-nums`}
-              style={{ background: 'oklch(97% 0.025 65)', color: venc.estado === 'vencido' ? '#8a3325' : DS.vence }}>
+            <span className={`${chip} tabular-nums ${venc.estado === 'vencido' ? 'bg-danger-50 text-danger-700' : 'bg-gold-50 text-gold-700'}`}>
               {venc.estado === 'vencido' ? 'venció' : 'vence'} {ddmm(venc.fecha)}
             </span>
           )}
@@ -577,10 +579,10 @@ function ProductRow({ p, venc, activo, empaque, corte, onSelect, onHover }: {
       </span>
       {/* Cuánto hay */}
       <span className="shrink-0 w-[86px] text-right">
-        <span className="tabular-nums text-[15px] font-bold" style={{ color: critico ? '#c64a3a' : DS.tinta }}>{num(p.stock_actual)}</span>
-        <span className="text-[11px]" style={{ color: DS.tinta30 }}> {p.unidad}</span>
+        <span className={`tabular-nums text-base font-bold ${critico ? 'text-danger-600' : 'text-warm-700'}`}>{num(p.stock_actual)}</span>
+        <span className="text-[11px] text-warm-400"> {p.unidad}</span>
         {enEmpaques !== null && (
-          <span className="block text-[10px] tabular-nums" style={{ color: DS.tinta30 }}
+          <span className="block text-[10px] tabular-nums text-warm-400"
             title={`Un empaque de compra trae ${num(empaque!)} ${p.unidad}.`}>
             ≈ {num(enEmpaques)} de {num(empaque!)}
           </span>
@@ -588,8 +590,8 @@ function ProductRow({ p, venc, activo, empaque, corte, onSelect, onHover }: {
       </span>
       {/* Alcanza: punto de estado + texto */}
       <span className="shrink-0 w-16 flex items-center justify-end gap-1.5">
-        <span className="w-2 h-2 rounded-[3px] shrink-0" style={{ background: cfg.mc }} />
-        <span className="text-[12px] font-bold tabular-nums" style={{ color: cfg.mc }}>{alcanzaLabel(p)}</span>
+        <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dotCls}`} />
+        <span className={`text-xs font-bold tabular-nums ${cfg.txtCls}`}>{alcanzaLabel(p)}</span>
       </span>
     </button>
   )
@@ -621,26 +623,25 @@ function FichaPanel({ producto: p, tiendaId, onEditar }: {
     : p.stock_actual <= 0 ? 'Contá una vez: no hay consumo cargado' : 'Nada por ahora — alcanza'
 
   const umbral = (lbl: string, val: number | null, fuerte = false) => (
-    <div className="rounded-[13px] px-3 py-2.5 flex flex-col gap-0.5"
-      style={{ border: `${fuerte ? 1.5 : 1}px solid ${fuerte && critico ? 'oklch(88% 0.06 30)' : DS.borde}`,
-               background: fuerte && critico ? 'oklch(97% 0.02 30 / 0.5)' : DS.card }}>
-      <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: DS.tinta45 }}>{lbl}</span>
-      <span className="tabular-nums text-[18px] font-bold" style={{ color: fuerte ? (critico ? '#c64a3a' : DS.tinta) : DS.tinta60 }}>
+    <div className={`rounded-xl px-3 py-2.5 flex flex-col gap-0.5 border ${
+      fuerte && critico ? 'border-danger-200 bg-danger-50' : 'border-warm-200 bg-white'}`}>
+      <span className="text-[10px] font-bold uppercase tracking-wide text-warm-500">{lbl}</span>
+      <span className={`tabular-nums text-lg font-bold ${fuerte ? (critico ? 'text-danger-600' : 'text-warm-700') : 'text-warm-600'}`}>
         {val == null ? '—' : num(val)}
       </span>
     </div>
   )
-  const TAG: Record<string, { bg: string; col: string }> = {
-    entrada: { bg: 'oklch(96% 0.018 145)', col: 'oklch(30% 0.10 145)' },
-    salida:  { bg: 'oklch(97% 0.02 30)',   col: '#8a3325' },
-    ajuste:  { bg: 'oklch(96% 0.008 75)',  col: 'oklch(40% 0.01 60)' },
+  const TAG: Record<string, string> = {
+    entrada: 'bg-success-50 text-success-700',
+    salida:  'bg-danger-50 text-danger-700',
+    ajuste:  'bg-warm-100 text-warm-600',
   }
   return (
     <div className="p-4">
       <div className="flex items-baseline justify-between gap-2 mb-3">
-        <span className="text-[13px] truncate" style={{ color: DS.tinta45 }}>{p.categoria}{p.proveedor ? ` · ${p.proveedor}` : ''}</span>
-        <span className="shrink-0 inline-flex items-center gap-1.5 text-[12px] font-bold" style={{ color: cfg.mc }}>
-          <span className="w-2 h-2 rounded-[3px]" style={{ background: cfg.mc }} />{cfg.label.toLowerCase()}
+        <span className="text-[13px] text-warm-500 truncate">{p.categoria}{p.proveedor ? ` · ${p.proveedor}` : ''}</span>
+        <span className={`shrink-0 inline-flex items-center gap-1.5 text-xs font-bold ${cfg.txtCls}`}>
+          <span className={`w-2 h-2 rounded-full ${cfg.dotCls}`} />{cfg.label.toLowerCase()}
         </span>
       </div>
       <div className="grid grid-cols-4 gap-2 mb-3">
@@ -650,40 +651,39 @@ function FichaPanel({ producto: p, tiendaId, onEditar }: {
         {umbral('Ideal', p.stock_ideal)}
       </div>
       <div className="flex flex-col gap-2 mb-4">
-        <div className="rounded-[13px] px-3.5 py-3 flex items-center gap-2.5" style={{ background: DS.bg }}>
-          <Clock size={17} style={{ color: DS.tinta45, flexShrink: 0 }} />
-          <span className="flex-1 text-[13px]" style={{ color: DS.tinta60 }}>{consume}</span>
-          <span className="text-[14px] font-extrabold" style={{ color: cfg.mc }}>{alcanzaLabel(p)}</span>
+        <div className="rounded-xl px-3.5 py-3 flex items-center gap-2.5 bg-warm-50">
+          <Clock size={17} className="shrink-0 text-warm-500" />
+          <span className="flex-1 text-[13px] text-warm-600">{consume}</span>
+          <span className={`text-sm font-extrabold ${cfg.txtCls}`}>{alcanzaLabel(p)}</span>
         </div>
-        <div className="rounded-[13px] px-3.5 py-3 flex items-center gap-2.5"
-          style={{ background: buy ? 'oklch(97% 0.02 50)' : 'oklch(96% 0.018 145)',
-                   border: `1px solid ${buy ? 'oklch(88% 0.07 50)' : 'oklch(85% 0.10 145)'}` }}>
-          <ArrowRight size={17} style={{ color: buy ? 'oklch(54% 0.16 45)' : 'oklch(30% 0.10 145)', flexShrink: 0 }} />
-          <span className="flex-1 text-[13px] font-bold" style={{ color: buy ? 'oklch(54% 0.16 45)' : 'oklch(30% 0.10 145)' }}>{accion}</span>
+        <div className={`rounded-xl px-3.5 py-3 flex items-center gap-2.5 border ${
+          buy ? 'bg-clay-50 border-clay-200' : 'bg-success-50 border-success-200'}`}>
+          <ArrowRight size={17} className={`shrink-0 ${buy ? 'text-clay-600' : 'text-success-700'}`} />
+          <span className={`flex-1 text-[13px] font-bold ${buy ? 'text-clay-600' : 'text-success-700'}`}>{accion}</span>
         </div>
       </div>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: DS.tinta30 }}>Últimos movimientos</span>
-        <button onClick={onEditar} className="text-[12px] font-bold inline-flex items-center gap-1 hover:underline" style={{ color: DS.terracota }}>
+        <span className="text-[11px] font-bold uppercase tracking-wide text-warm-400">Últimos movimientos</span>
+        <button onClick={onEditar} className="text-xs font-bold inline-flex items-center gap-1 hover:underline text-clay-600">
           Ajustar / editar →
         </button>
       </div>
       {movs == null ? (
-        <p className="text-[12px] py-2" style={{ color: DS.tinta30 }}>Cargando…</p>
+        <p className="text-xs py-2 text-warm-400">Cargando…</p>
       ) : movs.length === 0 ? (
-        <p className="text-[12px] py-2" style={{ color: DS.tinta30 }}>Sin movimientos registrados.</p>
+        <p className="text-xs py-2 text-warm-400">Sin movimientos registrados.</p>
       ) : (
         <div className="flex flex-col gap-1.5">
           {movs.slice(0, 5).map(m => {
             const t = TAG[m.tipo] ?? TAG.ajuste
             const signo = m.tipo === 'entrada' ? '+' : m.tipo === 'salida' ? '−' : '='
             return (
-              <div key={m.id} className="flex items-center gap-2.5 px-3 py-2 rounded-[11px]" style={{ border: `1px solid ${DS.bordeSuave}` }}>
-                <span className="shrink-0 text-[11px] w-11" style={{ color: DS.tinta30 }}>{m.fecha ? ddmm(m.fecha) : '—'}</span>
-                <span className="shrink-0 px-2 py-0.5 rounded-[8px] text-[10px] font-bold capitalize" style={{ background: t.bg, color: t.col }}>{m.tipo}</span>
-                <span className="flex-1 min-w-0 truncate text-[12px]" style={{ color: DS.tinta60 }}>{m.motivo ?? m.barista ?? '—'}</span>
-                <span className="shrink-0 tabular-nums text-[12px] font-bold"
-                  style={{ color: m.tipo === 'entrada' ? 'oklch(40% 0.14 145)' : m.tipo === 'salida' ? '#c64a3a' : DS.tinta60 }}>
+              <div key={m.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-warm-100">
+                <span className="shrink-0 text-[11px] w-11 text-warm-400">{m.fecha ? ddmm(m.fecha) : '—'}</span>
+                <span className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold capitalize ${t}`}>{m.tipo}</span>
+                <span className="flex-1 min-w-0 truncate text-xs text-warm-600">{m.motivo ?? m.barista ?? '—'}</span>
+                <span className={`shrink-0 tabular-nums text-xs font-bold ${
+                  m.tipo === 'entrada' ? 'text-success-600' : m.tipo === 'salida' ? 'text-danger-600' : 'text-warm-600'}`}>
                   {signo} {num(Math.abs(m.cantidad))}
                 </span>
               </div>
@@ -1096,7 +1096,7 @@ function PanelProducto({ producto: p, tiendaId, tab, onTab, onClose, sinConsumid
                       <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
                         style={{ background: dark.amberTint, color: dark.amber }}
                         title='Registrado con el botón "Todo coincide con sistema" — no es un conteo físico'>
-                        ⚡ Todo coincide
+                        Todo coincide
                       </span>
                     )}
                     <span className="ml-auto font-bold tabular-nums" style={{
@@ -1181,11 +1181,11 @@ function PanelProducto({ producto: p, tiendaId, tab, onTab, onClose, sinConsumid
 // Cómo se lee «en qué quedaría». Sale de `clasificar_estado` del backend
 // (services/inventario.py): agotado | critico | bajo | normal. La palabra que se
 // muestra es la del dueño, no la del enum.
-const QUEDARIA_CFG: Record<string, { label: string; color: string; bg: string }> = {
-  agotado: { label: 'sin stock', color: 'oklch(38% 0.16 25)',  bg: 'oklch(95% 0.04 25)'  },
-  critico: { label: 'crítico',   color: 'oklch(38% 0.16 25)',  bg: 'oklch(95% 0.04 25)'  },
-  bajo:    { label: 'bajo',      color: 'oklch(38% 0.12 70)',  bg: 'oklch(95% 0.045 70)' },
-  normal:  { label: 'al día',    color: 'oklch(32% 0.10 155)', bg: 'oklch(94% 0.04 155)' },
+const QUEDARIA_CFG: Record<string, { label: string; chip: string }> = {
+  agotado: { label: 'sin stock', chip: 'bg-danger-50 text-danger-700'   },
+  critico: { label: 'crítico',   chip: 'bg-danger-50 text-danger-700'   },
+  bajo:    { label: 'bajo',      chip: 'bg-gold-50 text-gold-700'       },
+  normal:  { label: 'al día',    chip: 'bg-success-50 text-success-700' },
 }
 
 function PanelMinimos({ tiendaId, onClose, onAplicado }: {
@@ -1460,8 +1460,7 @@ function FilaMinimo({ p, marcado, valor, onMarcar, onValor }: {
             className="w-24 px-2 py-1 rounded-lg text-xs text-right tabular-nums"
             style={{ background: dark.surface, border: `1px solid ${dark.border}`, color: dark.ink }} />
           <span className="text-[11px]" style={{ color: dark.inkSubtle }}>{p.unidad}</span>
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
-            style={{ background: cfg.bg, color: cfg.color }}>
+          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${cfg.chip}`}>
             {quedaria === 'normal' ? 'no te avisa hoy' : `te avisa ya: ${cfg.label}`}
           </span>
         </span>
@@ -1741,9 +1740,8 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
           vive en los acentos, no en el fondo). El wrapper se queda porque las
           pastillas sticky necesitan un fondo que las respalde al scrollear. */}
       <div
-        className={`space-y-2 transition-all rounded-2xl p-3 sm:p-4 ${
-          editando || verMinimos ? 'lg:mr-[420px]' : ''}`}
-        style={{ background: MC.hoja }}>
+        className={`space-y-2 transition-all rounded-2xl p-3 sm:p-4 bg-white ${
+          editando || verMinimos ? 'lg:mr-[420px]' : ''}`}>
 
         {/* EL HERO: enmarca la mañana con lo único que decide el pedido —cuántos
             piden acción— y sube «Armar pedido» de un link perdido a un botón. En
@@ -1756,43 +1754,41 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
           const nUrgente = base.filter(i => i.estado === 'urgente').length
           const nPronto  = cuentas['pronto'] ?? 0
           return (
-            <div className="rounded-3xl px-5 py-5 sm:px-7"
-              style={{ background: DS.verde, color: DS.cremaVerde, boxShadow: '0 16px 40px oklch(35% 0.05 155 / 0.2)' }}>
+            <div className="rounded-2xl bg-forest text-forest-50 p-4 sm:p-5 shadow-lg shadow-forest/20">
               <div className="flex items-center justify-between gap-5 flex-wrap">
                 <div className="flex flex-col gap-1 min-w-0">
-                  <span className="text-[11px] font-bold uppercase tracking-[0.1em]" style={{ color: 'oklch(90% 0.025 155 / 0.85)' }}>
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-forest-50/70">
                     Hoy, antes de que se corte la venta
                   </span>
                   {atencion === 0 ? (
-                    <span className="text-3xl font-extrabold leading-none inline-flex items-center gap-2" style={{ color: '#fff' }}>
+                    <span className="text-2xl sm:text-3xl font-extrabold text-white leading-none inline-flex items-center gap-2">
                       <CheckCircle2 size={26} /> Todo al día
                     </span>
                   ) : (
-                    <span className="leading-none tabular-nums" style={{ color: '#fff' }}>
-                      <span className="text-[40px] font-extrabold">{atencion}</span>
-                      <span className="text-[22px] font-bold"> {atencion === 1 ? 'pide' : 'piden'} acción</span>
+                    <span className="leading-none tabular-nums text-white">
+                      <span className="text-2xl sm:text-3xl font-extrabold">{atencion}</span>
+                      <span className="text-lg font-bold"> {atencion === 1 ? 'pide' : 'piden'} acción</span>
                     </span>
                   )}
-                  <span className="text-[13px]" style={{ color: 'oklch(90% 0.025 155 / 0.7)' }}>
+                  <span className="text-[13px] text-forest-50/70">
                     {atencion === 0
                       ? `los ${allItems.length} productos de la sede alcanzan`
                       : `de ${allItems.length} productos · el resto alcanza`}
                   </span>
                 </div>
                 <div className="flex gap-2.5 items-stretch flex-wrap">
-                  {([['Se acabó', nAgotado, 'oklch(80% 0.09 30)'],
-                     ['Urgente', nUrgente, 'oklch(82% 0.11 52)'],
-                     ['Pedir hoy', nPronto, 'oklch(80% 0.10 78)']] as const).map(([lbl, n, col]) => (
-                    <div key={lbl} className="rounded-2xl px-4 py-3 flex flex-col gap-1 min-w-[88px]" style={{ background: DS.verdeHondo }}>
-                      <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'oklch(90% 0.025 155 / 0.75)' }}>{lbl}</span>
-                      <span className="text-[22px] font-bold tabular-nums" style={{ color: col }}>{n}</span>
+                  {([['Se acabó', nAgotado, 'text-danger-200'],
+                     ['Urgente', nUrgente, 'text-clay-200'],
+                     ['Pedir hoy', nPronto, 'text-gold-200']] as const).map(([lbl, n, col]) => (
+                    <div key={lbl} className="rounded-xl bg-forest-700 px-4 py-2.5 flex flex-col gap-1 min-w-[88px]">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-forest-50/70">{lbl}</span>
+                      <span className={`text-2xl font-bold tabular-nums ${col}`}>{n}</span>
                     </div>
                   ))}
                   <button onClick={irAPedido}
-                    className="rounded-2xl px-5 py-3 flex flex-col items-start justify-center gap-0.5 hover:brightness-105 transition self-stretch"
-                    style={{ background: DS.terracota, color: '#fff' }}>
-                    <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ opacity: .85 }}>De un toque</span>
-                    <span className="text-[15px] font-extrabold inline-flex items-center gap-1.5">
+                    className="rounded-xl bg-clay-500 hover:bg-clay-600 text-white px-5 py-3 flex flex-col items-start justify-center gap-0.5 transition self-stretch">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-white/85">De un toque</span>
+                    <span className="text-base font-extrabold inline-flex items-center gap-1.5">
                       <ShoppingCart size={16} /> Armar pedido →
                     </span>
                   </button>
@@ -1808,26 +1804,22 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
             Sticky, porque con 56 filas el filtro tiene que seguir al pulgar. */}
         {sugerencia && (
           <nav aria-label="Filtrar la lista"
-            className="sticky top-0 z-20 -mx-3 px-3 sm:-mx-4 sm:px-4 py-1.5 flex gap-1.5 overflow-x-auto"
-            style={{ background: MC.hoja }}>
+            className="sticky top-0 z-20 -mx-3 px-3 sm:-mx-4 sm:px-4 py-1.5 flex gap-1.5 overflow-x-auto bg-white">
             {PASTILLAS.map(t => {
               const n = cuentas[t.id] ?? 0
               const activa = filtro === t.id
               if (n === 0 && !activa) return (
                 <span key={t.id} title={t.ayuda}
-                  className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-dashed pl-2 pr-2.5 py-1 text-[11.5px]"
-                  style={{ borderColor: MC.lineaFte, color: MC.tinta28 }}>
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-dashed border-warm-200 pl-2 pr-2.5 py-1 text-[11px] text-warm-400">
                   {t.corto} <b className="tabular-nums">0</b>
                 </span>
               )
               return (
                 <button key={t.id} title={t.ayuda} aria-pressed={activa}
                   onClick={() => setSp2({ estado: activa ? 'todos' : t.id })}
-                  className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-l-[3px] pl-2 pr-2.5 py-1 text-[11.5px] font-semibold"
-                  style={activa
-                    ? { borderColor: MC.negro, borderLeftColor: t.c, background: MC.negro, color: MC.crema }
-                    : { borderColor: MC.lineaFte, borderLeftColor: t.c, background: MC.papel, color: MC.negro }}>
-                  {t.corto} <b className="tabular-nums" style={{ color: activa ? MC.crema : t.c }}>{n}</b>
+                  className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border pl-2 pr-2.5 py-1 text-[11px] font-semibold shadow-[inset_3px_0_0] ${t.accent} ${
+                    activa ? 'border-warm-700 bg-warm-700 text-warm-50' : 'border-warm-200 bg-white text-warm-700'}`}>
+                  {t.corto} <b className={`tabular-nums ${activa ? 'text-warm-50' : t.txt}`}>{n}</b>
                 </button>
               )
             })}
@@ -1840,20 +1832,18 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
               acá la barra se partía en dos renglones — 38px menos de lista por
               un mínimo que nadie necesitaba. */}
           <div className="relative flex-1 min-w-[140px]">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: MC.tinta28 }} />
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-warm-400" />
             <input
               type="text" placeholder="Buscar producto…" value={busqueda}
               onChange={e => setBusqueda(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-sm rounded-xl focus:outline-none focus:ring-2"
-              style={{ background: MC.papel, border: `1px solid ${MC.linea}`, color: MC.negro }}
+              className="w-full pl-8 pr-3 py-1.5 text-sm rounded-xl bg-white border border-warm-200 text-warm-700 focus:outline-none focus:ring-2 focus:ring-forest/30"
             />
           </div>
           {/* Los N chips de categoría eran N botones siempre visibles. Un select
               dice lo mismo con un nodo y no crece con el catálogo. El filtro de
               ESTADO ya no es un select: son las pastillas, que además cuentan. */}
           <select value={catFiltro} onChange={e => setCatFiltro(e.target.value)}
-            className="py-1.5 px-2.5 text-sm rounded-xl focus:outline-none focus:ring-2"
-            style={{ background: MC.papel, border: `1px solid ${MC.linea}`, color: MC.tinta70 }}>
+            className="py-1.5 px-2.5 text-sm rounded-xl bg-white border border-warm-200 text-warm-700 focus:outline-none focus:ring-2 focus:ring-forest/30">
             {categorias.map(c => <option key={c} value={c}>{c === 'todas' ? 'Todas las categorías' : c}</option>)}
           </select>
         </div>
@@ -1862,14 +1852,14 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
             puerta al pedido (cuánto pedir, por proveedor) subió al hero de arriba
             —de un link perdido acá a un botón—, así que ya no vive en este renglón. */}
         {sugerencia && (
-          <p className="text-[11.5px] flex flex-wrap items-baseline gap-x-1.5" style={{ color: MC.tinta45 }}>
+          <p className="text-[11px] flex flex-wrap items-baseline gap-x-1.5 text-warm-500">
             <span>
-              <b className="tabular-nums" style={{ color: MC.tinta70 }}>{filtrados.length}</b>
+              <b className="tabular-nums text-warm-700">{filtrados.length}</b>
               {recortado ? <> de {allItems.length} productos</> : filtrados.length === 1 ? ' producto en esta sede' : ' productos en esta sede'}
               {recortado && etiquetaFiltro ? ` · ${etiquetaFiltro}` : ''}.
             </span>
             {recortado && (
-              <button onClick={verTodo} className="font-semibold underline" style={{ color: MC.terracota }}>
+              <button onClick={verTodo} className="font-semibold underline text-clay-600">
                 Ver todo
               </button>
             )}
@@ -1877,8 +1867,7 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
         )}
 
         {avisoUmbrales && (
-          <p className="text-[11px] rounded-lg px-2.5 py-1.5 border"
-            style={{ background: '#FBF5E3', borderColor: '#E7D8A9', color: '#7A5E10' }}>
+          <p className="text-[11px] rounded-lg px-2.5 py-1.5 border bg-gold-50 border-gold-200 text-gold-700">
             {/* El denominador es el inventario GESTIONADO de la sede entera
                 (`filas_gestionadas` del diagnóstico), la misma regla —controla
                 stock + entra al conteo— con la que /pedidos/sugerencia arma la
@@ -1897,8 +1886,7 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
         )}
 
         {vencTruncado && (
-          <p className="text-[11px] rounded-lg px-2.5 py-1.5 border"
-            style={{ background: '#F6E7C9', borderColor: '#E7D2A5', color: MC.vence }}>
+          <p className="text-[11px] rounded-lg px-2.5 py-1.5 border bg-gold-50 border-gold-200 text-gold-700">
             El listado de lotes viene recortado (tope de 800). El aviso de
             vencimiento puede faltar en los productos más antiguos.
           </p>
@@ -1907,15 +1895,14 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
         {/* Un mapa de vencimientos vacío es indistinguible de «no hay nada por
             vencer»: callarlo sería afirmar la buena noticia que no se sabe. */}
         {vencErr && (
-          <p className="text-[11px] rounded-lg px-2.5 py-1.5 border"
-            style={{ background: '#F6E7C9', borderColor: '#E7D2A5', color: MC.vence }}>
+          <p className="text-[11px] rounded-lg px-2.5 py-1.5 border bg-gold-50 border-gold-200 text-gold-700">
             No se pudo leer el listado de lotes: <b>no se sabe qué vence</b>. La
             pastilla «Se vence» y los avisos de las filas están incompletos hasta
             que vuelva a cargar.
           </p>
         )}
 
-        {loading && <p className="text-sm text-center py-8 animate-pulse" style={{ color: MC.tinta45 }}>Cargando…</p>}
+        {loading && <p className="text-sm text-center py-8 animate-pulse text-warm-500">Cargando…</p>}
 
         {/* DOS PANELES ENLAZADOS (rediseño Claude Design). Izquierda: el
             inventario producto por producto. Derecha: lo que pide acción. En el
@@ -1927,24 +1914,21 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
           <div className="grid grid-cols-1 lg:grid-cols-[1.15fr_1fr] gap-4 items-start">
 
             {/* Izquierda: la lista */}
-            <div className="rounded-[22px] overflow-hidden"
-              style={{ background: DS.card, border: `1px solid ${DS.borde}`,
-                       boxShadow: '0 1px 2px oklch(22% 0.01 60 / 0.04), 0 10px 28px oklch(22% 0.01 60 / 0.05)' }}>
-              <div className="px-4 py-3 flex items-baseline justify-between gap-2" style={{ borderBottom: `1px solid ${DS.bordeSuave}` }}>
-                <span className="text-[15px] font-extrabold" style={{ color: DS.tinta }}>El inventario, producto por producto</span>
-                <span className="text-[12px] tabular-nums" style={{ color: DS.tinta30 }}>
+            <div className="rounded-2xl border border-warm-200 bg-white overflow-hidden">
+              <div className="px-4 py-3 flex items-baseline justify-between gap-2 border-b border-warm-100">
+                <span className="text-sm font-bold text-warm-700">El inventario, producto por producto</span>
+                <span className="text-xs tabular-nums text-warm-400">
                   {filtrados.length} de {allItems.length}{filtro !== 'todos' ? ` · ${FILTROS.find(f => f.id === filtro)?.label}` : ''}
                 </span>
               </div>
               {filtrados.length === 0 ? (
-                <p className="text-sm text-center py-10" style={{ color: DS.tinta45 }}>
+                <p className="text-sm text-center py-10 text-warm-500">
                   {busqueda.trim() ? 'Ningún producto se llama así.' : 'Nada con este filtro.'}{' '}
-                  <button onClick={verTodo} className="font-semibold underline" style={{ color: DS.terracota }}>Ver todo</button>
+                  <button onClick={verTodo} className="font-semibold underline text-clay-600">Ver todo</button>
                 </p>
               ) : (
                 <>
-                  <div className="hidden sm:flex items-center gap-x-2 px-4 py-2.5 text-[10px] font-bold uppercase tracking-[.1em]"
-                    style={{ color: DS.tinta30, background: DS.bg, borderBottom: `1px solid ${DS.bordeSuave}` }}>
+                  <div className="hidden sm:flex items-center gap-x-2 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wide text-warm-400 bg-warm-50 border-b border-warm-100">
                     <span className="flex-1 min-w-0">Producto</span>
                     <span className="shrink-0 w-[86px] text-right">Cuánto hay</span>
                     <span className="shrink-0 w-16 text-right">Alcanza</span>
@@ -1970,17 +1954,14 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
             {/* Derecha: LA FICHA del producto señalado (hover o click). Sin
                 worklist —la lista de la izquierda ya viene ordenada por lo que
                 falta primero, así que repetirla no sumaba (pedido del dueño). */}
-            <div className="rounded-[22px] overflow-hidden"
-              style={{ background: DS.card, border: `1px solid ${DS.borde}`,
-                       boxShadow: '0 1px 2px oklch(22% 0.01 60 / 0.04), 0 10px 28px oklch(22% 0.01 60 / 0.05)' }}>
-              <div className="px-4 py-3 flex items-center justify-between gap-2" style={{ borderBottom: `1px solid ${DS.bordeSuave}` }}>
-                <span className="text-[15px] font-extrabold truncate" style={{ color: DS.tinta }}>
+            <div className="rounded-2xl border border-warm-200 bg-white overflow-hidden">
+              <div className="px-4 py-3 flex items-center justify-between gap-2 border-b border-warm-100">
+                <span className="text-sm font-bold text-warm-700 truncate">
                   {activo ? activo.nombre : 'Ficha del producto'}
                 </span>
                 {selId !== null && (
                   <button onClick={() => setSp2({ p: null })}
-                    className="shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold"
-                    style={{ border: `1px solid ${DS.borde}`, color: DS.tinta45 }}>
+                    className="shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold border border-warm-200 text-warm-500">
                     ✕ quitar
                   </button>
                 )}
@@ -1989,11 +1970,11 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
                 <FichaPanel producto={activo} tiendaId={tiendaId} onEditar={() => setEditando(activo.producto_id)} />
               ) : (
                 <div className="px-5 py-14 flex flex-col items-center gap-2.5 text-center">
-                  <span className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: DS.bg, color: DS.tinta30 }}>
+                  <span className="w-11 h-11 rounded-2xl flex items-center justify-center bg-warm-50 text-warm-400">
                     <Package size={22} />
                   </span>
-                  <span className="text-[13px] leading-snug" style={{ color: DS.tinta45, maxWidth: 250 }}>
-                    Pasá el cursor por un producto <span style={{ color: DS.tinta30 }}>— o tocalo —</span> y acá aparece su ficha: umbrales, para cuántos días alcanza y sus últimos movimientos.
+                  <span className="text-[13px] leading-snug text-warm-500 max-w-[250px]">
+                    Pasá el cursor por un producto <span className="text-warm-400">— o tocalo —</span> y acá aparece su ficha: umbrales, para cuántos días alcanza y sus últimos movimientos.
                   </span>
                 </div>
               )}
@@ -2013,35 +1994,34 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
           return (
             <div className="mt-2">
               <div className="flex items-baseline justify-between px-1 mb-3">
-                <span className="text-[16px] font-extrabold" style={{ color: DS.tinta }}>Qué pedir y de qué proveedor</span>
-                <span className="text-[13px]" style={{ color: DS.tinta45 }}>agrupado como sale el pedido</span>
+                <span className="text-base font-extrabold text-warm-700">Qué pedir y de qué proveedor</span>
+                <span className="text-[13px] text-warm-500">agrupado como sale el pedido</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {grupos.slice(0, 6).map(g => (
-                  <div key={g.prov} className="rounded-[20px] p-4 flex flex-col" style={{ background: DS.card, border: `1px solid ${DS.borde}` }}>
+                  <div key={g.prov} className="rounded-2xl border border-warm-200 bg-white p-4 flex flex-col">
                     <div className="flex items-center gap-2 mb-3">
-                      <span className="shrink-0 w-8 h-8 rounded-[10px] flex items-center justify-center" style={{ background: 'oklch(97% 0.02 50)', color: DS.terracota }}>
+                      <span className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center bg-clay-50 text-clay-600">
                         <ShoppingCart size={16} />
                       </span>
                       <span className="flex flex-col min-w-0">
-                        <span className="text-[14px] font-extrabold truncate" style={{ color: DS.tinta }}>{g.prov || 'Sin proveedor'}</span>
-                        <span className="text-[11px]" style={{ color: DS.tinta30 }}>{g.items.length} {g.items.length === 1 ? 'producto' : 'productos'}</span>
+                        <span className="text-sm font-extrabold text-warm-700 truncate">{g.prov || 'Sin proveedor'}</span>
+                        <span className="text-[11px] text-warm-400">{g.items.length} {g.items.length === 1 ? 'producto' : 'productos'}</span>
                       </span>
                     </div>
                     <div className="flex flex-col gap-2 flex-1">
                       {g.items.slice(0, 6).map(it => (
                         <div key={it.producto_id} className="flex items-center justify-between gap-2">
-                          <span className="inline-flex items-center gap-1.5 text-[13px] min-w-0" style={{ color: DS.tinta60 }}>
-                            <span className="w-1.5 h-1.5 rounded-[2px] shrink-0" style={{ background: ESTADO_CFG[it.estado].mc }} />
+                          <span className="inline-flex items-center gap-1.5 text-[13px] min-w-0 text-warm-600">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${(ESTADO_CFG[it.estado] ?? ESTADO_CFG.ok).dotCls}`} />
                             <span className="truncate">{it.nombre}</span>
                           </span>
-                          <span className="tabular-nums text-[13px] font-bold shrink-0" style={{ color: DS.tinta }}>{num(it.cantidad_sugerida)} {it.unidad}</span>
+                          <span className="tabular-nums text-[13px] font-bold shrink-0 text-warm-700">{num(it.cantidad_sugerida)} {it.unidad}</span>
                         </div>
                       ))}
-                      {g.items.length > 6 && <span className="text-[11px]" style={{ color: DS.tinta30 }}>+{g.items.length - 6} más</span>}
+                      {g.items.length > 6 && <span className="text-[11px] text-warm-400">+{g.items.length - 6} más</span>}
                     </div>
-                    <button onClick={irAPedido} className="mt-3 h-10 rounded-xl inline-flex items-center justify-center gap-1.5 text-[13px] font-bold hover:brightness-95 transition"
-                      style={{ background: DS.verdeClaro, color: DS.verdeTxt, border: '1px solid oklch(90% 0.025 155)' }}>
+                    <button onClick={irAPedido} className="mt-3 h-10 rounded-xl inline-flex items-center justify-center gap-1.5 text-[13px] font-bold transition bg-forest-50 text-forest border border-forest-100 hover:bg-forest-100">
                       Armar pedido →
                     </button>
                   </div>
@@ -2061,21 +2041,20 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
             .sort((a, b) => a.v.fecha.localeCompare(b.v.fecha))
           if (porVencer.length === 0) return null
           return (
-            <div className="mt-2 rounded-[20px] p-4 sm:p-5" style={{ background: DS.card, border: `1px solid ${DS.borde}` }}>
+            <div className="mt-2 rounded-2xl border border-warm-200 bg-white p-4 sm:p-5">
               <div className="flex items-baseline justify-between gap-2 mb-3">
-                <span className="text-[16px] font-extrabold" style={{ color: DS.tinta }}>Se vence pronto</span>
-                <span className="text-[13px]" style={{ color: DS.tinta45 }}>lo primero que hay que mover</span>
+                <span className="text-base font-extrabold text-warm-700">Se vence pronto</span>
+                <span className="text-[13px] text-warm-500">lo primero que hay que mover</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {porVencer.slice(0, 6).map(({ p, v }) => (
                   <button key={p.producto_id} onClick={() => setSp2({ p: String(p.producto_id), tab: 'lotes' }, true)}
-                    className="flex items-center justify-between gap-2 px-4 py-3 rounded-[13px] text-left hover:brightness-[.99] transition"
-                    style={{ background: DS.venceBg }}>
+                    className="flex items-center justify-between gap-2 px-4 py-3 rounded-xl text-left transition bg-gold-50 hover:bg-gold-100">
                     <span className="flex flex-col min-w-0">
-                      <span className="text-[14px] font-bold truncate" style={{ color: DS.tinta }}>{p.nombre}</span>
-                      <span className="text-[11px]" style={{ color: DS.tinta45 }}>{num(p.stock_actual)} {p.unidad} · {p.categoria}</span>
+                      <span className="text-sm font-bold text-warm-700 truncate">{p.nombre}</span>
+                      <span className="text-[11px] text-warm-500">{num(p.stock_actual)} {p.unidad} · {p.categoria}</span>
                     </span>
-                    <span className="shrink-0 text-[13px] font-extrabold" style={{ color: DS.vence }}>
+                    <span className="shrink-0 text-[13px] font-extrabold text-gold-700">
                       {v.estado === 'vencido' ? 'vencido' : `vence ${ddmm(v.fecha)}`}
                     </span>
                   </button>
@@ -2151,19 +2130,18 @@ function ModoRotacion({ tiendaId }: { tiendaId: number }) {
       {/* Date range */}
       <div className="flex gap-3 items-center flex-wrap">
         <div className="flex items-center gap-1.5">
-          <label className="text-xs text-gray-500">Desde</label>
+          <label className="text-xs text-warm-500">Desde</label>
           <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-            className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300" />
+            className="border border-warm-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-forest/30" />
         </div>
         <div className="flex items-center gap-1.5">
-          <label className="text-xs text-gray-500">Hasta</label>
+          <label className="text-xs text-warm-500">Hasta</label>
           <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
-            className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300" />
+            className="border border-warm-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-forest/30" />
         </div>
         {filas && filas.length > 0 && (
           <button onClick={exportar}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold text-white"
-            style={{ background: 'oklch(48% 0.15 155)' }}>
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold text-white bg-forest hover:bg-forest-700">
             <Download size={14} /> Excel
           </button>
         )}
@@ -2173,44 +2151,44 @@ function ModoRotacion({ tiendaId }: { tiendaId: number }) {
       {resumen && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {[
-            { key: 'activos',        label: 'Activos',        val: resumen.activos,        num: 'text-green-700'  },
-            { key: 'estancados',     label: 'Estancados',     val: resumen.estancados,     num: resumen.estancados > 0 ? 'text-orange-600' : 'text-gray-700' },
-            { key: 'sin_movimiento', label: 'Sin movimiento', val: resumen.sin_movimiento, num: 'text-gray-500'   },
-            { key: 'bajo_minimo',    label: 'Bajo mínimo',    val: resumen.bajo_minimo,    num: resumen.bajo_minimo > 0 ? 'text-red-600' : 'text-gray-700' },
+            { key: 'activos',        label: 'Activos',        val: resumen.activos,        num: 'text-success-700' },
+            { key: 'estancados',     label: 'Estancados',     val: resumen.estancados,     num: resumen.estancados > 0 ? 'text-clay-600' : 'text-warm-600' },
+            { key: 'sin_movimiento', label: 'Sin movimiento', val: resumen.sin_movimiento, num: 'text-warm-500'   },
+            { key: 'bajo_minimo',    label: 'Bajo mínimo',    val: resumen.bajo_minimo,    num: resumen.bajo_minimo > 0 ? 'text-danger-600' : 'text-warm-600' },
           ].map(s => (
             <button key={s.key}
               onClick={() => setEstadoFiltro(estadoFiltro === s.key ? 'todos' : s.key)}
               className={`bg-white border rounded-xl p-3 text-center transition-all ${
-                estadoFiltro === s.key ? 'border-amber-400 ring-1 ring-amber-200' : 'border-gray-200'
+                estadoFiltro === s.key ? 'border-forest-400 ring-1 ring-forest-100' : 'border-warm-200'
               }`}
             >
-              <p className="text-xs font-semibold text-gray-400">{s.label}</p>
+              <p className="text-xs font-semibold text-warm-400">{s.label}</p>
               <p className={`text-xl font-bold font-mono mt-0.5 ${s.num}`}>{s.val}</p>
             </button>
           ))}
         </div>
       )}
 
-      {loading && <p className="text-sm text-gray-400 text-center py-8 animate-pulse">Cargando…</p>}
+      {loading && <p className="text-sm text-warm-400 text-center py-8 animate-pulse">Cargando…</p>}
 
       {!loading && filas !== null && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-warm-200 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-400 uppercase">Producto</th>
-                  <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase">Stock</th>
-                  <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase">Entradas</th>
-                  <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase">Salidas</th>
-                  <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-400 uppercase">Rotación</th>
+                <tr className="border-b border-warm-100 bg-warm-50">
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-warm-400 uppercase">Producto</th>
+                  <th className="text-right px-3 py-2.5 text-xs font-semibold text-warm-400 uppercase">Stock</th>
+                  <th className="text-right px-3 py-2.5 text-xs font-semibold text-warm-400 uppercase">Entradas</th>
+                  <th className="text-right px-3 py-2.5 text-xs font-semibold text-warm-400 uppercase">Salidas</th>
+                  <th className="text-right px-3 py-2.5 text-xs font-semibold text-warm-400 uppercase">Rotación</th>
                   <th className="px-3 py-2.5"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-warm-100">
                 {visibles.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="text-center text-sm text-gray-400 py-6">
+                    <td colSpan={6} className="text-center text-sm text-warm-400 py-6">
                       Sin productos con este filtro.
                     </td>
                   </tr>
@@ -2218,23 +2196,22 @@ function ModoRotacion({ tiendaId }: { tiendaId: number }) {
                 {visibles.map(f => {
                   const cfg = ROT_CFG[f.estado] ?? ROT_CFG.sin_movimiento
                   return (
-                    <tr key={f.producto_id} className="hover:bg-gray-50">
+                    <tr key={f.producto_id} className="hover:bg-warm-50">
                       <td className="px-4 py-2.5">
-                        <p className="font-medium text-gray-800">{f.producto}</p>
-                        <p className="text-xs text-gray-400">{f.unidad}</p>
+                        <p className="font-medium text-warm-700">{f.producto}</p>
+                        <p className="text-xs text-warm-400">{f.unidad}</p>
                       </td>
-                      <td className={`px-3 py-2.5 text-right font-mono font-bold text-sm ${f.alerta_min ? 'text-red-600' : 'text-gray-700'}`}>
+                      <td className={`px-3 py-2.5 text-right font-mono font-bold text-sm ${f.alerta_min ? 'text-danger-600' : 'text-warm-700'}`}>
                         {f.stock_actual}
-                        {f.alerta_min && <AlertTriangle size={10} className="inline ml-1 text-red-500" />}
+                        {f.alerta_min && <AlertTriangle size={10} className="inline ml-1 text-danger-500" />}
                       </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-sm text-green-700">{f.entradas}</td>
-                      <td className="px-3 py-2.5 text-right font-mono text-sm text-blue-700">{f.salidas}</td>
-                      <td className="px-3 py-2.5 text-right font-mono text-sm text-gray-600">
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-success-700">{f.entradas}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-warm-600">{f.salidas}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm text-warm-600">
                         {f.rotacion !== null ? `${f.rotacion}x` : '—'}
                       </td>
                       <td className="px-3 py-2.5">
-                        <span className="text-xs px-1.5 py-0.5 rounded font-semibold"
-                          style={{ background: cfg.bg, color: cfg.text }}>
+                        <span className={`text-xs px-1.5 py-0.5 rounded-md font-semibold ${cfg.chip}`}>
                           {cfg.label}
                         </span>
                       </td>
@@ -2248,7 +2225,7 @@ function ModoRotacion({ tiendaId }: { tiendaId: number }) {
       )}
 
       {!loading && filas !== null && filas.length === 0 && (
-        <p className="text-sm text-gray-400 text-center py-6">Sin movimientos en el período.</p>
+        <p className="text-sm text-warm-400 text-center py-6">Sin movimientos en el período.</p>
       )}
     </div>
   )
@@ -2275,7 +2252,7 @@ export default function ControlInventario() {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <Layers size={18} className="text-forest" />
-          <h1 className="text-lg font-bold text-gray-800">Inventario</h1>
+          <h1 className="text-lg font-bold text-warm-700">Inventario</h1>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -2286,7 +2263,7 @@ export default function ControlInventario() {
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     tiendaId === s.id
                       ? 'bg-forest text-white'
-                      : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+                      : 'bg-white border border-warm-200 text-warm-600 hover:bg-warm-50'
                   }`}>
                   {s.nombre}
                 </button>
@@ -2294,7 +2271,7 @@ export default function ControlInventario() {
             </div>
           )}
 
-          <div className="flex bg-gray-100 rounded-xl p-0.5">
+          <div className="flex bg-warm-100 rounded-xl p-0.5">
             {([
               { id: 'stock',    label: 'Stock',    icon: <Package   size={13} /> },
               { id: 'rotacion', label: 'Rotación', icon: <RotateCcw size={13} /> },
@@ -2304,8 +2281,8 @@ export default function ControlInventario() {
                 onClick={() => setModo(m.id)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                   modo === m.id
-                    ? 'bg-white text-gray-800 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
+                    ? 'bg-white text-warm-700 shadow-sm'
+                    : 'text-warm-500 hover:text-warm-700'
                 }`}
               >
                 {m.icon} {m.label}

@@ -441,6 +441,29 @@ export default function Ingresos() {
   const setCantidadItem = (idx: number, v: string) =>
     setItems(prev => prev.map((it, i) => (i === idx ? { ...it, cantidad: v } : it)))
 
+  // Lote y vencimiento POR RENGLÓN, editables aunque el renglón venga del escaneo:
+  // la factura casi nunca trae el lote ni el vencimiento (van en el empaque del
+  // producto, no en el recibo), así que la barista tiene que poder tipearlos acá
+  // —es lo que da el control de lotes—. Antes se mostraban como chips de solo
+  // lectura y, si la foto no los traía, no había dónde cargarlos.
+  const setLoteItem = (idx: number, v: string) =>
+    setItems(prev => prev.map((it, i) => (i === idx ? { ...it, numero_lote: v } : it)))
+  const setVenceItem = (idx: number, v: string) =>
+    setItems(prev => prev.map((it, i) => (i === idx ? { ...it, fecha_vencimiento: v } : it)))
+
+  // El precio de la factura es lo que el sistema captura, pero lo que sale de la
+  // caja puede ser otro: un renglón que dice $3.999 se paga $4.000 porque no hay
+  // moneda para el peso. La barista lo corrige acá y el costo queda con lo que de
+  // verdad se pagó. Vacío = sin precio (null), no cero. `precio_unitario` viaja
+  // SIEMPRE por unidad de inventario (igual que el chip que reemplaza).
+  const setPrecioItem = (idx: number, v: string) =>
+    setItems(prev => prev.map((it, i) => {
+      if (i !== idx) return it
+      const t = v.trim()
+      const n = t === '' ? null : Number(t)
+      return { ...it, precio_unitario: n != null && Number.isFinite(n) ? n : null }
+    }))
+
   // precio_unitario SIEMPRE viaja por unidad de inventario: al escanear, el server
   // ya dividió el precio de la factura por el contenido del empaque. Si acá se
   // invierte la bandera hay que rebasarlo, o el costo unitario queda x cpe mal
@@ -827,20 +850,22 @@ export default function Ingresos() {
                       {Math.round(Number(it.cantidad) * (it.contenido_por_empaque || 0) * 100) / 100} {it.unidad_medida}
                     </p>
                   )}
-                  {/* Fila 2: chips lote + vence + precio (escaneo) */}
-                  {(it.numero_lote || it.fecha_vencimiento || it.precio_unitario != null) && (
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {it.numero_lote && (
-                        <FieldChip label="Lote" value={it.numero_lote} />
-                      )}
-                      {it.fecha_vencimiento && (
-                        <FieldChip label="Vence" value={it.fecha_vencimiento.slice(5).replace('-', '/')} />
-                      )}
-                      {it.precio_unitario != null && (
-                        <FieldChip label={`$/${it.unidad_medida}`} value={'$' + Number(it.precio_unitario).toLocaleString('es-CO')} />
-                      )}
+                  {/* Fila 2: lote + vence + precio EDITABLES (aunque el renglón
+                      venga del escaneo). Lote y vencimiento casi nunca están en la
+                      factura —van en el empaque— así que sin estos campos no había
+                      cómo llevar control de lotes. El precio se puede corregir a lo
+                      que de verdad salió de la caja ($3.999 impreso → $4.000 pagado). */}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <CompactInput label="Lote" value={it.numero_lote}
+                      onChange={v => setLoteItem(idx, v)} placeholder="—" />
+                    <CompactInput label="Vence" value={it.fecha_vencimiento}
+                      onChange={v => setVenceItem(idx, v)} type="date" placeholder="" />
+                    <div className="col-span-2">
+                      <CompactInput label={`Precio ($/${it.unidad_medida})`}
+                        value={it.precio_unitario != null ? String(it.precio_unitario) : ''}
+                        onChange={v => setPrecioItem(idx, v)} type="number" placeholder="0" />
                     </div>
-                  )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1029,17 +1054,6 @@ export default function Ingresos() {
           </button>
         </div>
       </div>
-    </div>
-  )
-}
-
-// ─── FieldChip ───────────────────────────────────────────────────────────────
-
-function FieldChip({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline gap-1.5 px-2 py-1.5 bg-warm-50 border border-warm-100 rounded-lg">
-      <span className="text-[9px] font-bold uppercase tracking-wide text-warm-400">{label}</span>
-      <span className="text-[12px] font-semibold text-warm-700 font-mono flex-1 text-right">{value}</span>
     </div>
   )
 }

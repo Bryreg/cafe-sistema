@@ -625,6 +625,13 @@ class RecogidaEfectivo(Base):
     # anteayer, y el reporte tiene que ubicarla en su día, no en el del teclado.
     fecha = Column(Date, index=True, nullable=False)
     monto = Column(Numeric(12, 2, asdecimal=False), nullable=False)   # siempre positivo
+    # EL DÍA (turno) QUE ESTA RECOGIDA SALDA. Con turno puesto, la recogida se
+    # imputa a ESE día y solo a ese: el dueño tocó «recogí» en la tarjeta de un
+    # día puntual y espera que ESE quede «Recogido», no que la plata se reparta
+    # al día más viejo. Sin turno (recogidas viejas, o una pasada suelta sin día)
+    # cae al reparto histórico del más viejo primero, como antes. FK plana en la
+    # migración (sin REFERENCES) por el mismo motivo que `caja_turno_id`.
+    turno_id = Column(Integer, ForeignKey("caja_turnos.id"), index=True, nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     # Con max_length explícito: sin él el INSERT explota en Postgres (ya pasó en
     # este repo con otras columnas de texto libre).

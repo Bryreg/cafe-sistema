@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, date, timedelta
 from fastapi import HTTPException
-from app.core.tz import fin_dia_col_utc, inicio_dia_col_utc
+from app.core.tz import dia_col, fin_dia_col_utc, inicio_dia_col_utc
 from app.models.models import (Consignacion, EstadoConsignacionEnum,
                                 CajaTurno, MovimientoCaja,
                                 RecogidaEfectivo, Tienda, EstadoTurnoEnum)
@@ -205,38 +205,52 @@ def _aplicar_cascada(saldos: list[dict]) -> None:
 
 
 def _aplicar_recogidas(saldos: list[dict], recogidas: list) -> None:
-    """Lo que el dueño RECOGIÓ cubre los días pendientes, del más viejo al más nuevo.
+    """Lo que el dueño RECOGIÓ cubre lo pendiente. Dos regímenes:
 
-    El error medido que esto corrige: él pasaba por la sede, se llevaba el
-    efectivo, y el día seguía pidiendo «consigná $X» — la barista veía una deuda
-    de plata que ya no estaba en el cajón. La recogida bajaba el efectivo en
-    registradora (services/costos.py) pero esta cuenta, la del pendiente por
-    consignar, no la leía.
+    POR DÍA (recogida con `turno_id`) — el caso de hoy. El dueño toca «recogí» en
+    la tarjeta de UN día y espera que ESE quede saldado. La recogida se imputa a
+    los turnos de ESE día (en la práctica uno; si un día tuviera dos, cubre ambos
+    del más viejo primero, sin salir del día). No baja ningún día más viejo: los
+    que no recogió siguen pendientes, que es lo honesto.
 
-    DEL MÁS VIEJO PRIMERO, al revés que la cascada de déficits. No se contradicen:
-    la cascada reconstruye de qué día salió la plata que tapó un hueco (y esa es
-    físicamente la del día anterior); la recogida es él llevándose los fajos que
-    más días llevan esperando el banco — el mismo criterio con el que `registrar`
-    imputa una consignación nueva al turno pendiente más antiguo.
+    SUELTA / VIEJA (recogida sin `turno_id`) — el reparto histórico de siempre:
+    del más viejo al más nuevo, cubriendo solo días que YA habían cerrado cuando
+    él pasó (`fecha_cierre <= fin del día de la recogida`). Se conserva para las
+    recogidas anteriores a este cambio y para una pasada suelta sin día.
 
-    CADA RECOGIDA SOLO CUBRE DÍAS QUE YA HABÍAN CERRADO CUANDO ÉL PASÓ. Sin ese
-    tope, una recogida con sobrante (llevarse la base de más, un conteo impreciso)
-    dejaría pre-cubierto un día que todavía no existía, y ese día nacería sin
-    pedir consignación: pendiente subestimado, para el lado que tranquiliza.
-
-    Y EL SOBRANTE DE UNA RECOGIDA SE DESCARTA, no se arrastra. Si recogió más de
-    lo que los días pendientes sumaban, la diferencia es un problema de conteo o
-    de base — vive en el «efectivo en mano» de costos, no acá. Arrastrarlo sería
-    inventar cobertura futura con plata cuyo origen no se midió.
-
-    Corre DESPUÉS de la cascada: los déficits son hechos de la caja y se cobran
-    entre turnos como siempre; la recogida solo consume los saldos que quedaron
-    en positivo. Muta la lista in-place, igual que `_aplicar_cascada`.
+    En AMBOS: el sobrante de una recogida SE DESCARTA, no se arrastra (si recogió
+    de más, la diferencia es conteo/base y vive en el «efectivo en mano» de
+    costos, no acá). Corre DESPUÉS de la cascada y solo consume saldos positivos.
+    Muta la lista in-place, igual que `_aplicar_cascada`.
     """
+    por_turno = {s["turno"].id: s for s in saldos}
     for r in recogidas:
         restante = float(r.monto or 0)
         if restante <= 0:
             continue
+
+        tid = getattr(r, "turno_id", None)
+        if tid is not None and tid in por_turno:
+            # ── POR DÍA ──: solo los turnos del MISMO día operativo que el marcado.
+            ancla = por_turno[tid]["turno"]
+            dia_ref = (dia_col(ancla.fecha_apertura)
+                       if ancla.fecha_apertura is not None else None)
+            for s in saldos:                       # `saldos` viene en orden asc
+                if restante <= 0:
+                    break
+                t = s["turno"]
+                mismo_dia = t.id == tid or (
+                    dia_ref is not None and t.fecha_apertura is not None
+                    and dia_col(t.fecha_apertura) == dia_ref)
+                if not mismo_dia or s["saldo"] <= 0:
+                    continue
+                take = min(s["saldo"], restante)
+                s["saldo"] -= take
+                s["recogido"] += take
+                restante -= take
+            continue
+
+        # ── SUELTA / VIEJA ──: del más viejo primero, hasta el día de la recogida.
         tope = fin_dia_col_utc(r.fecha)
         for s in saldos:
             if restante <= 0:
@@ -728,6 +742,7 @@ def _serializar_recogida(r: RecogidaEfectivo) -> dict:
         "fecha": r.fecha,
         "monto": float(r.monto or 0),
         "nota": r.nota,
+        "turno_id": getattr(r, "turno_id", None),
         "usuario_id": r.usuario_id,
         "usuario_nombre": r.usuario.nombre if r.usuario else None,
         "creado_en": r.creado_en,
@@ -735,12 +750,18 @@ def _serializar_recogida(r: RecogidaEfectivo) -> dict:
 
 
 def registrar_recogida(db: Session, tienda_id: int, fecha: date, monto: float,
-                       usuario_id: int, nota: str | None = None) -> dict:
+                       usuario_id: int, nota: str | None = None,
+                       turno_id: int | None = None) -> dict:
     """«Recogí $X de la sede Y el día Z». El registro que le faltaba al sistema.
 
     Sin esto la plata recogida seguía contando en el cajón: el cajón mostraba la
     venta entera del día aunque el dueño ya se hubiera llevado el efectivo, y el
     sobrante era exactamente lo que él pagaba de contado a los proveedores.
+
+    `turno_id` ATA la recogida a UN día: el dueño tocó «recogí» en la tarjeta de
+    ese día y espera que ESE quede saldado, no que la plata baje el pendiente del
+    día más viejo. Con turno, `_aplicar_recogidas` la imputa solo a ese turno; sin
+    turno (una pasada suelta, o las recogidas viejas) cae al reparto histórico.
 
     Las validaciones (monto positivo, fecha no futura, sede activa, largo de la
     nota) las hace el HANDLER, no este servicio ni el schema: el `detail` de un
@@ -749,6 +770,19 @@ def registrar_recogida(db: Session, tienda_id: int, fecha: date, monto: float,
     """
     from app.services import audit   # import local, como el resto del módulo
     from app.services.costos import fijar_desde_recogidas
+
+    # El turno tiene que ser de ESTA sede y estar cerrado: una recogida imputada a
+    # un turno de otra sede, o a uno todavía abierto, saldaría un día que no es el
+    # que el dueño marcó. Ante cualquier duda, se guarda SIN turno (cae al reparto
+    # histórico, que nunca inventa cobertura) en vez de atar a un turno equivocado.
+    if turno_id is not None:
+        t = (db.query(CajaTurno)
+             .filter(CajaTurno.id == turno_id,
+                     CajaTurno.tienda_id == tienda_id,
+                     CajaTurno.estado == EstadoTurnoEnum.cerrado)
+             .first())
+        if t is None:
+            turno_id = None
 
     # El ancla del régimen se deja puesta con la PRIMERA recogida y no se mueve
     # más. Va antes del INSERT para que la fecha que se fija sea la de esta misma
@@ -761,6 +795,7 @@ def registrar_recogida(db: Session, tienda_id: int, fecha: date, monto: float,
         fecha=fecha,
         monto=round(float(monto), 2),
         usuario_id=usuario_id,
+        turno_id=turno_id,
         # "" y "   " se guardan como NULL: una nota vacía no es una nota, y así el
         # frontend puede preguntar `nota ? ... : ...` sin casos especiales.
         nota=((nota or "").strip() or None),
@@ -770,11 +805,51 @@ def registrar_recogida(db: Session, tienda_id: int, fecha: date, monto: float,
     audit.registrar(
         db, accion="registrar_recogida_efectivo", tabla="recogidas_efectivo",
         registro_id=r.id, usuario_id=usuario_id, tienda_id=tienda_id,
-        datos_despues={"fecha": str(fecha), "monto": float(r.monto), "nota": r.nota},
+        datos_despues={"fecha": str(fecha), "monto": float(r.monto), "nota": r.nota,
+                       "turno_id": turno_id},
     )
     db.commit()
     db.refresh(r)
     return _serializar_recogida(r)
+
+
+def backfill_turno_recogidas(db: Session) -> dict:
+    """UNA VEZ: ata las recogidas sin `turno_id` al día que saldan.
+
+    Las recogidas anteriores al recogí-por-día no traen turno, así que caen al
+    reparto histórico (más viejo primero) — justo lo que el dueño quería cambiar.
+    Esta función las ata al turno cerrado de SU sede cuyo cierre cae en la fecha
+    de la recogida (el día que la pantalla usó al registrarla).
+
+    ES IDEMPOTENTE Y CONSERVADORA: solo mira las que están en NULL; si una fecha
+    no matchea ningún turno, la deja como está (sigue en el reparto histórico, que
+    nunca inventa cobertura). No borra ni recrea filas —no toca `creado_en`, del
+    que depende el conteo del cajón—: solo escribe `turno_id`.
+    """
+    pendientes = (db.query(RecogidaEfectivo)
+                  .filter(RecogidaEfectivo.turno_id.is_(None)).all())
+    asignadas, sin_match = 0, 0
+    detalle = []
+    for r in pendientes:
+        turnos = (db.query(CajaTurno)
+                  .filter(CajaTurno.tienda_id == r.tienda_id,
+                          CajaTurno.estado == EstadoTurnoEnum.cerrado,
+                          CajaTurno.fecha_cierre >= inicio_dia_col_utc(r.fecha),
+                          CajaTurno.fecha_cierre <= fin_dia_col_utc(r.fecha))
+                  .order_by(CajaTurno.fecha_cierre.asc(), CajaTurno.id.asc())
+                  .all())
+        if turnos:
+            # Uno o varios: se ata al primero del día; `_aplicar_recogidas` expande
+            # al resto de turnos del MISMO día operativo si los hubiera.
+            r.turno_id = turnos[0].id
+            asignadas += 1
+            detalle.append({"recogida_id": r.id, "fecha": str(r.fecha),
+                            "monto": float(r.monto or 0), "turno_id": turnos[0].id})
+        else:
+            sin_match += 1
+    if asignadas:
+        db.commit()
+    return {"asignadas": asignadas, "sin_match": sin_match, "detalle": detalle}
 
 
 def listar_recogidas(db: Session, desde: date | None = None,

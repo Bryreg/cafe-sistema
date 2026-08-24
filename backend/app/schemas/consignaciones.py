@@ -19,3 +19,7 @@ class RecogidaCreate(BaseModel):
     fecha: date          # el día COLOMBIA en que recogió, no el día en que teclea
     monto: float
     nota: Optional[str] = None
+    # El turno (día) que esta recogida salda. Con él, se imputa a ESE día y solo a
+    # ese —el dueño lo marcó en su tarjeta—; sin él (pasada suelta, cliente viejo)
+    # cae al reparto histórico del más viejo primero. El servicio lo valida.
+    turno_id: Optional[int] = None

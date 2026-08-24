@@ -291,6 +291,10 @@ with engine.connect() as _conn:
         # comisión, solo libro). Las existentes son todas del café.
         "ALTER TABLE costos_categorias ADD COLUMN ambito VARCHAR(20) DEFAULT 'cafe'",
         "UPDATE costos_categorias SET ambito = 'cafe' WHERE ambito IS NULL",
+        # Recogí POR DÍA: la recogida se imputa al turno que el dueño marca, no al
+        # más viejo. FK plana (sin REFERENCES): recogidas_efectivo puede ya existir
+        # en producción (create_all de un deploy previo), y el modelo define el FK real.
+        "ALTER TABLE recogidas_efectivo ADD COLUMN turno_id INTEGER",
     ]:
         try:
             _conn.execute(_text(_sql))

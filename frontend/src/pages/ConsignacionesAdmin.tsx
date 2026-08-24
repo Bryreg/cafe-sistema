@@ -576,10 +576,10 @@ export default function ConsignacionesAdmin() {
   // falsa (afirmaba banco donde había mano) y descontaba el cajón dos veces.
   const [recogiendo, setRecogiendo] = useState<string | null>(null)
   const [errorRecogi, setErrorRecogi] = useState<{ key: string; msg: string } | null>(null)
-  // Días de los que YA se registró la pasada en esta sesión. El pendiente se salda
-  // del día más viejo primero (regla de la cuenta), así que un día recién marcado
-  // puede seguir mostrando «por consignar» un rato; sin este candado el dueño lo
-  // volvería a tocar y registraría la recogida dos veces (mano inflada).
+  // Días de los que YA se registró la pasada en esta sesión. El candado cubre la
+  // ventana entre el toque y la recarga: sin él, el dueño podría tocar «recogí»
+  // dos veces antes de que la lista refresque y registrar la pasada doble (mano
+  // inflada). Con el recogí POR DÍA el día refresca a «Recogido» al recargar.
   const [recogidosLocal, setRecogidosLocal] = useState<Set<string>>(new Set())
 
   const registrarRecogida = async (dia: DiaAgrupado, monto: number) => {
@@ -587,7 +587,7 @@ export default function ConsignacionesAdmin() {
     const ok = window.confirm(
       `¿Registrar que recogiste ${fmt(monto)} de ${dia.tienda_nombre}, del `
       + `${fmtFecha(dia.fecha_apertura)}?\n\nEsa plata entra a «la mano» en La Plata y `
-      + 'baja lo pendiente por consignar (del día más viejo primero). No crea una consignación.')
+      + 'salda ESTE día. No crea una consignación.')
     if (!ok) return
     setRecogiendo(dia.key); setErrorRecogi(null)
     try {
@@ -599,8 +599,11 @@ export default function ConsignacionesAdmin() {
       // menos a este día. La agrupación sigue siendo por apertura; esto es solo la
       // fecha del registro. Sin cierre cargado, cae a la apertura.
       const fechaRecogida = dia.fecha_cierre ? calDay(dia.fecha_cierre) : dia.key
+      // `turno_id` ATA la recogida a ESTE día: se salda solo este, no el más viejo.
+      // Basta con un turno del día — el backend cubre los demás turnos del MISMO día.
       await api.post('/consignaciones/recogidas', {
         tienda_id: dia.tienda_id, fecha: fechaRecogida, monto, nota: null,
+        turno_id: dia.turno_ids[0] ?? null,
       })
       setRecogidosLocal(s => new Set(s).add(dia.key))
       if (tiendaId !== null) await load(tiendaId)
@@ -1166,12 +1169,11 @@ export default function ConsignacionesAdmin() {
                       <p className="text-[11px] text-gray-500 leading-snug px-1">
                         {yaRecogido ? (
                           <>Ya registraste esta pasada. La plata entró a <b>«la mano»</b> en La Plata
-                          y baja el pendiente <b>del día más viejo primero</b>, así que este día puede
-                          seguir mostrando saldo un rato. No la registres de nuevo.</>
+                          y saldó <b>este día</b>. No la registres de nuevo.</>
                         ) : (
                           <>Si te llevaste el efectivo en vez de consignarlo, tocá acá: entra a
-                          <b> «la mano»</b> en La Plata y baja el pendiente <b>del día más viejo
-                          primero</b>. <b>No</b> crea una consignación.</>
+                          <b> «la mano»</b> en La Plata y salda <b>este día</b>. <b>No</b> crea una
+                          consignación.</>
                         )}
                       </p>
                       {errorRecogi?.key === dia.key && (

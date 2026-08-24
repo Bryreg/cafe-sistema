@@ -166,7 +166,7 @@ def registrar_recogida(
     ensure_tienda_access(user, data.tienda_id)
 
     return svc.registrar_recogida(db, data.tienda_id, data.fecha, data.monto,
-                                  user.id, nota=data.nota)
+                                  user.id, nota=data.nota, turno_id=data.turno_id)
 
 
 @router.get("/recogidas")
@@ -184,6 +184,15 @@ def listar_recogidas(
     if desde is not None and hasta is not None and desde > hasta:
         raise HTTPException(400, "El rango de fechas está al revés: 'desde' es posterior a 'hasta'.")
     return svc.listar_recogidas(db, desde=desde, hasta=hasta, tienda_id=tienda_id)
+
+
+@router.post("/recogidas/backfill-turno")
+def backfill_turno_recogidas(db: Session = Depends(get_db),
+                             user: Usuario = Depends(require_admin)):
+    """UNA VEZ: ata las recogidas viejas (sin turno) al día que saldan, para que
+    el recogí-por-día también aplique a las ya registradas. Idempotente: solo toca
+    las que están sin turno y solo escribe `turno_id` (no borra ni recrea)."""
+    return svc.backfill_turno_recogidas(db)
 
 
 @router.delete("/recogidas/{recogida_id}")

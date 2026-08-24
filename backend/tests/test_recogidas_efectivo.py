@@ -150,18 +150,22 @@ class RecogidasBase(unittest.TestCase):
         return t
 
     def recogida(self, monto, *, tienda=None, fecha=None, creado_en=None,
-                 nota=None) -> RecogidaEfectivo:
+                 nota=None, turno_id=None) -> RecogidaEfectivo:
         """La pasada del dueño, escrita directo en la DB.
 
         `creado_en` se pasa a mano en los tests de borde: es el campo con el que
         `_efectivo_en_registradora` decide si la recogida ya está adentro del
         conteo físico del cierre, y ahí un microsegundo cambia el número.
+
+        `turno_id` ata la recogida a UN día (el recogí por día); sin él cae al
+        reparto histórico del más viejo primero.
         """
         r = RecogidaEfectivo(
             tienda_id=(tienda or self.vida).id,
             fecha=fecha or self.hoy,
             monto=monto,
             usuario_id=self.admin.id,
+            turno_id=turno_id,
             nota=nota,
         )
         if creado_en is not None:
@@ -984,6 +988,62 @@ class RecogidasApiTest(RecogidasBase):
         self.set_current_user(self.barista)
         self.assertEqual(
             self.client.delete(f"/api/v1/consignaciones/recogidas/{rid}").status_code, 403)
+
+
+class RecogiPorDiaTest(RecogidasBase):
+    """El recogí POR DÍA: una recogida atada a un turno salda ESE día y solo ese.
+
+    El bug que corrige: el dueño tocaba «recogí» en la tarjeta de un día y la
+    plata bajaba el pendiente del día MÁS VIEJO primero, así que el día que
+    marcaba no quedaba «Recogido» y cambiaba otro. Con `turno_id`, la recogida se
+    imputa al día marcado; los días viejos sin recoger siguen pendientes.
+    """
+
+    def _dos_dias_pendientes(self):
+        """Un día viejo ($300k) y uno nuevo ($500k), ambos cerrados y sin consignar."""
+        viejo = self.turno(tienda=self.vida, abierto=False, efectivo_ventas=300000,
+                           apertura=self.mediodia(self.dia(-2)),
+                           cierre=self.mediodia(self.dia(-2)) + timedelta(hours=8))
+        nuevo = self.turno(tienda=self.vida, abierto=False, efectivo_ventas=500000,
+                           apertura=self.mediodia(self.dia(-1)),
+                           cierre=self.mediodia(self.dia(-1)) + timedelta(hours=8))
+        return viejo, nuevo
+
+    def _saldos(self):
+        from app.services.consignaciones import _saldos_consignacion
+        s = {x["turno"].id: x for x in _saldos_consignacion(self.db, self.vida.id)}
+        return s
+
+    def test_recogi_por_dia_salda_ese_dia_y_no_el_mas_viejo(self):
+        viejo, nuevo = self._dos_dias_pendientes()
+        # Recojo el día NUEVO por su monto exacto, atado a su turno.
+        self.recogida(500000, tienda=self.vida,
+                      fecha=self.dia(-1), turno_id=nuevo.id)
+        s = self._saldos()
+        # El día nuevo quedó saldado (recogido), el VIEJO intacto: no se le bajó nada.
+        self.assertEqual(round(s[nuevo.id]["saldo"], 2), 0)
+        self.assertEqual(round(s[nuevo.id]["recogido"], 2), 500000)
+        self.assertEqual(round(s[viejo.id]["saldo"], 2), 300000)
+        self.assertEqual(round(s[viejo.id]["recogido"], 2), 0)
+
+    def test_recogi_por_dia_no_arrastra_el_sobrante_a_otro_dia(self):
+        viejo, nuevo = self._dos_dias_pendientes()
+        # Recojo el nuevo por MÁS de lo que debía: el sobrante se descarta, no baja el viejo.
+        self.recogida(800000, tienda=self.vida,
+                      fecha=self.dia(-1), turno_id=nuevo.id)
+        s = self._saldos()
+        self.assertEqual(round(s[nuevo.id]["saldo"], 2), 0)
+        self.assertEqual(round(s[nuevo.id]["recogido"], 2), 500000)   # solo lo que debía
+        self.assertEqual(round(s[viejo.id]["saldo"], 2), 300000)      # el viejo, intacto
+
+    def test_sin_turno_id_sigue_siendo_el_reparto_del_mas_viejo(self):
+        """Contraprueba: una recogida SUELTA (sin turno) conserva el FIFO histórico."""
+        viejo, nuevo = self._dos_dias_pendientes()
+        self.recogida(300000, tienda=self.vida, fecha=self.hoy)   # sin turno_id
+        s = self._saldos()
+        # Cae al más viejo primero, como antes del cambio.
+        self.assertEqual(round(s[viejo.id]["saldo"], 2), 0)
+        self.assertEqual(round(s[nuevo.id]["saldo"], 2), 500000)
 
 
 if __name__ == "__main__":

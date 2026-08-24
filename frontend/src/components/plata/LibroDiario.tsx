@@ -110,6 +110,27 @@ function aplanar(dias: DiaLibro[]): MovFila[] {
   return filas
 }
 
+// ── EL LIBRO ES «TODA LA PLATA»: entra, sale, queda — sin importar el riel ────
+// El dueño no quiere pensar en «banco» vs «efectivo»: quiere ver lo que ENTRÓ y
+// lo que SALIÓ cada día, y con cuánto quedó. Estas tres cuentas UNIFICAN el banco
+// y la mano en un solo número por día, con la misma matemática del backend —que
+// sí lleva las dos cadenas por separado para poder cuadrar contra el extracto,
+// pero eso es plomería, no lo que el dueño tiene que leer—:
+//   · entra = lo que entró al banco (consignaciones + tecleado) − lo que fue un
+//     TRASPASO de la mano al banco (no es plata nueva) + lo recogido en efectivo.
+//   · sale  = lo que salió del banco + lo que se pagó en efectivo de la mano.
+//   · queda = toda la plata al cierre (banco + mano) = `total_final`.
+// Los campos de la mano son opcionales (ventana de deploy): un servidor viejo no
+// los manda y todo se cae solo al «banco» de antes, sin romperse ni mentir.
+const entraDelDia = (d: DiaLibro) =>
+  d.total_entradas - (d.mano_depositos ?? 0) + (d.mano_entradas ?? 0)
+const saleDelDia = (d: DiaLibro) =>
+  d.total_salidas + (d.mano_salidas ?? 0)
+/** Toda la plata al cierre del día (banco + mano), o null si el banco no tiene
+ *  cadena (sin ancla no hay total). En un servidor viejo cae al banco `final`. */
+const quedaDelDia = (d: DiaLibro): number | null =>
+  d.cadena ? (d.total_final ?? d.final) : null
+
 export default function LibroDiario({
   libro, anio, mes, hoy, viendoElMesDeHoy,
   cuentas, agenda, categorias, sede, tiendas,
@@ -217,6 +238,12 @@ function LibroListo({
   const mostrados = activo ? movs.filter(m => m.fecha === activo) : movs
   const hayColumnasDeSaldo = l.dias_con_saldo > 0
   const t = l.totales
+  // Los totales del mes, UNIFICADOS (banco + mano), igual que las filas: lo que
+  // entró y salió sin importar el riel, y con cuánto quedó toda la plata. Los
+  // campos de la mano son opcionales — en un servidor viejo esto es el banco solo.
+  const entraMes = t.entradas - (t.mano_depositos ?? 0) + (t.mano_entradas ?? 0)
+  const saleMes = t.salidas + (t.mano_salidas ?? 0)
+  const quedaMes = t.total_final ?? t.final
 
   // ── EL PANEL DE MOVIMIENTOS SE ALINEA CON EL DÍA SEÑALADO ──────────────────
   // Antes, al señalar un día de abajo (el 22) sus movimientos aparecían arriba
@@ -289,20 +316,20 @@ function LibroListo({
         </div>
 
         <div className="mt-3 flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
-          {/* Con cuánto cerró (o el aviso honesto de que no se sabe). */}
+          {/* Con cuánto quedó TODA la plata (o el aviso honesto de que no se sabe). */}
           <div className="flex flex-col gap-1">
-            {t.final != null ? (<>
+            {quedaMes != null ? (<>
               <span className="text-[11px] font-bold uppercase tracking-wide text-forest-50/70">
-                Con lo cargado, el mes cerró con
+                Con lo cargado, quedó
               </span>
               <span className={`font-mono tabular-nums text-4xl sm:text-5xl font-bold leading-none ${
-                t.final < 0 ? 'text-gold-200' : 'text-white'}`}>
-                {plata(t.final)}
+                quedaMes < 0 ? 'text-gold-200' : 'text-white'}`}>
+                {plata(quedaMes)}
               </span>
             </>) : (
               <button onClick={onIrAlAncla} className="text-left">
                 <span className="block text-[11px] font-bold uppercase tracking-wide text-forest-50/80">
-                  El cierre no se sabe todavía
+                  Cuánto quedó no se sabe todavía
                 </span>
                 <span className="block text-sm text-forest-50/90 mt-1 max-w-xs leading-snug">
                   Falta el saldo del extracto para saber con cuánto termina. Tocá acá y cargalo.
@@ -314,11 +341,11 @@ function LibroListo({
           <div className="flex gap-2">
             <div className="rounded-xl bg-forest-700 px-4 py-2.5 flex flex-col gap-0.5 min-w-[7rem]">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-forest-50/70">Entró</span>
-              <span className="font-mono tabular-nums text-base font-semibold text-success-200">+ {plata(t.entradas)}</span>
+              <span className="font-mono tabular-nums text-base font-semibold text-success-200">+ {plata(entraMes)}</span>
             </div>
             <div className="rounded-xl bg-forest-700 px-4 py-2.5 flex flex-col gap-0.5 min-w-[7rem]">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-forest-50/70">Salió</span>
-              <span className="font-mono tabular-nums text-base font-semibold text-gold-200">− {plata(t.salidas)}</span>
+              <span className="font-mono tabular-nums text-base font-semibold text-gold-200">− {plata(saleMes)}</span>
             </div>
             {l.dias_con_saldo > 0 && (
               <div className="rounded-xl bg-forest-700 px-4 py-2.5 flex flex-col gap-0.5 min-w-[5.5rem]">
@@ -336,23 +363,6 @@ function LibroListo({
           </div>
         </div>
 
-        {/* La mano del dueño y el total (banco + mano) — SOLO cuando hay efectivo
-            recogido. Sin recogidas (el caso de hoy) el hero queda igual. Ausente
-            (servidor viejo, antes del modelo banco+mano) no dibuja nada. */}
-        {typeof t.mano_final === 'number' && t.mano_final !== 0 && (
-          <div className="mt-3 pt-3 border-t border-forest-700 flex flex-wrap items-center gap-x-6 gap-y-1">
-            <span className="text-sm text-forest-50/80">
-              En mano <span className="text-forest-50/60">(efectivo recogido)</span>:{' '}
-              <b className="font-mono tabular-nums text-white">{plata(t.mano_final)}</b>
-            </span>
-            {t.total_final != null && (
-              <span className="text-sm text-forest-50/80">
-                Toda la plata <span className="text-forest-50/60">(banco + mano)</span>:{' '}
-                <b className="font-mono tabular-nums text-white">{plata(t.total_final)}</b>
-              </span>
-            )}
-          </div>
-        )}
       </div>
 
       <p className="text-[13px] text-warm-500 px-1">
@@ -449,6 +459,10 @@ function FilaDia({
   const esHoy = dia.fecha === hoy
   const rojo = dia.en_rojo
   const numero = Number(dia.fecha.slice(8, 10))
+  // Unificado: entra/sale/queda de TODA la plata (banco + mano), sin distinguir riel.
+  const entra = entraDelDia(dia)
+  const sale = saleDelDia(dia)
+  const queda = quedaDelDia(dia)
   const fondo = activo
     ? (rojo ? 'bg-danger-50' : 'bg-forest-50')
     : (rojo ? 'bg-danger-50/60' : esFinde(dia.fecha) ? 'bg-warm-50/60' : '')
@@ -468,33 +482,20 @@ function FilaDia({
           <span className={`text-[10px] ${rojo ? 'text-danger-500' : 'text-warm-400'}`}>{diaSemana(dia.fecha)}</span>
         </span>
         <span className={`text-right font-mono tabular-nums text-[13px] font-semibold ${
-          dia.total_entradas > 0 ? 'text-success-600' : 'text-warm-300'}`}>
-          {dia.total_entradas > 0 ? `+ ${plata(dia.total_entradas)}` : '—'}
+          entra > 0 ? 'text-success-600' : 'text-warm-300'}`}>
+          {entra > 0 ? `+ ${plata(entra)}` : '—'}
         </span>
         <span className={`text-right font-mono tabular-nums text-[13px] font-semibold ${
-          dia.total_salidas > 0 ? 'text-danger-600' : 'text-warm-300'}`}>
-          {dia.total_salidas > 0 ? `− ${plata(dia.total_salidas)}` : '—'}
+          sale > 0 ? 'text-danger-600' : 'text-warm-300'}`}>
+          {sale > 0 ? `− ${plata(sale)}` : '—'}
         </span>
         {columnasDeSaldo && (
           <span className={`text-right font-mono tabular-nums text-[13px] font-bold ${
-            !dia.cadena ? 'text-warm-300' : rojo ? 'text-danger-700' : 'text-warm-700'}`}>
-            {dia.cadena ? plata(dia.final) : '—'}
+            queda == null ? 'text-warm-300' : queda < 0 ? 'text-danger-700' : 'text-warm-700'}`}>
+            {queda != null ? plata(queda) : '—'}
           </span>
         )}
       </div>
-      {/* La MANO del día (recogí) — abajo del renglón del banco, en otro color:
-          ENTRA/SALE/QUEDA son el BANCO; esto es efectivo que el dueño se llevó,
-          que no viaja al banco. Sin él, un día en que solo se recogió se veía
-          vacío («—» en las tres columnas) aunque hubiera movimiento de plata.
-          Ausente (servidor viejo) no dibuja nada. */}
-      {typeof dia.mano_entradas === 'number' && dia.mano_entradas > 0 && (
-        <div className="px-4 pb-2 -mt-1.5 pl-[3.9rem]">
-          <span className="text-[11px] font-mono tabular-nums font-semibold text-indigo-500">
-            + {plata(dia.mano_entradas)} recogí
-            <span className="font-sans font-normal text-indigo-400/80"> · en mano, no al banco</span>
-          </span>
-        </div>
-      )}
     </button>
   )
 }
@@ -516,11 +517,10 @@ function FilaMov({ m }: { m: MovFila }) {
       )}
       <span className="flex-1 min-w-0 truncate text-sm text-warm-600">
         {m.label}
-        {m.clase === 'efectivo' && <span className="ml-1 text-[11px] text-warm-400">· no toca el banco</span>}
-        {m.clase === 'deposito' && <span className="ml-1 text-[11px] text-warm-400">· de lo recogido, no suma al total</span>}
+        {m.clase === 'deposito' && <span className="ml-1 text-[11px] text-warm-400">· traspaso, no es plata nueva</span>}
       </span>
-      {/* El depósito de lo recogido es un traspaso mano→banco: ni + ni − al total.
-          Se pinta con «↔» y en gris para que no se lea como un ingreso. */}
+      {/* El depósito de lo recogido es un traspaso de la mano a la cuenta: ni + ni
+          − al total (la misma plata cambia de bolsillo). Se pinta «↔» y en gris. */}
       <span className={`shrink-0 font-mono tabular-nums text-sm font-bold ${
         m.clase === 'deposito' ? 'text-warm-400' : m.entra ? 'text-success-600' : 'text-danger-600'}`}>
         {m.clase === 'deposito' ? '↔' : m.entra ? '+' : '−'} {plata(m.monto)}

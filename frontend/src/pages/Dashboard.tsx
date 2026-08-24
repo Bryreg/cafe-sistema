@@ -572,13 +572,27 @@ export default function Dashboard() {
         por_proveedor: r.data?.por_proveedor ?? [],
       }))
       .catch(() => setComprasPeriodo(null))
-    // Mermas: /informes/mermas requiere tienda_id → solo con sede seleccionada.
-    if (sedeId !== null) {
-      api.get('/informes/mermas', { params })
-        .then(r => setMermas(((r.data?.filas ?? []) as any[])
-          .map(f => ({ producto: f.producto, cantidad: f.total_cantidad ?? 0, tipo: f.unidad ?? '' }))
-          .slice(0, 8)))
-        .catch(() => setMermas([]))
+    // Mermas: /informes/mermas requiere tienda_id. En «Todas» se pide por CADA
+    // sede y se combina (se suma por producto), igual que el widget de impulso —
+    // así el dashboard en «Todas» muestra la merma de ambas sedes en vez de pedir
+    // que elijas una.
+    const sedesMerma = sedeId !== null ? [sedeId] : sedes.map(s => s.id)
+    if (sedesMerma.length > 0) {
+      Promise.all(sedesMerma.map(tid =>
+        api.get('/informes/mermas', { params: { fecha_desde: desde, fecha_hasta: hasta, tienda_id: tid } })
+          .then(r => (r.data?.filas ?? []) as any[])
+          .catch(() => [])
+      )).then(listas => {
+        const acc = new Map<string, { producto: string; cantidad: number; tipo: string }>()
+        for (const filas of listas) {
+          for (const f of filas) {
+            const prev = acc.get(f.producto)
+            if (prev) prev.cantidad += f.total_cantidad ?? 0
+            else acc.set(f.producto, { producto: f.producto, cantidad: f.total_cantidad ?? 0, tipo: f.unidad ?? '' })
+          }
+        }
+        setMermas([...acc.values()].sort((a, b) => b.cantidad - a.cantidad).slice(0, 8))
+      }).catch(() => setMermas([]))
     } else {
       setMermas([])
     }
@@ -1176,10 +1190,8 @@ export default function Dashboard() {
 
         {/* Mermas del período */}
         <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
-          <SectionTitle icon={AlertTriangle} label="Mermas del período" />
-          {sedeId === null ? (
-            <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Elegí una sede para ver mermas</p>
-          ) : mermas.length === 0 ? (
+          <SectionTitle icon={AlertTriangle} label={sedeId === null ? 'Mermas del período · ambas sedes' : 'Mermas del período'} />
+          {mermas.length === 0 ? (
             <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Sin mermas registradas</p>
           ) : (
             mermas.slice(0, 8).map((m, idx) => (

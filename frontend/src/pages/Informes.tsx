@@ -5,7 +5,7 @@ import { FiltroProvider, useFiltro } from '../contexts/FiltroContext'
 import FilterBar from '../components/FilterBar'
 import api from '../api/client'
 import { ArrowUpDown, ChevronDown, ChevronUp, Download, TrendingUp, Printer, BarChart3 } from 'lucide-react'
-import TicketRecibo, { TicketData } from '../components/TicketRecibo'
+import TicketRecibo, { TicketData, useTicketConfigProps } from '../components/TicketRecibo'
 import { AnaliticaContenido } from './Analytics'
 
 interface Sede { id: number; nombre: string }
@@ -61,6 +61,8 @@ interface TicketFull {
 
 function TabVentas({ sedes }: { sedes: Sede[] }) {
   const { filtro } = useFiltro()
+  // Config del ticket (logo, NIT…) para que la reimpresión salga completa.
+  const ticketCfg = useTicketConfigProps()
   const [tickets, setTickets] = useState<TicketHist[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [expandido, setExpandido] = useState<number | null>(null)
@@ -241,7 +243,7 @@ function TabVentas({ sedes }: { sedes: Sede[] }) {
       )}
 
       {/* Recibo oculto para imprimir */}
-      {reprint && <TicketRecibo ticket={reprint} />}
+      {reprint && <TicketRecibo ticket={reprint} {...ticketCfg} />}
     </div>
   )
 }

@@ -5,7 +5,7 @@ import { dark } from '../constants/darkTheme'
 import { useTurno } from '../contexts/TurnoContext'
 import api from '../api/client'
 import CheckoutModal from '../components/CheckoutModal'
-import TicketRecibo, { TicketData } from '../components/TicketRecibo'
+import TicketRecibo, { TicketData, useTicketConfigProps } from '../components/TicketRecibo'
 import ProductGrid, { Producto } from '../components/ProductGrid'
 import Cart, { CartItem, cartKey } from '../components/Cart'
 import { ComboPos, ComboSeleccion } from '../components/ComboSelector'
@@ -90,6 +90,9 @@ function GuardShell({ children }: { children: React.ReactNode }) {
 export default function POS() {
   const { turno } = useTurno()
   const navigate = useNavigate()
+  // Config del ticket (logo, NIT…) para que «Reimprimir» salga igual que el
+  // recibo original — antes se montaba TicketRecibo pelado, sin logo ni NIT.
+  const ticketCfg = useTicketConfigProps()
   const { estados: rutinasEstado, bitacora: rutinaBitacora, registrar: registrarRutina } = useRutinasEstado(
     turno?.tienda_id ?? null,
   )
@@ -519,7 +522,7 @@ export default function POS() {
       )}
 
       {/* ── Ticket oculto para reimpresión (window.print) ── */}
-      {reprintTicket && <TicketRecibo ticket={reprintTicket} />}
+      {reprintTicket && <TicketRecibo ticket={reprintTicket} {...ticketCfg} />}
 
       {/* ── Banner operativo: estado de rutinas, abre PanelTurno ── */}
       <BannerOperativo

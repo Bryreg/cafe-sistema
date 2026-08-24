@@ -1,4 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import api from '../api/client'
+import { useAuth } from '../contexts/AuthContext'
 
 export interface TicketData {
   id: number
@@ -272,6 +274,45 @@ export default function TicketRecibo({
       </div>
     </>
   )
+}
+
+/**
+ * Trae la configuración del ticket (logo, NIT, nombre, dirección…) de la sede
+ * del usuario y la devuelve como los props de `TicketRecibo`. Se pide APENAS
+ * monta la pantalla (no al reimprimir), así el logo/NIT ya están cargados cuando
+ * se dispara `window.print()` — sin carrera. Las REIMPRESIONES (historial,
+ * «reimprimir último», informes) montaban `TicketRecibo` pelado y por eso salían
+ * sin logo ni NIT; el checkout ya la traía. Uso: `const cfg = useTicketConfigProps()`
+ * y luego `<TicketRecibo ticket={t} {...cfg} />`.
+ */
+export function useTicketConfigProps(): Partial<Props> {
+  const { user } = useAuth()
+  const [cfg, setCfg] = useState<{
+    nombre_negocio?: string | null; nit?: string | null; telefono?: string | null
+    direccion?: string | null; logo_url?: string | null; mensaje_footer?: string | null
+    ancho_papel_mm?: number; margen_mm?: number; escala_fuente?: 'small' | 'normal' | 'large'
+  } | null>(null)
+  useEffect(() => {
+    let vivo = true
+    const tid = user?.tienda_id
+    if (tid) {
+      api.get(`/config-ticket/${tid}`)
+        .then(r => { if (vivo) setCfg(r.data) })
+        .catch(() => { if (vivo) setCfg(null) })
+    }
+    return () => { vivo = false }
+  }, [user?.tienda_id])
+  return {
+    negocio: cfg?.nombre_negocio ?? undefined,
+    nit: cfg?.nit ?? undefined,
+    telefono: cfg?.telefono ?? undefined,
+    direccion: cfg?.direccion ?? undefined,
+    logoUrl: cfg?.logo_url ?? undefined,
+    mensajeFooter: cfg?.mensaje_footer ?? undefined,
+    anchoPapelMm: cfg?.ancho_papel_mm ?? 80,
+    margenMm: cfg?.margen_mm ?? 2,
+    escalaFuente: cfg?.escala_fuente ?? 'normal',
+  }
 }
 
 /** Renderiza el ticket en el DOM oculto y dispara window.print() */

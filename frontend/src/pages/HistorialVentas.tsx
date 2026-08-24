@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import { Search, Receipt, Printer, ChevronDown, Banknote, CreditCard, Layers } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
-import TicketRecibo, { TicketData } from '../components/TicketRecibo'
+import TicketRecibo, { TicketData, useTicketConfigProps } from '../components/TicketRecibo'
 
 interface TItem {
   id: number; producto_id: number; nombre_producto: string
@@ -44,6 +44,9 @@ const anulado = (t: Ticket) => t.estado === 'anulado' || t.estado === 'reversado
  */
 export default function HistorialVentas() {
   const { user } = useAuth()
+  // Config del ticket (logo, NIT, nombre) para que la REIMPRESIÓN salga igual que
+  // la original — antes se montaba TicketRecibo pelado y salía sin logo ni NIT.
+  const ticketCfg = useTicketConfigProps()
   const [desde, setDesde] = useState(hoyISO())
   const [hasta, setHasta] = useState(hoyISO())
   const [tickets, setTickets] = useState<Ticket[]>([])
@@ -205,7 +208,7 @@ export default function HistorialVentas() {
       </div>
 
       {/* Recibo oculto para imprimir */}
-      {reprint && <TicketRecibo ticket={reprint} />}
+      {reprint && <TicketRecibo ticket={reprint} {...ticketCfg} />}
     </BaristaLayout>
   )
 }

@@ -4,7 +4,7 @@ import api from '../api/client'
 import {
   BarChart3, TrendingUp, TrendingDown, ShoppingCart, Package,
   AlertTriangle, Download, RefreshCw, Layers, Store, Banknote,
-  Wallet, Check, ChevronRight, Inbox, Sparkles, Cake, AlertCircle,
+  Wallet, Check, ChevronRight, Inbox, Sparkles, Cake, AlertCircle, Target,
 } from 'lucide-react'
 // Hora LOCAL (Colombia): toISOString es UTC y despues de las 19:00 devuelve manana,
 // haciendo que el panel consulte un dia futuro y muestre todo en cero.
@@ -15,6 +15,9 @@ import { cascadaDelDia, faltaConsignar } from '../components/consignaciones/casc
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const fmt = (v: number) => `$${Math.round(v).toLocaleString('es-CO')}`
+// Unidades enteras: la pastelería se cuenta por pieza (6 u., 1 u.).
+const fmtU = (v: number) => `${Math.round(v || 0).toLocaleString('es-CO')} u.`
+const fmtDias = (d: number) => d <= 0 ? 'hoy' : d === 1 ? '1 día' : `${d} días`
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,8 +51,21 @@ interface VentaSede {
   n_tickets: number
 }
 
-interface ImpulsoSede { lote_id: number; producto_nombre: string; cantidad_restante: number; dias_en_inventario: number; urgente: boolean; sede: string }
+interface LoteResumen { cantidad: number; dias: number }
+interface ImpulsoSede {
+  producto_id: number
+  producto_nombre: string
+  total_unidades: number
+  n_lotes: number
+  lote_viejo: LoteResumen
+  lote_nuevo: LoteResumen
+  dias_en_inventario: number
+  urgente: boolean
+  sede: string
+}
 interface RutinaHoy { clave: string; nombre: string; status: 'ok' | 'warn' | 'alert' | null; hechas: number }
+// Avance del mes vs. la meta de cada sede (tarjeta «Meta del mes»).
+interface MetaSede { tienda_id: number; sede: string; meta: number; vendido: number }
 interface LimpiezaSede { tienda: string; rutinas: RutinaHoy[]; aseoHechas: number; aseoTotal: number; ultimaActividad: string | null }
 
 interface VentaCategoria {
@@ -216,6 +232,79 @@ function SectionTitle({ icon: Icon, label }: { icon: React.ElementType; label: s
   )
 }
 
+// Chip de un lote dentro de «Pastelería por impulsar»: cuánto queda y qué tan
+// viejo. El más viejo se pinta con el tono de su urgencia (rojo a los 5+ días);
+// el más nuevo va en gris, es solo referencia de lo fresco que hay.
+function LoteChip({ label, lote, tone }: {
+  label: string; lote: { cantidad: number; dias: number }; tone: 'danger' | 'amber' | 'muted'
+}) {
+  const c = tone === 'danger'
+    ? { bg: '#fde8e8', fg: '#b42318', dot: '#dc2626' }
+    : tone === 'amber'
+      ? { bg: '#fef3c7', fg: '#b45309', dot: '#d97706' }
+      : { bg: '#f3eee5', fg: '#6b5d4b', dot: '#b8a88f' }
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600,
+      color: c.fg, background: c.bg, padding: '3px 8px', borderRadius: 999, whiteSpace: 'nowrap' }}>
+      <span style={{ width: 6, height: 6, borderRadius: 999, background: c.dot, flexShrink: 0 }} />
+      {label} <strong>{fmtU(lote.cantidad)}</strong> · {fmtDias(lote.dias)}
+    </span>
+  )
+}
+
+// Avance del mes de UNA sede contra su meta. La barra lleva una marca vertical
+// en «dónde deberías ir hoy» (proporción del mes transcurrido): si el relleno
+// pasa la marca, la sede va en ritmo; si no, va atrasada. Sin meta configurada
+// se muestra solo lo vendido, sin juzgar.
+function MetaSedeFila({ m, diaHoy, diasEnMes }: { m: MetaSede; diaHoy: number; diasEnMes: number }) {
+  const tieneMeta = m.meta > 0
+  const fracc = tieneMeta ? m.vendido / m.meta : 0
+  const pct = Math.round(fracc * 100)
+  const pacePct = Math.min(1, diaHoy / diasEnMes)          // dónde deberías ir hoy
+  const cumplida = tieneMeta && m.vendido >= m.meta
+  const enRitmo = tieneMeta && m.vendido >= m.meta * pacePct
+  const faltan = Math.max(0, m.meta - m.vendido)
+  const diasRestantes = Math.max(0, diasEnMes - diaHoy)
+  const ritmoDiario = diasRestantes > 0 ? faltan / diasRestantes : faltan
+
+  const estado = !tieneMeta ? { txt: 'Sin meta', bg: '#f3eee5', fg: '#8b7d6b' }
+    : cumplida ? { txt: '¡Meta cumplida!', bg: '#dcfce7', fg: '#15803d' }
+    : enRitmo ? { txt: 'En ritmo', bg: '#dcfce7', fg: '#15803d' }
+    : { txt: 'Atrasada', bg: '#fef3c7', fg: '#b45309' }
+  const barra = !tieneMeta ? '#c8bfae' : (cumplida || enRitmo) ? '#1a6b3a' : '#d9a441'
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#2d1f0f' }}>{m.sede}</span>
+        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: estado.bg, color: estado.fg }}>
+          {estado.txt}
+        </span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+        <span style={{ fontSize: 16, fontWeight: 700, color: '#1a6b3a' }}>{fmt(m.vendido)}</span>
+        <span style={{ fontSize: 11, color: '#8b7d6b' }}>
+          {tieneMeta ? <>meta {fmt(m.meta)} · <strong style={{ color: '#4a3728' }}>{pct}%</strong></> : 'vendido este mes'}
+        </span>
+      </div>
+      {tieneMeta && (
+        <>
+          {/* barra: relleno vendido + marca de «dónde deberías ir hoy» */}
+          <div style={{ position: 'relative', height: 8, background: '#f0ebe4', borderRadius: 4, overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', inset: 0, height: '100%', width: `${Math.min(100, Math.round(fracc * 100))}%`, background: barra, borderRadius: 4 }} />
+            <div title="Dónde deberías ir hoy" style={{ position: 'absolute', top: 0, bottom: 0, left: `${Math.round(pacePct * 100)}%`, width: 2, background: '#6b5d4b', transform: 'translateX(-1px)' }} />
+          </div>
+          <p style={{ margin: '6px 0 0', fontSize: 11, color: '#6b5d4b' }}>
+            {cumplida
+              ? <>Superaste la meta por <strong style={{ color: '#15803d' }}>{fmt(m.vendido - m.meta)}</strong> 🎉</>
+              : <>Faltan <strong style={{ color: '#4a3728' }}>{fmt(faltan)}</strong>{diasRestantes > 0 ? <> · <strong style={{ color: '#4a3728' }}>{fmt(ritmoDiario)}</strong>/día ({diasRestantes} {diasRestantes === 1 ? 'día' : 'días'})</> : ' · último día'}</>}
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
 // Etiqueta de banda (nivel superior a SectionTitle).
 function BandLabel({ label }: { label: string }) {
   return (
@@ -332,6 +421,7 @@ export default function Dashboard() {
   // Pastelería por impulsar + Limpieza de hoy — de TODAS las sedes (no respetan el filtro de sede).
   const [impulso, setImpulso] = useState<ImpulsoSede[]>([])
   const [limpiezaSedes, setLimpiezaSedes] = useState<LimpiezaSede[]>([])
+  const [metasSede, setMetasSede] = useState<MetaSede[]>([])
 
   // ── Cargar sedes ──
   useEffect(() => {
@@ -378,7 +468,7 @@ export default function Dashboard() {
     let cancel = false
     Promise.all(
       sedes.map(s =>
-        api.get(`/inventario/pasteleria-impulso/${s.id}`)
+        api.get(`/inventario/pasteleria-impulso-resumen/${s.id}`)
           .then(r => (r.data ?? []).map((it: any) => ({ ...it, sede: s.nombre })))
           .catch(() => [])
       )
@@ -388,6 +478,25 @@ export default function Dashboard() {
         .sort((a, b) => (b.urgente ? 1 : 0) - (a.urgente ? 1 : 0) || b.dias_en_inventario - a.dias_en_inventario)
       setImpulso(all)
     })
+    return () => { cancel = true }
+  }, [sedes])
+
+  // Meta del mes por sede: vendido en el mes (contador) vs. meta configurada.
+  // Siempre TODAS las sedes (es un comparativo), no respeta el filtro de sede.
+  useEffect(() => {
+    if (sedes.length === 0) return
+    let cancel = false
+    const [aa, mm] = today().split('-').map(Number)
+    Promise.all(
+      sedes.map(s =>
+        Promise.all([
+          api.get('/pos/analytics/contador', { params: { anio: aa, mes: mm, tienda_id: s.id } })
+            .then(r => Number(r.data?.total_mes) || 0).catch(() => 0),
+          api.get(`/auth/config/meta-ventas/${s.id}`)
+            .then(r => Number(r.data?.meta) || 0).catch(() => 0),
+        ]).then(([vendido, meta]) => ({ tienda_id: s.id, sede: s.nombre, vendido, meta }))
+      )
+    ).then(res => { if (!cancel) setMetasSede(res) })
     return () => { cancel = true }
   }, [sedes])
 
@@ -697,6 +806,11 @@ export default function Dashboard() {
   const maxVentaCat  = ventasPorCategoria.length > 0 ? Math.max(...ventasPorCategoria.map(c => c.total)) : 1
   const maxTopProd   = topProductos.length > 0 ? Math.max(...topProductos.map(p => p.total)) : 1
 
+  // Día del mes y días del mes (locales) — para el ritmo de la tarjeta de meta.
+  const [_aa, _mm, _dd] = today().split('-').map(Number)
+  const diaMes = _dd
+  const diasDelMes = new Date(_aa, _mm, 0).getDate()
+
   // ─── Render ───────────────────────────────────────────────────────────────────
   return (
     <div style={{ fontFamily: '"Plus Jakarta Sans", -apple-system, system-ui, sans-serif', padding: '4px 0 40px', maxWidth: 1100 }}>
@@ -968,6 +1082,23 @@ export default function Dashboard() {
       {/* Grid principal de widgets */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, marginBottom: 16 }}>
 
+        {/* Meta del mes por sede — avance vs. meta, siempre todas las sedes */}
+        <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
+          <SectionTitle icon={Target} label="Meta del mes · por sede" />
+          {metasSede.length === 0 ? (
+            <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Cargando…</p>
+          ) : (
+            metasSede.map(m => (
+              <MetaSedeFila key={m.tienda_id} m={m} diaHoy={diaMes} diasEnMes={diasDelMes} />
+            ))
+          )}
+          {metasSede.length > 0 && metasSede.every(m => m.meta <= 0) && (
+            <p style={{ margin: '2px 0 0', fontSize: 10.5, color: '#a79a88' }}>
+              Definí la meta mensual de cada sede en el Informe del contador para ver el avance.
+            </p>
+          )}
+        </div>
+
         {/* Ventas por hora */}
         <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 14, padding: '14px 16px' }}>
           <SectionTitle icon={TrendingUp} label="Ventas por hora" />
@@ -1011,18 +1142,29 @@ export default function Dashboard() {
           {impulso.length === 0 ? (
             <p style={{ fontSize: 12, color: '#8b7d6b', textAlign: 'center', padding: '20px 0' }}>Nada urgente por impulsar</p>
           ) : (
-            impulso.slice(0, 7).map(it => (
-              <div key={`${it.sede}-${it.lote_id}`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ margin: 0, fontSize: 12.5, color: '#2d1f0f', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.producto_nombre}</p>
-                  <p style={{ margin: 0, fontSize: 10.5, color: '#8b7d6b' }}>{sedes.length > 1 ? `${it.sede} · ` : ''}{it.cantidad_restante} {it.cantidad_restante === 1 ? 'unidad' : 'u.'}</p>
+            impulso.slice(0, 6).map((it, idx) => {
+              const varios = it.n_lotes > 1
+              return (
+                <div key={`${it.sede}-${it.producto_id}`}
+                  style={{ padding: '8px 0', borderTop: idx > 0 ? '1px solid #f0ebe4' : undefined }}>
+                  {/* nombre + total en bodega */}
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+                    <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#2d1f0f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.producto_nombre}</p>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#2d1f0f', flexShrink: 0 }}>
+                      {fmtU(it.total_unidades)}
+                    </span>
+                  </div>
+                  <p style={{ margin: '1px 0 0', fontSize: 10.5, color: '#8b7d6b' }}>
+                    {sedes.length > 1 ? `${it.sede} · ` : ''}en total{varios ? ` · ${it.n_lotes} lotes` : ''}
+                  </p>
+                  {/* lote más viejo (empujar primero) + más nuevo */}
+                  <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                    <LoteChip label="Más viejo" lote={it.lote_viejo} tone={it.urgente ? 'danger' : 'amber'} />
+                    {varios && <LoteChip label="Más nuevo" lote={it.lote_nuevo} tone="muted" />}
+                  </div>
                 </div>
-                <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, flexShrink: 0,
-                  background: it.urgente ? '#fde8e8' : '#fef3c7', color: it.urgente ? '#b42318' : '#b45309' }}>
-                  {it.urgente ? '¡Último día!' : `${it.dias_en_inventario}d`}
-                </span>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
 

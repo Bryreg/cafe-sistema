@@ -702,3 +702,71 @@ def pasteleria_impulso(tienda_id: int, db: Session = Depends(get_db),
             "urgente": dias >= 5,          # 5+ días = ya pasó la ventana de rotación
         })
     return result
+
+
+@router.get("/pasteleria-impulso-resumen/{tienda_id}")
+def pasteleria_impulso_resumen(tienda_id: int, db: Session = Depends(get_db),
+                               user: Usuario = Depends(get_current_user)):
+    """
+    Pastelería «por impulsar» AGRUPADA POR PRODUCTO (no por lote).
+
+    Un producto entra a la lista si su lote más viejo lleva 3+ días en
+    inventario (la misma ventana de rotación que el pop-up del barista). Por
+    cada producto se devuelve el total de unidades en bodega y el detalle del
+    lote más viejo y el más nuevo, para decidir qué empujar primero (FIFO)
+    sin tener que listar cada lote por separado.
+
+    Diferencia con /pasteleria-impulso: ese es por-lote (lo usa el barista);
+    este consolida por producto para el panel de administración. El total y el
+    «lote más nuevo» consideran TODOS los lotes con stock del producto (también
+    los frescos de <3 días), no solo los que ya cumplieron la ventana.
+    """
+    ensure_tienda_access(user, tienda_id)
+    ahora = datetime.utcnow()
+    lotes_q = (
+        db.query(LoteInventario)
+        .join(Producto, LoteInventario.producto_id == Producto.id)
+        .options(joinedload(LoteInventario.producto))
+        .filter(
+            LoteInventario.tienda_id == tienda_id,
+            LoteInventario.cantidad_restante > 0,
+            Producto.categoria == CategoriaProductoEnum.pasteleria,
+        )
+        .order_by(LoteInventario.fecha_entrada.asc())
+        .all()
+    )
+    # Agrupar por producto conservando el orden (más viejo primero).
+    por_prod: dict[int, list] = {}
+    for l in lotes_q:
+        por_prod.setdefault(l.producto_id, []).append(l)
+
+    result = []
+    for pid, lotes in por_prod.items():
+        viejo = lotes[0]          # menor fecha_entrada (lote más viejo)
+        nuevo = lotes[-1]         # mayor fecha_entrada (lote más nuevo)
+        dias_viejo = (ahora - viejo.fecha_entrada).days
+        if dias_viejo < 3:
+            continue              # nada por impulsar todavía en este producto
+        dias_nuevo = (ahora - nuevo.fecha_entrada).days
+        total = sum(l.cantidad_restante for l in lotes)
+        result.append({
+            "producto_id": pid,
+            "producto_nombre": viejo.producto.nombre,
+            "total_unidades": total,
+            "n_lotes": len(lotes),
+            "lote_viejo": {
+                "cantidad": viejo.cantidad_restante,
+                "dias": dias_viejo,
+                "fecha_entrada": viejo.fecha_entrada.isoformat(),
+            },
+            "lote_nuevo": {
+                "cantidad": nuevo.cantidad_restante,
+                "dias": dias_nuevo,
+                "fecha_entrada": nuevo.fecha_entrada.isoformat(),
+            },
+            "dias_en_inventario": dias_viejo,   # días del lote más viejo (orden/urgencia)
+            "urgente": dias_viejo >= 5,         # 5+ días = ya pasó la ventana
+        })
+    # Más urgente primero, luego más días en inventario.
+    result.sort(key=lambda r: (r["urgente"], r["dias_en_inventario"]), reverse=True)
+    return result

@@ -546,11 +546,11 @@ function ProductRow({ p, venc, activo, empaque, corte, onSelect, onHover }: {
     <button
       onClick={onSelect} onMouseEnter={onHover}
       title={`${p.categoria}${p.proveedor ? ` · ${p.proveedor}` : ''}`}
-      className={`w-full flex items-center gap-3 text-left px-4 py-2.5 transition-colors border-t ${
+      className={`w-full grid grid-cols-[1.6fr_1fr_0.9fr] items-center gap-3 text-left px-4 py-2.5 transition-colors border-t ${
         corte ? 'border-t-2 border-warm-200' : 'border-warm-100'} ${activo ? 'bg-forest-50' : 'bg-white'}`}
     >
       {/* Producto: nombre + (categoría · chips) */}
-      <span className="flex-1 min-w-0 flex flex-col gap-0.5">
+      <span className="min-w-0 flex flex-col gap-0.5">
         <span className="inline-flex items-center gap-1.5 min-w-0">
           {p.barista_alerto && (
             <span title="La pidió una barista" className="inline-flex shrink-0">
@@ -578,8 +578,8 @@ function ProductRow({ p, venc, activo, empaque, corte, onSelect, onHover }: {
         </span>
       </span>
       {/* Cuánto hay */}
-      <span className="shrink-0 w-[86px] text-right">
-        <span className={`tabular-nums text-base font-bold ${critico ? 'text-danger-600' : 'text-warm-700'}`}>{num(p.stock_actual)}</span>
+      <span className="text-right">
+        <span className={`tabular-nums text-[17px] font-bold ${critico ? 'text-danger-600' : 'text-warm-700'}`}>{num(p.stock_actual)}</span>
         <span className="text-[11px] text-warm-400"> {p.unidad}</span>
         {enEmpaques !== null && (
           <span className="block text-[10px] tabular-nums text-warm-400"
@@ -588,10 +588,11 @@ function ProductRow({ p, venc, activo, empaque, corte, onSelect, onHover }: {
           </span>
         )}
       </span>
-      {/* Alcanza: punto de estado + texto */}
-      <span className="shrink-0 w-16 flex items-center justify-end gap-1.5">
-        <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dotCls}`} />
-        <span className={`text-xs font-bold tabular-nums ${cfg.txtCls}`}>{alcanzaLabel(p)}</span>
+      {/* Alcanza: punto de estado + texto — columna proporcional (0.9fr) para que
+          «se acabó» entre en UNA línea, como en el diseño. */}
+      <span className="flex items-center justify-end gap-1.5">
+        <span className={`w-2 h-2 rounded-[3px] shrink-0 ${cfg.dotCls}`} />
+        <span className={`text-[13px] font-bold tabular-nums whitespace-nowrap ${cfg.txtCls}`}>{alcanzaLabel(p)}</span>
       </span>
     </button>
   )
@@ -1928,10 +1929,10 @@ function ModoStock({ tiendaId }: { tiendaId: number }) {
                 </p>
               ) : (
                 <>
-                  <div className="hidden sm:flex items-center gap-x-2 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wide text-warm-400 bg-warm-50 border-b border-warm-100">
-                    <span className="flex-1 min-w-0">Producto</span>
-                    <span className="shrink-0 w-[86px] text-right">Cuánto hay</span>
-                    <span className="shrink-0 w-16 text-right">Alcanza</span>
+                  <div className="hidden sm:grid grid-cols-[1.6fr_1fr_0.9fr] items-center gap-3 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wide text-warm-400 bg-warm-50 border-b border-warm-100">
+                    <span className="min-w-0">Producto</span>
+                    <span className="text-right">Cuánto hay</span>
+                    <span className="text-right">Alcanza</span>
                   </div>
                   <div className="max-h-[74vh] overflow-y-auto" onMouseLeave={() => setHoverId(null)}>
                     {filtrados.map((p, i) => (

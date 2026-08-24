@@ -920,9 +920,13 @@ export default function ConsignacionesAdmin() {
           // SALDADO POR RECOGIDA, no por consignación: el dueño se llevó el
           // efectivo (recogí), así que no falta plata (porConsignar≈0) pero
           // tampoco fue al banco. `diaCuadrado` lo daba en rojo porque mira
-          // «consignado vs esperado» y no cuenta la recogida. Acá se marca aparte
-          // —«recogido, lo tenés vos»—: no es un faltante, es plata en la mano.
+          // «consignado vs esperado» y no cuenta la recogida.
           const soloRecogido = !ok && porConsignar <= 0.5 && dia.recogido > 0.5
+          // El dueño pidió que un día recogido se vea como «Al día» (verde), igual
+          // que uno consignado: para él los dos están CERRADOS —no le queda nada
+          // por hacer con ese día—. La distinción banco/mano ya vive en «En mano»
+          // de La Plata; acá solo importa si el día está resuelto o no.
+          const alDia = ok || soloRecogido
           // Este día ya se recogió en ESTA sesión. Como la recogida salda el día
           // más viejo primero, el día tocado puede seguir mostrando saldo tras el
           // reload: sin este candado el dueño lo re-toca y duplica la mano.
@@ -931,7 +935,7 @@ export default function ConsignacionesAdmin() {
           return (
             <div key={dia.key}
               className={`bg-white rounded-2xl border-2 overflow-hidden transition-all ${
-                soloRecogido ? 'border-indigo-200' : !ok ? 'border-red-200' : pendientes.length > 0 ? 'border-amber-200' : 'border-gray-200'
+                !alDia ? 'border-red-200' : pendientes.length > 0 ? 'border-amber-200' : 'border-gray-200'
               }`}>
 
               {/* Cabecera del día — siempre visible */}
@@ -941,7 +945,7 @@ export default function ConsignacionesAdmin() {
               >
                 {/* Indicador estado */}
                 <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                  soloRecogido ? 'bg-indigo-400' : !ok ? 'bg-red-500' : pendientes.length > 0 ? 'bg-amber-400' : 'bg-green-400'
+                  !alDia ? 'bg-red-500' : pendientes.length > 0 ? 'bg-amber-400' : 'bg-green-400'
                 }`} />
 
                 {/* Fecha + sede */}
@@ -994,14 +998,9 @@ export default function ConsignacionesAdmin() {
                       <p className="text-base font-bold text-amber-600">{fmt(porConsignar)}</p>
                       <p className="text-xs text-amber-500">por consignar</p>
                     </>
-                  ) : soloRecogido ? (
-                    <>
-                      <p className="text-base font-bold text-indigo-600">✓ Recogido</p>
-                      <p className="text-xs text-indigo-400">{fmt(dia.recogido)} · lo tenés vos</p>
-                    </>
                   ) : (
-                    <p className={`text-base font-bold ${ok ? 'text-green-600' : 'text-red-600'}`}>
-                      {ok ? '✓ Al día' : fmt(dif)}
+                    <p className={`text-base font-bold ${alDia ? 'text-green-600' : 'text-red-600'}`}>
+                      {alDia ? '✓ Al día' : fmt(dif)}
                     </p>
                   )}
                 </div>

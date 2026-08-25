@@ -58,6 +58,52 @@ _TIPOS_PAGO = {"contado", "credito", "transferencia"}
 # cifra son gramos/ml y la unidad no se leyó. En ese caso NO se adivina.
 _MAX_EMPAQUES_PLAUSIBLE = 50
 
+# ─── Autocorrección de precio de empaque colado como precio por unidad ────────
+# El sistema YA conoce el precio de referencia de cada producto (el más barato
+# real de los últimos 12 meses, ver rentabilidad._referencia_robusta). Si el
+# precio leído en la factura es un múltiplo ALTO y LIMPIO de esa referencia
+# —≈ el tamaño del empaque, o un entero ≥5—, casi seguro es el precio de la
+# CAJA/PAQUETE (o el subtotal) y no el de la unidad: se divide solo.
+#
+# Solo se corrige por encima de este múltiplo: 2×–4× es una suba de precio
+# normal y NO se toca. Un tipeo de empaque es 10× (pulpa), 12× (torta), etc.
+_AUTOCORR_RATIO_MIN = 4.5
+# El múltiplo tiene que caer casi sobre un ENTERO (distancia absoluta): un precio
+# de empaque es N× exacto, así que 6,3× no convence — mejor dejarlo pasar.
+_AUTOCORR_TOLERANCIA = 0.20
+
+
+def _factor_precio_empaque(precio, ref, cpe) -> float | None:
+    """Factor por el que hay que dividir `precio` si parece precio de EMPAQUE,
+    o None si no. `ref` es el precio de referencia por unidad; `cpe` el
+    contenido por empaque del producto (o None).
+
+    Un precio de empaque es un múltiplo ENTERO alto de lo usual: se exige que
+    el cociente caiga casi sobre un entero ≥5 (no un valor sucio como 6,3×). Se
+    ancla en `cpe` cuando coincide con ese entero. Corrige SOLO cuando dividir
+    deja el precio cerca de la referencia (0.5×–2×): así una suba real (2×, 3×)
+    no se toca y un precio de caja (10×, 12×) sí. Función pura — se testea
+    sin DB."""
+    if not (precio and ref and precio > 0 and ref > 0):
+        return None
+    ratio = precio / ref
+    if ratio < _AUTOCORR_RATIO_MIN:
+        return None
+    entero = round(ratio)
+    if abs(ratio - entero) > _AUTOCORR_TOLERANCIA:
+        return None                       # múltiplo sucio: no es precio de empaque
+    if cpe and cpe >= 2 and abs(entero - cpe) <= 1:
+        factor = float(cpe)               # coincide con el empaque conocido
+    elif 5 <= entero <= 100:
+        factor = float(entero)
+    else:
+        return None
+    # El resultado tiene que aterrizar DE VERDAD cerca de la referencia; si no,
+    # no era un múltiplo de empaque sino otra cosa y mejor no tocar.
+    if 0.5 <= (precio / factor) / ref <= 2.0:
+        return factor
+    return None
+
 # ─── Rate limit (en memoria): cada escaneo cuesta plata de API ────────────────
 _RL_MAX = 15                 # escaneos permitidos...
 _RL_VENTANA_SEG = 15 * 60    # ...por usuario cada 15 minutos
@@ -866,7 +912,7 @@ def _aliases_para_items(db, items: list) -> dict:
     return {f.alias_normalizado: f.producto_id for f in filas}
 
 
-def mapear_items(extraccion: dict, productos: list, db=None) -> list[dict]:
+def mapear_items(extraccion: dict, productos: list, db=None, referencias=None) -> list[dict]:
     """Cruza los items extraídos con el catálogo y convierte unidades.
 
     Orden de resolución por renglón (origen_match lo registra para el front):
@@ -875,7 +921,13 @@ def mapear_items(extraccion: dict, productos: list, db=None) -> list[dict]:
       2. "ia": el producto_id que asignó el modelo.
       3. "fuzzy": _match_por_nombre (siempre con advertencia de similitud).
       4. sin match → advertencia actual.
-    `db` es opcional: sin sesión no hay aliases y todo funciona como antes."""
+    `db` es opcional: sin sesión no hay aliases y todo funciona como antes.
+
+    `referencias` (opcional): {producto_id: {"precio": ...}} con el precio de
+    referencia por unidad que el sistema ya conoce. Si viene, un precio leído
+    que sea múltiplo de empaque de esa referencia (precio de caja) se corrige
+    solo (ver `_factor_precio_empaque`)."""
+    referencias = referencias or {}
     por_id = {p.id: p for p in productos}
     items = extraccion.get("items") or []
     aliases = _aliases_para_items(db, items)
@@ -900,6 +952,7 @@ def mapear_items(extraccion: dict, productos: list, db=None) -> list[dict]:
             "cantidad": None,
             "en_empaques": False,
             "precio_unitario": None,
+            "precio_autocorregido": None,
             "advertencia": None,
             "origen_match": None,
         }
@@ -952,6 +1005,25 @@ def mapear_items(extraccion: dict, productos: list, db=None) -> list[dict]:
         })
         if precio_factura and isinstance(precio_factura, (int, float)) and precio_factura > 0 and cantidad is not None:
             fila["precio_unitario"] = round(float(precio_factura) / factor, 4)
+
+            # Autocorrección: precio de EMPAQUE colado como precio por unidad.
+            # Se compara el precio YA convertido a $/unidad contra la referencia
+            # que el sistema conoce; si es un múltiplo de empaque, se divide solo.
+            ref = referencias.get(prod.id) or {}
+            ref_precio = ref.get("precio")
+            fac_emp = _factor_precio_empaque(
+                fila["precio_unitario"], ref_precio, fila.get("contenido_por_empaque"))
+            if fac_emp:
+                antes = fila["precio_unitario"]
+                fila["precio_unitario"] = round(antes / fac_emp, 4)
+                fila["precio_autocorregido"] = {
+                    "de": antes, "a": fila["precio_unitario"],
+                    "factor": fac_emp, "referencia": float(ref_precio),
+                }
+                nota = (f"precio ajustado ÷{fac_emp:g}: ${antes:,.0f} parecía precio por "
+                        f"empaque, se dejó en ${fila['precio_unitario']:,.0f} "
+                        f"(lo usual ~${ref_precio:,.0f}) — revisá")
+                fila["advertencia"] = f"{adv}; {nota}" if adv else nota
         out.append(fila)
     return out
 
@@ -1011,13 +1083,23 @@ def analizar_factura_foto(db, tienda_id: int, imagen_bytes: bytes, usuario_id: i
     if not isinstance(valor_total, (int, float)) or valor_total <= 0:
         valor_total = None
 
+    # Referencia de precio por producto (la que ya conoce el sistema) para
+    # autocorregir un precio de empaque colado como precio por unidad. NUNCA
+    # puede romper el escaneo: si falla, se sigue sin autocorrección.
+    try:
+        from app.services.rentabilidad import precios_referencia
+        referencias = precios_referencia(db)
+    except Exception:
+        logger.exception("No se pudo cargar la referencia de precios para autocorrección")
+        referencias = {}
+
     return {
         "proveedor": (extraccion.get("proveedor") or "").strip() or None,
         "numero_factura": (extraccion.get("numero_factura") or "").strip() or None,
         "fecha_factura": _fecha_iso(extraccion.get("fecha_factura")),
         "valor_total": valor_total,
         "tipo_pago": tipo_pago,
-        "items": mapear_items(extraccion, productos, db),
+        "items": mapear_items(extraccion, productos, db, referencias),
         "advertencias": advertencias,
     }
 

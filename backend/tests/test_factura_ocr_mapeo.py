@@ -13,8 +13,8 @@ from fastapi import HTTPException
 from app.services import factura_ocr
 from app.services.factura_ocr import (
     _convertir_cantidad, _extraer, _extraer_con_gemini, _extraer_con_groq,
-    _fecha_iso, _json_de_texto, _modelos_gemini, _modelos_groq,
-    _precios_para_factura, _reducir_para_groq, _validar_suma,
+    _factor_precio_empaque, _fecha_iso, _json_de_texto, _modelos_gemini,
+    _modelos_groq, _precios_para_factura, _reducir_para_groq, _validar_suma,
     hay_proveedor_ocr, mapear_items,
 )
 
@@ -1081,6 +1081,97 @@ class HelpersTest(unittest.TestCase):
         advertencias = []
         _validar_suma({"valor_total": 100000, "items": [{"subtotal": 40000}, {"subtotal": None}]}, advertencias)
         self.assertEqual(advertencias, [])
+
+
+class FactorPrecioEmpaqueTest(unittest.TestCase):
+    """La detección PURA de un precio de empaque colado como precio por unidad."""
+
+    def test_diez_veces_con_cpe_diez(self):
+        # Pulpa: referencia $1.130, empaque de 10 → un precio de $11.300 es la caja.
+        self.assertEqual(_factor_precio_empaque(11300, 1130, 10), 10.0)
+
+    def test_doce_veces_torta(self):
+        # Torta: referencia $4.321/porción, 12 porciones → $51.850 es la entera.
+        self.assertEqual(_factor_precio_empaque(51850, 4321, 12), 12.0)
+
+    def test_suba_de_precio_normal_no_se_toca(self):
+        # 2× no es empaque, es una suba real — no se corrige.
+        self.assertIsNone(_factor_precio_empaque(2260, 1130, 10))
+        self.assertIsNone(_factor_precio_empaque(3400, 1130, 10))
+
+    def test_multiplo_alto_sin_cpe_por_entero_cercano(self):
+        # Sin empaque configurado, un múltiplo redondo alto igual se detecta.
+        self.assertEqual(_factor_precio_empaque(11300, 1130, None), 10.0)
+
+    def test_multiplo_sucio_no_convence(self):
+        # 6,3× no cae cerca de un entero ni del empaque → no se arriesga.
+        self.assertIsNone(_factor_precio_empaque(7120, 1130, 10))
+
+    def test_sin_referencia_no_opina(self):
+        self.assertIsNone(_factor_precio_empaque(11300, None, 10))
+        self.assertIsNone(_factor_precio_empaque(11300, 0, 10))
+
+
+class AutocorreccionPrecioEnMapeoTest(unittest.TestCase):
+    """La autocorrección aplicada en mapear_items con la referencia inyectada."""
+
+    def test_precio_de_caja_se_baja_a_unidad(self):
+        # El caso real de F202/F203: producto SIN empaque configurado (la
+        # conversión no divide), y el precio llegó como el de la caja ($11.300).
+        # La autocorrección lo baja a $/und usando la referencia conocida.
+        pulpa = prod(id=4, nombre="Pulpa de Mango", unidad="und", cpe=None)
+        extr = {"items": [{
+            "descripcion": "PULPA MANGO", "cantidad": 10, "unidad": "unidad",
+            "precio_unitario": 11300, "subtotal": 113000,
+            "numero_lote": None, "fecha_vencimiento": None, "producto_id": 4,
+        }]}
+        refs = {4: {"precio": 1130.0}}
+        it = mapear_items(extr, [pulpa], referencias=refs)[0]
+        self.assertAlmostEqual(it["precio_unitario"], 1130.0)
+        self.assertIsNotNone(it["precio_autocorregido"])
+        self.assertEqual(it["precio_autocorregido"]["factor"], 10.0)
+        self.assertIn("ajustado", it["advertencia"])
+
+    def test_precio_normal_no_se_toca(self):
+        # Precio en línea con la referencia → sin autocorrección.
+        pulpa = prod(id=4, nombre="Pulpa de Mango", unidad="und", cpe=None)
+        extr = {"items": [{
+            "descripcion": "PULPA MANGO", "cantidad": 10, "unidad": "unidad",
+            "precio_unitario": 1130, "subtotal": 11300,
+            "numero_lote": None, "fecha_vencimiento": None, "producto_id": 4,
+        }]}
+        refs = {4: {"precio": 1130.0}}
+        it = mapear_items(extr, [pulpa], referencias=refs)[0]
+        self.assertAlmostEqual(it["precio_unitario"], 1130.0)
+        self.assertIsNone(it["precio_autocorregido"])
+
+    def test_no_dobla_la_division_del_empaque(self):
+        # "1 und" de una pulpa con cpe=10 y precio de empaque $11.300 ya lo baja
+        # la conversión (en_empaques, ÷10 → $1.130). La autocorrección NO debe
+        # volver a dividir: el precio ya quedó igual a la referencia.
+        pulpa = prod(id=4, nombre="Pulpa de Mango", unidad="und", cpe=10)
+        extr = {"items": [{
+            "descripcion": "PULPA MANGO X10", "cantidad": 1, "unidad": "und",
+            "precio_unitario": 11300, "subtotal": 11300,
+            "numero_lote": None, "fecha_vencimiento": None, "producto_id": 4,
+        }]}
+        refs = {4: {"precio": 1130.0}}
+        it = mapear_items(extr, [pulpa], referencias=refs)[0]
+        self.assertTrue(it["en_empaques"])
+        self.assertAlmostEqual(it["precio_unitario"], 1130.0)
+        self.assertIsNone(it["precio_autocorregido"])
+
+    def test_sin_referencias_funciona_igual_que_antes(self):
+        # Sin el dict de referencias, mapear_items se comporta como siempre.
+        pulpa = prod(id=4, nombre="Pulpa de Mango", unidad="und", cpe=None)
+        extr = {"items": [{
+            "descripcion": "PULPA MANGO", "cantidad": 10, "unidad": "unidad",
+            "precio_unitario": 11300, "subtotal": 113000,
+            "numero_lote": None, "fecha_vencimiento": None, "producto_id": 4,
+        }]}
+        it = mapear_items(extr, [pulpa])[0]
+        self.assertIsNone(it["precio_autocorregido"])
+        self.assertAlmostEqual(it["precio_unitario"], 11300.0)
 
 
 if __name__ == "__main__":

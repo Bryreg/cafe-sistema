@@ -1247,6 +1247,29 @@ def _costos_insumos(db) -> tuple[dict, dict]:
     return costo, ultimo
 
 
+def precios_referencia(db, producto_ids=None) -> dict:
+    """{producto_id: {"precio", "proveedor", "fecha"}} — la referencia ROBUSTA de
+    precio de compra por unidad: el más barato REAL de los últimos 12 meses,
+    descartando los tipeos freak-low (la MISMA que usan las alertas de costo).
+
+    La usa el ESCANEO de facturas para autocorregir un precio que llega como
+    precio de EMPAQUE (10-12× lo usual) en vez de por unidad — reusa
+    `_costos_insumos` para no divergir del cálculo oficial. `producto_ids` acota
+    el resultado (None = todos). Solo devuelve los que tienen referencia > 0."""
+    _, ultimo = _costos_insumos(db)
+    out = {}
+    for pid, info in ultimo.items():
+        if producto_ids is not None and pid not in producto_ids:
+            continue
+        ref = info.get("ref") or {}
+        precio = ref.get("precio")
+        if precio and precio > 0:
+            out[pid] = {"precio": float(precio),
+                        "proveedor": ref.get("proveedor"),
+                        "fecha": ref.get("fecha")}
+    return out
+
+
 def _ventas_30d(db) -> dict[int, dict]:
     """Unidades y plata vendidas por producto en los últimos 30 días (Colombia).
 

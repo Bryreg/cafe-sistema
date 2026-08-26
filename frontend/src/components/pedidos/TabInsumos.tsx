@@ -3,7 +3,7 @@ import api from '../../api/client'
 import {
   AlertTriangle, ArrowDown, ArrowUp, Search, ChevronRight,
 } from 'lucide-react'
-import FichaInsumo from './FichaInsumo'
+import FichaInsumo, { type Resumen } from './FichaInsumo'
 
 /**
  * «Qué pasó con cada insumo», la tabla que el dueño pidió: en un mismo sitio lo
@@ -30,43 +30,14 @@ import FichaInsumo from './FichaInsumo'
 
 type Origen = 'proveedor' | 'directa' | 'sin_origen'
 
-interface Insumo {
-  producto_id: number
-  producto: string
-  unidad: string
-  categoria: string | null
-  proveedor: string | null
-  origen: Origen
-  /** Lo que el DUEÑO pidió por escrito en el período, en la unidad del producto.
-   *  Un 0 significa que no le pidió nada a nadie, no que el sistema no lo sepa:
-   *  desde que «Armar pedido» guarda lo que manda, la ausencia es un dato. */
-  pedi: number
-  pedi_n_pedidos: number
-  pedi_proveedores: string[]
-  /** Lo pedido en una unidad distinta a la del producto. No entra en `pedi`
-   *  —no se puede restar contra una factura— pero se DICE, porque un «pedí 0»
-   *  al lado de una entrada grande manda a buscar un problema que no existe. */
-  pedi_otras_unidades: Record<string, number>
-  entradas: number
-  traslados_recibidos: number
-  preparaciones_producidas: number
-  ventas: number
-  mermas: number
-  traslados: number
-  preparaciones: number
-  reversas_salida: number
-  otras_salidas: number
-  total_salio: number
-  ajustes_conteo: number
-  ajustes: number
-  queda: number
-  valor_unitario: number
-  valor_sin_causa: number
-  arranque_estimado: boolean
-  no_se_mide: boolean
-}
+/** La fila de la tabla ES la fila de la ficha: la arma la MISMA función del
+ *  backend (`_fila_insumo`), compartida entre `/movimiento-insumos` y
+ *  `/insumo/{id}/ficha`. El tipo se importa en vez de re-declararse: dos
+ *  interfaces para la misma fila es cómo empiezan a divergir dos pantallas que
+ *  juraron decir lo mismo. */
+type Insumo = Resumen
 
-interface Resumen {
+interface ResumenTabla {
   n_insumos: number
   n_sin_causa: number
   valor_sin_causa: number
@@ -75,7 +46,7 @@ interface Resumen {
   n_con_pedido: number
 }
 
-interface Respuesta { insumos: Insumo[]; resumen: Resumen }
+interface Respuesta { insumos: Insumo[]; resumen: ResumenTabla }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -387,10 +358,16 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
         no son una causa, son faltante viejo que apareció al contar.
       </p>
 
+      {/* La fila viaja con la ficha. No es un caché: es EXACTAMENTE el mismo
+          objeto que la ficha va a recibir en `resumen` —la arma la misma función
+          del backend— así que abre con sus números puestos y solo espera el
+          detalle. Antes tapaba todo con «Cargando…» durante ~2 segundos para
+          después mostrar cifras que ya estaban en la pantalla de atrás. */}
       {fichaDe !== null && tiendaId && (
         <FichaInsumo
           productoId={fichaDe} tiendaId={tiendaId}
           desde={rango.desde} hasta={rango.hasta}
+          filaPrevia={data?.insumos.find(i => i.producto_id === fichaDe)}
           onClose={() => setFichaDe(null)}
         />
       )}

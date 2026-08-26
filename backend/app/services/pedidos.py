@@ -63,7 +63,8 @@ def _estado(stock: float, consumo_diario: float, lead_time: int,
     return "ok"
 
 
-def _items_base(db: Session, tienda_id: int) -> tuple[list[dict], dict[int, float]]:
+def _items_base(db: Session, tienda_id: int,
+                producto_ids: list[int] | None = None) -> tuple[list[dict], dict[int, float]]:
     """UNA sola fórmula para todo el módulo: el inventario GESTIONADO de la sede
     con su consumo, su estado y su `cantidad_sugerida`.
 
@@ -73,20 +74,33 @@ def _items_base(db: Session, tienda_id: int) -> tuple[list[dict], dict[int, floa
     exactamente la clase de bug (dos números para lo mismo) que este módulo ya
     tenía en la cabecera de sus grupos.
 
+    `producto_ids` acota el cálculo a esos productos. Cada item se arma contra su
+    propio inventario, sus propias salidas y su propia tasa de venta —ninguno
+    entra en la cuenta de otro— así que los números salen idénticos a los del
+    barrido completo. Lo usa la ficha de UN insumo, que para leer su «hoy hay que
+    pedir» disparaba el motor entero de la sede.
+
+    Lo que NO se acota es `consumo_ventas.tasa_diaria_por_producto`: el consumo
+    de un insumo sale de las VENTAS de los productos terminados que lo usan, así
+    que hay que leerlas todas o el número sale mal. Es una sola consulta indexada
+    por sede y rango, no un barrido por producto.
+
     Devuelve (items ordenados por urgencia, rendimiento de los preparables).
     """
     cutoff = datetime.utcnow() - timedelta(days=DIAS_ANALISIS)
 
     # Salidas de los últimos DIAS_ANALISIS días
-    salidas = (
+    q_salidas = (
         db.query(MovimientoInventario)
         .filter(
             MovimientoInventario.tienda_id == tienda_id,
             MovimientoInventario.tipo == TipoMovInvEnum.salida,
             MovimientoInventario.fecha >= cutoff,
         )
-        .all()
     )
+    if producto_ids is not None:
+        q_salidas = q_salidas.filter(MovimientoInventario.producto_id.in_(producto_ids))
+    salidas = q_salidas.all()
     salidas_por_prod: dict[int, float] = defaultdict(float)
     for s in salidas:
         salidas_por_prod[s.producto_id] += s.cantidad
@@ -101,24 +115,27 @@ def _items_base(db: Session, tienda_id: int) -> tuple[list[dict], dict[int, floa
     # nunca está pendiente— y está igual: el campo se llama «barista_alertó» y
     # tiene que seguir siendo cierto aunque mañana alguien cambie el estado con
     # el que nace un pedido del dueño.
-    barista_alerto: set[int] = set(
-        item.producto_id
-        for item in db.query(SolicitudPedidoItem)
+    q_alerto = (
+        db.query(SolicitudPedidoItem)
         .join(SolicitudPedido)
         .filter(
             SolicitudPedido.tienda_id == tienda_id,
             SolicitudPedido.estado == EstadoSolicitudEnum.pendiente,
             func.coalesce(SolicitudPedido.origen, ORIGEN_KIOSKO) != ORIGEN_ADMIN,
         )
-        .all()
     )
+    if producto_ids is not None:
+        q_alerto = q_alerto.filter(SolicitudPedidoItem.producto_id.in_(producto_ids))
+    barista_alerto: set[int] = set(item.producto_id for item in q_alerto.all())
 
-    inventarios = (
+    q_inv = (
         db.query(Inventario)
         .options(joinedload(Inventario.producto))   # evita N+1 al leer inv.producto en el loop
         .filter(Inventario.tienda_id == tienda_id)
-        .all()
     )
+    if producto_ids is not None:
+        q_inv = q_inv.filter(Inventario.producto_id.in_(producto_ids))
+    inventarios = q_inv.all()
 
     # Lo que se PREPARA en la barra (mezcla de granizado, almíbar) no se compra:
     # su necesidad es igual de real y la cuenta de consumo sirve igual, pero el

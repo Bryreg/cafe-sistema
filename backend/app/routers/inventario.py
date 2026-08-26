@@ -1062,10 +1062,23 @@ def ficha_insumo(
     from app.services import pedidos as ped_svc
 
     # ── El renglón de la escalera, igual que en la tabla ────────────────────
-    escalera = esc.escalera_rango(db, tienda_id, desde, hasta)
+    # ACOTADO A ESTE INSUMO, y no por prolijidad. Sin el filtro, abrir una ficha
+    # calculaba la escalera de los 123 insumos de la sede para leer un renglón:
+    # medido en producción, abrir el insumo más movido costaba 1,9 s y abrir uno
+    # SIN UN SOLO MOVIMIENTO costaba 1,7 s — el trabajo nunca fue sobre el insumo
+    # sino sobre los 19.000 movimientos de la sede.
+    #
+    # Es la MISMA función, no una cuenta paralela: cada renglón se arma contra su
+    # propio libro y su propio saldo, así que acotar no cambia un solo número
+    # (`tests/test_escalera_acotada.py` lo compara clave por clave). Copiar la
+    # fórmula acá para hacerla rápida habría sido la otra salida, y la que
+    # garantiza que un día la tabla y la ficha digan cosas distintas.
+    solo = [producto_id]
+    escalera = esc.escalera_rango(db, tienda_id, desde, hasta, producto_ids=solo)
     crudo = next((p for p in escalera.get("productos", [])
                   if p.get("producto_id") == producto_id), None)
-    prov_rango = fact_svc.proveedor_por_producto(db, tienda_id, desde, hasta)
+    prov_rango = fact_svc.proveedor_por_producto(db, tienda_id, desde, hasta,
+                                                 producto_ids=solo)
     proveedor = prov_rango.get(producto_id) or (prod.proveedor or "").strip() or None
     pedido = _pedido_por_producto(db, tienda_id, inicio_dia_col_utc(desde),
                                   fin_dia_col_utc(hasta), [producto_id]).get(producto_id)
@@ -1081,7 +1094,7 @@ def ficha_insumo(
     # ── Hacía falta ─────────────────────────────────────────────────────────
     sugerido = None
     try:
-        items, _ = ped_svc._items_base(db, tienda_id)
+        items, _ = ped_svc._items_base(db, tienda_id, producto_ids=solo)
         sugerido = next((i for i in items if i["producto_id"] == producto_id), None)
     except Exception:
         logger.exception("No se pudo calcular la sugerencia de pedido del insumo %s", producto_id)

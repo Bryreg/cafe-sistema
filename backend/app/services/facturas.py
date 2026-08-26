@@ -812,7 +812,8 @@ def get_dashboard_pagos(db: Session, tienda_id: int | None = None,
     }
 
 def proveedor_por_producto(db: Session, tienda_id: int,
-                           desde=None, hasta=None) -> dict[int, str]:
+                           desde=None, hasta=None,
+                           producto_ids=None) -> dict[int, str]:
     """{producto_id: proveedor} — DE DÓNDE VIENE de verdad cada insumo.
 
     Se saca de las facturas del rango, no de `Producto.proveedor`: ese campo se
@@ -824,6 +825,12 @@ def proveedor_por_producto(db: Session, tienda_id: int,
     El que llama completa con `Producto.proveedor` los que no tuvieron compras
     en el rango: sin eso, un insumo que no se compró este mes quedaría sin
     origen y la pantalla no podría decir si lo trae un proveedor o el dueño.
+
+    `producto_ids` acota a esos productos. Cada uno se resuelve contra SUS
+    propias facturas y nada más, así que el resultado de los pedidos es idéntico
+    al que sale del barrido completo — es la misma cuenta sobre menos filas. Lo
+    usa la ficha de un insumo, que antes recorría todas las facturas de la sede
+    para averiguar un solo proveedor.
     """
     q = (
         db.query(FacturaCompraItem.producto_id, FacturaCompra.proveedor,
@@ -832,6 +839,8 @@ def proveedor_por_producto(db: Session, tienda_id: int,
         .join(FacturaCompra, FacturaCompra.id == FacturaCompraItem.factura_id)
         .filter(FacturaCompra.tienda_id == tienda_id)
     )
+    if producto_ids is not None:
+        q = q.filter(FacturaCompraItem.producto_id.in_(producto_ids))
     if desde is not None:
         q = q.filter(func.coalesce(FacturaCompra.fecha_recibido,
                                    FacturaCompra.fecha_registro) >= inicio_dia_col_utc(desde))

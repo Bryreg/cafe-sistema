@@ -459,8 +459,28 @@ class _Ctx:
     de consulta no puede costar doce veces lo mismo.
     """
 
-    def __init__(self, db, horizonte: date | None = None):
+    def __init__(self, db, horizonte: date | None = None,
+                 solo_ids: list[int] | None = None):
         self.db = db
+        # Subconjunto de productos que este contexto va a servir. None = la sede
+        # entera (el comportamiento de siempre).
+        #
+        # Existe por la ficha de UN insumo: pedía la escalera de la sede completa
+        # para leer un solo renglón, y eso cuesta lo mismo abrir el insumo más
+        # movido que uno sin un solo movimiento —medido en producción: 1,9 s
+        # contra 1,7 s—, porque el trabajo nunca fue sobre el insumo sino sobre
+        # los 19.000 movimientos de la sede.
+        #
+        # VA EN EL CONTEXTO Y NO EN UN FILTRO POSTERIOR porque acá adentro es
+        # donde se paga: `sede()` materializa el libro de cada producto y el loop
+        # de la escalera corre `_saldos` —tres pasadas sobre la historia COMPLETA—
+        # una vez por producto. Filtrar el resultado al final no ahorraría nada.
+        #
+        # Y va en el CONSTRUCTOR y no en `sede(tienda_id, ids)` para que la
+        # memoización siga teniendo una sola clave: un contexto acotado solo
+        # puede servir a sus productos, así que no hay forma de que una lectura
+        # recortada envenene una consulta posterior de la sede entera.
+        self.solo_ids = set(solo_ids) if solo_ids is not None else None
         # Fecha de arranque de la escalera MÁS VIEJA que este contexto va a
         # pedir. Es lo único que permite no leer el libro entero: ver
         # `_corte_libro`. Sin ella el contexto se comporta como antes y lee todo.
@@ -569,11 +589,13 @@ class _Ctx:
     def sede(self, tienda_id: int):
         """(filas inventario+producto, libro por producto) de una sede."""
         if tienda_id not in self._sedes:
-            filas = (self.db.query(Inventario, Producto)
-                     .join(Producto, Producto.id == Inventario.producto_id)
-                     .filter(Inventario.tienda_id == tienda_id,
-                             Producto.controla_stock.is_(True))
-                     .all())
+            q_filas = (self.db.query(Inventario, Producto)
+                       .join(Producto, Producto.id == Inventario.producto_id)
+                       .filter(Inventario.tienda_id == tienda_id,
+                               Producto.controla_stock.is_(True)))
+            if self.solo_ids is not None:
+                q_filas = q_filas.filter(Producto.id.in_(self.solo_ids))
+            filas = q_filas.all()
             movs: dict[int, list] = defaultdict(list)
             if filas:
                 ids = [p.id for _, p in filas]
@@ -613,7 +635,8 @@ class _Ctx:
 def escalera_rango(db, tienda_id: int, desde: date, hasta: date,
                    fisicos: dict[int, float] | None = None,
                    fotos: dict[int, float] | None = None,
-                   hasta_instante: datetime | None = None, ctx=None) -> dict:
+                   hasta_instante: datetime | None = None, ctx=None,
+                   producto_ids: list[int] | None = None) -> dict:
     """Escalera de conciliación de TODOS los productos con stock de una sede
     sobre [desde, hasta]. Funciona para cualquier rango: mes calendario, semana
     o los 9 días que van de un conteo al siguiente.
@@ -625,6 +648,17 @@ def escalera_rango(db, tienda_id: int, desde: date, hasta: date,
     `hasta_instante` corta en el momento exacto del conteo en vez de al final del
     día: un cierre hecho el 28 no puede cargar con las ventas del 29 al 31.
     `ctx` reusa las lecturas caras entre escaleras seguidas (lo usa el P&L).
+
+    `producto_ids` acota la escalera a esos productos. Los RENGLONES de cada uno
+    salen idénticos —cada fila se calcula sola, contra su propio libro y su
+    propio saldo; ningún producto entra en la cuenta de otro— y por eso la ficha
+    de un insumo puede pedir solo el suyo sin abrir una segunda fórmula que
+    después se desincronice con la tabla.
+
+    Lo que SÍ cambia con el filtro son los agregados: `ranking`, `resumen` y
+    `ranking_sin_costo` se calculan sobre lo pedido, no sobre la sede. Es lo
+    correcto —es la escalera DE ESOS PRODUCTOS— pero no lo que espera quien
+    quiere el panorama de la sede: para eso, no se pasa el filtro.
     """
     fisicos = fisicos or {}
     fotos = fotos or {}
@@ -640,7 +674,7 @@ def escalera_rango(db, tienda_id: int, desde: date, hasta: date,
     assert ctx is None or ctx.horizonte is None or ctx.horizonte <= desde, (
         f"contexto con horizonte {ctx.horizonte} reusado sobre un rango que "
         f"arranca antes ({desde}): el stock inicial saldría mal")
-    ctx = ctx or _Ctx(db, horizonte=desde)
+    ctx = ctx or _Ctx(db, horizonte=desde, solo_ids=producto_ids)
     d_utc = inicio_dia_col_utc(desde)
     h_utc = hasta_instante or fin_dia_col_utc(hasta)
     # Instante justo anterior al rango: el saldo de arranque es lo que había
@@ -648,6 +682,14 @@ def escalera_rango(db, tienda_id: int, desde: date, hasta: date,
     pre_utc = d_utc - timedelta(microseconds=1)
 
     filas, movs_por_prod = ctx.sede(tienda_id)
+    if producto_ids is not None:
+        # Redundante cuando el contexto nació acotado, y NO opcional: un `ctx`
+        # que viene de afuera (el P&L) trae la sede entera, y sin esta línea
+        # pasar `producto_ids` con un `ctx` prestado devolvería los 123 insumos
+        # en silencio. El filtro rápido es el del contexto; este es el que hace
+        # que el parámetro signifique siempre lo mismo.
+        _pedidos = set(producto_ids)
+        filas = [(inv, p) for inv, p in filas if p.id in _pedidos]
     if not filas:
         return {"tienda_id": tienda_id, "desde": desde.isoformat(),
                 "hasta": hasta.isoformat(), "corte": h_utc.isoformat(),

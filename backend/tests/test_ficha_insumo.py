@@ -153,6 +153,39 @@ class MismosNumerosQueLaTablaTest(FichaBase):
         fila = next(f for f in tabla["insumos"] if f["producto_id"] == cafe.id)
         self.assertEqual(self.ficha(cafe)["resumen"], fila)
 
+    def test_siguen_siendo_identicos_con_media_sede_alrededor(self):
+        """Con UN solo producto en la sede, el test de arriba no prueba nada.
+
+        La ficha pide su escalera ACOTADA a un insumo y la tabla la pide entera
+        (`escalera_rango(producto_ids=...)`), porque calcular los 123 insumos
+        para leer un renglón hacía que abrir cualquier ficha costara ~1,7 s. Las
+        dos rutas tienen que seguir dando el MISMO número, y eso solo se ve
+        cuando hay otros productos que la ficha está dejando afuera.
+        """
+        cafe = self.producto("Café", proveedor=None)
+        leche = self.producto("Leche", unidad="ml")
+        azucar = self.producto("Azúcar")
+        vasos = self.producto("Vasos", unidad="und")
+
+        self.factura("Cafexcoop", cafe, 10000)
+        self.mov(cafe, TipoMovInvEnum.entrada, 10000, "Factura #1 — Cafexcoop")
+        self.mov(cafe, TipoMovInvEnum.salida, 3000, "Venta POS")
+        self.mov(cafe, TipoMovInvEnum.salida, 400, "se fue y nadie anotó")
+        # Ruido alrededor: movimientos de OTROS insumos, incluidos ajustes, que
+        # son los que anclan la reconstrucción del arranque.
+        self.mov(leche, TipoMovInvEnum.entrada, 24000, "Recepción #2")
+        self.mov(leche, TipoMovInvEnum.salida, 9000, "Venta POS")
+        self.mov(azucar, TipoMovInvEnum.ajuste, 4200, "Conteo #7 aplicado al inventario")
+        self.mov(vasos, TipoMovInvEnum.entrada, 500, "Factura #3 — Wilenses")
+
+        tabla = self.client.get("/api/v1/inventario/movimiento-insumos", params={
+            "tienda_id": self.vida.id, "desde": self.desde.isoformat(),
+            "hasta": self.hoy.isoformat()}).json()
+        for p in (cafe, leche, azucar, vasos):
+            with self.subTest(producto=p.nombre):
+                fila = next(f for f in tabla["insumos"] if f["producto_id"] == p.id)
+                self.assertEqual(self.ficha(p)["resumen"], fila)
+
 
 class HaciaFaltaTest(FichaBase):
     """El reemplazo honesto de la columna «pedí»."""

@@ -124,11 +124,14 @@ class FichaBase(unittest.TestCase):
         self.db.commit()
         return s
 
-    def ficha(self, producto, tienda=None):
-        r = self.client.get(f"/api/v1/inventario/insumo/{producto.id}/ficha", params={
+    def ficha(self, producto, tienda=None, causa=None):
+        params = {
             "tienda_id": (tienda or self.vida).id,
             "desde": self.desde.isoformat(), "hasta": self.hoy.isoformat(),
-        })
+        }
+        if causa:
+            params["causa"] = causa
+        r = self.client.get(f"/api/v1/inventario/insumo/{producto.id}/ficha", params=params)
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()
 
@@ -283,6 +286,41 @@ class MovimientosTest(FichaBase):
         self.mov(cafe, TipoMovInvEnum.salida, 2, "nuevo", dias=1)
         self.assertEqual([m["motivo"] for m in self.ficha(cafe)["movimientos"]],
                          ["nuevo", "viejo"])
+
+    def test_filtrar_por_causa_deja_ver_lo_que_las_ventas_tapan(self):
+        # El caso real: el café de Vida tiene 2.561 movimientos en dos meses y
+        # sus 250 últimos son casi todos ventas de a 10 gr. Sin filtro,
+        # «¿de dónde salieron los gramos sin causa?» no se puede contestar.
+        cafe = self.producto("Café")
+        for i in range(60):
+            self.mov(cafe, TipoMovInvEnum.salida, 10, "Venta POS", dias=1)
+        self.mov(cafe, TipoMovInvEnum.salida, 900, "se fue y nadie anotó", dias=20)
+        self.mov(cafe, TipoMovInvEnum.entrada, 5000, "Factura #1 — Cafexcoop", dias=25)
+
+        d = self.ficha(cafe, causa="otras_salidas")
+        self.assertEqual(len(d["movimientos"]), 1)
+        self.assertEqual(d["movimientos"][0]["motivo"], "se fue y nadie anotó")
+        self.assertEqual(d["movimientos_total"], 1)
+        self.assertEqual(d["causa_filtrada"], "otras_salidas")
+
+    def test_el_conteo_por_causa_es_del_rango_completo_no_de_lo_filtrado(self):
+        # Si contara solo lo filtrado, los chips dirían que hay 1 movimiento de
+        # cada otra causa y el dueño no sabría a cuál valen la pena entrar.
+        cafe = self.producto("Café")
+        for i in range(5):
+            self.mov(cafe, TipoMovInvEnum.salida, 10, "Venta POS", dias=2)
+        self.mov(cafe, TipoMovInvEnum.salida, 900, "misterio", dias=3)
+        self.mov(cafe, TipoMovInvEnum.entrada, 5000, "Factura #1 — Cafexcoop", dias=4)
+
+        d = self.ficha(cafe, causa="otras_salidas")
+        self.assertEqual(d["causas"], {"ventas": 5, "otras_salidas": 1, "entradas": 1})
+
+    def test_causa_inexistente_devuelve_vacio_sin_reventar(self):
+        cafe = self.producto("Café")
+        self.mov(cafe, TipoMovInvEnum.salida, 10, "Venta POS")
+        d = self.ficha(cafe, causa="no_existe_esta_causa")
+        self.assertEqual(d["movimientos"], [])
+        self.assertEqual(d["causas"], {"ventas": 1})
 
     def test_cuando_recorta_lo_dice(self):
         # Una lista incompleta que parece completa es peor que decir que se cortó.

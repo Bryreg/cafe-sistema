@@ -67,6 +67,8 @@ interface Ficha {
   movimientos: Movimiento[]
   movimientos_total: number
   movimientos_truncados: boolean
+  causas: Record<string, number>
+  causa_filtrada: string | null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -124,16 +126,23 @@ export default function FichaInsumo({ productoId, tiendaId, desde, hasta, onClos
   const [d, setD] = useState<Ficha | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
+  // Filtro de la lista de movimientos. Existe porque un insumo de alta rotación
+  // tiene miles y casi todos son ventas de a 10 gr: sin esto, los más recientes
+  // TAPAN lo que se vino a mirar (el café real tiene 2.561 en dos meses, y sus
+  // 250 últimos son 239 ventas).
+  const [causa, setCausa] = useState<string | null>(null)
 
   useEffect(() => {
     let cancel = false
     setCargando(true); setError('')
-    api.get<Ficha>(`/inventario/insumo/${productoId}/ficha`, { params: { tienda_id: tiendaId, desde, hasta } })
+    api.get<Ficha>(`/inventario/insumo/${productoId}/ficha`, {
+      params: { tienda_id: tiendaId, desde, hasta, ...(causa ? { causa } : {}) },
+    })
       .then(r => { if (!cancel) setD(r.data) })
       .catch(() => { if (!cancel) setError('No se pudo cargar la ficha de este insumo.') })
       .finally(() => { if (!cancel) setCargando(false) })
     return () => { cancel = true }
-  }, [productoId, tiendaId, desde, hasta])
+  }, [productoId, tiendaId, desde, hasta, causa])
 
   // Escape cierra: el panel tapa la tabla y quedarse encerrado es peor en tablet.
   useEffect(() => {
@@ -395,8 +404,32 @@ export default function FichaInsumo({ productoId, tiendaId, desde, hasta, onClos
 
             {/* ── 8 · Movimientos ── */}
             <Bloque titulo={`Movimiento por movimiento · ${d.movimientos_total}`}>
+              {/* Los chips salen de `causas`, que cuenta sobre el rango COMPLETO
+                  aunque haya filtro: así el número de cada uno es de verdad. */}
+              <div className="flex flex-wrap gap-1.5">
+                <button onClick={() => setCausa(null)}
+                  className={`text-[11.5px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
+                    causa === null ? 'bg-warm-700 text-white' : 'bg-warm-100 text-warm-600 hover:bg-warm-200'}`}>
+                  Todos
+                </button>
+                {Object.entries(d.causas)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([k, n]) => (
+                    <button key={k} onClick={() => setCausa(k)}
+                      className={`text-[11.5px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
+                        causa === k
+                          ? (k === 'otras_salidas' ? 'bg-danger text-white' : 'bg-warm-700 text-white')
+                          : k === 'otras_salidas'
+                            ? 'bg-danger-50 text-danger-700 hover:bg-danger-100'
+                            : 'bg-warm-100 text-warm-600 hover:bg-warm-200'}`}>
+                      {CAUSA_LABEL[k] ?? k} <span className="font-mono opacity-70">{n}</span>
+                    </button>
+                  ))}
+              </div>
               {d.movimientos.length === 0 ? (
-                <span className="text-[12.5px] text-warm-400">Sin movimientos en el período.</span>
+                <span className="text-[12.5px] text-warm-400">
+                  {causa ? 'Ningún movimiento de esa causa en el período.' : 'Sin movimientos en el período.'}
+                </span>
               ) : (
                 <>
                   <div className="flex flex-col max-h-[340px] overflow-y-auto">

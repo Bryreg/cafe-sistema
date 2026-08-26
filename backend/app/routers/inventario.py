@@ -934,6 +934,7 @@ def ficha_insumo(
     tienda_id: int = Query(...),
     desde: date = Query(...),
     hasta: date = Query(...),
+    causa: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     admin: Usuario = Depends(require_admin),
 ):
@@ -966,6 +967,15 @@ def ficha_insumo(
       · `movimientos` — cada movimiento con su causa puesta por el MISMO
         clasificador de la escalera (`conciliacion._bucket`), para que el detalle
         y los totales no puedan contradecirse.
+
+    `causa` filtra esa lista (ventas, entradas, mermas, otras_salidas…). NO es un
+    lujo: un insumo de alta rotación tiene miles de movimientos y casi todos son
+    ventas de a 10 gr, así que los más recientes TAPAN exactamente lo que se
+    vino a mirar. El café de Vida tiene 2.561 movimientos en dos meses y sus 250
+    últimos son 239 ventas: sin filtro, «¿de dónde salieron los 14.480 gr sin
+    causa?» no se puede contestar desde la ficha. `causas` viene siempre con el
+    conteo de CADA causa sobre el rango completo, para que la pantalla ofrezca
+    los filtros sin una segunda llamada y sin mentir sobre cuántos hay.
     """
     ensure_tienda_access(admin, tienda_id)
     if hasta < desde:
@@ -1078,16 +1088,19 @@ def ficha_insumo(
     ]
 
     # ── Los movimientos, con la causa del MISMO clasificador de la escalera ──
-    q_movs = (
+    # La causa se calcula en Python (sale del texto del motivo), así que el
+    # filtro no puede ir en el WHERE: se traen las filas del producto en el
+    # rango —son de un solo insumo, no de la sede entera— y se clasifican acá.
+    crudos = (
         db.query(MovimientoInventario)
         .filter(MovimientoInventario.producto_id == producto_id,
                 MovimientoInventario.tienda_id == tienda_id,
                 MovimientoInventario.fecha >= d_utc,
                 MovimientoInventario.fecha <= h_utc)
         .order_by(MovimientoInventario.fecha.desc())
+        .all()
     )
-    total_movs = q_movs.count()
-    movimientos = [
+    todos = [
         {
             "id": m.id,
             "fecha": m.fecha.isoformat() if m.fecha else None,
@@ -1097,8 +1110,18 @@ def ficha_insumo(
             "causa": esc._bucket(getattr(m.tipo, "value", m.tipo), m.motivo),
             "barista": m.barista_nombre,
         }
-        for m in q_movs.limit(_MAX_MOVS_FICHA).all()
+        for m in crudos
     ]
+    # El conteo por causa se hace SIEMPRE sobre el rango completo, aunque haya
+    # filtro: si contara solo lo filtrado, los chips dirían que hay 1 movimiento
+    # de cada otra causa.
+    causas: dict[str, int] = {}
+    for m in todos:
+        causas[m["causa"]] = causas.get(m["causa"], 0) + 1
+
+    filtrados = [m for m in todos if m["causa"] == causa] if causa else todos
+    total_movs = len(filtrados)
+    movimientos = filtrados[:_MAX_MOVS_FICHA]
 
     return {
         "producto": {
@@ -1118,4 +1141,6 @@ def ficha_insumo(
         "movimientos": movimientos,
         "movimientos_total": total_movs,
         "movimientos_truncados": total_movs > len(movimientos),
+        "causas": causas,
+        "causa_filtrada": causa,
     }

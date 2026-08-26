@@ -770,3 +770,132 @@ def pasteleria_impulso_resumen(tienda_id: int, db: Session = Depends(get_db),
     # Más urgente primero, luego más días en inventario.
     result.sort(key=lambda r: (r["urgente"], r["dias_en_inventario"]), reverse=True)
     return result
+
+@router.get("/movimiento-insumos")
+def movimiento_insumos(
+    tienda_id: int = Query(...),
+    desde: date = Query(...),
+    hasta: date = Query(...),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """La vida de cada insumo en un rango, en una sola tabla: qué entró, por
+    dónde salió y qué queda.
+
+    Responde la pregunta con la que el dueño llegó —«tener en un mismo sitio
+    control de lo que se pidió, comparado con lo que llegó, y también lo que
+    salió, sea por merma, venta o traslado»— reusando la escalera de
+    conciliación (`services/conciliacion.py`), que ya clasifica cada movimiento
+    del libro por su causa. Acá NO se recalcula nada de eso: se le agrega lo que
+    la escalera no sabe, que es DE DÓNDE VIENE cada insumo.
+
+    Ese origen importa porque cambia el significado de la fila: contra un
+    proveedor (Cafexcoop) hay pedido, precio acordado y lead time, así que
+    comparar lo que salió con lo que entró habla de cumplimiento; en una compra
+    directa (Makro, Galerías) no hay pedido que incumplir y la misma resta es,
+    en la práctica, la lista de mercado. En producción la compra directa es ~25%
+    de la plata: no es un caso de borde.
+
+    Dos cosas que la tabla dice EXPLÍCITAMENTE en vez de dejar un cero mudo:
+      · `no_se_mide`: el producto tuvo entradas y el libro no registra ni una
+        venta ni una preparación que lo consuma. No es que no se use —los vasos
+        y el jabón se gastan todos los días—, es que la caja no los descuenta.
+        Un 0 ahí es un agujero de configuración, no una buena noticia. Se pide
+        también preparaciones=0 porque un insumo que solo se gasta preparando
+        (la leche en polvo del granizado) vende cero y sin embargo SÍ se mide.
+      · `ajustes_conteo` viaja SEPARADO del total que salió: un ajuste no es una
+        causa de salida, es faltante viejo que apareció al contar. Mezclarlo
+        taparía todo lo demás (es el renglón más grande después de las ventas).
+
+    Sin conteo cerrado en el rango, `queda` es la reconstrucción del libro y no
+    el conteo físico; `arranque_estimado` avisa cuando ni el arranque se pudo
+    reconstruir con certeza.
+    """
+    ensure_tienda_access(admin, tienda_id)
+    if hasta < desde:
+        raise HTTPException(400, "El rango termina antes de empezar")
+
+    from app.services import conciliacion as esc
+    from app.services import facturas as fact_svc
+    from app.services import proveedor_canon
+
+    escalera = esc.escalera_rango(db, tienda_id, desde, hasta)
+
+    # Origen: el proveedor REAL de las compras del rango, y para los que no se
+    # compraron en el rango, el que tenga cargado el producto.
+    prov_rango = fact_svc.proveedor_por_producto(db, tienda_id, desde, hasta)
+    prov_ficha = {
+        pid: (nombre or "").strip()
+        for pid, nombre in db.query(Producto.id, Producto.proveedor)
+        .filter(Producto.proveedor.isnot(None)).all()
+    }
+
+    def num(x) -> float:
+        return float(x or 0)
+
+    filas = []
+    for p in escalera.get("productos", []):
+        pid = p.get("producto_id")
+        salidas = {
+            "ventas": num(p.get("ventas")),
+            "mermas": num(p.get("mermas")),
+            "traslados": num(p.get("traslados")),
+            "preparaciones": num(p.get("preparaciones")),
+            "reversas_salida": num(p.get("reversas_salida")),
+            "otras_salidas": num(p.get("otras_salidas")),
+        }
+        total_salio = sum(salidas.values())
+        entradas = num(p.get("entradas"))
+        proveedor = prov_rango.get(pid) or prov_ficha.get(pid) or None
+        if proveedor is None:
+            origen = "sin_origen"
+        elif proveedor_canon.es_compra_directa(proveedor):
+            origen = "directa"
+        else:
+            origen = "proveedor"
+        vu = num(p.get("valor_unitario"))
+        filas.append({
+            "producto_id": pid,
+            "producto": p.get("producto_nombre"),
+            "unidad": p.get("unidad_medida"),
+            "categoria": p.get("categoria"),
+            "proveedor": proveedor,
+            "origen": origen,
+            "entradas": entradas,
+            # Lo que entró SIN comprarse: se muestra aparte para que una tanda
+            # preparada no se lea como mercadería que alguien facturó.
+            "traslados_recibidos": num(p.get("traslados_recibidos")),
+            "preparaciones_producidas": num(p.get("preparaciones_producidas")),
+            **salidas,
+            "total_salio": total_salio,
+            "ajustes_conteo": num(p.get("ajustes_conteo")),
+            "ajustes": num(p.get("ajustes")),
+            "queda": num(p.get("stock_esperado")),
+            "valor_unitario": vu,
+            "valor_origen": p.get("valor_origen"),
+            "valor_sin_causa": round(salidas["otras_salidas"] * vu, 2),
+            "arranque_estimado": bool(p.get("stock_inicial_estimado")),
+            # Ver el docstring. Se exige que TAMPOCO haya preparaciones: un
+            # insumo que solo se consume preparando (la leche en polvo del
+            # granizado) vende cero y SÍ está medido — marcarlo mandaría a
+            # revisar un agujero que no existe.
+            "no_se_mide": (entradas > 0 and salidas["ventas"] == 0
+                           and salidas["preparaciones"] == 0),
+        })
+
+    # Más plata sin explicar primero: es el orden en el que conviene mirarlas.
+    filas.sort(key=lambda f: (-f["valor_sin_causa"], -f["total_salio"]))
+
+    return {
+        "tienda_id": tienda_id,
+        "desde": desde.isoformat(),
+        "hasta": hasta.isoformat(),
+        "insumos": filas,
+        "resumen": {
+            "n_insumos": len(filas),
+            "n_sin_causa": sum(1 for f in filas if f["otras_salidas"] > 0),
+            "valor_sin_causa": round(sum(f["valor_sin_causa"] for f in filas), 2),
+            "n_no_se_mide": sum(1 for f in filas if f["no_se_mide"]),
+            "n_compra_directa": sum(1 for f in filas if f["origen"] == "directa"),
+        },
+    }

@@ -3,7 +3,7 @@ import {
   Banknote, Wrench, ClipboardCheck, Activity,
   Bell, Inbox, BarChart2, Users, Tag, RotateCcw, Calculator, Scale, Boxes, Wallet,
   Receipt, ShieldCheck, ListChecks, BookOpen, TrendingUp, Package, CalendarDays,
-  Truck,
+  Truck, ShoppingCart,
 } from 'lucide-react'
 
 export interface NavItem { to: string; label: string; icon: typeof Layers }
@@ -37,6 +37,13 @@ export const NAV_GROUPS: NavGroup[] = [
     { to: '/control-inventario',      label: 'Inventario',     icon: Layers          },
     { to: '/conteos-admin',           label: 'Conteos',        icon: ListChecks      },
     { to: '/conciliacion-inventario', label: 'Cierre de mes',  icon: Scale           },
+    // Pedidos volvió al menú. Se había ido porque su pestaña «Armar pedido» es
+    // la MISMA sugerencia que ya da Inventario, y dos puertas al mismo número
+    // confundían. Ahora tiene algo propio que no está en ninguna otra pantalla:
+    // la pestaña «Insumos», la vida de cada insumo (qué entró, por dónde salió,
+    // qué queda). Sin esta línea solo se llegaba por un botón de Inventario o
+    // escribiendo la URL a mano.
+    { to: '/pedidos-admin',           label: 'Pedidos',        icon: ShoppingCart    },
     { to: '/lotes',                   label: 'Lotes',          icon: Boxes           },
   ]},
   // «Pago a proveedores» volvió a tener pantalla propia (pedido del dueño):

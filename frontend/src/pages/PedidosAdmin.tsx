@@ -2,10 +2,11 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
+import TabInsumos from '../components/pedidos/TabInsumos'
 import {
   ShoppingCart, AlertTriangle, Clock, CheckCircle2, CheckCircle,
   Copy, ChevronDown, ChevronUp, Phone, ClipboardList, Settings2, Check, Search,
-  ChefHat, Plus, X, HelpCircle, Package,
+  ChefHat, Plus, X, HelpCircle, Package, Boxes,
 } from 'lucide-react'
 
 // Timestamps en UTC naive → parsear como UTC para mostrar hora local Colombia
@@ -1128,8 +1129,9 @@ export default function PedidosAdmin() {
   const [nPendientes, setNPendientes] = useState(0)
 
   const tabURL = sp.get('tab')
-  const tab: 'pedidos' | 'solicitudes' | 'proveedores' =
-    tabURL === 'pedidos' || tabURL === 'proveedores' ? tabURL : 'solicitudes'
+  const tab: 'pedidos' | 'solicitudes' | 'proveedores' | 'insumos' =
+    tabURL === 'pedidos' || tabURL === 'proveedores' || tabURL === 'insumos'
+      ? tabURL : 'solicitudes'
 
   const tiendaURL = Number(sp.get('tienda_id'))
   const tiendaId: number | null =
@@ -1203,6 +1205,14 @@ export default function PedidosAdmin() {
               )}
             </button>
             <button
+              onClick={() => irA({ tab: 'insumos' })}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                tab === 'insumos' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Boxes size={13} /> Insumos
+            </button>
+            <button
               onClick={() => irA({ tab: 'proveedores' })}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 tab === 'proveedores' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
@@ -1216,6 +1226,7 @@ export default function PedidosAdmin() {
 
       {tab === 'pedidos'     && <TabPedidos     tiendaId={tiendaId} sedeNombre={sedeNombre} />}
       {tab === 'solicitudes' && <TabSolicitudes onCount={setNPendientes} />}
+      {tab === 'insumos'     && <TabInsumos     tiendaId={tiendaId} sedeNombre={sedeNombre} />}
       {tab === 'proveedores' && <TabProveedores tiendaId={tiendaId} />}
     </div>
   )

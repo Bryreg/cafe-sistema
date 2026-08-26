@@ -148,3 +148,43 @@ def canonizar(db: Session, nombre: str | None, tienda_id: int | None = None) -> 
         if k.startswith(ke) or k.endswith(ke) or ke.startswith(k) or ke.endswith(k):
             return existente
     return limpio
+
+
+# ─── ¿Proveedor o compra directa? ────────────────────────────────────────────
+# No es lo mismo pedirle a Cafexcoop —hay pedido, precio acordado y dos días de
+# espera— que ir a Makro y comprar lo que haya. La distinción cambia cómo se lee
+# la pantalla: contra un proveedor, «hacía falta 64.120 y llegaron 27.500» habla
+# del cumplimiento del proveedor; en una compra directa habla de tu lista de
+# mercado. En producción la compra directa es el 25% de la plata, así que no es
+# un caso de borde.
+#
+# La lista es CURADA a propósito y no se infiere: un autoservicio no tiene nada
+# en el nombre que lo delate, y adivinarlo llenaría la pantalla de etiquetas
+# equivocadas. Agregar uno nuevo es agregar una línea acá.
+_AUTOSERVICIOS = {
+    "makro", "galerias", "exito", "d1", "ara", "olimpica", "jumbo", "metro",
+    "surtimax", "surtiapp", "unicali", "alkosto", "pricesmart", "colsubsidio",
+    "carulla", "zapatoca", "euro", "la14", "cencosud",
+}
+_CLAVES_AUTOSERVICIO = {clave(n) for n in _AUTOSERVICIOS}
+
+
+def es_compra_directa(proveedor: str | None) -> bool:
+    """True si el «proveedor» es en realidad un autoservicio donde se compra de
+    mostrador. Compara por `clave`, así que «SUPERMERCADOS GALERIAS PLAZA S.A.S»
+    y «Galerías» dan lo mismo. Sin nombre devuelve False: no sabemos, y marcar
+    de más es peor que no marcar."""
+    k = clave(proveedor)
+    if not k:
+        return False
+    if k in _CLAVES_AUTOSERVICIO:
+        return True
+    if len(k) < _MIN_CONTENIDO:
+        return False
+    # Contención por un extremo, en las dos direcciones y con el mismo largo
+    # mínimo que `canonizar`: cubre la razón social larga («Galerias Plaza») y
+    # también el singular suelto («Galeria» contra «galerias» de la lista).
+    return any(
+        k.startswith(a) or k.endswith(a) or a.startswith(k) or a.endswith(k)
+        for a in _CLAVES_AUTOSERVICIO if len(a) >= _MIN_CONTENIDO
+    )

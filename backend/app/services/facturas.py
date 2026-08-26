@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from fastapi import HTTPException
 from datetime import datetime
-from app.core.tz import dia_col, hoy_col, inicio_dia_col_utc
+from app.core.tz import dia_col, fin_dia_col_utc, hoy_col, inicio_dia_col_utc
 from app.models.models import (FacturaCompra, FacturaCompraItem, TipoPagoEnum,
                                CajaTurno, MovimientoCaja, EstadoTurnoEnum,
                                LoteInventario, Producto, Inventario, Pago)
@@ -810,3 +810,53 @@ def get_dashboard_pagos(db: Session, tienda_id: int | None = None,
         "por_sede": _round_grupo(list(por_sede.values()), "facturado", "pagado"),
         "facturas": [_serializar(f) for f in facturas],
     }
+
+def proveedor_por_producto(db: Session, tienda_id: int,
+                           desde=None, hasta=None) -> dict[int, str]:
+    """{producto_id: proveedor} — DE DÓNDE VIENE de verdad cada insumo.
+
+    Se saca de las facturas del rango, no de `Producto.proveedor`: ese campo se
+    escribe UNA vez (el alta lo llena solo si estaba vacío, ver `crear_factura`)
+    y después no se mueve, así que un producto que cambió de proveedor sigue
+    diciendo el viejo para siempre. Acá gana el proveedor al que MÁS cantidad se
+    le compró en el rango; a igual cantidad, el de la factura más reciente.
+
+    El que llama completa con `Producto.proveedor` los que no tuvieron compras
+    en el rango: sin eso, un insumo que no se compró este mes quedaría sin
+    origen y la pantalla no podría decir si lo trae un proveedor o el dueño.
+    """
+    q = (
+        db.query(FacturaCompraItem.producto_id, FacturaCompra.proveedor,
+                 FacturaCompraItem.cantidad,
+                 func.coalesce(FacturaCompra.fecha_recibido, FacturaCompra.fecha_registro))
+        .join(FacturaCompra, FacturaCompra.id == FacturaCompraItem.factura_id)
+        .filter(FacturaCompra.tienda_id == tienda_id)
+    )
+    if desde is not None:
+        q = q.filter(func.coalesce(FacturaCompra.fecha_recibido,
+                                   FacturaCompra.fecha_registro) >= inicio_dia_col_utc(desde))
+    if hasta is not None:
+        q = q.filter(func.coalesce(FacturaCompra.fecha_recibido,
+                                   FacturaCompra.fecha_registro) <= fin_dia_col_utc(hasta))
+
+    acum: dict[int, dict[str, tuple[float, object]]] = {}
+    for pid, prov, cant, fecha in q.all():
+        prov = (prov or "").strip()
+        if not pid or not prov:
+            continue
+        por_prov = acum.setdefault(pid, {})
+        cant_prev, fecha_prev = por_prov.get(prov, (0.0, None))
+        nueva_fecha = fecha if fecha_prev is None else max(
+            [f for f in (fecha, fecha_prev) if f is not None], default=None)
+        por_prov[prov] = (cant_prev + float(cant or 0), nueva_fecha)
+
+    out: dict[int, str] = {}
+    for pid, por_prov in acum.items():
+        # Más cantidad primero; a igual cantidad, la compra más reciente; y como
+        # último desempate el nombre, para que el resultado no dependa del orden
+        # del SELECT.
+        out[pid] = max(
+            por_prov.items(),
+            key=lambda kv: (kv[1][0], kv[1][1] or datetime.min, kv[0]),
+        )[0]
+    return out

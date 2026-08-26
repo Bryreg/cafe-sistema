@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../../api/client'
 import {
-  AlertTriangle, ArrowDown, ArrowUp, Info, Search, Package, ChevronRight,
+  AlertTriangle, ArrowDown, ArrowUp, Search, ChevronRight,
 } from 'lucide-react'
+import FichaInsumo from './FichaInsumo'
 
 /**
  * «Qué pasó con cada insumo», la tabla que el dueño pidió: en un mismo sitio lo
@@ -152,69 +153,6 @@ function Celda({ v, tono = 'normal' }: { v: number; tono?: 'normal' | 'alerta' |
   return <span className={`font-mono text-[12.5px] tabular-nums text-right ${cls}`}>{fmtCant(v)}</span>
 }
 
-/** Lo que la fila no muestra en columnas: lo que entró sin comprarse, el ajuste
- *  de conteo (que NO es una salida) y las advertencias de confianza. */
-function Detalle({ it }: { it: Insumo }) {
-  const nada = !it.traslados_recibidos && !it.preparaciones_producidas
-    && !it.ajustes_conteo && !it.ajustes && !it.reversas_salida
-  return (
-    <div className="col-span-full bg-warm-50 rounded-xl px-4 py-3 mt-1 mb-2 flex flex-col gap-2.5">
-      {it.no_se_mide && (
-        <div className="flex items-start gap-2 text-[12px] text-gold-700 font-semibold">
-          <AlertTriangle size={14} className="shrink-0 mt-px" />
-          <span>Este insumo no se descuenta al vender. El <b>0</b> de «vendió» no significa que no se usó — significa que nadie lo está midiendo.</span>
-        </div>
-      )}
-      {it.arranque_estimado && (
-        <div className="flex items-start gap-2 text-[12px] text-warm-500">
-          <Info size={14} className="shrink-0 mt-px" />
-          <span>El arranque del período es un cálculo, no un dato: nadie registró cuánto había antes.</span>
-        </div>
-      )}
-
-      {!nada && (
-        <div className="flex flex-wrap gap-x-8 gap-y-2">
-          {(it.traslados_recibidos > 0 || it.preparaciones_producidas > 0) && (
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-warm-400">Entró sin comprarse</span>
-              {it.traslados_recibidos > 0 && (
-                <span className="text-[12px] text-warm-600">Vino de la otra sede <b className="font-mono">{fmtCant(it.traslados_recibidos)} {it.unidad}</b></span>
-              )}
-              {it.preparaciones_producidas > 0 && (
-                <span className="text-[12px] text-warm-600">Se produjo acá <b className="font-mono">{fmtCant(it.preparaciones_producidas)} {it.unidad}</b></span>
-              )}
-            </div>
-          )}
-          {it.reversas_salida > 0 && (
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-warm-400">Correcciones de papeles</span>
-              <span className="text-[12px] text-warm-600">No salió mercadería <b className="font-mono">{fmtCant(it.reversas_salida)} {it.unidad}</b></span>
-            </div>
-          )}
-          {(it.ajustes_conteo !== 0 || it.ajustes !== 0) && (
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-warm-400">Aparte · no salió ahora</span>
-              {it.ajustes_conteo !== 0 && (
-                <span className="text-[12px] text-warm-600">
-                  Ajuste de conteo <b className="font-mono">{fmtCant(it.ajustes_conteo)} {it.unidad}</b>
-                  <span className="text-warm-400"> · faltante viejo que apareció al contar</span>
-                </span>
-              )}
-              {it.ajustes !== 0 && (
-                <span className="text-[12px] text-warm-600">Ajuste manual <b className="font-mono">{fmtCant(it.ajustes)} {it.unidad}</b></span>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {nada && !it.no_se_mide && !it.arranque_estimado && (
-        <span className="text-[12px] text-warm-400">Sin nada más que contar: todo lo que se movió está en las columnas.</span>
-      )}
-    </div>
-  )
-}
-
 // ─── Componente ───────────────────────────────────────────────────────────────
 
 export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number | null; sedeNombre: string }) {
@@ -227,7 +165,9 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
   const [filtro, setFiltro] = useState<FiltroOrigen>('todos')
   const [orden, setOrden] = useState<OrdenKey>('valor_sin_causa')
   const [dir, setDir] = useState<'asc' | 'desc'>('desc')
-  const [abierto, setAbierto] = useState<number | null>(null)
+  // Qué insumo tiene la ficha abierta. El rango viaja con él: la ficha
+  // muestra EL MISMO período que la tabla, o los números no se corresponderían.
+  const [fichaDe, setFichaDe] = useState<number | null>(null)
 
   useEffect(() => {
     if (!tiendaId) return
@@ -266,6 +206,7 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
   }, [data, q, filtro, orden, dir])
 
   const r = data?.resumen
+  const rango = rangoDe(periodo)
 
   if (!tiendaId) {
     return <p className="text-sm text-warm-400 text-center py-10">Elegí una sede para ver sus insumos.</p>
@@ -358,21 +299,20 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
           )}
 
           {!cargando && !error && filas.map(it => {
-            const abiertoEsta = abierto === it.producto_id
             const alerta = it.otras_salidas > 0
             return (
               <div key={it.producto_id}>
                 <button
-                  onClick={() => setAbierto(abiertoEsta ? null : it.producto_id)}
+                  onClick={() => setFichaDe(it.producto_id)}
                   className={`w-full text-left grid grid-cols-[2.4fr_0.8fr_0.8fr_0.62fr_0.7fr_0.75fr_0.9fr_0.8fr] gap-2 items-center px-2 py-2.5 rounded-lg transition-colors ${
                     alerta ? 'bg-danger-50/60 hover:bg-danger-50' : it.no_se_mide ? 'bg-gold-50/50 hover:bg-gold-50' : 'hover:bg-warm-50'
-                  } ${abiertoEsta ? 'ring-1 ring-warm-200' : ''}`}
+                  }`}
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="text-[13px] font-semibold text-warm-700 truncate">{it.producto}</span>
                       <span className="text-[11px] text-warm-400 shrink-0">{it.unidad}</span>
-                      <ChevronRight size={13} className={`text-warm-300 shrink-0 transition-transform ${abiertoEsta ? 'rotate-90' : ''}`} />
+                      <ChevronRight size={13} className="text-warm-300 shrink-0" />
                     </div>
                     <div className="flex items-center gap-1.5 mt-1">
                       <ChipOrigen origen={it.origen} />
@@ -393,7 +333,6 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
                   </span>
                   <Celda v={it.queda} />
                 </button>
-                {abiertoEsta && <Detalle it={it} />}
               </div>
             )
           })}
@@ -402,9 +341,17 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
 
       <p className="text-[11.5px] text-warm-400 leading-relaxed px-1">
         <b>«Comprás vos»</b> = lo traés del supermercado, sin pedido ni precio acordado — ahí lo que salió es tu lista de mercado.
-        Tocá una columna para ordenar, una fila para ver el detalle. Los <b>ajustes de conteo</b> no entran en lo que salió:
+        Tocá una columna para ordenar, una fila para abrir su ficha. Los <b>ajustes de conteo</b> no entran en lo que salió:
         no son una causa, son faltante viejo que apareció al contar.
       </p>
+
+      {fichaDe !== null && tiendaId && (
+        <FichaInsumo
+          productoId={fichaDe} tiendaId={tiendaId}
+          desde={rango.desde} hasta={rango.hasta}
+          onClose={() => setFichaDe(null)}
+        />
+      )}
     </div>
   )
 }

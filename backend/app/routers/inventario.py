@@ -4,18 +4,26 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel
+import logging
+from sqlalchemy import func
+from app.core.tz import fin_dia_col_utc, inicio_dia_col_utc
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.core.deps import ensure_tienda_access, get_current_user, require_admin, get_barista_actor, require_barista_en_turno
-from app.models.models import Usuario, Producto, ProductoInsumo, ProductoDesechable, Inventario, Tienda, CategoriaProductoEnum, LoteInventario
+from app.models.models import (Usuario, Producto, ProductoInsumo, ProductoDesechable,
+                               Inventario, Tienda, CategoriaProductoEnum, LoteInventario,
+                               MovimientoInventario, FacturaCompra, FacturaCompraItem,
+                               SolicitudPedido, SolicitudPedidoItem)
 from app.schemas.inventario import (
     MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate, UmbralesStockUpdate,
     InsumosProductoUpdate, DesechablesProductoUpdate, PreparacionRequest,
     UmbralesMinimosAplicar,
 )
 from app.services import audit
+from app.services import proveedor_canon
 from app.services import inventario as svc
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/inventario", tags=["inventario"])
 
 @router.get("/tienda/{tienda_id}")
@@ -771,6 +779,66 @@ def pasteleria_impulso_resumen(tienda_id: int, db: Session = Depends(get_db),
     result.sort(key=lambda r: (r["urgente"], r["dias_en_inventario"]), reverse=True)
     return result
 
+def _num(x) -> float:
+    return float(x or 0)
+
+
+def _fila_insumo(p: dict, proveedor: str | None) -> dict:
+    """Una fila de «qué pasó con este insumo», a partir del renglón que ya
+    calculó la escalera de conciliación más el proveedor.
+
+    Vive acá, compartida, porque la TABLA (`/movimiento-insumos`) y la FICHA
+    (`/insumo/{id}/ficha`) muestran exactamente los mismos números: si cada una
+    los armara por su lado, el día que alguien agregue un renglón las dos
+    pantallas dirían cosas distintas del mismo producto y nadie sabría cuál
+    creer."""
+    salidas = {
+        "ventas": _num(p.get("ventas")),
+        "mermas": _num(p.get("mermas")),
+        "traslados": _num(p.get("traslados")),
+        "preparaciones": _num(p.get("preparaciones")),
+        "reversas_salida": _num(p.get("reversas_salida")),
+        "otras_salidas": _num(p.get("otras_salidas")),
+    }
+    entradas = _num(p.get("entradas"))
+    vu = _num(p.get("valor_unitario"))
+    proveedor = (proveedor or "").strip() or None
+    if proveedor is None:
+        origen = "sin_origen"
+    elif proveedor_canon.es_compra_directa(proveedor):
+        origen = "directa"
+    else:
+        origen = "proveedor"
+    return {
+        "producto_id": p.get("producto_id"),
+        "producto": p.get("producto_nombre"),
+        "unidad": p.get("unidad_medida"),
+        "categoria": p.get("categoria"),
+        "proveedor": proveedor,
+        "origen": origen,
+        "entradas": entradas,
+        # Lo que entró SIN comprarse: aparte, para que una tanda preparada no se
+        # lea como mercadería que alguien facturó.
+        "traslados_recibidos": _num(p.get("traslados_recibidos")),
+        "preparaciones_producidas": _num(p.get("preparaciones_producidas")),
+        **salidas,
+        "total_salio": sum(salidas.values()),
+        "ajustes_conteo": _num(p.get("ajustes_conteo")),
+        "ajustes": _num(p.get("ajustes")),
+        "queda": _num(p.get("stock_esperado")),
+        "valor_unitario": vu,
+        "valor_origen": p.get("valor_origen"),
+        "valor_sin_causa": round(salidas["otras_salidas"] * vu, 2),
+        "valor_total_salio": round(sum(salidas.values()) * vu, 2),
+        "arranque_estimado": bool(p.get("stock_inicial_estimado")),
+        # Se exige que TAMPOCO haya preparaciones: un insumo que solo se consume
+        # preparando (la leche en polvo del granizado) vende cero y SÍ está
+        # medido — marcarlo mandaría a revisar un agujero que no existe.
+        "no_se_mide": (entradas > 0 and salidas["ventas"] == 0
+                       and salidas["preparaciones"] == 0),
+    }
+
+
 @router.get("/movimiento-insumos")
 def movimiento_insumos(
     tienda_id: int = Query(...),
@@ -817,7 +885,6 @@ def movimiento_insumos(
 
     from app.services import conciliacion as esc
     from app.services import facturas as fact_svc
-    from app.services import proveedor_canon
 
     escalera = esc.escalera_rango(db, tienda_id, desde, hasta)
 
@@ -830,58 +897,11 @@ def movimiento_insumos(
         .filter(Producto.proveedor.isnot(None)).all()
     }
 
-    def num(x) -> float:
-        return float(x or 0)
-
-    filas = []
-    for p in escalera.get("productos", []):
-        pid = p.get("producto_id")
-        salidas = {
-            "ventas": num(p.get("ventas")),
-            "mermas": num(p.get("mermas")),
-            "traslados": num(p.get("traslados")),
-            "preparaciones": num(p.get("preparaciones")),
-            "reversas_salida": num(p.get("reversas_salida")),
-            "otras_salidas": num(p.get("otras_salidas")),
-        }
-        total_salio = sum(salidas.values())
-        entradas = num(p.get("entradas"))
-        proveedor = prov_rango.get(pid) or prov_ficha.get(pid) or None
-        if proveedor is None:
-            origen = "sin_origen"
-        elif proveedor_canon.es_compra_directa(proveedor):
-            origen = "directa"
-        else:
-            origen = "proveedor"
-        vu = num(p.get("valor_unitario"))
-        filas.append({
-            "producto_id": pid,
-            "producto": p.get("producto_nombre"),
-            "unidad": p.get("unidad_medida"),
-            "categoria": p.get("categoria"),
-            "proveedor": proveedor,
-            "origen": origen,
-            "entradas": entradas,
-            # Lo que entró SIN comprarse: se muestra aparte para que una tanda
-            # preparada no se lea como mercadería que alguien facturó.
-            "traslados_recibidos": num(p.get("traslados_recibidos")),
-            "preparaciones_producidas": num(p.get("preparaciones_producidas")),
-            **salidas,
-            "total_salio": total_salio,
-            "ajustes_conteo": num(p.get("ajustes_conteo")),
-            "ajustes": num(p.get("ajustes")),
-            "queda": num(p.get("stock_esperado")),
-            "valor_unitario": vu,
-            "valor_origen": p.get("valor_origen"),
-            "valor_sin_causa": round(salidas["otras_salidas"] * vu, 2),
-            "arranque_estimado": bool(p.get("stock_inicial_estimado")),
-            # Ver el docstring. Se exige que TAMPOCO haya preparaciones: un
-            # insumo que solo se consume preparando (la leche en polvo del
-            # granizado) vende cero y SÍ está medido — marcarlo mandaría a
-            # revisar un agujero que no existe.
-            "no_se_mide": (entradas > 0 and salidas["ventas"] == 0
-                           and salidas["preparaciones"] == 0),
-        })
+    filas = [
+        _fila_insumo(p, prov_rango.get(p.get("producto_id"))
+                     or prov_ficha.get(p.get("producto_id")))
+        for p in escalera.get("productos", [])
+    ]
 
     # Más plata sin explicar primero: es el orden en el que conviene mirarlas.
     filas.sort(key=lambda f: (-f["valor_sin_causa"], -f["total_salio"]))
@@ -898,4 +918,204 @@ def movimiento_insumos(
             "n_no_se_mide": sum(1 for f in filas if f["no_se_mide"]),
             "n_compra_directa": sum(1 for f in filas if f["origen"] == "directa"),
         },
+    }
+
+# Tope de movimientos que devuelve la ficha. Un insumo de alta rotación tiene
+# cientos por mes (el café de Vida hizo ~500 en dos semanas) y traerlos todos no
+# ayuda a nadie: la ficha responde «qué pasó», no es un export contable. Cuando
+# se recorta, la respuesta lo DICE (`movimientos_truncados`) en vez de mostrar
+# una lista incompleta que parece completa.
+_MAX_MOVS_FICHA = 250
+
+
+@router.get("/insumo/{producto_id}/ficha")
+def ficha_insumo(
+    producto_id: int,
+    tienda_id: int = Query(...),
+    desde: date = Query(...),
+    hasta: date = Query(...),
+    db: Session = Depends(get_db),
+    admin: Usuario = Depends(require_admin),
+):
+    """La vida de UN insumo en un rango: qué hacía falta, qué llegó, por dónde
+    salió y qué queda — más los movimientos uno por uno.
+
+    Es el detalle detrás de una fila de `/movimiento-insumos`, y los totales son
+    LOS MISMOS (los arma `_fila_insumo`, compartida): si la ficha recalculara por
+    su cuenta, el día que se agregue un renglón la tabla y la ficha dirían cosas
+    distintas del mismo producto.
+
+    Lo que agrega sobre la fila:
+
+      · `hacia_falta` — el reemplazo honesto de la columna «pedí» que el dueño
+        pidió. No se puede comparar «lo pedido» con «lo llegado» porque el pedido
+        al proveedor sale por WhatsApp y el sistema nunca lo guarda; y lo que la
+        barista pide desde el kiosko viene en unidades de texto libre que cambian
+        semana a semana para el mismo producto (el azúcar aparece como «2 bolsa»,
+        «2 unidad» y «5000 gr»). Sumar eso da un número falso. En su lugar van
+        tres cifras que sí son ciertas: lo que salió, lo que se compró, y cuánto
+        hay que pedir hoy — este último del MOTOR de pedidos (`_items_base`), la
+        única fórmula de consumo del sistema, para no inventar una segunda.
+
+      · `pedido_escrito` — lo que la barista pidió por el kiosko, como BITÁCORA:
+        la cantidad tal cual la tecleó, con su unidad textual y su estado. Nunca
+        se suma ni se resta contra lo que llegó, por lo mismo de arriba. Y
+        «aprobada» es un sello, no un envío: aprobar no toca stock ni genera
+        pedido.
+
+      · `movimientos` — cada movimiento con su causa puesta por el MISMO
+        clasificador de la escalera (`conciliacion._bucket`), para que el detalle
+        y los totales no puedan contradecirse.
+    """
+    ensure_tienda_access(admin, tienda_id)
+    if hasta < desde:
+        raise HTTPException(400, "El rango termina antes de empezar")
+    prod = db.query(Producto).filter(Producto.id == producto_id).first()
+    if not prod:
+        raise HTTPException(404, "Producto no encontrado")
+
+    from app.services import conciliacion as esc
+    from app.services import facturas as fact_svc
+    from app.services import pedidos as ped_svc
+
+    # ── El renglón de la escalera, igual que en la tabla ────────────────────
+    escalera = esc.escalera_rango(db, tienda_id, desde, hasta)
+    crudo = next((p for p in escalera.get("productos", [])
+                  if p.get("producto_id") == producto_id), None)
+    prov_rango = fact_svc.proveedor_por_producto(db, tienda_id, desde, hasta)
+    proveedor = prov_rango.get(producto_id) or (prod.proveedor or "").strip() or None
+    if crudo is None:
+        # Un producto sin fila de inventario en esta sede no tiene escalera: se
+        # responde la ficha vacía en vez de un 404, porque la pregunta («¿qué
+        # pasó con esto acá?») tiene una respuesta legítima: nada.
+        fila = _fila_insumo({"producto_id": producto_id, "producto_nombre": prod.nombre,
+                             "unidad_medida": prod.unidad_medida}, proveedor)
+    else:
+        fila = _fila_insumo(crudo, proveedor)
+
+    # ── Hacía falta ─────────────────────────────────────────────────────────
+    sugerido = None
+    try:
+        items, _ = ped_svc._items_base(db, tienda_id)
+        sugerido = next((i for i in items if i["producto_id"] == producto_id), None)
+    except Exception:
+        logger.exception("No se pudo calcular la sugerencia de pedido del insumo %s", producto_id)
+    cpe = float(prod.contenido_por_empaque or 0) or None
+    a_pedir = float(sugerido["cantidad_sugerida"]) if sugerido else None
+    hacia_falta = {
+        # Reponer lo que salió: es el MISMO total que muestra el bloque «salió»,
+        # no un segundo número que lo contradiga.
+        "para_reponer": fila["total_salio"],
+        "se_compro": fila["entradas"],
+        "hoy_hay_que_pedir": a_pedir,
+        "empaques_sugeridos": (round(a_pedir / cpe, 1) if (a_pedir and cpe) else None),
+        "contenido_por_empaque": cpe,
+        "consumo_diario": (sugerido or {}).get("consumo_diario"),
+        "dias_restantes": (sugerido or {}).get("dias_restantes"),
+        "estado": (sugerido or {}).get("estado"),
+        "accion": (sugerido or {}).get("accion"),
+        "tandas_sugeridas": (sugerido or {}).get("tandas_sugeridas"),
+        "stock_minimo": (sugerido or {}).get("stock_minimo"),
+        "lead_time_dias": (sugerido or {}).get("lead_time_dias"),
+    }
+
+    d_utc, h_utc = inicio_dia_col_utc(desde), fin_dia_col_utc(hasta)
+
+    # ── Llegó: las facturas del rango que traen este producto ───────────────
+    fc_fecha = func.coalesce(FacturaCompra.fecha_recibido, FacturaCompra.fecha_registro)
+    facturas = [
+        {
+            "factura_id": fid,
+            "fecha": (fecha.isoformat() if fecha else None),
+            "proveedor": prov,
+            "numero_factura": nro,
+            "cantidad": float(cant or 0),
+            "precio_unitario": (float(pu) if pu is not None else None),
+            "total": round(float(cant or 0) * float(pu or 0), 2) if pu is not None else None,
+        }
+        for fid, fecha, prov, nro, cant, pu in (
+            db.query(FacturaCompra.id, fc_fecha, FacturaCompra.proveedor,
+                     FacturaCompra.numero_factura, FacturaCompraItem.cantidad,
+                     FacturaCompraItem.precio_unitario)
+            .join(FacturaCompraItem, FacturaCompraItem.factura_id == FacturaCompra.id)
+            .filter(FacturaCompraItem.producto_id == producto_id,
+                    FacturaCompra.tienda_id == tienda_id,
+                    fc_fecha >= d_utc, fc_fecha <= h_utc)
+            .order_by(fc_fecha.asc()).all()
+        )
+    ]
+    total_facturado = sum(f["cantidad"] for f in facturas)
+    llego = {
+        "facturas": facturas,
+        "con_factura": total_facturado,
+        # Entró al libro pero no hay factura que lo respalde: mercadería cargada
+        # a mano. Se muestra aparte porque es la puerta de atrás del inventario.
+        "sin_papel": round(fila["entradas"] - total_facturado, 2),
+        "vino_de_la_otra_sede": fila["traslados_recibidos"],
+        "se_produjo_aca": fila["preparaciones_producidas"],
+    }
+
+    # ── Lo que se pidió por escrito (bitácora, jamás un total) ──────────────
+    pedido_escrito = [
+        {
+            "solicitud_id": sid,
+            "fecha": (f.isoformat() if f else None),
+            "cantidad": float(cant or 0),
+            "unidad": (unidad or prod.unidad_medida),
+            "estado": getattr(estado, "value", estado),
+        }
+        for sid, f, cant, unidad, estado in (
+            db.query(SolicitudPedido.id, SolicitudPedido.fecha_solicitud,
+                     SolicitudPedidoItem.cantidad_solicitada,
+                     SolicitudPedidoItem.unidad_solicitada, SolicitudPedido.estado)
+            .join(SolicitudPedidoItem, SolicitudPedidoItem.solicitud_id == SolicitudPedido.id)
+            .filter(SolicitudPedidoItem.producto_id == producto_id,
+                    SolicitudPedido.tienda_id == tienda_id,
+                    SolicitudPedido.fecha_solicitud >= d_utc,
+                    SolicitudPedido.fecha_solicitud <= h_utc)
+            .order_by(SolicitudPedido.fecha_solicitud.asc()).all()
+        )
+    ]
+
+    # ── Los movimientos, con la causa del MISMO clasificador de la escalera ──
+    q_movs = (
+        db.query(MovimientoInventario)
+        .filter(MovimientoInventario.producto_id == producto_id,
+                MovimientoInventario.tienda_id == tienda_id,
+                MovimientoInventario.fecha >= d_utc,
+                MovimientoInventario.fecha <= h_utc)
+        .order_by(MovimientoInventario.fecha.desc())
+    )
+    total_movs = q_movs.count()
+    movimientos = [
+        {
+            "id": m.id,
+            "fecha": m.fecha.isoformat() if m.fecha else None,
+            "tipo": getattr(m.tipo, "value", m.tipo),
+            "cantidad": float(m.cantidad or 0),
+            "motivo": m.motivo,
+            "causa": esc._bucket(getattr(m.tipo, "value", m.tipo), m.motivo),
+            "barista": m.barista_nombre,
+        }
+        for m in q_movs.limit(_MAX_MOVS_FICHA).all()
+    ]
+
+    return {
+        "producto": {
+            "id": prod.id,
+            "nombre": prod.nombre,
+            "unidad": prod.unidad_medida,
+            "categoria": getattr(prod.categoria, "value", None) or str(prod.categoria or ""),
+            "contenido_por_empaque": cpe,
+            "proveedor": fila["proveedor"],
+            "origen": fila["origen"],
+        },
+        "periodo": {"desde": desde.isoformat(), "hasta": hasta.isoformat()},
+        "resumen": fila,
+        "hacia_falta": hacia_falta,
+        "llego": llego,
+        "pedido_escrito": pedido_escrito,
+        "movimientos": movimientos,
+        "movimientos_total": total_movs,
+        "movimientos_truncados": total_movs > len(movimientos),
     }

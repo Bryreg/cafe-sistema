@@ -1,0 +1,445 @@
+import { useEffect, useState } from 'react'
+import api from '../../api/client'
+import { AlertTriangle, Info, X, FileText, ArrowDown, ArrowUp, Clock } from 'lucide-react'
+
+/**
+ * La ficha de UN insumo: qué hacía falta, qué llegó, por dónde salió y qué
+ * queda, más los movimientos uno por uno.
+ *
+ * Los totales NO se calculan acá: vienen de `/inventario/insumo/{id}/ficha`, que
+ * los arma con la misma función que la tabla. Esta pantalla solo los ordena y
+ * los pone en castellano.
+ *
+ * Dos cosas que la ficha DICE en vez de dejar un número mudo, y que son la razón
+ * de que tenga tanto texto:
+ *  · No hay columna «pedí» comparable contra «llegó»: el pedido al proveedor
+ *    sale por WhatsApp y el sistema no lo guarda, y lo que la barista pide por
+ *    el kiosko viene en unidades que cambian semana a semana para el mismo
+ *    producto. En su lugar va «hacía falta», que sí es cierto. Lo pedido por
+ *    escrito se muestra como bitácora, sin sumarse jamás.
+ *  · Un 0 en «se vendió» puede significar dos cosas opuestas —no se vendió, o
+ *    nadie lo está midiendo—, así que cuando es lo segundo se dice con todas
+ *    las letras.
+ */
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Resumen {
+  producto: string; unidad: string; proveedor: string | null
+  origen: 'proveedor' | 'directa' | 'sin_origen'
+  entradas: number; traslados_recibidos: number; preparaciones_producidas: number
+  ventas: number; mermas: number; traslados: number; preparaciones: number
+  reversas_salida: number; otras_salidas: number; total_salio: number
+  ajustes_conteo: number; ajustes: number; queda: number
+  valor_unitario: number; valor_sin_causa: number; valor_total_salio: number
+  arranque_estimado: boolean; no_se_mide: boolean
+}
+interface HaciaFalta {
+  para_reponer: number; se_compro: number; hoy_hay_que_pedir: number | null
+  empaques_sugeridos: number | null; contenido_por_empaque: number | null
+  consumo_diario: number | null; estado: string | null; accion: string | null
+  tandas_sugeridas: number | null; stock_minimo: number | null
+}
+interface FacturaLinea {
+  factura_id: number; fecha: string | null; proveedor: string | null
+  numero_factura: string | null; cantidad: number
+  precio_unitario: number | null; total: number | null
+}
+interface Llego {
+  facturas: FacturaLinea[]; con_factura: number; sin_papel: number
+  vino_de_la_otra_sede: number; se_produjo_aca: number
+}
+interface PedidoEscrito {
+  solicitud_id: number; fecha: string | null; cantidad: number
+  unidad: string; estado: string
+}
+interface Movimiento {
+  id: number; fecha: string | null; tipo: string; cantidad: number
+  motivo: string | null; causa: string; barista: string | null
+}
+interface Ficha {
+  producto: { id: number; nombre: string; unidad: string; proveedor: string | null; origen: string; contenido_por_empaque: number | null }
+  periodo: { desde: string; hasta: string }
+  resumen: Resumen
+  hacia_falta: HaciaFalta
+  llego: Llego
+  pedido_escrito: PedidoEscrito[]
+  movimientos: Movimiento[]
+  movimientos_total: number
+  movimientos_truncados: boolean
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const fmt$ = (v: number) => `$${Math.round(v || 0).toLocaleString('es-CO')}`
+const fmtC = (v: number) => {
+  const n = Number(v || 0)
+  const abs = Math.abs(n)
+  return abs < 10 && !Number.isInteger(n)
+    ? n.toLocaleString('es-CO', { maximumFractionDigits: 2 })
+    : Math.round(n).toLocaleString('es-CO')
+}
+const fmtFecha = (s: string | null) => {
+  if (!s) return '—'
+  const [a, m, d] = s.slice(0, 10).split('-')
+  const MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+  return `${d} ${MES[Number(m) - 1] ?? m}${a ? '' : ''}`
+}
+
+/** Los renglones de «salió», en el idioma del dueño. «Sin causa» va primero
+ *  porque es lo único que merece investigarse; el resto solo si es distinto de
+ *  cero (una lista de ceros compite con lo que sí pasó). */
+const RENGLONES: { k: keyof Resumen; label: string; siempre?: boolean; alerta?: boolean }[] = [
+  { k: 'otras_salidas',   label: 'Salió sin causa registrada', alerta: true },
+  { k: 'ventas',          label: 'Se vendió', siempre: true },
+  { k: 'preparaciones',   label: 'Se usó para preparar' },
+  { k: 'mermas',          label: 'Se lo tomó el personal o se dañó' },
+  { k: 'traslados',       label: 'Se mandó a la otra sede' },
+  { k: 'reversas_salida', label: 'Correcciones de papeles (no salió mercadería)' },
+]
+
+const CAUSA_LABEL: Record<string, string> = {
+  ventas: 'Venta', mermas: 'Merma o consumo', traslados: 'Traslado',
+  preparaciones: 'Preparación', otras_salidas: 'Sin causa',
+  reversas_salida: 'Corrección', entradas: 'Compra',
+  traslados_recibidos: 'Recibo de traslado', preparaciones_producidas: 'Se produjo',
+  ajustes_conteo: 'Ajuste de conteo', ajustes: 'Ajuste manual',
+  reversas: 'Reversa', unificaciones: 'Unificación',
+}
+
+function Bloque({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-white border border-warm-200 rounded-2xl px-4 py-3.5 flex flex-col gap-2.5">
+      <span className="text-[10.5px] font-bold uppercase tracking-wider text-warm-500">{titulo}</span>
+      {children}
+    </div>
+  )
+}
+
+// ─── Componente ───────────────────────────────────────────────────────────────
+
+export default function FichaInsumo({ productoId, tiendaId, desde, hasta, onClose }: {
+  productoId: number; tiendaId: number; desde: string; hasta: string; onClose: () => void
+}) {
+  const [d, setD] = useState<Ficha | null>(null)
+  const [cargando, setCargando] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancel = false
+    setCargando(true); setError('')
+    api.get<Ficha>(`/inventario/insumo/${productoId}/ficha`, { params: { tienda_id: tiendaId, desde, hasta } })
+      .then(r => { if (!cancel) setD(r.data) })
+      .catch(() => { if (!cancel) setError('No se pudo cargar la ficha de este insumo.') })
+      .finally(() => { if (!cancel) setCargando(false) })
+    return () => { cancel = true }
+  }, [productoId, tiendaId, desde, hasta])
+
+  // Escape cierra: el panel tapa la tabla y quedarse encerrado es peor en tablet.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [onClose])
+
+  const r = d?.resumen
+  const u = d?.producto.unidad ?? ''
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/25 px-2 py-4 sm:px-4 sm:py-8"
+         onClick={onClose}>
+      <div className="w-full max-w-[880px] flex flex-col gap-3" onClick={e => e.stopPropagation()}>
+
+        {/* ── Cabecera ── */}
+        <div className="bg-white border border-warm-200 rounded-2xl px-4 py-3 flex items-start justify-between gap-3 sticky top-0 z-10">
+          <div className="flex flex-col gap-1 min-w-0">
+            <span className="text-[16px] font-bold text-warm-700 truncate">{d?.producto.nombre ?? 'Cargando…'}</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              {d && (
+                <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-full ${
+                  d.producto.origen === 'directa' ? 'bg-gold-50 text-gold-700'
+                  : d.producto.origen === 'proveedor' ? 'bg-forest-50 text-forest-700'
+                  : 'bg-warm-100 text-warm-500'}`}>
+                  {d.producto.origen === 'directa' ? 'comprás vos' : d.producto.origen === 'proveedor' ? 'proveedor' : 'sin origen'}
+                </span>
+              )}
+              {d?.producto.proveedor && <span className="text-[11.5px] text-warm-500">{d.producto.proveedor}</span>}
+              {d && <span className="text-[11.5px] text-warm-400">· se mide en {u}</span>}
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Cerrar"
+            className="shrink-0 w-9 h-9 rounded-full bg-warm-50 border border-warm-200 flex items-center justify-center text-warm-500 hover:bg-warm-100 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        {cargando && <div className="bg-white border border-warm-200 rounded-2xl py-14 text-center text-sm text-warm-400">Cargando…</div>}
+        {!cargando && error && <div className="bg-white border border-warm-200 rounded-2xl py-14 text-center text-sm text-danger-700">{error}</div>}
+
+        {d && r && !cargando && !error && (
+          <>
+            {/* ── 1 · El titular ── */}
+            <div className="bg-white border border-warm-200 rounded-2xl px-5 py-4 flex flex-col gap-2">
+              <p className="text-[20px] sm:text-[23px] font-extrabold text-warm-700 leading-snug">
+                Salieron <span className="font-mono text-danger-700">{fmtC(r.total_salio)} {u}</span>,
+                {' '}entraron <span className="font-mono text-forest-700">{fmtC(r.entradas)} {u}</span>
+                {' '}y quedan <span className="font-mono">{fmtC(r.queda)} {u}</span>
+              </p>
+              {r.valor_total_salio > 0 && (
+                <span className="text-[12.5px] text-warm-500">
+                  Eso son <b className="font-mono text-warm-700">{fmt$(r.valor_total_salio)}</b> que salieron del estante
+                </span>
+              )}
+              {r.otras_salidas > 0 && (
+                <div className="flex items-center gap-2 bg-danger-50 border border-danger-100 rounded-xl px-3 py-2.5">
+                  <AlertTriangle size={16} className="text-danger shrink-0" />
+                  <span className="text-[13px] font-bold text-danger-700">
+                    Hay <span className="font-mono">{fmtC(r.otras_salidas)} {u}</span> que salieron sin que nadie anotara por qué
+                    {r.valor_sin_causa > 0 && <> — <span className="font-mono">{fmt$(r.valor_sin_causa)}</span></>}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* ── 2 · Carteles de honestidad ── */}
+            {r.no_se_mide && (
+              <div className="bg-gold-50 border border-gold-200 rounded-2xl px-4 py-3 flex items-start gap-2.5">
+                <AlertTriangle size={18} className="text-gold-700 shrink-0 mt-px" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[13.5px] font-extrabold text-gold-700">Este insumo no se descuenta cuando se vende</span>
+                  <span className="text-[12.5px] text-gold-700 leading-relaxed">
+                    La caja no lo resta. El <b>0</b> de «se vendió» no significa que no se usó — significa que nadie lo está midiendo.
+                  </span>
+                </div>
+              </div>
+            )}
+            {r.arranque_estimado && (
+              <div className="bg-warm-100 border border-warm-200 rounded-2xl px-4 py-2.5 flex items-start gap-2.5">
+                <Info size={15} className="text-warm-500 shrink-0 mt-px" />
+                <span className="text-[12.5px] text-warm-600">
+                  El arranque del período es un cálculo, no un dato: nadie registró cuánto había antes.
+                </span>
+              </div>
+            )}
+
+            {/* ── 3 · Hacía falta ── */}
+            <Bloque titulo="Hacía falta">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="bg-warm-50 rounded-xl px-3 py-2.5 flex flex-col gap-0.5">
+                  <span className="text-[11.5px] text-warm-500 leading-tight">Para reponer lo que salió</span>
+                  <span className="font-mono text-[18px] font-bold text-warm-700">{fmtC(r.total_salio)} {u}</span>
+                </div>
+                <div className="bg-gold-50 rounded-xl px-3 py-2.5 flex flex-col gap-0.5">
+                  <span className="text-[11.5px] text-gold-700 leading-tight">Hoy hay que pedir</span>
+                  <span className="font-mono text-[18px] font-bold text-gold-700">
+                    {d.hacia_falta.hoy_hay_que_pedir == null ? '—' : `${fmtC(d.hacia_falta.hoy_hay_que_pedir)} ${u}`}
+                  </span>
+                  {d.hacia_falta.empaques_sugeridos != null && (
+                    <span className="text-[11px] text-gold-600">≈ {fmtC(d.hacia_falta.empaques_sugeridos)} empaques</span>
+                  )}
+                  {d.hacia_falta.accion === 'preparar' && d.hacia_falta.tandas_sugeridas != null && (
+                    <span className="text-[11px] text-gold-600">no se compra: son {d.hacia_falta.tandas_sugeridas} tandas</span>
+                  )}
+                </div>
+                <div className="bg-forest-50 rounded-xl px-3 py-2.5 flex flex-col gap-0.5">
+                  <span className="text-[11.5px] text-forest-700 leading-tight">Se compró</span>
+                  <span className="font-mono text-[18px] font-bold text-forest-700">{fmtC(r.entradas)} {u}</span>
+                </div>
+              </div>
+              {r.entradas < r.total_salio && (
+                <span className="text-[12.5px] font-semibold text-danger-700">
+                  Se compró menos de lo que salió: el estante se está vaciando.
+                </span>
+              )}
+            </Bloque>
+
+            {/* ── 4 · Lo que se pidió por escrito ── */}
+            <Bloque titulo="Lo que se pidió por escrito">
+              {d.pedido_escrito.length === 0 ? (
+                <span className="text-[12.5px] text-warm-500 leading-relaxed">
+                  Este insumo no se pidió por el kiosko en este período. El pedido al proveedor se manda por
+                  WhatsApp y hoy el sistema no lo guarda.
+                </span>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-1.5">
+                    {d.pedido_escrito.map(p => (
+                      <div key={p.solicitud_id} className="flex items-center justify-between gap-3 bg-warm-50 rounded-lg px-3 py-2">
+                        <span className="text-[13px] text-warm-700">
+                          <b className="font-mono">{fmtFecha(p.fecha)}</b> · {fmtC(p.cantidad)} {p.unidad}
+                        </span>
+                        <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                          p.estado === 'rechazada' ? 'bg-danger-50 text-danger-700'
+                          : p.estado === 'aprobada' ? 'bg-forest-50 text-forest-700'
+                          : 'bg-gold-50 text-gold-700'}`}>{p.estado}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <span className="text-[11.5px] text-warm-400 leading-relaxed">
+                    Se muestra tal cual lo tecleó la barista, sin sumarse: el mismo insumo se pide en unidades
+                    distintas según el día. Y «aprobada» quiere decir que lo viste, no que se mandó.
+                  </span>
+                </>
+              )}
+            </Bloque>
+
+            {/* ── 5 · Llegó ── */}
+            <Bloque titulo="Llegó">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[13.5px] font-semibold text-warm-700">
+                  Con factura
+                  {d.llego.facturas.length > 0 && (
+                    <span className="font-normal text-warm-500"> · {d.llego.facturas.length} factura{d.llego.facturas.length > 1 ? 's' : ''}</span>
+                  )}
+                </span>
+                <span className="font-mono text-[15px] font-bold text-forest-700">{fmtC(d.llego.con_factura)} {u}</span>
+              </div>
+              {d.llego.facturas.length > 0 && (
+                <div className="flex flex-col gap-1 pl-3 border-l-2 border-warm-100">
+                  {d.llego.facturas.map(f => (
+                    <div key={f.factura_id} className="flex items-center justify-between gap-3 text-[11.5px] text-warm-500">
+                      <span className="truncate">
+                        {fmtFecha(f.fecha)} · {f.proveedor}{f.numero_factura ? ` · N° ${f.numero_factura}` : ' · sin N°'}
+                      </span>
+                      <span className="font-mono shrink-0">
+                        {fmtC(f.cantidad)} {u}{f.total != null && ` · ${fmt$(f.total)}`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {Math.abs(d.llego.sin_papel) > 0.01 && (
+                <div className="flex items-center justify-between gap-3 pt-2 border-t border-warm-100">
+                  <span className="text-[13px] font-semibold text-gold-700">Cargado a mano, sin papel</span>
+                  <span className="font-mono text-[14px] font-bold text-gold-700">{fmtC(d.llego.sin_papel)} {u}</span>
+                </div>
+              )}
+              {(d.llego.vino_de_la_otra_sede > 0 || d.llego.se_produjo_aca > 0) && (
+                <div className="bg-warm-50 rounded-xl px-3 py-2.5 flex flex-col gap-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-warm-400">No se compró</span>
+                  {d.llego.vino_de_la_otra_sede > 0 && (
+                    <div className="flex justify-between text-[12.5px] text-warm-600">
+                      <span>Vino de la otra sede</span><span className="font-mono font-bold">{fmtC(d.llego.vino_de_la_otra_sede)} {u}</span>
+                    </div>
+                  )}
+                  {d.llego.se_produjo_aca > 0 && (
+                    <div className="flex justify-between text-[12.5px] text-warm-600">
+                      <span>Se produjo acá</span><span className="font-mono font-bold">{fmtC(d.llego.se_produjo_aca)} {u}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Bloque>
+
+            {/* ── 6 · Salió ── */}
+            <Bloque titulo="Salió · por qué">
+              <div className="flex flex-col">
+                {RENGLONES.filter(x => x.siempre || Number(r[x.k]) !== 0).map(x => {
+                  const v = Number(r[x.k] ?? 0)
+                  return (
+                    <div key={x.k}
+                      className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl ${
+                        x.alerta ? 'bg-danger-50 border border-danger-100 mb-1.5' : 'border-b border-warm-100'}`}>
+                      <span className={`text-[13.5px] font-semibold flex items-center gap-2 ${x.alerta ? 'text-danger-700' : 'text-warm-700'}`}>
+                        {x.alerta && <AlertTriangle size={14} className="shrink-0" />}
+                        {x.label}
+                      </span>
+                      <span className="text-right shrink-0">
+                        <span className={`font-mono text-[15px] font-bold ${x.alerta ? 'text-danger-700' : 'text-warm-700'}`}>
+                          {fmtC(v)} {u}
+                        </span>
+                        {x.alerta && r.valor_sin_causa > 0 && (
+                          <><br /><span className="font-mono text-[11px] text-danger-500">{fmt$(r.valor_sin_causa)}</span></>
+                        )}
+                      </span>
+                    </div>
+                  )
+                })}
+                <div className="flex items-center justify-between gap-3 px-3 pt-3 mt-1 border-t-2 border-warm-200">
+                  <span className="text-[14px] font-extrabold text-warm-700">TOTAL QUE SALIÓ</span>
+                  <span className="text-right">
+                    <span className="font-mono text-[17px] font-extrabold text-warm-700">{fmtC(r.total_salio)} {u}</span>
+                    {r.valor_total_salio > 0 && (
+                      <><br /><span className="font-mono text-[11.5px] text-warm-500">{fmt$(r.valor_total_salio)}</span></>
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              {(r.ajustes_conteo !== 0 || r.ajustes !== 0) && (
+                <div className="bg-warm-100 rounded-xl px-3 py-2.5 flex flex-col gap-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[12.5px] font-bold text-warm-600">APARTE · Ajustes de conteo</span>
+                    <span className="font-mono text-[14px] font-bold text-warm-600">{fmtC(r.ajustes_conteo + r.ajustes)} {u}</span>
+                  </div>
+                  <span className="text-[11.5px] text-warm-500 leading-relaxed">
+                    Esto no salió ahora: es faltante viejo que apareció al contar y recién se anotó en el sistema.
+                  </span>
+                </div>
+              )}
+            </Bloque>
+
+            {/* ── 7 · Queda ── */}
+            <div className="bg-white border border-warm-200 rounded-2xl px-4 py-3.5 flex items-center justify-between gap-4">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10.5px] font-bold uppercase tracking-wider text-warm-500">Queda</span>
+                <span className="text-[11.5px] text-warm-500">Lo que dice el sistema, no lo que hay en el estante.</span>
+              </div>
+              <div className="text-right shrink-0">
+                <span className="font-mono text-[24px] font-extrabold text-warm-700">{fmtC(r.queda)} {u}</span>
+                {d.hacia_falta.stock_minimo ? (
+                  <><br /><span className="text-[11.5px] text-warm-500">mínimo <b className="font-mono">{fmtC(d.hacia_falta.stock_minimo)}</b></span></>
+                ) : null}
+              </div>
+            </div>
+
+            {/* ── 8 · Movimientos ── */}
+            <Bloque titulo={`Movimiento por movimiento · ${d.movimientos_total}`}>
+              {d.movimientos.length === 0 ? (
+                <span className="text-[12.5px] text-warm-400">Sin movimientos en el período.</span>
+              ) : (
+                <>
+                  <div className="flex flex-col max-h-[340px] overflow-y-auto">
+                    {d.movimientos.map(m => {
+                      const entra = m.tipo === 'entrada'
+                      const ajuste = m.tipo === 'ajuste'
+                      const sinCausa = m.causa === 'otras_salidas'
+                      return (
+                        <div key={m.id} className="flex items-center gap-2.5 py-2 border-b border-warm-100 last:border-0">
+                          {ajuste ? <Clock size={13} className="text-warm-400 shrink-0" />
+                            : entra ? <ArrowDown size={13} className="text-forest shrink-0" />
+                            : <ArrowUp size={13} className={`shrink-0 ${sinCausa ? 'text-danger' : 'text-warm-400'}`} />}
+                          <span className="font-mono text-[11.5px] text-warm-500 shrink-0 w-[52px]">{fmtFecha(m.fecha)}</span>
+                          <div className="flex-1 min-w-0">
+                            <span className={`text-[12.5px] font-semibold ${sinCausa ? 'text-danger-700' : 'text-warm-700'}`}>
+                              {CAUSA_LABEL[m.causa] ?? m.causa}
+                            </span>
+                            {m.motivo && <span className="text-[11.5px] text-warm-400 truncate"> · {m.motivo}</span>}
+                            {m.barista && <span className="text-[11px] text-warm-400"> · {m.barista}</span>}
+                          </div>
+                          <span className={`font-mono text-[12.5px] font-bold shrink-0 ${
+                            ajuste ? 'text-warm-500' : entra ? 'text-forest-700' : sinCausa ? 'text-danger-700' : 'text-warm-700'}`}>
+                            {ajuste ? '=' : entra ? '+' : '−'}{fmtC(m.cantidad)}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {d.movimientos_truncados && (
+                    <span className="text-[11.5px] text-warm-400">
+                      Se muestran los {d.movimientos.length} más recientes de {d.movimientos_total}.
+                    </span>
+                  )}
+                  <span className="text-[11.5px] text-warm-400 leading-relaxed flex items-start gap-1.5">
+                    <FileText size={12} className="shrink-0 mt-0.5" />
+                    Un <b>ajuste</b> no suma ni resta: fija el saldo en lo que se contó.
+                  </span>
+                </>
+              )}
+            </Bloque>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}

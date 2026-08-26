@@ -11,6 +11,7 @@ from app.models.models import (FacturaCompra, FacturaCompraItem, TipoPagoEnum,
 from app.services import inventario as inv_svc
 from app.services import audit
 from app.services import producto_alias as alias_svc
+from app.services import proveedor_canon
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,14 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
         raise HTTPException(400, "tipo_pago inválido: contado | credito | transferencia")
     if not data.items:
         raise HTTPException(400, "Debes agregar al menos un producto")
+
+    # UN PROVEEDOR, UN NOMBRE. El nombre viene del tecleo o de la foto, y cada
+    # grafía nueva nacía un proveedor nuevo (41 nombres para 23 negocios en
+    # producción). Se resuelve ACÁ, en la única puerta por la que entra una
+    # compra, y se pisa `data.proveedor` a propósito: el nombre viaja después al
+    # motivo del movimiento, al lote, al egreso de caja y al producto, y los
+    # cinco tienen que decir lo mismo.
+    data.proveedor = proveedor_canon.canonizar(db, data.proveedor)
 
     # Contado/transferencia se paga al recibir; crédito queda pendiente (valor_pagado=0).
     pagado_inicial = data.valor_total if data.tipo_pago in ("contado", "transferencia") else 0

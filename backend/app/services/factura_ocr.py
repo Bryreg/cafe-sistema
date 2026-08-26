@@ -179,6 +179,13 @@ Reglas:
   unidades individuales — eso lo hace el sistema después con el catálogo real.
 - "tipo_pago": "contado" si dice contado/efectivo, "credito" si dice crédito,
   "transferencia" si dice transferencia/consignación/bancos; null si no se indica.
+- "proveedor": si te pasan una lista de PROVEEDORES CONOCIDOS y el de la factura
+  es UNO DE ELLOS escrito distinto (otra grafía, con o sin S.A.S., con la razón
+  social larga, o el nombre del vendedor junto al del negocio), devolvé EXACTAMENTE
+  el nombre de la lista, tal cual está escrito ahí. Ejemplos del mismo negocio:
+  "SUPERMERCADOS GALERIAS PLAZA S.A.S" y "Galerías"; "JUAN CARLOS PARRA/CALIPULPAS"
+  y "Calipulpas"; "Café Expreso Coop" y "Cafexcoop". Si NO es ninguno de la lista,
+  escribí el nombre como aparece en la factura — no lo fuerces contra la lista.
 - Para cada item: si corresponde claramente a un producto del CATÁLOGO que te
   pasan, poné su id en "producto_id". Si hay duda razonable, null — no fuerces
   coincidencias.
@@ -273,9 +280,18 @@ def _catalogo_txt(productos: list) -> str:
     return "\n".join(lineas)
 
 
-def _user_text(catalogo: str, fecha_hoy: date) -> str:
+def _user_text(catalogo: str, fecha_hoy: date, proveedores: list | None = None) -> str:
+    # La lista de proveedores conocidos va en el mensaje del usuario (no en el
+    # system) porque cambia con cada café y con cada factura nueva: es DATO, no
+    # instrucción. Sirve para que el mismo negocio no nazca con una grafía nueva
+    # cada vez que alguien escanea (ver services/proveedor_canon.py).
+    prov = ""
+    if proveedores:
+        prov = ("PROVEEDORES CONOCIDOS (si es uno de estos, devolvé el nombre TAL CUAL):\n"
+                + "\n".join(f"- {p}" for p in proveedores[:60]) + "\n\n")
     return (
         f"Fecha de hoy (para inferir años faltantes): {fecha_hoy.isoformat()}\n\n"
+        f"{prov}"
         "CATÁLOGO de productos del inventario (id | nombre | unidad):\n"
         f"{catalogo}\n\n"
         "Extraé los datos de esta factura de compra."
@@ -357,7 +373,8 @@ def _error_presupuesto_agotado(presupuesto: _Presupuesto,
     return HTTPException(503, f"{_MSG_INTENTOS_AGOTADOS}{detalle}")
 
 
-def _extraer(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
+def _extraer(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
+             proveedores_conocidos: list | None = None) -> dict:
     """Dispatcher de proveedor: intenta TODOS los que tengan key configurada,
     en orden de preferencia Gemini → Groq → Claude.
 
@@ -401,7 +418,7 @@ def _extraer(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date) -> dict:
             logger.warning("Presupuesto del escaneo agotado — no se intenta %s", nombre)
             break
         try:
-            return fn(imagen_jpeg, catalogo, fecha_hoy, presupuesto)
+            return fn(imagen_jpeg, catalogo, fecha_hoy, presupuesto, proveedores_conocidos)
         except HTTPException as e:
             if e.status_code == 422:
                 raise
@@ -510,7 +527,8 @@ def _json_de_texto(texto: str) -> dict:
 
 
 def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
-                      presupuesto: "_Presupuesto | None" = None) -> dict:
+                      presupuesto: "_Presupuesto | None" = None,
+                      proveedores_conocidos: list | None = None) -> dict:
     import httpx
 
     presupuesto = presupuesto or _Presupuesto()
@@ -518,7 +536,7 @@ def _extraer_con_groq(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
     b64 = base64.standard_b64encode(jpeg).decode("utf-8")
     # Los modelos de visión de Llama tuvieron el bug de rechazar un mensaje
     # `system` cuando venía una imagen: mandamos TODO en un solo turno de usuario.
-    prompt = f"{_SYSTEM}\n\n{_user_text(catalogo, fecha_hoy)}\n\n{_ESQUEMA_TXT}"
+    prompt = f"{_SYSTEM}\n\n{_user_text(catalogo, fecha_hoy, proveedores_conocidos)}\n\n{_ESQUEMA_TXT}"
     ultimo_error = ""
     for modelo in _modelos_groq():
         if presupuesto.agotado():
@@ -641,7 +659,8 @@ def _modelos_gemini() -> list[str]:
 
 
 def _extraer_con_gemini(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
-                        presupuesto: "_Presupuesto | None" = None) -> dict:
+                        presupuesto: "_Presupuesto | None" = None,
+                        proveedores_conocidos: list | None = None) -> dict:
     import httpx
 
     presupuesto = presupuesto or _Presupuesto()
@@ -654,7 +673,7 @@ def _extraer_con_gemini(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
                     "mime_type": "image/jpeg",
                     "data": base64.standard_b64encode(imagen_jpeg).decode("utf-8"),
                 }},
-                {"text": _user_text(catalogo, fecha_hoy)},
+                {"text": _user_text(catalogo, fecha_hoy, proveedores_conocidos)},
             ],
         }],
         "generationConfig": {
@@ -721,7 +740,8 @@ def _extraer_con_gemini(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
 
 
 def _extraer_con_claude(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
-                        presupuesto: "_Presupuesto | None" = None) -> dict:
+                        presupuesto: "_Presupuesto | None" = None,
+                        proveedores_conocidos: list | None = None) -> dict:
     import anthropic
 
     presupuesto = presupuesto or _Presupuesto()
@@ -735,7 +755,7 @@ def _extraer_con_claude(imagen_jpeg: bytes, catalogo: str, fecha_hoy: date,
         max_retries=0,
     )
     b64 = base64.standard_b64encode(imagen_jpeg).decode("utf-8")
-    user_text = _user_text(catalogo, fecha_hoy)
+    user_text = _user_text(catalogo, fecha_hoy, proveedores_conocidos)
     try:
         resp = client.messages.create(
             model=settings.OCR_MODEL,
@@ -1065,9 +1085,20 @@ def analizar_factura_foto(db, tienda_id: int, imagen_bytes: bytes, usuario_id: i
         )
         for p in db.query(Producto).order_by(Producto.nombre).all()
     ]
+    # Los proveedores que YA existen: se le pasan al modelo para que el mismo
+    # negocio no vuelva a nacer con otra grafía (ver proveedor_canon). Se leen
+    # ACÁ, junto al catálogo y antes de soltar la conexión. Si falla, el escaneo
+    # sigue: el canon determinístico del guardado es la red de abajo.
+    try:
+        from app.services.proveedor_canon import conocidos as _prov_conocidos
+        proveedores_conocidos = _prov_conocidos(db)
+    except Exception:
+        logger.exception("No se pudo cargar la lista de proveedores conocidos")
+        proveedores_conocidos = []
     db.rollback()
 
-    extraccion = _extraer(jpeg, _catalogo_txt(productos), hoy_col())
+    extraccion = _extraer(jpeg, _catalogo_txt(productos), hoy_col(),
+                          proveedores_conocidos)
 
     if extraccion.get("error"):
         raise HTTPException(422, f"No se pudo leer la factura: {extraccion['error']}")
@@ -1093,8 +1124,18 @@ def analizar_factura_foto(db, tienda_id: int, imagen_bytes: bytes, usuario_id: i
         logger.exception("No se pudo cargar la referencia de precios para autocorrección")
         referencias = {}
 
+    # Segunda red: aunque el modelo haya inventado una grafía, el nombre que
+    # llega al formulario es el que ya existe en la casa.
+    proveedor_leido = (extraccion.get("proveedor") or "").strip() or None
+    if proveedor_leido:
+        try:
+            from app.services.proveedor_canon import canonizar as _canon_prov
+            proveedor_leido = _canon_prov(db, proveedor_leido)
+        except Exception:
+            logger.exception("No se pudo canonizar el proveedor leído")
+
     return {
-        "proveedor": (extraccion.get("proveedor") or "").strip() or None,
+        "proveedor": proveedor_leido,
         "numero_factura": (extraccion.get("numero_factura") or "").strip() or None,
         "fecha_factura": _fecha_iso(extraccion.get("fecha_factura")),
         "valor_total": valor_total,

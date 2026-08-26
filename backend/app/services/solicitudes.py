@@ -1,12 +1,29 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
+from sqlalchemy import func
 from app.models.models import (SolicitudPedido, SolicitudPedidoItem,
-                                SolicitudSencilla, EstadoSolicitudEnum)
+                                SolicitudSencilla, EstadoSolicitudEnum,
+                                ORIGEN_ADMIN, ORIGEN_KIOSKO)
 from app.services import notificaciones
 from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _solo_kiosko(q):
+    """Estas pantallas son la BANDEJA DE LAS BARISTAS: lo que alguien en el local
+    pidió y el dueño tiene que mirar. Desde que el dueño también deja escrito su
+    propio pedido (`services/pedidos.registrar_pedido`) las dos cosas conviven en
+    la misma tabla, y sin este filtro cada pedido a un proveedor aparecería acá
+    como si una barista lo hubiera pedido.
+
+    `coalesce` y no `!= ORIGEN_ADMIN` a secas: las filas anteriores a la columna
+    tienen `origen` NULL y en SQL `NULL != 'admin'` no es verdadero, es NULL — o
+    sea FALSO para el WHERE. Sin el coalesce, este filtro haría desaparecer toda
+    la historia de solicitudes en vez de filtrar una sola clase.
+    """
+    return q.filter(func.coalesce(SolicitudPedido.origen, ORIGEN_KIOSKO) != ORIGEN_ADMIN)
 
 
 def crear_pedido(db: Session, tienda_id: int, nota: str | None,
@@ -21,6 +38,7 @@ def crear_pedido(db: Session, tienda_id: int, nota: str | None,
         tienda_id=tienda_id,
         nota=nota,
         usuario_id=usuario_id,
+        origen=ORIGEN_KIOSKO,
     )
     db.add(solicitud)
     db.flush()
@@ -103,9 +121,9 @@ def _marcar_accion(db: Session, solicitudes: list) -> list:
 
 
 def get_pedidos_tienda(db: Session, tienda_id: int):
-    return _marcar_accion(db, db.query(SolicitudPedido).filter(
+    return _marcar_accion(db, _solo_kiosko(db.query(SolicitudPedido).filter(
         SolicitudPedido.tienda_id == tienda_id
-    ).order_by(SolicitudPedido.fecha_solicitud.desc()).all())
+    )).order_by(SolicitudPedido.fecha_solicitud.desc()).all())
 
 
 def crear_sencilla(db: Session, tienda_id: int, monto_solicitado: float,
@@ -174,7 +192,8 @@ def get_sencillas_tienda(db: Session, tienda_id: int):
 
 
 def get_pedidos_todas(db: Session):
-    rows = db.query(SolicitudPedido).order_by(SolicitudPedido.fecha_solicitud.desc()).limit(100).all()
+    rows = _solo_kiosko(db.query(SolicitudPedido)).order_by(
+        SolicitudPedido.fecha_solicitud.desc()).limit(100).all()
     for r in rows:
         r.tienda_nombre = r.tienda.nombre if r.tienda else None
     return _marcar_accion(db, rows)
@@ -188,10 +207,10 @@ def get_sencillas_todas(db: Session):
 
 
 def get_bandeja_pendientes(db: Session, tienda_id: int):
-    pedidos = db.query(SolicitudPedido).filter(
+    pedidos = _solo_kiosko(db.query(SolicitudPedido).filter(
         SolicitudPedido.tienda_id == tienda_id,
         SolicitudPedido.estado == EstadoSolicitudEnum.pendiente
-    ).all()
+    )).all()
     sencillas = db.query(SolicitudSencilla).filter(
         SolicitudSencilla.tienda_id == tienda_id,
         SolicitudSencilla.estado == EstadoSolicitudEnum.pendiente

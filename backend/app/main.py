@@ -218,6 +218,15 @@ with engine.connect() as _conn:
         "ALTER TABLE mermas ADD COLUMN quien VARCHAR(100)",
         # Pedido: unidad elegida por la barista (gr/unidad/lt/paquete), aparte de la del producto.
         "ALTER TABLE solicitudes_pedido_items ADD COLUMN unidad_solicitada VARCHAR(20)",
+        # El pedido que el dueño ARMA y MANDA queda escrito, igual que la solicitud
+        # de la barista, pero son cosas distintas y `origen` es lo que las separa
+        # (ver el docstring de SolicitudPedido). El backfill es obligatorio: sin él,
+        # las filas viejas quedan con origen NULL y todo filtro por `!= 'admin'`
+        # las descarta en silencio —en SQL, NULL != 'admin' no es verdadero— y la
+        # bandeja de solicitudes de las baristas se vaciaría sola.
+        "ALTER TABLE solicitudes_pedido ADD COLUMN origen VARCHAR(20)",
+        "ALTER TABLE solicitudes_pedido ADD COLUMN proveedor VARCHAR(150)",
+        "UPDATE solicitudes_pedido SET origen = 'kiosko' WHERE origen IS NULL",
         # Huella del atajo "Todo coincide con sistema": distingue conteo fisico real de un eco.
         "ALTER TABLE conteos_fisicos ADD COLUMN es_atajo BOOLEAN DEFAULT FALSE",
         # Vínculo estructural egreso↔factura de proveedor (antes solo texto del concepto,

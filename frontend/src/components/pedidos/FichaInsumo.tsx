@@ -10,13 +10,16 @@ import { AlertTriangle, Info, X, FileText, ArrowDown, ArrowUp, Clock } from 'luc
  * los arma con la misma función que la tabla. Esta pantalla solo los ordena y
  * los pone en castellano.
  *
- * Dos cosas que la ficha DICE en vez de dejar un número mudo, y que son la razón
- * de que tenga tanto texto:
- *  · No hay columna «pedí» comparable contra «llegó»: el pedido al proveedor
- *    sale por WhatsApp y el sistema no lo guarda, y lo que la barista pide por
- *    el kiosko viene en unidades que cambian semana a semana para el mismo
- *    producto. En su lugar va «hacía falta», que sí es cierto. Lo pedido por
- *    escrito se muestra como bitácora, sin sumarse jamás.
+ * Tres cosas que la ficha DICE en vez de dejar un número mudo, y que son la
+ * razón de que tenga tanto texto:
+ *  · «Pedí vs. llegó» solo cuenta lo que el DUEÑO pidió por escrito y en la
+ *    unidad del insumo. Lo que la barista pide por el kiosko va aparte, en la
+ *    bitácora: viene en unidades que cambian semana a semana para el mismo
+ *    producto (el azúcar aparece como «2 bolsa», «2 unidad» y «5000 gr»), y
+ *    sumarlo daría un número falso con toda la pinta de ser cierto.
+ *  · «Hacía falta» convive con «pedí» y no lo reemplaza. Uno es el cálculo del
+ *    sistema y el otro la decisión del dueño; la diferencia entre los dos es su
+ *    criterio de compra, y aplanarla en una sola cifra lo escondería.
  *  · Un 0 en «se vendió» puede significar dos cosas opuestas —no se vendió, o
  *    nadie lo está midiendo—, así que cuando es lo segundo se dice con todas
  *    las letras.
@@ -52,6 +55,16 @@ interface Llego {
 interface PedidoEscrito {
   solicitud_id: number; fecha: string | null; cantidad: number
   unidad: string; estado: string
+  origen: 'kiosko' | 'admin'
+  proveedor: string | null
+}
+interface PediLlego {
+  pedi: number; n_pedidos: number; proveedores: string[]
+  en_otra_unidad: Record<string, number>
+  llego_con_factura: number
+  /** Positivo = trajeron de menos. Contra lo que entró CON FACTURA: la
+   *  mercadería cargada a mano no respalda ningún pedido. */
+  diferencia: number
 }
 interface Movimiento {
   id: number; fecha: string | null; tipo: string; cantidad: number
@@ -62,6 +75,7 @@ interface Ficha {
   periodo: { desde: string; hasta: string }
   resumen: Resumen
   hacia_falta: HaciaFalta
+  pedi_llego: PediLlego
   llego: Llego
   pedido_escrito: PedidoEscrito[]
   movimientos: Movimiento[]
@@ -152,6 +166,7 @@ export default function FichaInsumo({ productoId, tiendaId, desde, hasta, onClos
   }, [onClose])
 
   const r = d?.resumen
+  const pl = d?.pedi_llego
   const u = d?.producto.unidad ?? ''
 
   return (
@@ -231,7 +246,75 @@ export default function FichaInsumo({ productoId, tiendaId, desde, hasta, onClos
               </div>
             )}
 
-            {/* ── 3 · Hacía falta ── */}
+            {/* ── 3 · Pedí vs. llegó ── */}
+            {/* La pregunta que motivó guardar el pedido: ¿trajeron lo que pedí?
+                Se compara contra lo que entró CON FACTURA y no contra todo lo que
+                entró: la mercadería cargada a mano no respalda un pedido, y
+                contarla haría cuadrar entregas que nadie hizo. */}
+            <Bloque titulo="Pedí vs. llegó">
+              {!pl ? null : pl.pedi === 0 ? (
+                <span className="text-[12.5px] text-warm-500 leading-relaxed">
+                  {Object.keys(pl.en_otra_unidad).length > 0 ? (
+                    <>
+                      Se pidió <b className="font-mono">
+                        {Object.entries(pl.en_otra_unidad).map(([un, c]) => `${fmtC(c)} ${un}`).join(' · ')}
+                      </b>, en una unidad distinta a la del insumo ({u}). No se resta contra lo que
+                      llegó porque no son la misma cosa, pero se dice para que el cero de arriba no
+                      se lea como «no pediste nada».
+                    </>
+                  ) : (
+                    <>No le pediste este insumo a ningún proveedor en este período. Los pedidos
+                    quedan escritos desde que se mandan con el botón «Pedir a…» de la pestaña
+                    Pedido.</>
+                  )}
+                </span>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div className="bg-warm-50 rounded-xl px-3 py-2.5 flex flex-col gap-0.5">
+                      <span className="text-[11.5px] text-warm-500 leading-tight">Pedí</span>
+                      <span className="font-mono text-[18px] font-bold text-warm-700">{fmtC(pl.pedi)} {u}</span>
+                      <span className="text-[11px] text-warm-400">
+                        en {pl.n_pedidos} pedido{pl.n_pedidos !== 1 ? 's' : ''}
+                        {pl.proveedores.length > 0 && ` · ${pl.proveedores.join(', ')}`}
+                      </span>
+                    </div>
+                    <div className="bg-forest-50 rounded-xl px-3 py-2.5 flex flex-col gap-0.5">
+                      <span className="text-[11.5px] text-forest-700 leading-tight">Llegó con factura</span>
+                      <span className="font-mono text-[18px] font-bold text-forest-700">{fmtC(pl.llego_con_factura)} {u}</span>
+                    </div>
+                    <div className={`rounded-xl px-3 py-2.5 flex flex-col gap-0.5 ${
+                      pl.diferencia > 0 ? 'bg-danger-50' : 'bg-warm-50'}`}>
+                      <span className={`text-[11.5px] leading-tight ${
+                        pl.diferencia > 0 ? 'text-danger-700' : 'text-warm-500'}`}>
+                        {pl.diferencia > 0 ? 'Faltó' : pl.diferencia < 0 ? 'Llegó de más' : 'Cuadra'}
+                      </span>
+                      <span className={`font-mono text-[18px] font-bold ${
+                        pl.diferencia > 0 ? 'text-danger-700' : 'text-warm-700'}`}>
+                        {pl.diferencia === 0 ? '✓' : `${fmtC(Math.abs(pl.diferencia))} ${u}`}
+                      </span>
+                    </div>
+                  </div>
+                  {pl.diferencia > 0 && (
+                    <span className="text-[12.5px] text-warm-500 leading-relaxed">
+                      Puede ser que no lo trajeron, que llegó después del período, o que entró sin
+                      factura — mirá «Llegó», más abajo, antes de reclamarle a nadie.
+                    </span>
+                  )}
+                  {Object.keys(pl.en_otra_unidad).length > 0 && (
+                    <span className="text-[11.5px] text-warm-400 leading-relaxed">
+                      Aparte, se pidió {Object.entries(pl.en_otra_unidad)
+                        .map(([un, c]) => `${fmtC(c)} ${un}`).join(' · ')} — otra unidad, no entra en la resta.
+                    </span>
+                  )}
+                </>
+              )}
+            </Bloque>
+
+            {/* ── 4 · Hacía falta ── */}
+            {/* Convive con «pedí» y no lo reemplaza: uno es lo que el sistema
+                calcula y el otro lo que el dueño decidió. La diferencia entre
+                los dos es su criterio de compra. */}
             <Bloque titulo="Hacía falta">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div className="bg-warm-50 rounded-xl px-3 py-2.5 flex flex-col gap-0.5">
@@ -262,37 +345,51 @@ export default function FichaInsumo({ productoId, tiendaId, desde, hasta, onClos
               )}
             </Bloque>
 
-            {/* ── 4 · Lo que se pidió por escrito ── */}
+            {/* ── 5 · Lo que se pidió por escrito ── */}
+            {/* Bitácora de las dos clases de pedido, cada línea con su origen a
+                la vista. Las del dueño ya están sumadas arriba; las del kiosko
+                no se suman nunca —la barista teclea la unidad libre— y por eso
+                la etiqueta importa: sin ella, dos líneas idénticas en pantalla
+                significarían cosas distintas y nadie podría notarlo. */}
             <Bloque titulo="Lo que se pidió por escrito">
               {d.pedido_escrito.length === 0 ? (
                 <span className="text-[12.5px] text-warm-500 leading-relaxed">
-                  Este insumo no se pidió por el kiosko en este período. El pedido al proveedor se manda por
-                  WhatsApp y hoy el sistema no lo guarda.
+                  Nadie pidió este insumo por escrito en este período: ni vos a un proveedor, ni la
+                  barista desde el kiosko.
                 </span>
               ) : (
                 <>
                   <div className="flex flex-col gap-1.5">
-                    {d.pedido_escrito.map(p => (
-                      <div key={p.solicitud_id} className="flex items-center justify-between gap-3 bg-warm-50 rounded-lg px-3 py-2">
+                    {d.pedido_escrito.map((p, i) => (
+                      <div key={`${p.solicitud_id}-${i}`}
+                           className="flex items-center justify-between gap-3 bg-warm-50 rounded-lg px-3 py-2">
                         <span className="text-[13px] text-warm-700">
                           <b className="font-mono">{fmtFecha(p.fecha)}</b> · {fmtC(p.cantidad)} {p.unidad}
+                          {p.proveedor && <span className="text-warm-500"> · a {p.proveedor}</span>}
                         </span>
-                        <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                          p.estado === 'rechazada' ? 'bg-danger-50 text-danger-700'
-                          : p.estado === 'aprobada' ? 'bg-forest-50 text-forest-700'
-                          : 'bg-gold-50 text-gold-700'}`}>{p.estado}</span>
+                        {p.origen === 'admin' ? (
+                          <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full uppercase bg-forest-50 text-forest-700 whitespace-nowrap">
+                            lo pediste vos
+                          </span>
+                        ) : (
+                          <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-full uppercase whitespace-nowrap ${
+                            p.estado === 'rechazada' ? 'bg-danger-50 text-danger-700'
+                            : p.estado === 'aprobada' ? 'bg-warm-100 text-warm-600'
+                            : 'bg-gold-50 text-gold-700'}`}>kiosko · {p.estado}</span>
+                        )}
                       </div>
                     ))}
                   </div>
                   <span className="text-[11.5px] text-warm-400 leading-relaxed">
-                    Se muestra tal cual lo tecleó la barista, sin sumarse: el mismo insumo se pide en unidades
-                    distintas según el día. Y «aprobada» quiere decir que lo viste, no que se mandó.
+                    Lo del <b>kiosko</b> es la barista avisando que falta algo, y se muestra tal cual lo
+                    tecleó, sin sumarse: el mismo insumo se pide en unidades distintas según el día.
+                    Ahí «aprobada» quiere decir que lo viste, no que se mandó.
                   </span>
                 </>
               )}
             </Bloque>
 
-            {/* ── 5 · Llegó ── */}
+            {/* ── 6 · Llegó ── */}
             <Bloque titulo="Llegó">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[13.5px] font-semibold text-warm-700">
@@ -340,7 +437,7 @@ export default function FichaInsumo({ productoId, tiendaId, desde, hasta, onClos
               )}
             </Bloque>
 
-            {/* ── 6 · Salió ── */}
+            {/* ── 7 · Salió ── */}
             <Bloque titulo="Salió · por qué">
               <div className="flex flex-col">
                 {RENGLONES.filter(x => x.siempre || Number(r[x.k]) !== 0).map(x => {
@@ -388,7 +485,7 @@ export default function FichaInsumo({ productoId, tiendaId, desde, hasta, onClos
               )}
             </Bloque>
 
-            {/* ── 7 · Queda ── */}
+            {/* ── 8 · Queda ── */}
             <div className="bg-white border border-warm-200 rounded-2xl px-4 py-3.5 flex items-center justify-between gap-4">
               <div className="flex flex-col gap-0.5">
                 <span className="text-[10.5px] font-bold uppercase tracking-wider text-warm-500">Queda</span>
@@ -402,7 +499,7 @@ export default function FichaInsumo({ productoId, tiendaId, desde, hasta, onClos
               </div>
             </div>
 
-            {/* ── 8 · Movimientos ── */}
+            {/* ── 9 · Movimientos ── */}
             <Bloque titulo={`Movimiento por movimiento · ${d.movimientos_total}`}>
               {/* Los chips salen de `causas`, que cuenta sobre el rango COMPLETO
                   aunque haya filtro: así el número de cada uno es de verdad. */}

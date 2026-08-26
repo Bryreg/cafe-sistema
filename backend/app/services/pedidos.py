@@ -1,17 +1,19 @@
 import math
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from app.models.models import (
     Inventario, MovimientoInventario, TipoMovInvEnum,
     SolicitudPedido, SolicitudPedidoItem, EstadoSolicitudEnum,
     FacturaCompra, FacturaCompraItem, Producto,
+    ORIGEN_ADMIN, ORIGEN_KIOSKO,
 )
 from app.services import preparables as preparables_svc
 from app.services import consumo_ventas
 from app.services.producto_alias import normalizar_alias
-from app.core.tz import hoy_col
+from app.core.tz import fin_dia_col_utc, hoy_col, inicio_dia_col_utc
 
 
 def _proveedores_por_compras(db: Session) -> dict[int, str]:
@@ -94,7 +96,11 @@ def _items_base(db: Session, tienda_id: int) -> tuple[list[dict], dict[int, floa
     # Ver `consumo_ventas`: por qué venta y no solo salidas, y por qué la mediana.
     ventas_rate = consumo_ventas.tasa_diaria_por_producto(db, tienda_id, hoy_col())
 
-    # Productos que el barista marcó como urgentes (solicitudes pendientes)
+    # Productos que el barista marcó como urgentes (solicitudes pendientes).
+    # El filtro por origen es redundante HOY —el pedido del dueño nace aprobado y
+    # nunca está pendiente— y está igual: el campo se llama «barista_alertó» y
+    # tiene que seguir siendo cierto aunque mañana alguien cambie el estado con
+    # el que nace un pedido del dueño.
     barista_alerto: set[int] = set(
         item.producto_id
         for item in db.query(SolicitudPedidoItem)
@@ -102,6 +108,7 @@ def _items_base(db: Session, tienda_id: int) -> tuple[list[dict], dict[int, floa
         .filter(
             SolicitudPedido.tienda_id == tienda_id,
             SolicitudPedido.estado == EstadoSolicitudEnum.pendiente,
+            func.coalesce(SolicitudPedido.origen, ORIGEN_KIOSKO) != ORIGEN_ADMIN,
         )
         .all()
     )
@@ -509,6 +516,10 @@ def catalogo_proveedores(db: Session, tienda_id: int) -> dict:
         }
 
     ahora = datetime.utcnow()
+    # Lo que YA se le pidió hoy a cada proveedor. Viaja con el catálogo —y no en
+    # una segunda llamada— para que la pantalla nunca se dibuje un instante
+    # ofreciendo pedir algo que ya se pidió.
+    ya_pedido = pedido_del_dia_por_proveedor(db, tienda_id)
     proveedores = []
     for clave, pids in miembros.items():
         productos = [it for it in (_armar_item(clave, pid) for pid in pids) if it]
@@ -557,6 +568,11 @@ def catalogo_proveedores(db: Session, tienda_id: int) -> dict:
             "dias_desde_ultima": (ahora - ultima).days if ultima else None,
             "cada_dias": _promedio_dias_entre(hist["fechas"].get(clave, set())),
             "total_productos": len(productos),
+            # Los pedidos que ya salieron HOY para este proveedor, del más viejo
+            # al más nuevo. Lista y no un booleano: pedir dos veces en el día es
+            # legítimo, y lo que el dueño necesita ver es QUÉ mandó, no cuántas
+            # veces. Vacía cuando todavía no le pidió nada hoy.
+            "pedidos_hoy": (ya_pedido.get(clave) or {}).get("pedidos", []),
         })
 
     proveedores.sort(key=lambda g: (
@@ -634,3 +650,216 @@ def catalogo_proveedores(db: Session, tienda_id: int) -> dict:
         "total_bajo": sum(1 for i in items if i["estado"] == "bajo"),
         "total_ok": sum(1 for i in items if i["estado"] == "ok"),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# El pedido que el dueño MANDA queda escrito
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Hasta acá, «Armar pedido» calculaba muy bien qué pedir, armaba el texto y lo
+# soltaba en el portapapeles. Ahí terminaba: el pedido se iba por WhatsApp y el
+# sistema no se enteraba nunca de que había existido. Por eso la ficha del insumo
+# tenía un hueco donde debía ir «pedí» y decía, literalmente, que no lo guardaba.
+#
+# Sin ese dato no hay forma de contestar la única pregunta que importa cuando
+# llega la mercadería: ¿trajeron lo que pedí? Se podía comparar lo que llegó
+# contra lo que HACÍA FALTA, que no es lo mismo — hacía falta es un cálculo del
+# sistema, el pedido es una decisión del dueño, y la diferencia entre los dos es
+# justamente donde vive el criterio de quien compra.
+#
+# DOS COSAS QUE ESTE MÓDULO NO HACE, A PROPÓSITO:
+#
+#  · No manda el WhatsApp. Guardar es dejar constancia de lo que el dueño decidió
+#    mandar; mandarlo lo sigue haciendo él. Un sistema que dijera «pedido enviado»
+#    sin haber enviado nada sería peor que uno que no guarda nada.
+#  · No aprueba ni espera aprobación. El dueño ES quien aprueba. La fila nace
+#    `aprobada` y con `origen='admin'`, y por eso NO dispara la notificación de
+#    kiosko: avisarle al dueño de su propio pedido es ruido.
+
+_VENTANA_ANTIDUPLICADO = timedelta(minutes=5)
+
+
+def _clave_items(items: list[dict]) -> frozenset:
+    """Huella de un pedido: qué productos y cuánto de cada uno."""
+    return frozenset(
+        (int(i["producto_id"]), round(float(i["cantidad"]), 4)) for i in items
+    )
+
+
+def registrar_pedido(db: Session, tienda_id: int, proveedor: str,
+                     items: list[dict], usuario_id: int,
+                     nota: str | None = None) -> dict:
+    """Deja escrito el pedido que el dueño acaba de mandarle a UN proveedor.
+
+    `items`: [{"producto_id": int, "cantidad": float, "unidad": str|None}]. La
+    unidad se guarda porque la cantidad sin unidad no se puede restar contra una
+    factura; la pantalla manda siempre la del producto, que es en la que están
+    hechas las dos cuentas.
+
+    GUARDA ANTI-DOBLE-TOQUE. Esto corre en una tablet, con un dedo, sobre wifi de
+    local: el mismo pedido llega dos veces por un doble toque o por un reintento
+    del navegador. Si en los últimos minutos ya se registró un pedido IDÉNTICO
+    (mismo proveedor, mismos productos, mismas cantidades) se devuelve ese, sin
+    crear el gemelo. No es una regla de negocio —dos pedidos iguales al mismo
+    proveedor el mismo día son legítimos con horas de por medio—: es la ventana
+    en la que un duplicado solo puede ser un accidente. Duplicar acá no rompe
+    nada visible, y esa es la trampa: inflaría «pedí» para siempre y el dueño
+    creería que le entregaron de menos.
+    """
+    prov = (proveedor or "").strip()
+    if not prov:
+        raise HTTPException(status_code=400, detail="Falta a qué proveedor se le pidió")
+
+    limpios = []
+    for i in items or []:
+        cant = float(i.get("cantidad") or 0)
+        if cant <= 0:
+            continue          # una línea en cero no es un pedido, es un input vacío
+        limpios.append({
+            "producto_id": int(i["producto_id"]),
+            "cantidad": cant,
+            "unidad": (i.get("unidad") or "").strip() or None,
+        })
+    if not limpios:
+        raise HTTPException(status_code=400, detail="El pedido está vacío: ninguna línea tiene cantidad")
+
+    ids = {i["producto_id"] for i in limpios}
+    existentes = {p.id: p for p in db.query(Producto).filter(Producto.id.in_(ids)).all()}
+    faltan = ids - set(existentes)
+    if faltan:
+        raise HTTPException(status_code=400,
+                            detail=f"Hay productos que ya no existen: {sorted(faltan)}")
+
+    huella = _clave_items(limpios)
+    desde = datetime.utcnow() - _VENTANA_ANTIDUPLICADO
+    for previo in (
+        db.query(SolicitudPedido)
+        .options(joinedload(SolicitudPedido.items))
+        .filter(SolicitudPedido.tienda_id == tienda_id,
+                SolicitudPedido.origen == ORIGEN_ADMIN,
+                SolicitudPedido.fecha_solicitud >= desde)
+        .all()
+    ):
+        if _clave_proveedor(previo.proveedor) != _clave_proveedor(prov):
+            continue
+        gemelo = frozenset(
+            (it.producto_id, round(float(it.cantidad_solicitada), 4)) for it in previo.items)
+        if gemelo == huella:
+            return _pedido_dict(previo, existentes, duplicado=True)
+
+    ahora = datetime.utcnow()
+    pedido = SolicitudPedido(
+        tienda_id=tienda_id,
+        proveedor=prov,
+        origen=ORIGEN_ADMIN,
+        nota=(nota or "").strip() or None,
+        usuario_id=usuario_id,
+        # El dueño no se pide permiso a sí mismo: el pedido nace resuelto para no
+        # aparecer como pendiente en la bandeja ni contarse como alerta de barista.
+        estado=EstadoSolicitudEnum.aprobada,
+        usuario_aprobacion_id=usuario_id,
+        fecha_aprobacion=ahora,
+        fecha_solicitud=ahora,
+    )
+    db.add(pedido)
+    db.flush()
+    for i in limpios:
+        db.add(SolicitudPedidoItem(
+            solicitud_id=pedido.id,
+            producto_id=i["producto_id"],
+            cantidad_solicitada=i["cantidad"],
+            unidad_solicitada=i["unidad"] or existentes[i["producto_id"]].unidad_medida,
+        ))
+    db.commit()
+    db.refresh(pedido)
+    return _pedido_dict(pedido, existentes)
+
+
+def _pedido_dict(pedido: SolicitudPedido, productos: dict | None = None,
+                 duplicado: bool = False) -> dict:
+    productos = productos or {}
+    return {
+        "id": pedido.id,
+        "tienda_id": pedido.tienda_id,
+        "proveedor": pedido.proveedor,
+        "fecha": pedido.fecha_solicitud.isoformat() if pedido.fecha_solicitud else None,
+        "nota": pedido.nota,
+        "items": [
+            {
+                "producto_id": it.producto_id,
+                "nombre": (productos[it.producto_id].nombre if it.producto_id in productos
+                           else (it.producto.nombre if it.producto else "")),
+                "cantidad": float(it.cantidad_solicitada or 0),
+                "unidad": it.unidad_solicitada or "",
+            }
+            for it in pedido.items
+        ],
+        # Se devolvió un pedido que YA estaba: la pantalla lo dice en vez de
+        # celebrar un guardado que no ocurrió.
+        "ya_estaba": duplicado,
+    }
+
+
+def pedidos_registrados(db: Session, tienda_id: int,
+                        desde: datetime | None = None,
+                        hasta: datetime | None = None) -> list[dict]:
+    """Los pedidos que el dueño mandó, del más reciente al más viejo."""
+    q = (
+        db.query(SolicitudPedido)
+        .options(joinedload(SolicitudPedido.items).joinedload(SolicitudPedidoItem.producto))
+        .filter(SolicitudPedido.tienda_id == tienda_id,
+                SolicitudPedido.origen == ORIGEN_ADMIN)
+    )
+    if desde is not None:
+        q = q.filter(SolicitudPedido.fecha_solicitud >= desde)
+    if hasta is not None:
+        q = q.filter(SolicitudPedido.fecha_solicitud <= hasta)
+    return [_pedido_dict(p) for p in q.order_by(SolicitudPedido.fecha_solicitud.desc()).all()]
+
+
+def anular_pedido(db: Session, pedido_id: int, tienda_id: int | None = None) -> dict:
+    """Borra un pedido mal registrado (el dedo gordo en la tablet).
+
+    Solo alcanza a los del DUEÑO. Una solicitud de barista no se borra por acá:
+    tiene su propio camino —aprobar o rechazar— y ese deja rastro de quién
+    decidió. Borrarla desde este botón sería hacer desaparecer el aviso de otra
+    persona sin que quede constancia de nada.
+    """
+    p = (db.query(SolicitudPedido)
+         .filter(SolicitudPedido.id == pedido_id).first())
+    if not p:
+        raise HTTPException(status_code=404, detail="Ese pedido no existe")
+    if p.origen != ORIGEN_ADMIN:
+        raise HTTPException(status_code=400,
+                            detail="Eso es una solicitud del kiosko: se aprueba o se rechaza, no se borra")
+    if tienda_id is not None and p.tienda_id != tienda_id:
+        raise HTTPException(status_code=404, detail="Ese pedido no es de esta sede")
+    resumen = _pedido_dict(p)
+    db.delete(p)          # los items caen con él (cascade del modelo)
+    db.commit()
+    return resumen
+
+
+def pedido_del_dia_por_proveedor(db: Session, tienda_id: int,
+                                 dia: date | None = None) -> dict[str, dict]:
+    """Lo ya pedido HOY, indexado por la MISMA clave con la que la pantalla
+    agrupa los proveedores (`_clave_proveedor`).
+
+    Sin esto, recargar la pantalla —o abrirla en el celular después de haber
+    pedido desde la tablet— borraría la memoria de lo que ya se mandó y el dueño
+    lo pediría dos veces. El estado de «ya pedí» no puede vivir solo en la
+    pestaña del navegador.
+    """
+    dia = dia or hoy_col()
+    out: dict[str, dict] = {}
+    for p in pedidos_registrados(db, tienda_id,
+                                 inicio_dia_col_utc(dia), fin_dia_col_utc(dia)):
+        clave = _clave_proveedor(p["proveedor"])
+        if not clave:
+            continue
+        # Varios pedidos al mismo proveedor en el día: se muestran todos, porque
+        # todos se mandaron. Quedan del más viejo al más nuevo para que se lean
+        # en el orden en que salieron.
+        g = out.setdefault(clave, {"proveedor": p["proveedor"], "pedidos": []})
+        g["pedidos"].insert(0, p)
+    return out

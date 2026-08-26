@@ -13,7 +13,8 @@ from app.core.deps import ensure_tienda_access, get_current_user, require_admin,
 from app.models.models import (Usuario, Producto, ProductoInsumo, ProductoDesechable,
                                Inventario, Tienda, CategoriaProductoEnum, LoteInventario,
                                MovimientoInventario, FacturaCompra, FacturaCompraItem,
-                               SolicitudPedido, SolicitudPedidoItem)
+                               SolicitudPedido, SolicitudPedidoItem,
+                               ORIGEN_ADMIN, ORIGEN_KIOSKO)
 from app.schemas.inventario import (
     MovimientoInvRequest, ProductoCreate, ProductoUpdate, StockMinimoUpdate, UmbralesStockUpdate,
     InsumosProductoUpdate, DesechablesProductoUpdate, PreparacionRequest,
@@ -783,9 +784,48 @@ def _num(x) -> float:
     return float(x or 0)
 
 
-def _fila_insumo(p: dict, proveedor: str | None) -> dict:
+def _pedido_por_producto(db: Session, tienda_id: int, d_utc: datetime, h_utc: datetime,
+                         producto_ids: list[int] | None = None) -> dict[int, dict]:
+    """Lo que el DUEÑO pidió por escrito en el rango, por producto.
+
+    Solo `origen='admin'`: son los pedidos que salieron a un proveedor, con la
+    cantidad en la unidad del producto. La solicitud del kiosko queda afuera a
+    propósito —la barista avisa que falta algo, no le pide a nadie, y sus
+    unidades cambian de un día para otro para el mismo insumo—; sumarlas daría
+    un «pedí» que no se puede restar contra ninguna factura.
+
+    Se agrega en Python sobre filas crudas y no con un GROUP BY: son los pedidos
+    que una persona tecleó, no el libro de movimientos, así que caben de sobra en
+    memoria; y agrupando en SQL por (producto, unidad) el conteo de pedidos se
+    duplicaría en cuanto un mismo pedido trajera el mismo insumo en dos unidades.
+    """
+    q = (
+        db.query(SolicitudPedidoItem.producto_id, SolicitudPedidoItem.unidad_solicitada,
+                 SolicitudPedidoItem.cantidad_solicitada, SolicitudPedido.id,
+                 SolicitudPedido.proveedor)
+        .join(SolicitudPedido, SolicitudPedidoItem.solicitud_id == SolicitudPedido.id)
+        .filter(SolicitudPedido.tienda_id == tienda_id,
+                SolicitudPedido.origen == ORIGEN_ADMIN,
+                SolicitudPedido.fecha_solicitud >= d_utc,
+                SolicitudPedido.fecha_solicitud <= h_utc)
+    )
+    if producto_ids is not None:
+        q = q.filter(SolicitudPedidoItem.producto_id.in_(producto_ids))
+
+    out: dict[int, dict] = {}
+    for pid, unidad, cant, sid, prov in q.all():
+        d = out.setdefault(pid, {"por_unidad": {}, "pedidos": set(), "proveedores": set()})
+        u = (unidad or "").strip()
+        d["por_unidad"][u] = round(d["por_unidad"].get(u, 0.0) + float(cant or 0), 4)
+        d["pedidos"].add(sid)
+        if (prov or "").strip():
+            d["proveedores"].add(prov.strip())
+    return out
+
+
+def _fila_insumo(p: dict, proveedor: str | None, pedido: dict | None = None) -> dict:
     """Una fila de «qué pasó con este insumo», a partir del renglón que ya
-    calculó la escalera de conciliación más el proveedor.
+    calculó la escalera de conciliación, más el proveedor y lo que se le pidió.
 
     Vive acá, compartida, porque la TABLA (`/movimiento-insumos`) y la FICHA
     (`/insumo/{id}/ficha`) muestran exactamente los mismos números: si cada una
@@ -802,6 +842,16 @@ def _fila_insumo(p: dict, proveedor: str | None) -> dict:
     }
     entradas = _num(p.get("entradas"))
     vu = _num(p.get("valor_unitario"))
+
+    # Lo pedido SOLO cuenta en la unidad del producto: es la única en la que
+    # restarlo contra lo que entró significa algo. Lo pedido en otra unidad no se
+    # descarta en silencio —se informa aparte— porque un «pedí 0» junto a una
+    # entrada grande manda a buscar un problema que no existe.
+    ped = pedido or {}
+    por_unidad = dict(ped.get("por_unidad") or {})
+    unidad_prod = (p.get("unidad_medida") or "").strip()
+    pedi = round(por_unidad.pop(unidad_prod, 0.0), 2)
+
     proveedor = (proveedor or "").strip() or None
     if proveedor is None:
         origen = "sin_origen"
@@ -816,6 +866,13 @@ def _fila_insumo(p: dict, proveedor: str | None) -> dict:
         "categoria": p.get("categoria"),
         "proveedor": proveedor,
         "origen": origen,
+        # Lo que el dueño pidió por escrito en el rango. 0 significa que no le
+        # pidió nada a nadie, no que el sistema no lo sepa: desde que «Armar
+        # pedido» guarda lo que manda, la ausencia es un dato.
+        "pedi": pedi,
+        "pedi_n_pedidos": len(ped.get("pedidos") or ()),
+        "pedi_proveedores": sorted(ped.get("proveedores") or ()),
+        "pedi_otras_unidades": {u: round(c, 2) for u, c in por_unidad.items() if c},
         "entradas": entradas,
         # Lo que entró SIN comprarse: aparte, para que una tanda preparada no se
         # lea como mercadería que alguien facturó.
@@ -897,9 +954,13 @@ def movimiento_insumos(
         .filter(Producto.proveedor.isnot(None)).all()
     }
 
+    pedidos = _pedido_por_producto(db, tienda_id,
+                                   inicio_dia_col_utc(desde), fin_dia_col_utc(hasta))
+
     filas = [
         _fila_insumo(p, prov_rango.get(p.get("producto_id"))
-                     or prov_ficha.get(p.get("producto_id")))
+                     or prov_ficha.get(p.get("producto_id")),
+                     pedidos.get(p.get("producto_id")))
         for p in escalera.get("productos", [])
     ]
 
@@ -917,6 +978,11 @@ def movimiento_insumos(
             "valor_sin_causa": round(sum(f["valor_sin_causa"] for f in filas), 2),
             "n_no_se_mide": sum(1 for f in filas if f["no_se_mide"]),
             "n_compra_directa": sum(1 for f in filas if f["origen"] == "directa"),
+            # Cuántos insumos tienen pedido escrito en el rango. Sirve para que la
+            # pantalla sepa si la columna «pedí» tiene algo que contar todavía: en
+            # los rangos anteriores a que «Armar pedido» guardara, es cero para
+            # todos, y una columna vacía sin explicación se lee como un bug.
+            "n_con_pedido": sum(1 for f in filas if f["pedi"] > 0),
         },
     }
 
@@ -948,21 +1014,28 @@ def ficha_insumo(
 
     Lo que agrega sobre la fila:
 
-      · `hacia_falta` — el reemplazo honesto de la columna «pedí» que el dueño
-        pidió. No se puede comparar «lo pedido» con «lo llegado» porque el pedido
-        al proveedor sale por WhatsApp y el sistema nunca lo guarda; y lo que la
-        barista pide desde el kiosko viene en unidades de texto libre que cambian
-        semana a semana para el mismo producto (el azúcar aparece como «2 bolsa»,
-        «2 unidad» y «5000 gr»). Sumar eso da un número falso. En su lugar van
-        tres cifras que sí son ciertas: lo que salió, lo que se compró, y cuánto
-        hay que pedir hoy — este último del MOTOR de pedidos (`_items_base`), la
-        única fórmula de consumo del sistema, para no inventar una segunda.
+      · `pedi` — lo que el DUEÑO pidió por escrito, contra lo que llegó. Existe
+        desde que «Armar pedido» guarda el pedido que manda
+        (`services/pedidos.registrar_pedido`): antes el pedido se iba por
+        WhatsApp y no quedaba en ninguna parte, y esta ficha lo decía con todas
+        las letras. Solo suma lo pedido en la unidad DEL PRODUCTO —la única en la
+        que restarlo contra una factura significa algo—; lo pedido en otra unidad
+        viaja aparte en vez de desaparecer.
 
-      · `pedido_escrito` — lo que la barista pidió por el kiosko, como BITÁCORA:
-        la cantidad tal cual la tecleó, con su unidad textual y su estado. Nunca
-        se suma ni se resta contra lo que llegó, por lo mismo de arriba. Y
-        «aprobada» es un sello, no un envío: aprobar no toca stock ni genera
-        pedido.
+      · `hacia_falta` — lo que el sistema CALCULA que hay que reponer, que no es
+        lo mismo que lo que el dueño decidió pedir. Las dos cifras conviven a
+        propósito: la diferencia entre ellas es el criterio de quien compra
+        (aprovechar una promoción, cubrir un puente, no fiarse de un proveedor
+        flojo), y aplanarla en un solo número escondería justamente eso. Sale del
+        MOTOR de pedidos (`_items_base`), la única fórmula de consumo del
+        sistema, para no inventar una segunda.
+
+      · `pedido_escrito` — la bitácora de TODO lo que se pidió por escrito, del
+        dueño y del kiosko, cada línea con su origen. Lo del kiosko no se suma
+        nunca: la barista teclea la unidad libre y el azúcar aparece como «2
+        bolsa», «2 unidad» y «5000 gr» en la misma semana. Y en una solicitud del
+        kiosko «aprobada» es un sello, no un envío: aprobar no toca stock ni
+        genera pedido.
 
       · `movimientos` — cada movimiento con su causa puesta por el MISMO
         clasificador de la escalera (`conciliacion._bucket`), para que el detalle
@@ -994,14 +1067,16 @@ def ficha_insumo(
                   if p.get("producto_id") == producto_id), None)
     prov_rango = fact_svc.proveedor_por_producto(db, tienda_id, desde, hasta)
     proveedor = prov_rango.get(producto_id) or (prod.proveedor or "").strip() or None
+    pedido = _pedido_por_producto(db, tienda_id, inicio_dia_col_utc(desde),
+                                  fin_dia_col_utc(hasta), [producto_id]).get(producto_id)
     if crudo is None:
         # Un producto sin fila de inventario en esta sede no tiene escalera: se
         # responde la ficha vacía en vez de un 404, porque la pregunta («¿qué
         # pasó con esto acá?») tiene una respuesta legítima: nada.
         fila = _fila_insumo({"producto_id": producto_id, "producto_nombre": prod.nombre,
-                             "unidad_medida": prod.unidad_medida}, proveedor)
+                             "unidad_medida": prod.unidad_medida}, proveedor, pedido)
     else:
-        fila = _fila_insumo(crudo, proveedor)
+        fila = _fila_insumo(crudo, proveedor, pedido)
 
     # ── Hacía falta ─────────────────────────────────────────────────────────
     sugerido = None
@@ -1065,7 +1140,12 @@ def ficha_insumo(
         "se_produjo_aca": fila["preparaciones_producidas"],
     }
 
-    # ── Lo que se pidió por escrito (bitácora, jamás un total) ──────────────
+    # ── Lo que se pidió por escrito ─────────────────────────────────────────
+    # Bitácora de las dos clases de pedido, cada línea con su origen. Las del
+    # dueño SÍ se suman (arriba, en `pedi`, y solo en la unidad del producto);
+    # las del kiosko no se suman nunca. Se muestran juntas porque para quien mira
+    # la ficha son la misma pregunta —«¿alguien pidió esto?»— y separarlas en dos
+    # listas obligaría a leer dos veces para contestarla.
     pedido_escrito = [
         {
             "solicitud_id": sid,
@@ -1073,11 +1153,16 @@ def ficha_insumo(
             "cantidad": float(cant or 0),
             "unidad": (unidad or prod.unidad_medida),
             "estado": getattr(estado, "value", estado),
+            # Las filas anteriores a la columna son todas del kiosko: era lo
+            # único que existía. Ver `models.SolicitudPedido`.
+            "origen": origen or ORIGEN_KIOSKO,
+            "proveedor": (proveedor_ped or "").strip() or None,
         }
-        for sid, f, cant, unidad, estado in (
+        for sid, f, cant, unidad, estado, origen, proveedor_ped in (
             db.query(SolicitudPedido.id, SolicitudPedido.fecha_solicitud,
                      SolicitudPedidoItem.cantidad_solicitada,
-                     SolicitudPedidoItem.unidad_solicitada, SolicitudPedido.estado)
+                     SolicitudPedidoItem.unidad_solicitada, SolicitudPedido.estado,
+                     SolicitudPedido.origen, SolicitudPedido.proveedor)
             .join(SolicitudPedidoItem, SolicitudPedidoItem.solicitud_id == SolicitudPedido.id)
             .filter(SolicitudPedidoItem.producto_id == producto_id,
                     SolicitudPedido.tienda_id == tienda_id,
@@ -1086,6 +1171,20 @@ def ficha_insumo(
             .order_by(SolicitudPedido.fecha_solicitud.asc()).all()
         )
     ]
+
+    # ── Pedí vs. llegó ──────────────────────────────────────────────────────
+    # La comparación que el dueño vino a buscar, y la razón de que el pedido se
+    # guarde. `diferencia` es lo que FALTÓ (positivo = trajeron de menos), contra
+    # lo que entró CON FACTURA: la mercadería cargada a mano no respalda un
+    # pedido, y contarla acá haría cuadrar pedidos que nadie cumplió.
+    pedi_llego = {
+        "pedi": fila["pedi"],
+        "n_pedidos": fila["pedi_n_pedidos"],
+        "proveedores": fila["pedi_proveedores"],
+        "en_otra_unidad": fila["pedi_otras_unidades"],
+        "llego_con_factura": total_facturado,
+        "diferencia": round(fila["pedi"] - total_facturado, 2) if fila["pedi"] else 0.0,
+    }
 
     # ── Los movimientos, con la causa del MISMO clasificador de la escalera ──
     # La causa se calcula en Python (sale del texto del motivo), así que el
@@ -1136,6 +1235,7 @@ def ficha_insumo(
         "periodo": {"desde": desde.isoformat(), "hasta": hasta.isoformat()},
         "resumen": fila,
         "hacia_falta": hacia_falta,
+        "pedi_llego": pedi_llego,
         "llego": llego,
         "pedido_escrito": pedido_escrito,
         "movimientos": movimientos,

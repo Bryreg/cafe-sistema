@@ -80,12 +80,15 @@ def get_dashboard(db: Session, tienda_id: int):
         Consignacion.estado == EstadoConsignacionEnum.pendiente
     ).count()
 
-    # Solicitudes pendientes (pedidos + sencillas sin resolver)
+    # Solicitudes pendientes (pedidos + sencillas sin resolver). Solo las del
+    # kiosko: el pedido que el dueño manda al proveedor vive en la misma tabla y
+    # no es nada que él tenga que resolverse a sí mismo.
     from app.models.models import EstadoSolicitudEnum
-    sol_pedidos = db.query(SolicitudPedido).filter(
+    from app.services.solicitudes import _solo_kiosko
+    sol_pedidos = _solo_kiosko(db.query(SolicitudPedido).filter(
         SolicitudPedido.tienda_id == tienda_id,
         SolicitudPedido.estado == EstadoSolicitudEnum.pendiente
-    ).count()
+    )).count()
     sol_sencillas = db.query(SolicitudSencilla).filter(
         SolicitudSencilla.tienda_id == tienda_id,
         SolicitudSencilla.estado == EstadoSolicitudEnum.pendiente

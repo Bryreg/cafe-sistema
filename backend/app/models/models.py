@@ -444,12 +444,42 @@ class Merma(Base):
     usuario = relationship("Usuario", back_populates="mermas")
 
 
+# ─── Origen de una fila de `solicitudes_pedido` ────────────────────────────────
+# Constantes y no literales sueltos: el valor se compara en tres servicios y en
+# la migración de arranque. Ver el docstring de SolicitudPedido.
+ORIGEN_KIOSKO = "kiosko"   # la barista avisa que falta algo (entra pendiente)
+ORIGEN_ADMIN = "admin"     # el pedido que el dueño armó y mandó al proveedor
+
+
 class SolicitudPedido(Base):
+    """Dos cosas distintas viven en esta tabla, y `origen` es lo que las separa.
+
+    «kiosko»: la barista avisa que falta algo. Es un PEDIDO DE AUXILIO, entra
+    pendiente y el admin decide. No tiene proveedor: la barista no le pide a
+    nadie, le avisa al dueño.
+
+    «admin»: el pedido que el dueño ARMÓ y MANDÓ por WhatsApp. Ya está hecho —
+    no hay nada que aprobar—, va contra UN proveedor y sus cantidades están en
+    la unidad del producto, así que se puede restar contra lo que llegó. Es la
+    columna «pedí» de la ficha, que hasta ahora no existía porque el pedido se
+    iba por WhatsApp y no quedaba escrito en ninguna parte.
+
+    Un marcador de texto libre en `nota` habría alcanzado para dibujar la
+    pantalla y habría sido una bomba de tiempo: el día que alguien cambie el
+    texto, los pedidos del dueño se cuelan en la bandeja de las baristas y
+    nadie se entera. Es una columna porque es una distinción real.
+    """
     __tablename__ = "solicitudes_pedido"
     id = Column(Integer, primary_key=True)
     tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False)
     fecha_solicitud = Column(DateTime, default=datetime.utcnow)
     estado = Column(SAEnum(EstadoSolicitudEnum), default=EstadoSolicitudEnum.pendiente)
+    # Ver el docstring. Las filas viejas (todas de kiosko) se rellenan en la
+    # migración de arranque; el default cubre las nuevas.
+    origen = Column(String(20), nullable=True, default="kiosko")
+    # A quién se le pidió. Solo lo llena el pedido del admin: es lo que permite
+    # cotejar el pedido contra la factura de ESE proveedor.
+    proveedor = Column(String(150), nullable=True)
     nota = Column(String(500), nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     usuario_aprobacion_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)

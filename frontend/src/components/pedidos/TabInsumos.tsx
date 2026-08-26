@@ -37,6 +37,16 @@ interface Insumo {
   categoria: string | null
   proveedor: string | null
   origen: Origen
+  /** Lo que el DUEÑO pidió por escrito en el período, en la unidad del producto.
+   *  Un 0 significa que no le pidió nada a nadie, no que el sistema no lo sepa:
+   *  desde que «Armar pedido» guarda lo que manda, la ausencia es un dato. */
+  pedi: number
+  pedi_n_pedidos: number
+  pedi_proveedores: string[]
+  /** Lo pedido en una unidad distinta a la del producto. No entra en `pedi`
+   *  —no se puede restar contra una factura— pero se DICE, porque un «pedí 0»
+   *  al lado de una entrada grande manda a buscar un problema que no existe. */
+  pedi_otras_unidades: Record<string, number>
   entradas: number
   traslados_recibidos: number
   preparaciones_producidas: number
@@ -62,6 +72,7 @@ interface Resumen {
   valor_sin_causa: number
   n_no_se_mide: number
   n_compra_directa: number
+  n_con_pedido: number
 }
 
 interface Respuesta { insumos: Insumo[]; resumen: Resumen }
@@ -107,7 +118,7 @@ const PERIODOS: { k: PeriodoKey; label: string }[] = [
   { k: 'anterior', label: 'Mes pasado' },
 ]
 
-type OrdenKey = 'valor_sin_causa' | 'entradas' | 'ventas' | 'mermas' | 'traslados'
+type OrdenKey = 'valor_sin_causa' | 'pedi' | 'entradas' | 'ventas' | 'mermas' | 'traslados'
   | 'preparaciones' | 'otras_salidas' | 'queda' | 'producto'
 
 type FiltroOrigen = 'todos' | 'proveedor' | 'directa'
@@ -277,10 +288,11 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
 
       {/* ── Tabla ── */}
       <div className="bg-white border border-warm-200 rounded-2xl px-3 py-2 overflow-x-auto">
-        <div className="min-w-[860px]">
+        <div className="min-w-[940px]">
           {/* encabezado */}
-          <div className="grid grid-cols-[2.4fr_0.8fr_0.8fr_0.62fr_0.7fr_0.75fr_0.9fr_0.8fr] gap-2 items-center px-2 py-2.5 border-b-2 border-warm-200">
+          <div className="grid grid-cols-[2.2fr_0.8fr_0.8fr_0.8fr_0.62fr_0.7fr_0.75fr_0.9fr_0.8fr] gap-2 items-center px-2 py-2.5 border-b-2 border-warm-200">
             <Th label="Insumo · de dónde viene" k="producto" orden={orden} dir={dir} onSort={sortear} />
+            <Th label="Pedí"     k="pedi"          orden={orden} dir={dir} onSort={sortear} className="justify-end" />
             <Th label="Entró"    k="entradas"      orden={orden} dir={dir} onSort={sortear} className="justify-end" />
             <Th label="Vendió"   k="ventas"        orden={orden} dir={dir} onSort={sortear} className="justify-end" />
             <Th label="Merma"    k="mermas"        orden={orden} dir={dir} onSort={sortear} className="justify-end" />
@@ -304,7 +316,7 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
               <div key={it.producto_id}>
                 <button
                   onClick={() => setFichaDe(it.producto_id)}
-                  className={`w-full text-left grid grid-cols-[2.4fr_0.8fr_0.8fr_0.62fr_0.7fr_0.75fr_0.9fr_0.8fr] gap-2 items-center px-2 py-2.5 rounded-lg transition-colors ${
+                  className={`w-full text-left grid grid-cols-[2.2fr_0.8fr_0.8fr_0.8fr_0.62fr_0.7fr_0.75fr_0.9fr_0.8fr] gap-2 items-center px-2 py-2.5 rounded-lg transition-colors ${
                     alerta ? 'bg-danger-50/60 hover:bg-danger-50' : it.no_se_mide ? 'bg-gold-50/50 hover:bg-gold-50' : 'hover:bg-warm-50'
                   }`}
                 >
@@ -319,6 +331,22 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
                       {it.proveedor && <span className="text-[11px] text-warm-500 truncate">{it.proveedor}</span>}
                     </div>
                   </div>
+                  {/* Pedí vs. Entró, una al lado de la otra: es la comparación
+                      que el dueño vino a buscar. Cuando pidió y llegó de menos,
+                      el faltante va abajo en chico — el número solo no dice
+                      nada, y hacer la resta de cabeza en una tabla de 120 filas
+                      es exactamente lo que la pantalla vino a evitar. */}
+                  <span className="flex flex-col items-end leading-tight">
+                    <Celda v={it.pedi} />
+                    {it.pedi > 0 && it.entradas < it.pedi && (
+                      <span className="font-mono text-[10px] text-gold-600 tabular-nums">
+                        faltó {fmtCant(it.pedi - it.entradas)}
+                      </span>
+                    )}
+                    {it.pedi === 0 && Object.keys(it.pedi_otras_unidades).length > 0 && (
+                      <span className="text-[10px] text-warm-400">otra unidad</span>
+                    )}
+                  </span>
                   <Celda v={it.entradas} />
                   <span className="flex items-center justify-end gap-1">
                     {it.no_se_mide && <AlertTriangle size={11} className="text-gold-600 shrink-0" />}
@@ -339,8 +367,22 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
         </div>
       </div>
 
+      {/* Una columna de ceros sin explicación se lee como un bug, y en los
+          períodos anteriores a que «Armar pedido» guardara lo que manda, «Pedí»
+          es cero para todo. Se dice por qué, en vez de dejar al dueño
+          preguntándose si el sistema perdió sus pedidos. */}
+      {!cargando && !error && r && r.n_con_pedido === 0 && filas.length > 0 && (
+        <p className="text-[11.5px] text-warm-500 bg-warm-50 border border-warm-200 rounded-xl px-3 py-2 leading-relaxed">
+          <b>«Pedí» está en cero en todo el período.</b> Los pedidos quedan escritos desde que se
+          mandan con el botón «Pedir a…» de la pestaña <b>Pedido</b>. Lo de antes se iba por
+          WhatsApp sin pasar por acá, y no hay forma de recuperarlo.
+        </p>
+      )}
+
       <p className="text-[11.5px] text-warm-400 leading-relaxed px-1">
-        <b>«Comprás vos»</b> = lo traés del supermercado, sin pedido ni precio acordado — ahí lo que salió es tu lista de mercado.
+        <b>«Pedí»</b> = lo que mandaste por escrito a un proveedor, en la unidad del insumo. Al lado va
+        lo que <b>entró</b>: la resta entre las dos es lo que no te trajeron.
+        <b> «Comprás vos»</b> = lo traés del supermercado, sin pedido ni precio acordado — ahí lo que salió es tu lista de mercado.
         Tocá una columna para ordenar, una fila para abrir su ficha. Los <b>ajustes de conteo</b> no entran en lo que salió:
         no son una causa, son faltante viejo que apareció al contar.
       </p>

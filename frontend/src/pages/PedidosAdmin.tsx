@@ -62,6 +62,17 @@ interface ItemHuerfano extends ItemCatalogo {
   visto_en_otra_sede: string | null
 }
 
+/** Un pedido que YA salió: quedó escrito cuando el dueño lo mandó. */
+interface PedidoRegistrado {
+  id: number
+  proveedor: string
+  fecha: string | null
+  nota: string | null
+  items: { producto_id: number; nombre: string; cantidad: number; unidad: string }[]
+  /** El backend devolvió uno que ya existía (doble toque) en vez de crear otro. */
+  ya_estaba: boolean
+}
+
 interface GrupoProveedor {
   proveedor: string
   clave: string
@@ -76,6 +87,10 @@ interface GrupoProveedor {
   dias_desde_ultima: number | null
   cada_dias: number | null
   total_productos: number
+  /** Lo que ya se le mandó HOY. Viene del servidor y no de esta pestaña: si
+   *  viviera solo acá, recargar —o abrir la pantalla en el celular después de
+   *  haber pedido desde la tablet— borraría la memoria y se pediría dos veces. */
+  pedidos_hoy: PedidoRegistrado[]
 }
 
 interface Preparable {
@@ -173,19 +188,19 @@ function lineasPedido(grupo: GrupoProveedor, cantidades: Record<string, number>)
   return grupo.productos.filter(p => (cantidades[claveCantidad(grupo.clave, p.producto_id)] ?? 0) > 0)
 }
 
-function textoWhatsApp(
-  grupo: GrupoProveedor, cantidades: Record<string, number>, sede: string,
-): string | null {
-  const lineas = lineasPedido(grupo, cantidades)
-  if (!lineas.length) return null
-  const fecha = new Date().toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })
-  const cuerpo = lineas.map(p => {
-    const cant = cantidades[claveCantidad(grupo.clave, p.producto_id)]
-    const emp = enEmpaques(cant, p.contenido_por_empaque, p.unidad)
-    return `- ${p.nombre}: ${numero(cant)} ${p.unidad}${emp ? ` (${emp})` : ''}`
-  })
-  return `*Pedido ${grupo.proveedor} — ${fecha}*\n${sede ? `${sede}\n` : ''}${cuerpo.join('\n')}`
+/** El texto de un pedido YA MANDADO. Se arma de lo que quedó GUARDADO y no de
+ *  lo que hay en pantalla: «copiar otra vez» tiene que reproducir exactamente lo
+ *  que salió, aunque después alguien haya tocado una cantidad. */
+function textoDeRegistrado(pedido: PedidoRegistrado, sede: string): string {
+  const fecha = pedido.fecha
+    ? parseUTC(pedido.fecha).toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })
+    : new Date().toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })
+  const cuerpo = pedido.items.map(i => `- ${i.nombre}: ${numero(i.cantidad)} ${i.unidad}`)
+  return `*Pedido ${pedido.proveedor} — ${fecha}*\n${sede ? `${sede}\n` : ''}${cuerpo.join('\n')}`
 }
+
+const horaDe = (iso: string | null) =>
+  iso ? parseUTC(iso).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' }) : ''
 
 function copiar(texto: string, ok: string) {
   navigator.clipboard?.writeText(texto)
@@ -273,15 +288,20 @@ function FilaPedido({
 // ─── Card de proveedor ────────────────────────────────────────────────────────
 
 function CardProveedor({
-  grupo, cantidades, setCantidad, sede,
+  grupo, cantidades, setCantidad, sede, tiendaId, onPedido, onAnular,
 }: {
   grupo: GrupoProveedor
   cantidades: Record<string, number>
   setCantidad: (clave: string, productoId: number, v: number) => void
   sede: string
+  tiendaId: number | null
+  onPedido: (clave: string, pedido: PedidoRegistrado) => void
+  onAnular: (clave: string, pedidoId: number) => void
 }) {
   const [abierto, setAbierto] = useState(grupo.n_necesita + grupo.n_en_alerta > 0)
   const [verCatalogo, setVerCatalogo] = useState(false)
+  const [mandando, setMandando] = useState(false)
+  const [errorPedido, setErrorPedido] = useState('')
   const cfg = ESTADO_CFG[grupo.estado_resumen as keyof typeof ESTADO_CFG] ?? ESTADO_CFG.ok
 
   // El pedido = lo que tiene cantidad > 0. Mismo cálculo para el número del
@@ -317,10 +337,55 @@ function CardProveedor({
     (s, p) => s + (p.ultimo_precio ?? 0) * (cantidades[claveCantidad(grupo.clave, p.producto_id)] ?? 0), 0)
   const faltanPrecio = enPedido.some(p => p.ultimo_precio == null)
 
-  const copiarPedido = () => {
-    const texto = textoWhatsApp(grupo, cantidades, sede)
-    if (!texto) { alert('Este pedido está vacío: poné una cantidad mayor a cero.'); return }
-    copiar(texto, `Pedido de ${grupo.proveedor} copiado ✓`)
+  // El botón hace DOS cosas y en este orden: guarda y después copia. Antes solo
+  // copiaba, y el pedido se iba por WhatsApp sin que el sistema se enterara
+  // nunca de que había existido —por eso la ficha del insumo no tenía con qué
+  // contestar «¿trajeron lo que pedí?»—. Guardar primero es a propósito: si el
+  // guardado falla, no se copia nada. Un texto en el portapapeles es un pedido
+  // que el dueño va a mandar creyendo que quedó registrado.
+  //
+  // Lo que NO hace: mandar el WhatsApp. Eso lo sigue haciendo él, desde su
+  // teléfono. Decir «pedido enviado» sin haber enviado nada sería peor que no
+  // guardar nada.
+  const mandarPedido = async () => {
+    if (tiendaId === null) return
+    const lineas = lineasPedido(grupo, cantidades)
+    if (!lineas.length) { alert('Este pedido está vacío: poné una cantidad mayor a cero.'); return }
+    setMandando(true); setErrorPedido('')
+    try {
+      const { data } = await api.post<PedidoRegistrado>('/pedidos/registrar', {
+        tienda_id: tiendaId,
+        proveedor: grupo.proveedor,
+        items: lineas.map(p => ({
+          producto_id: p.producto_id,
+          cantidad: cantidades[claveCantidad(grupo.clave, p.producto_id)],
+          // Siempre la unidad DEL PRODUCTO: es la única en la que «pedí» y
+          // «llegó» se pueden restar. Sin esto, «pedí 4» contra una factura de
+          // 4.000 gr no compara nada.
+          unidad: p.unidad,
+        })),
+      })
+      if (!data.ya_estaba) onPedido(grupo.clave, data)
+      copiar(textoDeRegistrado(data, sede),
+             data.ya_estaba
+               ? `Este pedido a ${grupo.proveedor} ya estaba registrado. Se copió de nuevo ✓`
+               : `Pedido a ${grupo.proveedor} guardado y copiado ✓`)
+    } catch (e: any) {
+      setErrorPedido(e.response?.data?.detail || 'No se pudo guardar el pedido. No se copió nada.')
+    } finally {
+      setMandando(false)
+    }
+  }
+
+  const deshacer = async (pedidoId: number) => {
+    if (tiendaId === null) return
+    if (!confirm('¿Borrar este pedido del registro? Lo que ya mandaste por WhatsApp no se deshace.')) return
+    try {
+      await api.delete(`/pedidos/registrado/${pedidoId}`, { params: { tienda_id: tiendaId } })
+      onAnular(grupo.clave, pedidoId)
+    } catch (e: any) {
+      setErrorPedido(e.response?.data?.detail || 'No se pudo borrar el pedido')
+    }
   }
 
   return (
@@ -419,20 +484,64 @@ function CardProveedor({
             </div>
           )}
 
+          {/* Lo que YA salió hoy para este proveedor. Va arriba del botón porque
+              es lo primero que hay que saber antes de volver a pedir. Se listan
+              todos: pedir dos veces en el día es legítimo —llega el de la
+              mañana y por la tarde falta algo— y lo que el dueño necesita ver
+              es QUÉ mandó, no cuántas veces. */}
+          {grupo.pedidos_hoy.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {grupo.pedidos_hoy.map(ped => (
+                <div key={ped.id} className="rounded-xl border border-green-200 bg-green-50 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-green-800">
+                      <CheckCircle2 size={13} />
+                      Pedido a {grupo.proveedor}
+                      <span className="font-medium text-green-600">
+                        · {ped.items.length} producto{ped.items.length !== 1 ? 's' : ''}
+                        {ped.fecha && ` · ${horaDe(ped.fecha)}`}
+                      </span>
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => copiar(textoDeRegistrado(ped, sede), 'Pedido copiado otra vez ✓')}
+                        className="flex items-center gap-1 text-[11px] font-semibold text-green-700 hover:text-green-900 border border-green-300 rounded-lg px-2 py-1"
+                      >
+                        <Copy size={11} /> Copiar otra vez
+                      </button>
+                      <button
+                        onClick={() => deshacer(ped.id)}
+                        className="flex items-center gap-1 text-[11px] font-medium text-gray-500 hover:text-red-600 border border-gray-200 rounded-lg px-2 py-1"
+                        title="Si lo registraste por error"
+                      >
+                        <X size={11} /> Deshacer
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-green-700 mt-1 leading-relaxed">
+                    {ped.items.map(i => `${i.nombre} ${numero(i.cantidad)} ${i.unidad}`).join(' · ')}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             <button
-              onClick={copiarPedido}
-              disabled={enPedido.length === 0}
+              onClick={mandarPedido}
+              disabled={enPedido.length === 0 || mandando}
               className={`flex items-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-2 transition-colors ${
-                enPedido.length
+                enPedido.length && !mandando
                   ? 'bg-green-600 text-white hover:bg-green-700'
                   : 'bg-gray-100 text-gray-300 cursor-not-allowed'
               }`}
             >
               <Copy size={12} />
-              {enPedido.length
-                ? `Copiar pedido para WhatsApp (${enPedido.length} producto${enPedido.length !== 1 ? 's' : ''})`
-                : 'Sin nada que pedir'}
+              {mandando
+                ? 'Guardando…'
+                : enPedido.length
+                  ? `${grupo.pedidos_hoy.length ? 'Pedir otra vez' : 'Pedir'} a ${grupo.proveedor} (${enPedido.length} producto${enPedido.length !== 1 ? 's' : ''})`
+                  : 'Sin nada que pedir'}
             </button>
             {enPedido.length > 0 && (
               <span className="text-xs text-gray-500 tabular-nums">
@@ -441,6 +550,20 @@ function CardProveedor({
               </span>
             )}
           </div>
+          {/* Qué hace el botón, dicho una vez. «Pedir» suena a que el sistema
+              manda el WhatsApp, y no lo manda: lo copia para que lo mande el
+              dueño. Prometer un envío que no ocurre sería el peor bug posible
+              acá, porque nadie se entera hasta que el proveedor no llega. */}
+          {enPedido.length > 0 && !mandando && (
+            <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
+              Guarda el pedido y te lo copia para WhatsApp. Mandarlo lo hacés vos.
+            </p>
+          )}
+          {errorPedido && (
+            <p className="flex items-center gap-1.5 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 mt-2">
+              <AlertTriangle size={12} /> {errorPedido}
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -618,6 +741,27 @@ function TabPedidos({ tiendaId, sedeNombre }: { tiendaId: number | null; sedeNom
   const setCantidad = (clavePr: string, productoId: number, v: number) =>
     setCantidades(prev => ({ ...prev, [claveCantidad(clavePr, productoId)]: v }))
 
+  // Después de guardar un pedido se parchea el grupo en memoria en vez de
+  // recargar todo el catálogo. No es solo velocidad: `cargar()` recalcula la
+  // precarga sobre el inventario, y en una tablet con wifi de local el card
+  // parpadearía justo cuando el dueño acaba de mandar el pedido y está mirando
+  // qué mandó. El servidor ya guardó; esto solo pone la pantalla al día.
+  const anotarPedido = (clave: string, pedido: PedidoRegistrado) =>
+    setData(prev => prev && ({
+      ...prev,
+      proveedores: prev.proveedores.map(g =>
+        g.clave === clave ? { ...g, pedidos_hoy: [...g.pedidos_hoy, pedido] } : g),
+    }))
+
+  const olvidarPedido = (clave: string, pedidoId: number) =>
+    setData(prev => prev && ({
+      ...prev,
+      proveedores: prev.proveedores.map(g =>
+        g.clave === clave
+          ? { ...g, pedidos_hoy: g.pedidos_hoy.filter(p => p.id !== pedidoId) }
+          : g),
+    }))
+
   // Total de líneas del pedido: la MISMA regla que cada card y que cada texto.
   const totalLineas = useMemo(
     () => (data?.proveedores ?? []).reduce((n, g) => n + lineasPedido(g, cantidades).length, 0),
@@ -663,6 +807,10 @@ function TabPedidos({ tiendaId, sedeNombre }: { tiendaId: number | null; sedeNom
   if (!data) return null
 
   const conPedido = data.proveedores.filter(g => lineasPedido(g, cantidades).length > 0)
+  // A cuántos proveedores YA se les pidió hoy. Es lo que contesta «¿ya hice el
+  // pedido de hoy?» sin abrir card por card, la pregunta con la que el dueño
+  // llega a esta pantalla la segunda vez en el día.
+  const yaPedidos = data.proveedores.filter(g => g.pedidos_hoy.length > 0)
 
   return (
     <div className="space-y-3">
@@ -677,6 +825,12 @@ function TabPedidos({ tiendaId, sedeNombre }: { tiendaId: number | null; sedeNom
               <span className="text-gray-400"> · {totalAlertas} en rojo esperando cantidad</span>
             )}
           </p>
+          {yaPedidos.length > 0 && (
+            <p className="flex items-center gap-1.5 text-xs text-green-700 font-medium mt-1">
+              <CheckCircle2 size={13} />
+              Hoy ya le pediste a {yaPedidos.map(g => g.proveedor).join(', ')}
+            </p>
+          )}
           {(data.total_urgentes > 0 || data.total_pronto > 0 || data.total_bajo > 0) && (
             <p className="text-xs text-gray-400 mt-0.5">
               {data.total_urgentes > 0 && <span className="text-red-500 font-semibold">{data.total_urgentes} urgente{data.total_urgentes !== 1 ? 's' : ''}</span>}
@@ -723,6 +877,9 @@ function TabPedidos({ tiendaId, sedeNombre }: { tiendaId: number | null; sedeNom
           cantidades={cantidades}
           setCantidad={setCantidad}
           sede={sedeNombre}
+          tiendaId={tiendaId}
+          onPedido={anotarPedido}
+          onAnular={olvidarPedido}
         />
       ))}
 

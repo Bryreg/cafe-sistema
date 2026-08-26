@@ -191,6 +191,14 @@ def costo_unitario(db) -> dict[int, tuple[float, str]]:
 _PREFIJOS_SALIDA = (
     ("Venta POS", "ventas"),                        # pos.py:463 y :501
     ("Consumo", "mermas"),                          # mermas.py:76
+    # Motivo de una versión vieja del registro de consumo (23 movimientos del
+    # 2-jul-2026 en Vida). No arranca con "Consumo" —minúscula y guion bajo— así
+    # que caía al cajón `otras_salidas` y la pantalla lo mostraba como fuga SIN
+    # EXPLICAR: $1.126.398, el 99,7% de todo lo «sin causa» de la sede. Era
+    # consumo del personal, registrado y con nombre; el clasificador no sabía
+    # leerlo. Acusar de faltante algo que sí se anotó es el peor modo de falla
+    # de esta pantalla, y por eso el motivo viejo se reconoce explícitamente.
+    ("consumo_turno", "mermas"),                    # legado, 2-jul-2026
     ("Daño", "mermas"),                             # mermas.py:78
     ("Traslado a", "traslados"),                    # mermas.py:80
     ("Preparación:", "preparaciones"),              # inventario.py:569
@@ -220,6 +228,14 @@ _PREFIJOS_AJUSTE = (
     ("Verificación de conteo", "ajustes_conteo"),   # conteos.py:347
     ("Inventario mensual", "ajustes_conteo"),       # inventario_mensual.py:498
     ("Ajuste por conteo", "ajustes_conteo"),        # compras.py:67
+    # Conteos que se cargaron a mano durante la puesta en marcha, con el motivo
+    # escrito libre. SON conteos —el saldo se fijó en lo que alguien contó—, así
+    # que pertenecen al renglón de ajustes de conteo y no al de ajustes
+    # manuales. La identidad no se mueve (los dos renglones ya viajaban aparte
+    # de las causas de salida); lo que cambia es que el rótulo diga la verdad.
+    ("Carga inicial", "ajustes_conteo"),            # legado, puesta en marcha
+    ("Conteo fisico real", "ajustes_conteo"),       # legado, corrección de admin
+    ("Aplicar conteo de cierre", "ajustes_conteo"), # legado, cierre 1-jul-2026
 )
 
 RENGLONES = [

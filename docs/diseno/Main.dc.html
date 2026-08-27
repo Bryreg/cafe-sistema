@@ -1,0 +1,173 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+  <style>
+    body { margin: 0; font-family: 'Plus Jakarta Sans', -apple-system, system-ui, sans-serif;
+           background: #fbf8f4; color: #1e1a16; -webkit-font-smoothing: antialiased; }
+    a { color: #bf6700; } a:hover { color: #6b2f00; }
+    .rot { font-size: 10px; font-weight: 700; text-transform: uppercase;
+           letter-spacing: 0.09em; color: #7f7974; }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+            font-variant-numeric: tabular-nums; }
+  </style>
+</helmet>
+
+<div style="width: 900px; min-height: 1280px; background: #fbf8f4; display: flex; flex-direction: column">
+
+  <header style="display: flex; flex-direction: column; gap: 18px; padding: 30px 32px 22px; background: #ffffff; border-bottom: 1px solid #e7e4e0">
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 24px">
+      <div style="display: flex; flex-direction: column; gap: 7px">
+        <span class="rot">Inventario · 21 al 27 de agosto</span>
+        <h1 style="margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -0.022em; line-height: 1.1; color: #1e1a16">Lo que se está yendo</h1>
+        <p style="margin: 0; max-width: 54ch; font-size: 13.5px; line-height: 1.5; color: #4c4742">
+          Cada insumo ordenado por lo que <em>vale</em> la distancia entre lo que el sistema cree
+          que hay y lo que alguien contó en el estante.
+        </p>
+      </div>
+      <div style="display: flex; gap: 3px; background: #f5f1ec; border-radius: 11px; padding: 3px; flex-shrink: 0">
+        <span style="{{cssVida}}">Vida</span>
+        <span style="{{cssPalmetto}}">Palmetto</span>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px">
+      <div style="background: #fff1ed; border: 1px solid #ffe2dc; border-radius: 12px; padding: 13px 15px; display: flex; flex-direction: column; gap: 3px">
+        <span class="rot" style="color: #8a3325">Falta en el estante</span>
+        <b class="mono" style="font-size: 21px; font-weight: 700; color: #8a3325">{{plataFalta}}</b>
+        <span style="font-size: 11.5px; color: #7f7974">{{nFalta}}</span>
+      </div>
+      <div style="background: #fff2e4; border: 1px solid #ffe4c2; border-radius: 12px; padding: 13px 15px; display: flex; flex-direction: column; gap: 3px">
+        <span class="rot" style="color: #6b2f00">Sobra en el estante</span>
+        <b class="mono" style="font-size: 21px; font-weight: 700; color: #6b2f00">{{plataSobra}}</b>
+        <span style="font-size: 11.5px; color: #7f7974">{{nSobra}}</span>
+      </div>
+      <div style="background: #ffffff; border: 1px solid #e7e4e0; border-radius: 12px; padding: 13px 15px; display: flex; flex-direction: column; gap: 3px">
+        <span class="rot">Hoy coinciden</span>
+        <b class="mono" style="font-size: 21px; font-weight: 700; color: {{colCuadra}}">{{nCuadra}}</b>
+        <span style="font-size: 11.5px; color: #7f7974">de {{nTotal}} insumos mirados</span>
+      </div>
+    </div>
+    <p style="margin: -6px 0 0; font-size: 11.5px; line-height: 1.45; color: #7f7974">
+      No es plata perdida: es plata sobre la que el sistema y el estante no dicen lo mismo. Vale lo que
+      costaría reponerla al precio al que se compró.
+    </p>
+  </header>
+
+  <div style="display: grid; grid-template-columns: 250px minmax(0, 1fr) 168px; gap: 20px; padding: 11px 32px 9px; background: #f5f1ec; border-bottom: 1px solid #e7e4e0">
+    <span class="rot">Insumo · lo que dice cada uno</span>
+    <span style="display: grid; grid-template-columns: 1fr auto 1fr; align-items: center">
+      <span class="rot">&#8592; falta</span>
+      <span class="rot" style="text-align: center">el sistema</span>
+      <span class="rot" style="text-align: right">sobra &#8594;</span>
+    </span>
+    <span class="rot" style="text-align: right">Cuánto vale</span>
+  </div>
+
+  <sc-for list="{{filas}}" as="f" hint-placeholder-count="10">
+    <div style="display: grid; grid-template-columns: 250px minmax(0, 1fr) 168px; gap: 20px; align-items: center; padding: 13px 32px; background: #ffffff; border-bottom: 1px solid #f0ece7">
+
+      <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0">
+        <b style="font-size: 13.5px; font-weight: 700; line-height: 1.25; color: #1e1a16">{{f.n}}</b>
+        <span style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap">
+          <span style="font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 99px; letter-spacing: 0.03em; color: {{f.chipCol}}; background: {{f.chipBg}}">{{f.chip}}</span>
+          <span class="mono" style="font-size: 11px; color: #a8a3a0">{{f.u}}</span>
+        </span>
+        <span class="mono" style="font-size: 11px; color: #7f7974">{{f.cuentas}}</span>
+      </div>
+
+      <div style="position: relative; height: 22px">
+        <div style="position: absolute; left: 50%; top: -5px; bottom: -5px; width: 1px; background: #d8d3ce"></div>
+        <sc-if value="{{f.esFalta}}" hint-placeholder-val="{{true}}">
+          <div style="position: absolute; top: 2px; height: 18px; right: 50%; background: #1e1a16; border-radius: 5px 0 0 5px; width: max(3px, {{f.ancho}})"></div>
+        </sc-if>
+        <sc-if value="{{f.esSobra}}" hint-placeholder-val="{{true}}">
+          <div style="position: absolute; top: 2px; height: 18px; left: 50%; background: #7f7974; border-radius: 0 5px 5px 0; width: max(3px, {{f.ancho}})"></div>
+        </sc-if>
+        <sc-if value="{{f.esCero}}" hint-placeholder-val="{{true}}">
+          <div style="position: absolute; top: 6px; left: 50%; margin-left: -5px; width: 10px; height: 10px; border-radius: 50%; background: #007313"></div>
+        </sc-if>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 2px; align-items: flex-end">
+        <b class="mono" style="font-size: 16px; font-weight: 700; color: #1e1a16">{{f.plataTxt}}</b>
+        <span style="font-size: 11.5px; color: #7f7974; text-align: right">{{f.leyenda}}</span>
+      </div>
+    </div>
+  </sc-for>
+
+  <footer style="padding: 18px 32px 26px; display: flex; gap: 12px; align-items: flex-start">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a8a3a0" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; margin-top: 1px">
+      <circle cx="12" cy="12" r="9"></circle><path d="M12 16v-5"></path><path d="M12 8h.01"></path>
+    </svg>
+    <p style="margin: 0; font-size: 12px; line-height: 1.5; color: #7f7974; max-width: 78ch">
+      La barra oscura es lo que <b style="color: #4c4742">falta</b> en el estante; la clara, lo que
+      <b style="color: #4c4742">sobra</b>. El largo es plata, así que un insumo caro con poca
+      diferencia puede pesar más que uno barato con mucha. Los conteos son de la semana; se usa el
+      último de cada insumo.
+    </p>
+  </footer>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"sede":{"editor":"enum","options":["Vida","Palmetto"],"default":"Vida","section":"Datos"},"$preview":{"width":900,"height":1280}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const D = {"dias":["2026-08-21","2026-08-22","2026-08-23","2026-08-24","2026-08-25","2026-08-26","2026-08-27"],"sedes":{"Vida":[{"n":"Cafe Alta Tostion x2500","u":"gr","q":6104.0,"vu":65.72,"v":"sobra","obs":7,"mas":7,"menos":0,"sis":6584.0,"real":9328.0,"dif":2744.0,"serie":[1497.0,2720.0,2573.0,2585.0,1944.0,2658.0,2744.0],"prov":"Cafexcoop","origen":"proveedor"},{"n":"Leche Entera","u":"und","q":11.516,"vu":5556.67,"v":"sobra","obs":7,"mas":7,"menos":0,"sis":15.719000000000026,"real":27.0,"dif":11.28,"serie":[20.38,15.76,12.76,11.96,7.53,10.12,11.28],"prov":"Galerías","origen":"directa"},{"n":"MEZCLA GRANIZADO (preparada)","u":"gr","q":11468.0,"vu":33.61,"v":"falta","obs":7,"mas":0,"menos":7,"sis":13063.0,"real":7956.0,"dif":-5107.0,"serie":[-2371.0,-2929.0,-3805.0,-2939.0,-3578.0,-4849.0,-5107.0],"prov":null,"origen":"sin_origen"},{"n":"Helado Vainilla","u":"gr","q":7105.0,"vu":8.06,"v":"mixto","obs":6,"mas":2,"menos":4,"sis":7305.0,"real":6733.0,"dif":-572.0,"serie":[-705.0,502.0,-2392.0,633.0,-5181.0,-572.0],"prov":"Mimos","origen":"proveedor"},{"n":"Almojabanas","u":"und","q":70.0,"vu":1200.0,"v":"falta","obs":7,"mas":0,"menos":7,"sis":82.0,"real":81.0,"dif":-1.0,"serie":[-1.0,-1.0,-1.0,-1.0,-1.0,-1.0,-1.0],"prov":"Wilenses","origen":"proveedor"},{"n":"Azucar a Granel","u":"gr","q":7335.0,"vu":3.74,"v":"mixto","obs":7,"mas":4,"menos":3,"sis":7455.0,"real":7742.0,"dif":287.0,"serie":[35.0,-28.0,145.0,250.0,-3875.0,-7635.0,287.0],"prov":"Galerías","origen":"directa"},{"n":"Salsa Caramelo","u":"gr","q":1007.0,"vu":43.09,"v":"falta","obs":7,"mas":0,"menos":7,"sis":1007.0,"real":727.0,"dif":-280.0,"serie":[-149.0,-149.0,-262.0,-256.0,-242.0,-305.0,-280.0],"prov":"Mimos","origen":"proveedor"},{"n":"Leche Deslactosada","u":"und","q":8.299,"vu":5556.67,"v":"mixto","obs":8,"mas":2,"menos":6,"sis":8.298999999999921,"real":30.0,"dif":21.7,"serie":[-18.51,-13.34,-12.34,-9.25,-8.72,-4.05,23.7,21.7],"prov":"Galerías","origen":"directa"},{"n":"Bati Crema","u":"und","q":46.0,"vu":1616.85,"v":"falta","obs":6,"mas":0,"menos":6,"sis":46.0,"real":25.0,"dif":-21.0,"serie":[-12.0,-14.0,-15.0,-17.0,-19.0,-21.0],"prov":"Quala","origen":"proveedor"},{"n":"LECHE CONDENSADA","u":"gr","q":8073.0,"vu":25.33,"v":"falta","obs":7,"mas":0,"menos":7,"sis":8133.0,"real":7864.0,"dif":-269.0,"serie":[-151.0,-162.0,-111.0,-137.0,-159.0,-259.0,-269.0],"prov":"Makro","origen":"directa"}],"Palmetto":[{"n":"Cafe Alta Tostion x2500","u":"gr","q":15190.0,"vu":65.72,"v":"mixto","obs":7,"mas":5,"menos":2,"sis":3810.0,"real":3640.0,"dif":-170.0,"serie":[-120.0,10.0,140.0,140.0,280.0,60.0,-170.0],"prov":"Cafexcoop","origen":"proveedor"},{"n":"Leche Entera","u":"und","q":24.899,"vu":5556.67,"v":"sobra","obs":7,"mas":7,"menos":0,"sis":-3.954999999999982,"real":15.0,"dif":18.95,"serie":[9.36,11.95,17.69,19.08,22.09,20.24,18.95],"prov":"Galerías","origen":"directa"},{"n":"MEZCLA GRANIZADO (preparada)","u":"gr","q":7875.0,"vu":33.61,"v":"falta","obs":7,"mas":0,"menos":7,"sis":3455.0,"real":0.0,"dif":-3455.0,"serie":[-755.0,-1080.0,-1485.0,-1080.0,-2895.0,-1970.0,-3455.0],"prov":null,"origen":"sin_origen"},{"n":"Helado Vainilla","u":"gr","q":3270.0,"vu":8.06,"v":"falta","obs":6,"mas":0,"menos":5,"sis":4270.0,"real":2610.0,"dif":-1660.0,"serie":[0.0,-880.0,-680.0,-860.0,-1020.0,-1660.0],"prov":"Mimos","origen":"proveedor"},{"n":"Almojabanas","u":"und","q":33.0,"vu":1200.0,"v":"cuadra","obs":7,"mas":0,"menos":0,"sis":34.0,"real":34.0,"dif":0.0,"serie":[0.0,0.0,0.0,0.0,0.0,0.0,0.0],"prov":"Wilenses","origen":"proveedor"},{"n":"Azucar a Granel","u":"gr","q":2780.0,"vu":3.74,"v":"mixto","obs":7,"mas":4,"menos":3,"sis":3400.0,"real":5890.0,"dif":2490.0,"serie":[10.0,330.0,-10.0,-90.0,-980.0,20.0,2490.0],"prov":"Makro","origen":"directa"},{"n":"Salsa Caramelo","u":"gr","q":1250.0,"vu":43.09,"v":"falta","obs":7,"mas":0,"menos":7,"sis":1310.0,"real":990.0,"dif":-320.0,"serie":[-140.0,-120.0,-170.0,-170.0,-190.0,-200.0,-320.0],"prov":"Mimos","origen":"proveedor"},{"n":"Leche Deslactosada","u":"und","q":50.847,"vu":5556.67,"v":"falta","obs":7,"mas":0,"menos":7,"sis":21.802000000000007,"real":5.0,"dif":-16.8,"serie":[-10.0,-11.0,-15.0,-17.0,-19.58,-17.86,-16.8],"prov":"Galerías","origen":"directa"},{"n":"Bati Crema","u":"und","q":8.0,"vu":1616.85,"v":"falta","obs":4,"mas":0,"menos":3,"sis":8.0,"real":8.0,"dif":0.0,"serie":[-8.0,-12.0,-16.0,0.0],"prov":"Éxito","origen":"directa"},{"n":"LECHE CONDENSADA","u":"gr","q":4734.0,"vu":25.33,"v":"falta","obs":7,"mas":0,"menos":7,"sis":5940.0,"real":5820.0,"dif":-120.0,"serie":[-40.0,-10.0,-10.0,-40.0,-50.0,-60.0,-120.0],"prov":"Makro","origen":"directa"}]}};
+    const sede = this.props.sede ?? 'Vida';
+    const fmt = (v) => {
+      const a = Math.abs(v);
+      const txt = a < 10 && !Number.isInteger(v)
+        ? v.toLocaleString('es-CO', { maximumFractionDigits: 2 })
+        : Math.round(v).toLocaleString('es-CO');
+      return txt.replace('-', '\u2212');   // menos de verdad, no guion
+    };
+    const pesos = (v) => '$' + Math.round(v).toLocaleString('es-CO');
+    const CHIP = {
+      falta:  { t: 'siempre falta', c: '#8a3325', b: '#ffe2dc' },
+      sobra:  { t: 'siempre sobra', c: '#6b2f00', b: '#ffe4c2' },
+      mixto:  { t: 'va y viene',    c: '#4c4742', b: '#f5f1ec' },
+      cuadra: { t: 'cuadra exacto', c: '#007313', b: '#dbf3db' },
+    };
+    const base = D.sedes[sede].map((f) => Object.assign({}, f, { plata: Math.abs(f.dif) * f.vu }));
+    base.sort((a, b) => b.plata - a.plata);
+    const max = Math.max.apply(null, base.map((f) => f.plata).concat([1]));
+    const suma = (xs) => xs.reduce((t, f) => t + f.plata, 0);
+    const falta = base.filter((f) => f.dif < -0.001);
+    const sobra = base.filter((f) => f.dif > 0.001);
+    const cuadra = base.filter((f) => Math.abs(f.dif) <= 0.001);
+    const pastilla = (activa) => 'padding: 7px 15px; border-radius: 8px; font-size: 13px; font-weight: 600; '
+      + (activa ? 'background: #ffffff; color: #1e1a16; box-shadow: 0 1px 2px rgba(30,26,22,0.08);'
+                : 'background: transparent; color: #7f7974;');
+    return {
+      cssVida: pastilla(sede === 'Vida'),
+      cssPalmetto: pastilla(sede === 'Palmetto'),
+      plataFalta: pesos(suma(falta)), plataSobra: pesos(suma(sobra)),
+      nFalta: falta.length + (falta.length === 1 ? ' insumo' : ' insumos'),
+      nSobra: sobra.length + (sobra.length === 1 ? ' insumo' : ' insumos'),
+      nCuadra: String(cuadra.length), nTotal: String(base.length),
+      colCuadra: cuadra.length ? '#007313' : '#1e1a16',
+      filas: base.map((f) => ({
+        n: f.n, u: f.u,
+        chip: CHIP[f.v].t, chipCol: CHIP[f.v].c, chipBg: CHIP[f.v].b,
+        cuentas: 'sistema ' + fmt(f.sis) + ' · estante ' + fmt(f.real),
+        plataTxt: f.plata >= 1 ? pesos(f.plata) : '—',
+        leyenda: Math.abs(f.dif) <= 0.001 ? 'hoy coinciden'
+          : (f.dif < 0 ? 'faltan ' : 'sobran ') + fmt(Math.abs(f.dif)) + ' ' + f.u,
+        ancho: (f.plata / max * 48).toFixed(1) + '%',
+        esFalta: f.dif < -0.001, esSobra: f.dif > 0.001, esCero: Math.abs(f.dif) <= 0.001,
+      })),
+    };
+  }
+}
+</script>
+</body>
+</html>

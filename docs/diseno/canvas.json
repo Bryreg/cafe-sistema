@@ -1,0 +1,51 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 900,
+      "h": 1280
+    },
+    {
+      "file": "Tendencia.dc.html",
+      "x": 1020,
+      "y": 0,
+      "w": 900,
+      "h": 1240
+    },
+    {
+      "file": "Parte.dc.html",
+      "x": 2040,
+      "y": 0,
+      "w": 900,
+      "h": 1320
+    }
+  ],
+  "annotations": [
+    {
+      "id": "eje-plata",
+      "x": 0,
+      "y": -235,
+      "w": 880,
+      "text": "OPCIÓN A — «¿cuánto?»\nEl desacuerdo entre el sistema y el estante deja de estar escondido dentro de una línea de tiempo y pasa a ser el objeto: una barra por insumo, a un lado y al otro de lo que el sistema dice, ordenadas por lo que vale la diferencia. Sirve para decidir qué arreglar primero.\nA cambio: pierde el tiempo. No se ve cuándo llegó la mercadería ni cómo bajó el stock durante el día — sólo el estado de hoy."
+    },
+    {
+      "id": "eje-tendencia",
+      "x": 1020,
+      "y": -235,
+      "w": 880,
+      "text": "OPCIÓN B — «¿hacia dónde va?»\nUn renglón por insumo con los siete conteos de la semana contra la línea del cero. La pregunta no es cuánto falta sino si la diferencia se está agrandando: eso separa una fuga (crece) de una receta mal medida (pareja) de un problema de conteo (cambia de lado).\nA cambio: no dice cuánta plata hay en juego, y una escala por renglón hace que dos filas no se puedan comparar por altura."
+    },
+    {
+      "id": "eje-parte",
+      "x": 2040,
+      "y": -235,
+      "w": 880,
+      "text": "OPCIÓN C — «¿qué hago?»\nSin gráficos: tres párrafos escritos solos a partir de los mismos números, con la causa más probable de cada caso. Pensado para abrir en la tablet a las siete de la mañana y saber qué revisar sin interpretar nada.\nA cambio: sólo habla de tres insumos y esconde todo lo demás; y hay que confiar en la regla que eligió esos tres, porque no se ve el dato crudo."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

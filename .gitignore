@@ -42,3 +42,6 @@ desktop.ini
 
 # Cache de tooling (skill registry), no es del producto
 .atl/
+
+# Lienzo de Claude Design ya armado (2,5 MB, se regenera desde docs/diseno/)
+.diseno-vida-insumo/

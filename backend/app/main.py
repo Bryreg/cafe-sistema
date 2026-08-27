@@ -228,6 +228,23 @@ with engine.connect() as _conn:
         # segunda volvía a rebobinar el stock. NULL en las filas viejas = no se
         # sabe (los 7 conteos ya aplicados se identifican por sus movimientos).
         "ALTER TABLE conteos_fisicos ADD COLUMN fecha_aplicado TIMESTAMP",
+        # Backfill de los conteos que YA se habían aplicado antes de existir la
+        # columna (7 entre las dos sedes). La marca se saca del propio libro: un
+        # conteo se aplicó si dejó ajustes con su nombre. Sin esto, la pantalla
+        # les seguiría ofreciendo «Aplicar» y volverían a pisar el stock.
+        #
+        # Idempotente por el `fecha_aplicado IS NULL`: corre en cada arranque y
+        # solo rellena lo que falta. El patrón lleva el espacio final a propósito
+        # —«Conteo #5 %» no matchea «Conteo #55 …»— y el MIN toma la aplicación
+        # original, no las correcciones posteriores que comparten el prefijo.
+        """UPDATE conteos_fisicos SET fecha_aplicado = (
+               SELECT MIN(m.fecha) FROM movimientos_inventario m
+               WHERE m.tipo = 'ajuste' AND m.tienda_id = conteos_fisicos.tienda_id
+                 AND m.motivo LIKE 'Conteo #' || conteos_fisicos.id || ' %')
+           WHERE fecha_aplicado IS NULL AND EXISTS (
+               SELECT 1 FROM movimientos_inventario m2
+               WHERE m2.tipo = 'ajuste' AND m2.tienda_id = conteos_fisicos.tienda_id
+                 AND m2.motivo LIKE 'Conteo #' || conteos_fisicos.id || ' %')""",
         "ALTER TABLE solicitudes_pedido ADD COLUMN origen VARCHAR(20)",
         "ALTER TABLE solicitudes_pedido ADD COLUMN proveedor VARCHAR(150)",
         "UPDATE solicitudes_pedido SET origen = 'kiosko' WHERE origen IS NULL",

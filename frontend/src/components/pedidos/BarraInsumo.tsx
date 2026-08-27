@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useId, useMemo } from 'react'
 import type { Curva, PuntoCurva, ConteoCurva } from './FichaInsumo'
 
 /**
@@ -102,10 +102,11 @@ interface Props {
 }
 
 export default function BarraInsumo({ curva, span, onConteo, onPunto }: Props) {
+  const uid = useId().replace(/:/g, '')
   const g = useMemo(() => geometria(curva, span), [curva, span])
   if (!g) return <div className="h-[52px]" />
 
-  const { paso, marcas, X, Y, piso, tope, ultAj, bajoCero } = g
+  const { paso, marcas, X, Y, piso, tope, ultAj, bajoCero, finEstimado } = g
   const escalones = (campo: 'v' | 'techo') => {
     let d = `M ${X(paso[0].x)} ${Y(paso[0][campo])}`
     for (let i = 1; i < paso.length; i++) {
@@ -126,8 +127,36 @@ export default function BarraInsumo({ curva, span, onConteo, onPunto }: Props) {
         <path d={escalones('techo')} fill="none" strokeWidth="1.5" strokeDasharray="4 4"
           vectorEffect="non-scaling-stroke" stroke={C.sombraBorde} />
         <path d={area('v')} fill={C.stockRelleno} />
-        <path d={escalones('v')} fill="none" strokeWidth="2" strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke" stroke={C.stock} />
+
+        {/* EL TRAMO ESTIMADO. El saldo previo a un ajuste viejo no quedó
+            registrado en ninguna parte, así que la escalera lo deduce suponiendo
+            que el producto arrancó en cero. Sin esta marca el punto del conteo
+            queda lejos de la curva y se lee como una fuga enorme, cuando lo que
+            está lejos es la suposición: en producción son ~35 insumos por sede,
+            casi todos desechables con un ajuste antiguo. */}
+        {finEstimado !== null ? (
+          <>
+            <defs>
+              <clipPath id={`est${uid}`}>
+                <rect x={0} y={0} width={X(finEstimado)} height={H} />
+              </clipPath>
+              <clipPath id={`firme${uid}`}>
+                <rect x={X(finEstimado)} y={0} width={W - X(finEstimado)} height={H} />
+              </clipPath>
+            </defs>
+            <rect x={0} y={0} width={X(finEstimado)} height={H} fill={C.papel} opacity=".55" />
+            <path d={escalones('v')} fill="none" strokeWidth="2" strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke" stroke={C.stock} clipPath={`url(#firme${uid})`} />
+            <path d={escalones('v')} fill="none" strokeWidth="2" strokeLinejoin="round"
+              strokeDasharray="5 4" opacity=".75"
+              vectorEffect="non-scaling-stroke" stroke={C.stock} clipPath={`url(#est${uid})`} />
+            <line x1={X(finEstimado)} x2={X(finEstimado)} y1={0} y2={H} strokeWidth="1.5"
+              vectorEffect="non-scaling-stroke" stroke={C.sombraBorde} />
+          </>
+        ) : (
+          <path d={escalones('v')} fill="none" strokeWidth="2" strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke" stroke={C.stock} />
+        )}
 
         {/* Un conteo aplicado FIJA el saldo. Se marca el instante con una línea;
             apagar medio gráfico exageraría la duda hasta la forma, que sí es dato. */}
@@ -208,11 +237,16 @@ function geometria(curva: Curva, span: number) {
 
   const ultAj = paso.reduce((a, s, k) => (s.p.k === 'ajuste' ? k : a), -1)
   const bajoCero = paso.slice(ultAj + 1).some(s => s.v < -EPS)
+  // Hasta dónde llega la reconstrucción. Es siempre un PREFIJO: la pasada
+  // estimada cubre el tramo más viejo, antes del primer ajuste del libro.
+  const ultEst = paso.reduce((a, s, k) => (s.p.est ? k : a), -1)
+  const finEstimado = ultEst < 0 ? null
+    : Math.min(1, ultEst + 1 < paso.length ? paso[ultEst + 1].x : 1)
 
   const marcas = (curva.conteos ?? []).map(c => {
     const u = Math.max(0, Math.min(1, c.t / dur))
     return { xp: (X(u) / W) * 100, yr: Y(c.real), yc: Y(c.curva), c }
   })
 
-  return { paso, marcas, X, Y, piso, tope, ultAj, bajoCero }
+  return { paso, marcas, X, Y, piso, tope, ultAj, bajoCero, finEstimado }
 }

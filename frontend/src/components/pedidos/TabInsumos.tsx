@@ -237,6 +237,12 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
           {it.no_se_mide && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gold-100 text-gold-700">no se mide</span>
           )}
+          {it.curva?.ancla === 'estimado' && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-warm-100 text-warm-600"
+              title="Antes del ajuste más viejo el libro no registra el saldo previo: ese tramo es una reconstrucción, no un dato.">
+              arranque reconstruido
+            </span>
+          )}
         </div>
       </div>
 
@@ -465,6 +471,10 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
             <span className="inline-flex items-center gap-1.5 text-[11px] text-warm-500">
               <i className="w-[9px] h-[9px] rounded-full bg-warm-700 ring-2 ring-white" />
               lo que contaron · el palito hasta la barra es la diferencia
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-warm-500">
+              <i className="w-4 h-0 border-t-2 border-dashed border-forest-500 opacity-70" />
+              tramo reconstruido, no medido
             </span>
           </div>
 

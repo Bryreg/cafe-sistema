@@ -3,12 +3,18 @@ from fastapi import HTTPException
 from datetime import datetime, date
 from app.models.models import (ConteoFisico, ConteoFisicoItem, Inventario,
                                 ChecklistDiario, CajaTurno, EstadoTurnoEnum,
-                                Producto, ConteoVerificacion,
+                                MovimientoInventario, Producto, ConteoVerificacion,
                                 SolicitudConteoDesechables)
 from app.services.caja import get_turno_activo, _tick_checklist
 from app.services.inventario import registrar_movimiento
 from app.services import audit
-from app.core.tz import rango_col_utc
+from app.core.tz import local_col, rango_col_utc
+
+
+def _tipo(m) -> str:
+    """El tipo del movimiento como texto. El enum viaja como objeto en Postgres y
+    como str en SQLite; comparar contra el objeto crudo falla en uno de los dos."""
+    return m.tipo.value if hasattr(m.tipo, "value") else str(m.tipo)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,36 +29,107 @@ def aplicar_conteo_inventario(db: Session, conteo_id: int, usuario_id: int) -> d
     conteo pise el stock — pensado para el conteo de fin de mes que siembra
     las cantidades con las que el sistema arranca, o la primera operación de
     una sede. Correcciones puntuales siguen yendo por verificación.
+
+    EL CONTEO ES LA VERDAD DE UN INSTANTE, NO DE AHORA. Lo que la barista contó
+    vale para el momento en que lo contó, y entre ese momento y el clic de
+    «Aplicar» el local no se detiene: sigue vendiendo, mermando y recibiendo. La
+    versión anterior escribía `stock = lo contado` a secas, y con eso BORRABA del
+    saldo todo lo que había pasado en el medio. Pasó de verdad y está medido: el
+    conteo #348 de Palmetto se contó a las 13:07 y se aplicó a las 15:42, y esas
+    2 h 35 se llevaron por delante 145 gr de mezcla de granizado y 30 gr de salsa
+    de caramelo de un Granizado Caramelo vendido a las 14:51, más el consumo de
+    tres baristas. Los movimientos seguían en el libro —se veían en la ficha—
+    pero el stock había vuelto a antes de que ocurrieran, así que el inventario
+    quedaba ALTO y el siguiente conteo acusaba de faltante algo que sí se vendió
+    y sí se anotó. Ese es el peor error posible acá: manda a buscar un robo que
+    no existe.
+
+    La cuenta correcta suma las dos fuentes en vez de dejar que una pise a la
+    otra:
+
+        stock = lo contado + (lo que entró − lo que salió DESDE el conteo)
+
+    SI ALGUIEN YA AJUSTÓ EL PRODUCTO DESPUÉS DEL CONTEO, no se toca. Un ajuste
+    posterior —otra aplicación, un inventario mensual, una verificación— es
+    alguien que ya volvió a anclar ese producto a lo que contó físicamente, y es
+    más reciente que este conteo. Pisarlo con un dato viejo sería deshacer una
+    corrección buena. Se salta y se informa: la respuesta los devuelve por nombre
+    para que la pantalla los muestre en vez de dejar un silencio.
     """
     conteo = db.query(ConteoFisico).filter(ConteoFisico.id == conteo_id).first()
     if not conteo:
         raise HTTPException(status_code=404, detail="Conteo no encontrado")
+    if conteo.fecha_aplicado:
+        # Sin este candado, aplicar dos veces volvía a rebobinar el stock a un
+        # valor viejo. El error no rompía nada visible, que es lo que lo hacía
+        # caro: la segunda pasada se llevaba puesto todo lo vendido desde la
+        # primera.
+        raise HTTPException(status_code=400, detail=(
+            f"Este conteo ya se aplicó al inventario el "
+            f"{local_col(conteo.fecha_aplicado):%d/%m/%Y a las %H:%M}. "
+            "Para volver a corregir el stock, registrá un conteo nuevo."))
 
-    ajustados = 0
+    desde = conteo.fecha_registro
+    ajustados, sin_cambio, protegidos = 0, 0, []
     for item in conteo.items:
         inv = db.query(Inventario).filter_by(
             producto_id=item.producto_id, tienda_id=conteo.tienda_id
         ).first()
         if not inv:
             continue
-        if abs(float(inv.stock_actual) - float(item.cantidad_real)) < 0.001:
+
+        # Lo que le pasó al producto DESPUÉS de que lo contaran.
+        posteriores = (
+            db.query(MovimientoInventario)
+            .filter(MovimientoInventario.producto_id == item.producto_id,
+                    MovimientoInventario.tienda_id == conteo.tienda_id,
+                    MovimientoInventario.fecha > desde)
+            .all()
+        ) if desde else []
+
+        # Un ajuste posterior manda: es un anclaje al físico más nuevo que este
+        # conteo. Este producto no se toca.
+        if any(_tipo(m) == "ajuste" for m in posteriores):
+            protegidos.append(item.producto_id)
+            continue
+
+        movido = sum((float(m.cantidad or 0) if _tipo(m) == "entrada"
+                      else -float(m.cantidad or 0))
+                     for m in posteriores if _tipo(m) in ("entrada", "salida"))
+        # El stock no puede quedar negativo: si lo movido se lleva más de lo que
+        # se contó, el piso es cero y la diferencia queda como lo que es —una
+        # inconsistencia entre el papel y el libro— para el siguiente conteo.
+        objetivo = max(0.0, round(float(item.cantidad_real) + movido, 4))
+
+        if abs(float(inv.stock_actual) - objetivo) < 0.001:
+            sin_cambio += 1
             continue
         registrar_movimiento(
-            db, item.producto_id, conteo.tienda_id, "ajuste",
-            float(item.cantidad_real),
+            db, item.producto_id, conteo.tienda_id, "ajuste", objetivo,
             motivo=f"Conteo #{conteo.id} aplicado al inventario",
             usuario_id=usuario_id, commit=False,
         )
         ajustados += 1
 
+    conteo.fecha_aplicado = datetime.utcnow()
+    nombres_protegidos = [
+        n for (n,) in db.query(Producto.nombre)
+        .filter(Producto.id.in_(protegidos)).all()
+    ] if protegidos else []
+
     audit.registrar(
         db, accion="conteo_aplicado_inventario", tabla="conteos_fisicos",
         registro_id=conteo.id, usuario_id=usuario_id, tienda_id=conteo.tienda_id,
         datos_despues={"tipo": conteo.tipo.value if conteo.tipo else None,
-                       "items": len(conteo.items), "ajustados": ajustados},
+                       "items": len(conteo.items), "ajustados": ajustados,
+                       "protegidos": nombres_protegidos},
     )
     db.commit()
-    return {"ok": True, "conteo_id": conteo.id, "ajustados": ajustados}
+    return {"ok": True, "conteo_id": conteo.id, "ajustados": ajustados,
+            "sin_cambio": sin_cambio,
+            # Los que NO se tocaron porque alguien ya los ajustó después. Van por
+            # nombre y no por id: es lo que el dueño necesita leer en pantalla.
+            "protegidos": nombres_protegidos}
 
 
 # ─── Conteo de desechables (a pedido del admin) ──────────────────────────────
@@ -428,6 +505,11 @@ def get_conteos_tienda(db: Session, tienda_id: int,
         result.append({
             "id": c.id, "turno_id": c.turno_id, "tipo": tipo,
             "fecha_registro": c.fecha_registro.isoformat() if c.fecha_registro else None,
+            # Cuándo se promovió a verdad del inventario (None = nunca). La
+            # pantalla lo necesita para no volver a ofrecer «Aplicar» sobre un
+            # conteo ya aplicado: antes no había forma de saberlo desde la
+            # pantalla y aplicarlo de nuevo rebobinaba el stock.
+            "fecha_aplicado": c.fecha_aplicado.isoformat() if c.fecha_aplicado else None,
             "barista_nombre": c.barista_nombre,
             "es_atajo": bool(c.es_atajo),
             "n_items": len(items), "n_diferencias": n_dif,

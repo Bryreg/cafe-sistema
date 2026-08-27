@@ -24,6 +24,8 @@ interface Conteo {
   turno_id: number
   tipo: string // apertura | cierre
   fecha_registro: string | null
+  /** Cuándo se promovió a verdad del inventario. null = nunca. */
+  fecha_aplicado?: string | null
   barista_nombre: string | null
   es_atajo?: boolean
   n_items: number
@@ -328,7 +330,20 @@ export default function ConteosAdmin() {
 
                   {abiertoEste && (
                     <div style={{ borderTop: '1px solid oklch(95% 0.005 75)' }}>
-                      {c.n_diferencias > 0 && (
+                      {/* Un conteo YA APLICADO no se vuelve a ofrecer. Aplicarlo
+                          dos veces rebobinaba el stock a un valor viejo y se
+                          llevaba puesto todo lo vendido desde la primera vez —
+                          sin romper nada visible, que era lo peor. */}
+                      {c.fecha_aplicado ? (
+                        <div className="flex items-center gap-2 px-4 py-2"
+                          style={{ background: 'oklch(97% 0.02 150)' }}>
+                          <DatabaseZap size={12} className="shrink-0" style={{ color: 'oklch(45% 0.12 150)' }} />
+                          <p className="text-[11px] m-0" style={{ color: 'oklch(38% 0.08 150)' }}>
+                            <b>Ya se aplicó al inventario</b> el {new Date(c.fecha_aplicado + 'Z').toLocaleString('es-CO', { day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' })}.
+                            Para volver a corregir el stock, registrá un conteo nuevo.
+                          </p>
+                        </div>
+                      ) : c.n_diferencias > 0 && (
                         <div className="flex items-center justify-between gap-3 px-4 py-2"
                           style={{ background: 'oklch(97% 0.01 75)' }}>
                           <p className="text-[11px] text-gray-500 m-0">
@@ -336,11 +351,36 @@ export default function ConteosAdmin() {
                           </p>
                           <button
                             onClick={async () => {
-                              if (!window.confirm(`¿Aplicar este conteo como verdad del inventario? Se ajustan ${c.n_diferencias} productos al valor contado. Pensado para el conteo de fin de mes.`)) return
+                              // El texto dice la verdad completa: el conteo vale
+                              // para la hora en que se contó, y lo que se movió
+                              // después SE RESPETA. Prometer «se ajustan al valor
+                              // contado» era exactamente lo que el sistema hacía
+                              // mal —borraba las ventas del medio— y no se puede
+                              // seguir prometiendo ahora que dejó de hacerlo.
+                              if (!window.confirm(
+                                `¿Aplicar este conteo como verdad del inventario?\n\n` +
+                                `Se ajustan hasta ${c.n_diferencias} productos a lo que se contó, ` +
+                                `MÁS lo que entró y menos lo que salió desde que se contó` +
+                                (c.fecha_registro
+                                  ? ` (${new Date(c.fecha_registro + 'Z').toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' })})`
+                                  : '') + `. ` +
+                                `Lo vendido después del conteo no se borra.\n\n` +
+                                `Los productos que alguien ya haya ajustado después del conteo no se tocan.`)) return
                               setAccionando(`aplicar-${c.id}`)
                               try {
-                                await api.post(`/conteos/${c.id}/aplicar`)
+                                const { data } = await api.post(`/conteos/${c.id}/aplicar`)
+                                // El resultado se DICE. Un «protegidos» silencioso
+                                // dejaba al dueño creyendo que su conteo entró
+                                // entero cuando parte se había saltado.
+                                const prot: string[] = data?.protegidos ?? []
+                                alert(
+                                  `Conteo aplicado: ${data?.ajustados ?? 0} producto${data?.ajustados === 1 ? '' : 's'} ajustado${data?.ajustados === 1 ? '' : 's'}.` +
+                                  (prot.length
+                                    ? `\n\nNo se tocaron ${prot.length}, porque alguien ya los ajustó después de este conteo:\n· ${prot.join('\n· ')}`
+                                    : ''))
                                 await cargar()
+                              } catch (e: any) {
+                                alert(e?.response?.data?.detail || 'No se pudo aplicar el conteo.')
                               } finally { setAccionando(null) }
                             }}
                             disabled={accionando === `aplicar-${c.id}`}

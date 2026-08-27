@@ -224,6 +224,10 @@ with engine.connect() as _conn:
         # las filas viejas quedan con origen NULL y todo filtro por `!= 'admin'`
         # las descarta en silencio —en SQL, NULL != 'admin' no es verdadero— y la
         # bandeja de solicitudes de las baristas se vaciaría sola.
+        # Aplicar un conteo deja marca: sin ella se podía aplicar dos veces y la
+        # segunda volvía a rebobinar el stock. NULL en las filas viejas = no se
+        # sabe (los 7 conteos ya aplicados se identifican por sus movimientos).
+        "ALTER TABLE conteos_fisicos ADD COLUMN fecha_aplicado TIMESTAMP",
         "ALTER TABLE solicitudes_pedido ADD COLUMN origen VARCHAR(20)",
         "ALTER TABLE solicitudes_pedido ADD COLUMN proveedor VARCHAR(150)",
         "UPDATE solicitudes_pedido SET origen = 'kiosko' WHERE origen IS NULL",

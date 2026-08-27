@@ -392,6 +392,13 @@ class ConteoFisico(Base):
     # True si usaron el atajo "Todo coincide con sistema": el conteo es un eco del
     # stock, no un conteo físico — el admin debe poder distinguirlos.
     es_atajo = Column(Boolean, default=False)
+    # Cuándo se promovió este conteo a verdad del inventario. NULL = nunca.
+    #
+    # Sin esta columna, «Aplicar conteo» se podía ejecutar dos veces y la segunda
+    # rebobinaba el stock a un valor viejo otra vez. Y la pantalla no tenía cómo
+    # decir si un conteo ya se había aplicado: el dueño solo se enteraba mirando
+    # los movimientos.
+    fecha_aplicado = Column(DateTime, nullable=True)
     turno = relationship("CajaTurno", back_populates="conteos")
     usuario = relationship("Usuario", back_populates="conteos_fisicos")
     items = relationship("ConteoFisicoItem", back_populates="conteo", cascade="all, delete-orphan")

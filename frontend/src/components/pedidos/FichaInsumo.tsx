@@ -41,7 +41,17 @@ export interface Resumen {
   origen: 'proveedor' | 'directa' | 'sin_origen'
   pedi: number; pedi_n_pedidos: number; pedi_proveedores: string[]
   pedi_otras_unidades: Record<string, number>
+  /** Lo que había cuando arrancó el período. Sin este número la resta de la fila
+   *  no da, y el que la mira concluye que el sistema está mal. */
+  arranco: number
   entradas: number; traslados_recibidos: number; preparaciones_producidas: number
+  reversas: number; unificaciones: number
+  /** Todo lo que mueve el saldo y NO está en el arco que la pantalla cuenta:
+   *  lo recibido de la otra sede, lo producido acá, anulaciones, unificaciones y
+   *  ajustes. Con signo, en un solo número; el desglose vive en esta ficha. */
+  otros: number
+  /** La identidad comprobada en el backend con estos mismos números. */
+  cuadra: boolean
   ventas: number; mermas: number; traslados: number; preparaciones: number
   reversas_salida: number; otras_salidas: number; total_salio: number
   ajustes_conteo: number; ajustes: number; queda: number
@@ -555,6 +565,26 @@ export default function FichaInsumo({
                 </div>
               )}
             </Bloque>
+
+            {/* ── La cuenta, escrita con los números de arriba ──
+                No se afirma que cierra: se muestra la resta para que el lector la
+                pueda seguir, y si algún día deja de dar, la pantalla lo dice sola
+                en vez de mostrar números que no se corresponden. */}
+            <div className={`rounded-2xl px-4 py-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 border ${
+              r.cuadra ? 'bg-forest-50 border-forest-100' : 'bg-danger-50 border-danger-200'}`}>
+              <span className="font-mono text-[13px] text-warm-600">
+                {fmtC(r.arranco)}
+                <span className="text-warm-400"> arrancó</span>
+                {' + '}{fmtC(r.entradas)}<span className="text-warm-400"> entró</span>
+                {Math.abs(r.otros) > 0.001 && <>{r.otros >= 0 ? ' + ' : ' − '}{fmtC(Math.abs(r.otros))}<span className="text-warm-400"> otros</span></>}
+                {' − '}{fmtC(r.ventas + r.mermas + r.traslados + r.preparaciones + r.otras_salidas)}
+                <span className="text-warm-400"> salió</span>
+                {' = '}<b className="text-[15px] text-warm-700">{fmtC(r.queda)} {u}</b>
+              </span>
+              <span className={`ml-auto text-[11.5px] font-bold ${r.cuadra ? 'text-forest-700' : 'text-danger-700'}`}>
+                {r.cuadra ? 'la cuenta cierra' : 'la cuenta NO cierra'}
+              </span>
+            </div>
 
             {/* ── 8 · Queda ── */}
             <div className="bg-white border border-warm-200 rounded-2xl px-4 py-3.5 flex items-center justify-between gap-4">

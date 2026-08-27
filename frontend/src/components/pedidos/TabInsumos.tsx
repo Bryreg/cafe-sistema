@@ -90,8 +90,8 @@ const PERIODOS: { k: PeriodoKey; label: string }[] = [
   { k: 'anterior', label: 'Mes pasado' },
 ]
 
-type OrdenKey = 'valor_sin_causa' | 'pedi' | 'entradas' | 'ventas' | 'mermas' | 'traslados'
-  | 'preparaciones' | 'otras_salidas' | 'queda' | 'producto'
+type OrdenKey = 'valor_sin_causa' | 'arranco' | 'pedi' | 'entradas' | 'ventas' | 'mermas' | 'traslados'
+  | 'preparaciones' | 'otras_salidas' | 'otros' | 'queda' | 'producto'
 
 type FiltroOrigen = 'todos' | 'proveedor' | 'directa'
 
@@ -263,10 +263,11 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
 
       {/* ── Tabla ── */}
       <div className="bg-white border border-warm-200 rounded-2xl px-3 py-2 overflow-x-auto">
-        <div className="min-w-[940px]">
+        <div className="min-w-[1080px]">
           {/* encabezado */}
-          <div className="grid grid-cols-[2.2fr_0.8fr_0.8fr_0.8fr_0.62fr_0.7fr_0.75fr_0.9fr_0.8fr] gap-2 items-center px-2 py-2.5 border-b-2 border-warm-200">
+          <div className="grid grid-cols-[2fr_0.75fr_0.7fr_0.75fr_0.75fr_0.6fr_0.66fr_0.7fr_0.66fr_0.85fr_0.75fr] gap-2 items-center px-2 py-2.5 border-b-2 border-warm-200">
             <Th label="Insumo · de dónde viene" k="producto" orden={orden} dir={dir} onSort={sortear} />
+            <Th label="Arrancó"  k="arranco"       orden={orden} dir={dir} onSort={sortear} className="justify-end" />
             <Th label="Pedí"     k="pedi"          orden={orden} dir={dir} onSort={sortear} className="justify-end" />
             <Th label="Entró"    k="entradas"      orden={orden} dir={dir} onSort={sortear} className="justify-end" />
             <Th label="Vendió"   k="ventas"        orden={orden} dir={dir} onSort={sortear} className="justify-end" />
@@ -274,6 +275,7 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
             <Th label="Traslado" k="traslados"     orden={orden} dir={dir} onSort={sortear} className="justify-end" />
             <Th label="Preparó"  k="preparaciones" orden={orden} dir={dir} onSort={sortear} className="justify-end" />
             <Th label="Sin causa" k="otras_salidas" orden={orden} dir={dir} onSort={sortear} className="justify-end" destacado />
+            <Th label="Otros ±"  k="otros"         orden={orden} dir={dir} onSort={sortear} className="justify-end" />
             <Th label="Queda"    k="queda"         orden={orden} dir={dir} onSort={sortear} className="justify-end" />
           </div>
 
@@ -291,7 +293,7 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
               <div key={it.producto_id}>
                 <button
                   onClick={() => setFichaDe(it.producto_id)}
-                  className={`w-full text-left grid grid-cols-[2.2fr_0.8fr_0.8fr_0.8fr_0.62fr_0.7fr_0.75fr_0.9fr_0.8fr] gap-2 items-center px-2 py-2.5 rounded-lg transition-colors ${
+                  className={`w-full text-left grid grid-cols-[2fr_0.75fr_0.7fr_0.75fr_0.75fr_0.6fr_0.66fr_0.7fr_0.66fr_0.85fr_0.75fr] gap-2 items-center px-2 py-2.5 rounded-lg transition-colors ${
                     alerta ? 'bg-danger-50/60 hover:bg-danger-50' : it.no_se_mide ? 'bg-gold-50/50 hover:bg-gold-50' : 'hover:bg-warm-50'
                   }`}
                 >
@@ -306,6 +308,15 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
                       {it.proveedor && <span className="text-[11px] text-warm-500 truncate">{it.proveedor}</span>}
                     </div>
                   </div>
+                  {/* Lo que había al empezar. Es el término que faltaba: sin él,
+                      «entró 180, vendió 167, queda 70» no da, y el que hace la
+                      resta de cabeza concluye que el sistema está mal. */}
+                  <span className="flex flex-col items-end leading-tight">
+                    <Celda v={it.arranco} />
+                    {it.arranque_estimado && (
+                      <span className="text-[10px] text-warm-400">estimado</span>
+                    )}
+                  </span>
                   {/* Pedí vs. Entró, una al lado de la otra: es la comparación
                       que el dueño vino a buscar. Cuando pidió y llegó de menos,
                       el faltante va abajo en chico — el número solo no dice
@@ -334,6 +345,17 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
                     <Celda v={it.otras_salidas} tono={alerta ? 'alerta' : 'normal'} />
                     {alerta && <span className="font-mono text-[10px] text-danger-500 tabular-nums">{fmt$(it.valor_sin_causa)}</span>}
                   </span>
+                  {/* Lo que mueve el saldo sin estar en el arco: traslados recibidos,
+                      lo producido acá, anulaciones, unificaciones y ajustes. En una
+                      columna y no en cinco, porque son raros; el desglose está en la
+                      ficha. Sin esta columna la mezcla de granizado sube 3.400 gr
+                      con «entró 0» al lado. */}
+                  <span className="flex flex-col items-end leading-tight">
+                    <Celda v={it.otros} />
+                    {!it.cuadra && (
+                      <span className="text-[10px] font-bold text-danger-600">no cierra</span>
+                    )}
+                  </span>
                   {/* Un «queda» negativo no se pinta como un número más: es el
                       único dato de esta tabla que es imposible, y por lo tanto
                       una certeza de que falta registrar algo. */}
@@ -361,6 +383,16 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
           WhatsApp sin pasar por acá, y no hay forma de recuperarlo.
         </p>
       )}
+
+      {/* La cuenta que la tabla permite hacer, escrita. Antes faltaban «arrancó» y
+          «otros», y por eso una fila como «entró 180, vendió 167, queda 70» no
+          daba: los 57 de diferencia eran lo que ya había en el estante. */}
+      <p className="text-[12px] text-warm-600 bg-warm-50 border border-warm-200 rounded-xl px-3 py-2 leading-relaxed">
+        <b>Cada fila cierra:</b> <span className="font-mono">arrancó + entró + otros − vendió − merma − traslado − preparó − sin causa = queda</span>.
+        <b> «Otros ±»</b> junta lo que mueve el saldo sin ser una compra ni una salida normal —lo que
+        vino de la otra sede, lo que se preparó acá, anulaciones y ajustes de conteo—; abrí la ficha
+        para ver de qué está hecho.
+      </p>
 
       <p className="text-[11.5px] text-warm-400 leading-relaxed px-1">
         <b>«Pedí»</b> = lo que mandaste por escrito a un proveedor, en la unidad del insumo. Al lado va

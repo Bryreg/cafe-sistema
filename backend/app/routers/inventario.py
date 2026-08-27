@@ -843,6 +843,27 @@ def _fila_insumo(p: dict, proveedor: str | None, pedido: dict | None = None) -> 
     entradas = _num(p.get("entradas"))
     vu = _num(p.get("valor_unitario"))
 
+    # ── La fila tiene que CERRAR, y para eso tiene que llevar todos sus términos ──
+    # La escalera define la identidad como `inicial + Σ(signo × renglón) = esperado`
+    # sobre los 13 renglones (`conciliacion.RENGLONES`). La fila mostraba nueve, y
+    # con nueve no suma: el agua de Vida enseñaba «entró 180, vendió 167, queda 70»
+    # y los 57 que faltaban eran lo que ya había el 1 de agosto — sin columna que
+    # los nombrara. Un renglón que no aparece no se lee como ausente, se lee como
+    # cero, y la resta que el dueño hace de cabeza le da otro número.
+    #
+    # `otros` junta lo que NO es parte del arco que la pantalla cuenta (pedí →
+    # entró → salió → queda) y que aun así mueve el saldo: mercadería que vino de
+    # la otra sede, lo que se produjo acá, anulaciones, unificaciones de productos
+    # duplicados y los ajustes. Va con signo y en UNA columna en vez de cinco,
+    # porque son raros; el desglose completo vive en la ficha.
+    arranco = _num(p.get("stock_inicial"))
+    entra_no_compra = (_num(p.get("traslados_recibidos"))
+                       + _num(p.get("preparaciones_producidas"))
+                       + _num(p.get("reversas"))
+                       + _num(p.get("unificaciones")))
+    otros = round(entra_no_compra - _num(p.get("reversas_salida"))
+                  + _num(p.get("ajustes_conteo")) + _num(p.get("ajustes")), 3)
+
     # Lo pedido SOLO cuenta en la unidad del producto: es la única en la que
     # restarlo contra lo que entró significa algo. Lo pedido en otra unidad no se
     # descarta en silencio —se informa aparte— porque un «pedí 0» junto a una
@@ -873,11 +894,17 @@ def _fila_insumo(p: dict, proveedor: str | None, pedido: dict | None = None) -> 
         "pedi_n_pedidos": len(ped.get("pedidos") or ()),
         "pedi_proveedores": sorted(ped.get("proveedores") or ()),
         "pedi_otras_unidades": {u: round(c, 2) for u, c in por_unidad.items() if c},
+        # Lo que había cuando arrancó el período. Sin este número la resta de la
+        # fila no da, y el que la mira concluye que el sistema está mal.
+        "arranco": arranco,
         "entradas": entradas,
         # Lo que entró SIN comprarse: aparte, para que una tanda preparada no se
         # lea como mercadería que alguien facturó.
         "traslados_recibidos": _num(p.get("traslados_recibidos")),
         "preparaciones_producidas": _num(p.get("preparaciones_producidas")),
+        "reversas": _num(p.get("reversas")),
+        "unificaciones": _num(p.get("unificaciones")),
+        "otros": otros,
         **salidas,
         "total_salio": sum(salidas.values()),
         "ajustes_conteo": _num(p.get("ajustes_conteo")),
@@ -905,6 +932,20 @@ def _fila_insumo(p: dict, proveedor: str | None, pedido: dict | None = None) -> 
         # vez, en ninguna sede— y nadie lo vio hasta que el dueño lo encontró de
         # casualidad mirando otra cosa.
         "en_negativo": _num(p.get("stock_esperado")) < 0,
+        # La identidad se COMPRUEBA acá, con los mismos números que la pantalla va
+        # a mostrar, y viaja en la fila. No se afirma en un comentario: si algún
+        # día un renglón nuevo se queda afuera del reparto, la fila lo dice sola en
+        # vez de mostrar una resta que no da y dejar al lector dudando de sus ojos.
+        # Contra las salidas que la PANTALLA muestra, no contra `total_salio`:
+        # `reversas_salida` no tiene columna propia —viaja dentro de `otros`— y
+        # restarla por los dos lados la contaría dos veces. Lo que se comprueba
+        # es la resta que el dueño puede hacer con los números que ve.
+        "cuadra": abs(
+            arranco + entradas + otros - (
+                salidas["ventas"] + salidas["mermas"] + salidas["traslados"]
+                + salidas["preparaciones"] + salidas["otras_salidas"])
+            - _num(p.get("stock_esperado"))
+        ) < 0.01,
     }
 
 

@@ -67,10 +67,14 @@ const fmtCant = (v: number) => {
 const iso = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
-type PeriodoKey = 'mes' | 'ocho' | 'anterior'
+type PeriodoKey = 'hoy' | 'mes' | 'ocho' | 'anterior'
 
 function rangoDe(k: PeriodoKey): { desde: string; hasta: string } {
   const hoy = new Date()
+  // El día corrido. Con este rango «arrancó» es literalmente lo que había al
+  // abrir esta mañana, que es como el dueño lee el inventario cuando está en el
+  // local: la barra llena al empezar y lo que se fue comiendo desde entonces.
+  if (k === 'hoy') return { desde: iso(hoy), hasta: iso(hoy) }
   if (k === 'mes') {
     return { desde: iso(new Date(hoy.getFullYear(), hoy.getMonth(), 1)), hasta: iso(hoy) }
   }
@@ -85,6 +89,7 @@ function rangoDe(k: PeriodoKey): { desde: string; hasta: string } {
 }
 
 const PERIODOS: { k: PeriodoKey; label: string }[] = [
+  { k: 'hoy', label: 'Hoy' },
   { k: 'mes', label: 'Este mes' },
   { k: 'ocho', label: 'Últimas 8 semanas' },
   { k: 'anterior', label: 'Mes pasado' },
@@ -94,6 +99,12 @@ type OrdenKey = 'valor_sin_causa' | 'arranco' | 'pedi' | 'entradas' | 'ventas' |
   | 'preparaciones' | 'otras_salidas' | 'otros' | 'queda' | 'producto'
 
 type FiltroOrigen = 'todos' | 'proveedor' | 'directa'
+
+/** ¿Este insumo se movió en el período? Cualquier cosa que toque el saldo cuenta:
+ *  una entrada, una salida o un ajuste. Un insumo con stock pero quieto NO se
+ *  movió — y en la vista del día es exactamente el que estorba. */
+const seMovio = (it: Insumo) =>
+  Math.abs(it.entradas) + Math.abs(it.total_salio) + Math.abs(it.otros) > 0.001
 
 // ─── Piezas ───────────────────────────────────────────────────────────────────
 
@@ -146,6 +157,7 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
 
   const [q, setQ] = useState('')
   const [filtro, setFiltro] = useState<FiltroOrigen>('todos')
+  const [soloMovidos, setSoloMovidos] = useState(false)
   const [orden, setOrden] = useState<OrdenKey>('valor_sin_causa')
   const [dir, setDir] = useState<'asc' | 'desc'>('desc')
   // Qué insumo tiene la ficha abierta. El rango viaja con él: la ficha
@@ -174,6 +186,7 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
     const todo = data?.insumos ?? []
     const texto = q.trim().toLowerCase()
     const filtrado = todo.filter(it => {
+      if (soloMovidos && !seMovio(it)) return false
       if (filtro !== 'todos' && it.origen !== filtro) return false
       if (!texto) return true
       return it.producto.toLowerCase().includes(texto)
@@ -186,9 +199,12 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
       if (va !== vb) return signo * (va - vb)
       return a.producto.localeCompare(b.producto, 'es')
     })
-  }, [data, q, filtro, orden, dir])
+  }, [data, q, filtro, orden, dir, soloMovidos])
 
   const r = data?.resumen
+  // Cuántos se movieron en el período, del total. En «Hoy» es el número que
+  // contesta «¿qué pasó en el local?» de un vistazo.
+  const movidos = useMemo(() => (data?.insumos ?? []).filter(seMovio).length, [data])
   const rango = rangoDe(periodo)
 
   if (!tiendaId) {
@@ -206,6 +222,7 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
             <span className="text-[12px] text-warm-500">
               {sedeNombre}
               {r && <> · {r.n_insumos} insumos</>}
+              {r && <> · <b className="text-warm-700">{movidos} se movieron</b></>}
               {r && r.n_compra_directa > 0 && (
                 <> · <b className="text-gold-700">{r.n_compra_directa} los comprás vos</b></>
               )}
@@ -216,7 +233,7 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
           </div>
           <div className="flex gap-1 bg-warm-100 rounded-xl p-0.5">
             {PERIODOS.map(p => (
-              <button key={p.k} onClick={() => setPeriodo(p.k)}
+              <button key={p.k} onClick={() => { setPeriodo(p.k); setSoloMovidos(p.k === 'hoy') }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                   periodo === p.k ? 'bg-white text-warm-700 shadow-sm' : 'text-warm-500 hover:text-warm-700'
                 }`}>
@@ -235,6 +252,19 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
               className="flex-1 bg-transparent outline-none text-[13px] text-warm-700 placeholder:text-warm-400"
             />
           </div>
+          {/* Se enciende solo al pasar a «Hoy» —donde 120 filas de guiones taparían
+              las 3 que importan— pero se puede apagar: nunca se esconde una fila
+              sin que el botón lo diga. */}
+          <button
+            onClick={() => setSoloMovidos(v => !v)}
+            aria-pressed={soloMovidos}
+            className={`text-[11.5px] font-bold px-3 py-2 rounded-xl border transition-colors whitespace-nowrap ${
+              soloMovidos
+                ? 'bg-forest-50 border-forest-100 text-forest-700'
+                : 'bg-white border-warm-200 text-warm-500 hover:text-warm-700'
+            }`}>
+            Solo los que se movieron
+          </button>
           <div className="flex gap-1 bg-warm-100 rounded-xl p-0.5">
             {([['todos', 'Todos'], ['proveedor', 'Con proveedor'], ['directa', 'Compra directa']] as const).map(([k, label]) => (
               <button key={k} onClick={() => setFiltro(k)}
@@ -283,7 +313,11 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
           {!cargando && error && <p className="text-sm text-danger-700 text-center py-10">{error}</p>}
           {!cargando && !error && filas.length === 0 && (
             <p className="text-sm text-warm-400 text-center py-10">
-              {q || filtro !== 'todos' ? 'Ningún insumo con ese filtro.' : 'Sin movimiento en el período.'}
+              {soloMovidos && !q && filtro === 'todos'
+                ? (periodo === 'hoy'
+                    ? 'Todavía no se movió ningún insumo hoy.'
+                    : 'Ningún insumo se movió en este período.')
+                : q || filtro !== 'todos' ? 'Ningún insumo con ese filtro.' : 'Sin movimiento en el período.'}
             </p>
           )}
 

@@ -893,6 +893,18 @@ def _fila_insumo(p: dict, proveedor: str | None, pedido: dict | None = None) -> 
         # medido — marcarlo mandaría a revisar un agujero que no existe.
         "no_se_mide": (entradas > 0 and salidas["ventas"] == 0
                        and salidas["preparaciones"] == 0),
+        # MENOS QUE CERO ES IMPOSIBLE. No es «se acabó» —eso es cero— es la
+        # prueba aritmética de que el libro está incompleto: o entró mercadería
+        # que nadie registró, o una receta descuenta un insumo que no es.
+        #
+        # Va como bandera propia porque el sistema los venía tratando igual: el
+        # clasificador de stock mete el cero y el negativo en el mismo balde
+        # («agotado»), que sirve para decidir un pedido e inútil para encontrar
+        # un error. El helado de chocolate de Palmetto estuvo en −400 gr desde
+        # julio —tres recetas descontaban un helado que nunca se compró, ni una
+        # vez, en ninguna sede— y nadie lo vio hasta que el dueño lo encontró de
+        # casualidad mirando otra cosa.
+        "en_negativo": _num(p.get("stock_esperado")) < 0,
     }
 
 
@@ -983,6 +995,10 @@ def movimiento_insumos(
             # los rangos anteriores a que «Armar pedido» guardara, es cero para
             # todos, y una columna vacía sin explicación se lee como un bug.
             "n_con_pedido": sum(1 for f in filas if f["pedi"] > 0),
+            # Cuántos insumos están por debajo de cero. Es el número que hay que
+            # llevar a cero: cada uno es un error de registro esperando ser
+            # encontrado, no un producto por pedir.
+            "n_en_negativo": sum(1 for f in filas if f["en_negativo"]),
         },
     }
 

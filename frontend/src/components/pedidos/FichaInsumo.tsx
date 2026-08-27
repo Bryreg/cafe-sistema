@@ -48,6 +48,9 @@ export interface Resumen {
   valor_unitario: number; valor_origen: string | null
   valor_sin_causa: number; valor_total_salio: number
   arranque_estimado: boolean; no_se_mide: boolean
+  /** El stock quedó por debajo de cero. No es «se acabó»: es imposible, y por
+   *  eso es una certeza y no una sospecha — falta registrar algo. */
+  en_negativo: boolean
 }
 interface HaciaFalta {
   para_reponer: number; se_compro: number; hoy_hay_que_pedir: number | null
@@ -261,6 +264,25 @@ export default function FichaInsumo({
             </div>
 
             {/* ── 2 · Carteles de honestidad ── */}
+            {/* El negativo va PRIMERO y en rojo: los otros dos carteles avisan de
+                algo que puede estar mal; este es aritmética. Menos que cero no
+                existe en una nevera. */}
+            {r.en_negativo && (
+              <div className="bg-danger-50 border border-danger-200 rounded-2xl px-4 py-3 flex items-start gap-2.5">
+                <AlertTriangle size={18} className="text-danger shrink-0 mt-px" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[13.5px] font-extrabold text-danger-700">
+                    El sistema dice que hay menos que cero
+                  </span>
+                  <span className="text-[12.5px] text-danger-700 leading-relaxed">
+                    Eso no puede pasar en el estante, así que el libro está incompleto. Son dos
+                    cosas y solo dos: <b>entró mercadería que nadie registró</b>, o <b>una receta
+                    está descontando este insumo cuando debería descontar otro</b>. No es que se
+                    haya acabado — mirá los movimientos de abajo.
+                  </span>
+                </div>
+              </div>
+            )}
             {r.no_se_mide && (
               <div className="bg-gold-50 border border-gold-200 rounded-2xl px-4 py-3 flex items-start gap-2.5">
                 <AlertTriangle size={18} className="text-gold-700 shrink-0 mt-px" />

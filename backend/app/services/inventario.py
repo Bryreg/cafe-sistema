@@ -215,13 +215,24 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
     if tipo == "salida":
         try:
             from app.services import notificaciones
-            estado = clasificar_estado(
-                inv.stock_actual, inv.stock_minimo or 0.0,
-                inv.stock_critico or 0.0, inv.stock_ideal or 0.0,
-            )
-            if estado in ("critico", "agotado"):
-                nombre = inv.producto.nombre if inv.producto else None
-                notificaciones.evaluar_stock(db, tienda_id, producto_id, nombre, estado)
+            nombre = inv.producto.nombre if inv.producto else None
+            stock_final = float(inv.stock_actual or 0)
+            # NEGATIVO ≠ AGOTADO, y la diferencia no es de grado. Agotado es «se
+            # acabó, hay que pedir». Negativo es «este número es imposible»: o
+            # entró mercadería sin registrar, o una receta descuenta lo que no
+            # es. `clasificar_estado` los mete a los dos en «agotado» —correcto
+            # para decidir un pedido, inútil para encontrar el error— así que el
+            # aviso se separa acá.
+            if stock_final < 0:
+                notificaciones.evaluar_stock_negativo(
+                    db, tienda_id, producto_id, nombre, stock_final)
+            else:
+                estado = clasificar_estado(
+                    inv.stock_actual, inv.stock_minimo or 0.0,
+                    inv.stock_critico or 0.0, inv.stock_ideal or 0.0,
+                )
+                if estado in ("critico", "agotado"):
+                    notificaciones.evaluar_stock(db, tienda_id, producto_id, nombre, estado)
         except Exception:
             pass
 

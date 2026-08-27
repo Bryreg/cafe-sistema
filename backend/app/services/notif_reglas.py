@@ -48,6 +48,19 @@ DEFAULTS = [
         "nivel": "critico",
     },
     {
+        "tipo": "stock_negativo",
+        "label": "Un insumo quedó en negativo",
+        "descripcion": ("Avisa cuando el stock de un insumo baja de cero. No es «se acabó»: "
+                        "menos que cero es imposible en el mundo físico, así que o entró "
+                        "mercadería sin registrar o una receta está descontando lo que no es."),
+        "unidad": "",
+        "umbral": 0,
+        "activa": True,
+        "canal_bell": True,
+        "canal_push": True,
+        "nivel": "critico",
+    },
+    {
         "tipo": "descuadre_caja",
         "label": "Descuadre de caja al cierre",
         "descripcion": "Avisa cuando el cierre de caja tiene una diferencia mayor a la tolerancia.",

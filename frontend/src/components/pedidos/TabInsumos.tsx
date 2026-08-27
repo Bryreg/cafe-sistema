@@ -44,6 +44,7 @@ interface ResumenTabla {
   n_no_se_mide: number
   n_compra_directa: number
   n_con_pedido: number
+  n_en_negativo: number
 }
 
 interface Respuesta { insumos: Insumo[]; resumen: ResumenTabla }
@@ -208,6 +209,9 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
               {r && r.n_compra_directa > 0 && (
                 <> · <b className="text-gold-700">{r.n_compra_directa} los comprás vos</b></>
               )}
+              {r && r.n_en_negativo > 0 && (
+                <> · <b className="text-danger-700">{r.n_en_negativo} en negativo</b></>
+              )}
             </span>
           </div>
           <div className="flex gap-1 bg-warm-100 rounded-xl p-0.5">
@@ -330,7 +334,15 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
                     <Celda v={it.otras_salidas} tono={alerta ? 'alerta' : 'normal'} />
                     {alerta && <span className="font-mono text-[10px] text-danger-500 tabular-nums">{fmt$(it.valor_sin_causa)}</span>}
                   </span>
-                  <Celda v={it.queda} />
+                  {/* Un «queda» negativo no se pinta como un número más: es el
+                      único dato de esta tabla que es imposible, y por lo tanto
+                      una certeza de que falta registrar algo. */}
+                  <span className="flex flex-col items-end leading-tight">
+                    <Celda v={it.queda} tono={it.en_negativo ? 'alerta' : 'normal'} />
+                    {it.en_negativo && (
+                      <span className="text-[10px] font-bold text-danger-600">menos que cero</span>
+                    )}
+                  </span>
                 </button>
               </div>
             )

@@ -159,6 +159,37 @@ def evaluar_venta_sin_descuento(db: Session, tienda_id: int, producto_id: int,
         logger.warning("evaluar_venta_sin_descuento fallo: %s", e)
 
 
+def evaluar_stock_negativo(db: Session, tienda_id: int, producto_id: int,
+                           producto_nombre: str, stock: float) -> None:
+    """Un stock NEGATIVO no es «se acabó»: es la prueba de que algo no cuadra.
+
+    En el mundo físico no existe menos que nada. Si el sistema llega ahí, solo
+    puede ser por una de dos: entró mercadería que nadie registró, o una receta
+    descuenta un insumo que no es. Las dos se arreglan hoy y ninguna es «hay que
+    pedir más».
+
+    Por eso NO se mezcla con la alerta de agotado. `clasificar_estado` mete todo
+    lo que está en cero o menos en el mismo balde («agotado»), y el aviso decía
+    «Producto X en nivel agotado» — que se lee como «se acabó, pedilo». El helado
+    de chocolate de Palmetto estuvo en −400 gr desde julio: la receta de tres
+    malteadas descontaba un helado que NUNCA se compró, ni una sola vez, en
+    ninguna de las dos sedes. Tres meses en rojo, y nadie se enteró hasta que el
+    dueño lo encontró de casualidad mirando otra cosa.
+    """
+    try:
+        if _ya_disparo_hoy(db, tienda_id, "stock_negativo", referencia_id=producto_id):
+            return
+        nombre = producto_nombre or f"#{producto_id}"
+        msg = (f"{nombre} quedó en {stock:,.0f} — menos que cero. "
+               "Entró algo sin registrar, o una receta está descontando lo que no es.")
+        disparar(
+            db, tienda_id, "stock_negativo", msg, "critico", referencia_id=producto_id,
+            push_titulo="Un insumo quedó en negativo", push_cuerpo=msg,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("evaluar_stock_negativo fallo: %s", e)
+
+
 def evaluar_stock(db: Session, tienda_id: int, producto_id: int,
                   producto_nombre: str, estado: str) -> None:
     """Dispara alerta de stock para estado 'critico' o 'agotado'

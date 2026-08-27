@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from datetime import datetime, timedelta
 from app.models.models import (Merma, Inventario, MovimientoInventario, TipoMovInvEnum,
                                 Tienda, Producto, ProductoInsumo)
-from app.services.inventario import consumir_fifo, registrar_movimiento
+from app.services.inventario import consumir_fifo, consumir_insumo, registrar_movimiento
 from app.services import audit
 import logging
 
@@ -131,18 +131,33 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
         consumir_fifo(db, producto_id, tienda_id, cantidad)
     else:
         # Bebida preparada / producto sin stock propio: descuenta sus INSUMOS por
-        # receta (mismo mecanismo que la venta POS, pero sin plata). Si no tiene
-        # receta, queda solo el registro de la merma.
+        # receta. Es el MISMO mecanismo que la venta POS, y por eso llama a la
+        # MISMA función: `consumir_insumo`, que aplica la cascada al sustituto.
+        #
+        # Antes llamaba a `registrar_movimiento` directo, y esa diferencia —que
+        # el comentario viejo decía que no existía— tenía una consecuencia
+        # concreta: un cappuccino VENDIDO caía a la leche deslactosada cuando se
+        # acababa la entera, y el MISMO cappuccino REGALADO (consumo del
+        # personal, descarga de tarjeta virtual) salía de la entera igual, la
+        # cruzaba por cero y seguía cavando. La leche entera de Palmetto llegó a
+        # −4 und así, en 16 movimientos de agosto y TODOS de consumo: una vez en
+        # negativo, el POS ya no la tocaba —la cascada mandaba todo a la
+        # deslactosada— y solo los consumos seguían restando.
+        #
+        # El sistema no sabe con qué leche se hizo la bebida, y ese es
+        # precisamente el motivo de que la cascada exista. Un regalo no se hace
+        # con otra leche que una venta.
         receta = db.query(ProductoInsumo).filter(
             ProductoInsumo.producto_id == producto_id
         ).all()
         for r in receta:
             try:
-                registrar_movimiento(
+                consumir_insumo(
                     db, producto_id=r.insumo_id, tienda_id=tienda_id,
-                    tipo="salida", cantidad=r.cantidad * cantidad,
+                    cantidad=r.cantidad * cantidad,
                     motivo=f"{mov_motivo} — insumo de {producto.nombre}",
-                    usuario_id=usuario_id, commit=False, allow_negative=True,
+                    usuario_id=usuario_id,
+                    barista_id=barista_id, barista_nombre=barista_nombre,
                 )
             except HTTPException as e:
                 if e.status_code == 404:

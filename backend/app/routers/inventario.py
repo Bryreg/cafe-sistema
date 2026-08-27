@@ -954,6 +954,7 @@ def movimiento_insumos(
     tienda_id: int = Query(...),
     desde: date = Query(...),
     hasta: date = Query(...),
+    con_curva: bool = Query(False, description="Agrega la curva del saldo y los conteos"),
     db: Session = Depends(get_db),
     admin: Usuario = Depends(require_admin),
 ):
@@ -988,15 +989,29 @@ def movimiento_insumos(
     Sin conteo cerrado en el rango, `queda` es la reconstrucción del libro y no
     el conteo físico; `arranque_estimado` avisa cuando ni el arranque se pudo
     reconstruir con certeza.
+
+    Con `con_curva`, cada fila trae además CUÁNDO pasó lo que pasó: la curva del
+    saldo momento a momento y los conteos físicos del rango. Es la misma fila con
+    dos claves más —no un segundo endpoint— porque una tabla y un gráfico que
+    calculan por separado terminan discrepando, y el que mira no tiene forma de
+    saber cuál de los dos está mal. Va detrás de una bandera porque cuesta: la
+    curva multiplica la respuesta por unas seis veces, y la tabla vieja no la
+    necesita.
     """
     ensure_tienda_access(admin, tienda_id)
     if hasta < desde:
         raise HTTPException(400, "El rango termina antes de empezar")
 
     from app.services import conciliacion as esc
+    from app.services import curvas as curvas_svc
     from app.services import facturas as fact_svc
 
-    escalera = esc.escalera_rango(db, tienda_id, desde, hasta)
+    # El contexto se crea acá para poder REUSARLO en las curvas. `ctx.sede()` ya
+    # trae todos los movimientos de la sede por producto y `ctx.saldos()` ya
+    # calculó el saldo después de cada uno: dibujar la curva no cuesta ni una
+    # consulta más, siempre que sea el mismo contexto.
+    ctx = esc._Ctx(db, horizonte=desde) if con_curva else None
+    escalera = esc.escalera_rango(db, tienda_id, desde, hasta, ctx=ctx)
 
     # Origen: el proveedor REAL de las compras del rango, y para los que no se
     # compraron en el rango, el que tenga cargado el producto.
@@ -1017,6 +1032,23 @@ def movimiento_insumos(
         for p in escalera.get("productos", [])
     ]
 
+    if con_curva:
+        d_utc, h_utc = inicio_dia_col_utc(desde), fin_dia_col_utc(hasta)
+        inv_filas, movs_por_prod = ctx.sede(tienda_id)
+        stock_vivo = {prod.id: inv.stock_actual for inv, prod in inv_filas}
+        conteos = curvas_svc.conteos_rango(db, tienda_id, desde, hasta)
+        por_prod = {p["producto_id"]: p for p in escalera.get("productos", [])}
+        for f in filas:
+            pid = f["producto_id"]
+            p = por_prod.get(pid)
+            if p is None:
+                continue
+            movs = movs_por_prod.get(pid, [])
+            f["curva"] = curvas_svc.curva_producto(
+                movs, ctx.saldos(tienda_id, pid, movs, stock_vivo.get(pid, 0)),
+                d_utc, h_utc, p["stock_inicial"], p["stock_inicial_estimado"],
+                p["stock_esperado"], conteos.get(pid, []))
+
     # Más plata sin explicar primero: es el orden en el que conviene mirarlas.
     filas.sort(key=lambda f: (-f["valor_sin_causa"], -f["total_salio"]))
 
@@ -1024,6 +1056,9 @@ def movimiento_insumos(
         "tienda_id": tienda_id,
         "desde": desde.isoformat(),
         "hasta": hasta.isoformat(),
+        # Los `t` de la curva son segundos desde acá. Sin este ancla la pantalla
+        # no puede convertirlos en una hora que mostrar.
+        "desde_utc": inicio_dia_col_utc(desde).isoformat(),
         "insumos": filas,
         "resumen": {
             "n_insumos": len(filas),

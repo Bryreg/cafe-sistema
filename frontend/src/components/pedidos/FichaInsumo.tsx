@@ -61,6 +61,37 @@ export interface Resumen {
   /** El stock quedó por debajo de cero. No es «se acabó»: es imposible, y por
    *  eso es una certeza y no una sospecha — falta registrar algo. */
   en_negativo: boolean
+  /** Sólo cuando se pide `con_curva`: CUÁNDO pasó lo que los totales resumen. */
+  curva?: Curva
+}
+
+/** Un punto de la curva. `t` son segundos desde el arranque del rango (no una
+ *  fecha: son 5 bytes contra 26, y esto viaja para ~120 insumos a una tablet).
+ *  `c` es cuánto movió ese escalón — en una salida raleada, cuánto salió DESDE
+ *  el punto anterior, que es lo que el globo tiene que decir. */
+export interface PuntoCurva {
+  t: number; v: number
+  k: 'inicio' | 'entrada' | 'salida' | 'ajuste' | 'fin'
+  c?: number; causa?: string
+  /** El saldo salió de suponer que el producto arrancó en cero antes del ajuste
+   *  más viejo. Es un supuesto y se dibuja como tal. */
+  est?: boolean
+}
+
+/** Un conteo físico: lo ÚNICO que no sale del libro. `sistema` es lo que el
+ *  sistema creía en ese instante y `real` lo que alguien vio en el estante; la
+ *  distancia entre los dos es la fuga. `registros` > 1 es la apertura que copió
+ *  el cierre de la noche anterior. */
+export interface ConteoCurva {
+  conteo_id: number; t: number; tipos: string[]; registros: number
+  sistema: number; real: number; dif: number; curva: number
+  es_atajo: boolean; aplicado: boolean
+}
+
+export interface Curva {
+  puntos: PuntoCurva[]; puntos_total: number
+  conteos: ConteoCurva[]; n_movs: number
+  ancla: 'libro' | 'estimado'
 }
 interface HaciaFalta {
   para_reponer: number; se_compro: number; hoy_hay_que_pedir: number | null

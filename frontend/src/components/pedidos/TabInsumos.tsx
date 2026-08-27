@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import api from '../../api/client'
 import {
   AlertTriangle, ArrowDown, ArrowUp, Search, ChevronRight,
 } from 'lucide-react'
-import FichaInsumo, { type Resumen } from './FichaInsumo'
+import FichaInsumo, { type Resumen, type ConteoCurva, type PuntoCurva } from './FichaInsumo'
+import BarraInsumo, { veredicto, CHIP_VEREDICTO, num, firmado } from './BarraInsumo'
 
 /**
  * «Qué pasó con cada insumo», la tabla que el dueño pidió: en un mismo sitio lo
@@ -47,7 +48,18 @@ interface ResumenTabla {
   n_en_negativo: number
 }
 
-interface Respuesta { insumos: Insumo[]; resumen: ResumenTabla }
+interface Respuesta {
+  insumos: Insumo[]; resumen: ResumenTabla
+  /** Arranque del rango en UTC. Los `t` de la curva son segundos desde acá; sin
+   *  este ancla no se pueden convertir en una hora que mostrar. */
+  desde_utc: string
+}
+
+/** Cómo se mira la misma respuesta. La barra contesta CUÁNDO —un insumo que se
+ *  agota el miércoles y otro que baja parejo tienen los mismos totales—; la
+ *  tabla contesta CUÁNTO y sigue siendo la que se ordena y se compara columna
+ *  por columna. No se reemplaza una por otra: son dos preguntas. */
+type Vista = 'barras' | 'tabla'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -149,7 +161,104 @@ function Celda({ v, tono = 'normal' }: { v: number; tono?: 'normal' | 'alerta' |
 
 // ─── Componente ───────────────────────────────────────────────────────────────
 
+/** La hora de un punto, a partir del arranque del rango y sus segundos. */
+const horaDe = (desdeUtc: string | undefined, t: number) =>
+  !desdeUtc ? '' : new Date(new Date(desdeUtc).getTime() + t * 1000)
+    .toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
+
+const NOMBRE_CAUSA: Record<string, string> = {
+  entradas: 'Llegó con factura', traslados_recibidos: 'Vino de la otra sede',
+  preparaciones_producidas: 'Se preparó acá', reversas: 'Se anuló una venta',
+  unificaciones: 'Unificación', ventas: 'Se vendió', mermas: 'Merma y consumo',
+  traslados: 'Se mandó a la otra sede', preparaciones: 'Se usó para preparar',
+  reversas_salida: 'Se anuló una entrada', otras_salidas: 'Sin causa',
+  ajustes_conteo: 'Ajuste de conteo', ajustes: 'Ajuste',
+}
+
+/** Una fila de la vista de barras. */
+function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
+  it: Insumo; span: number; desdeUtc?: string
+  onAbrir: () => void
+  onGlobo: (nodo: React.ReactNode | null) => void
+}) {
+  const ver = veredicto(it.curva?.conteos)
+  const delta = it.queda - it.arranco
+
+  const globoPunto = (p: PuntoCurva) => onGlobo(
+    <>
+      <b>{p.k === 'inicio' ? 'Al arrancar el período'
+        : p.k === 'fin' ? 'Al cerrar'
+        : p.k === 'entrada' ? `Llegaron ${num(p.c ?? 0)} ${it.unidad}`
+        : p.k === 'ajuste' ? `Se aplicó un conteo: el saldo quedó en ${num(p.v)} ${it.unidad}`
+        : `Salieron ${num(p.c ?? 0)} ${it.unidad}`}</b>
+      {p.k !== 'inicio' && p.k !== 'fin' && <><br />{horaDe(desdeUtc, p.t)}</>}
+      {p.causa && <><br /><span className="opacity-70">{NOMBRE_CAUSA[p.causa] ?? p.causa}</span></>}
+      <br />Quedan <b>{num(p.v)} {it.unidad}</b>
+    </>)
+
+  const globoConteo = (c: ConteoCurva) => onGlobo(
+    <>
+      <b>Conteo de {c.tipos.join(' + ')}</b>{c.es_atajo && <> · atajo</>}
+      <br />{horaDe(desdeUtc, c.t)}
+      <br />El sistema decía <b>{num(c.sistema)}</b>
+      <br />Contaron <b>{num(c.real)}</b>
+      <br /><span className="opacity-75">
+        {Math.abs(c.dif) <= 0.001 ? 'Coincidió exacto'
+          : c.dif > 0 ? `Sobran ${num(c.dif)} ${it.unidad}`
+          : `Faltan ${num(-c.dif)} ${it.unidad}`}
+      </span>
+    </>)
+
+  return (
+    <button
+      onClick={onAbrir}
+      onMouseLeave={() => onGlobo(null)}
+      className="w-full text-left grid grid-cols-[minmax(140px,1.3fr)_minmax(200px,3fr)_minmax(104px,auto)]
+        gap-3 items-center px-2 py-3 rounded-xl hover:bg-warm-50 transition-colors
+        border-b border-warm-100 last:border-b-0"
+    >
+      <div className="min-w-0 flex flex-col gap-1">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-[13px] font-semibold text-warm-700 truncate">{it.producto}</span>
+          <ChevronRight size={13} className="text-warm-300 shrink-0" />
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <ChipOrigen origen={it.origen} />
+          <span className="text-[11px] text-warm-400">{it.unidad}</span>
+          {ver && (
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-flex items-center gap-1 ${CHIP_VEREDICTO[ver.clave]}`}>
+              <i className={`w-1.5 h-1.5 rounded-full ${ver.clave === 'cuadra' ? 'bg-forest-500' : 'bg-warm-700'}`} />
+              {ver.texto}
+            </span>
+          )}
+          {it.en_negativo && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-danger-100 text-danger-700">bajó de cero</span>
+          )}
+          {it.no_se_mide && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gold-100 text-gold-700">no se mide</span>
+          )}
+        </div>
+      </div>
+
+      <div className="min-w-0">
+        {it.curva
+          ? <BarraInsumo curva={it.curva} span={span} onPunto={globoPunto} onConteo={globoConteo} />
+          : <div className="h-[52px]" />}
+      </div>
+
+      <span className="flex flex-col items-end leading-tight">
+        <span className={`font-mono text-[15px] font-bold tabular-nums ${it.en_negativo ? 'text-danger-700' : 'text-warm-700'}`}>
+          {fmtCant(it.queda)} <span className="text-[10px] text-warm-400">{it.unidad}</span>
+        </span>
+        <span className="font-mono text-[11px] text-warm-500 tabular-nums">{firmado(delta)} en el período</span>
+        {!it.cuadra && <span className="text-[10px] font-bold text-danger-600">no cierra</span>}
+      </span>
+    </button>
+  )
+}
+
 export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number | null; sedeNombre: string }) {
+  const [vista, setVista] = useState<Vista>('barras')
   const [periodo, setPeriodo] = useState<PeriodoKey>('mes')
   const [data, setData] = useState<Respuesta | null>(null)
   const [cargando, setCargando] = useState(true)
@@ -157,24 +266,44 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
 
   const [q, setQ] = useState('')
   const [filtro, setFiltro] = useState<FiltroOrigen>('todos')
-  const [soloMovidos, setSoloMovidos] = useState(false)
+  const [soloMovidos, setSoloMovidos] = useState(true)
   const [orden, setOrden] = useState<OrdenKey>('valor_sin_causa')
   const [dir, setDir] = useState<'asc' | 'desc'>('desc')
   // Qué insumo tiene la ficha abierta. El rango viaja con él: la ficha
   // muestra EL MISMO período que la tabla, o los números no se corresponderían.
   const [fichaDe, setFichaDe] = useState<number | null>(null)
+  // El globo del gráfico. Un gráfico en pantalla se toca: sin esto los escalones
+  // son sólo una silueta. En la tablet no hay hover y por eso el detalle
+  // completo vive en la ficha, no acá.
+  const [globoNodo, setGloboNodo] = useState<React.ReactNode | null>(null)
+  const lienzo = useRef<HTMLDivElement | null>(null)
+  const globoRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const caja = lienzo.current
+    if (!caja) return
+    const mover = (e: MouseEvent) => {
+      const g = globoRef.current
+      if (!g) return
+      g.style.left = `${Math.min(e.clientX + 14, window.innerWidth - g.offsetWidth - 10)}px`
+      g.style.top = `${Math.max(8, e.clientY - g.offsetHeight - 12)}px`
+    }
+    caja.addEventListener('mousemove', mover)
+    return () => caja.removeEventListener('mousemove', mover)
+  }, [vista, cargando])
 
   useEffect(() => {
     if (!tiendaId) return
     let cancel = false
     setCargando(true); setError('')
     const { desde, hasta } = rangoDe(periodo)
-    api.get<Respuesta>('/inventario/movimiento-insumos', { params: { tienda_id: tiendaId, desde, hasta } })
+    api.get<Respuesta>('/inventario/movimiento-insumos', {
+      params: { tienda_id: tiendaId, desde, hasta, con_curva: vista === 'barras' } })
       .then(r => { if (!cancel) setData(r.data) })
       .catch(() => { if (!cancel) setError('No se pudo cargar el movimiento de los insumos.') })
       .finally(() => { if (!cancel) setCargando(false) })
     return () => { cancel = true }
-  }, [tiendaId, periodo])
+  }, [tiendaId, periodo, vista])
 
   const sortear = (k: OrdenKey) => {
     if (k === orden) { setDir(d => (d === 'desc' ? 'asc' : 'desc')); return }
@@ -200,6 +329,18 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
       return a.producto.localeCompare(b.producto, 'es')
     })
   }, [data, q, filtro, orden, dir, soloMovidos])
+
+  // El eje horizontal es el MISMO para todas las filas: sin esto cada barra
+  // escalaría a su último movimiento y el miércoles de una fila caería en un
+  // sitio distinto que el de la de al lado, que es justo lo que se compara.
+  const span = useMemo(() => {
+    for (const it of data?.insumos ?? []) {
+      const fin = it.curva?.puntos[it.curva.puntos.length - 1]
+      if (fin) return fin.t
+    }
+    return 1
+  }, [data])
+  const desdeUtc = data?.desde_utc
 
   const r = data?.resumen
   // Cuántos se movieron en el período, del total. En «Hoy» es el número que
@@ -231,15 +372,27 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
               )}
             </span>
           </div>
+          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex gap-1 bg-warm-100 rounded-xl p-0.5">
+            {([['barras', 'Barras'], ['tabla', 'Tabla']] as const).map(([k, label]) => (
+              <button key={k} onClick={() => { setVista(k); setSoloMovidos(k === 'barras' || periodo === 'hoy') }} aria-pressed={vista === k}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  vista === k ? 'bg-white text-warm-700 shadow-sm' : 'text-warm-500 hover:text-warm-700'
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="flex gap-1 bg-warm-100 rounded-xl p-0.5">
             {PERIODOS.map(p => (
-              <button key={p.k} onClick={() => { setPeriodo(p.k); setSoloMovidos(p.k === 'hoy') }}
+              <button key={p.k} onClick={() => { setPeriodo(p.k); setSoloMovidos(p.k === 'hoy' || vista === 'barras') }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                   periodo === p.k ? 'bg-white text-warm-700 shadow-sm' : 'text-warm-500 hover:text-warm-700'
                 }`}>
                 {p.label}
               </button>
             ))}
+          </div>
           </div>
         </div>
 
@@ -291,7 +444,46 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
         </div>
       )}
 
+      {/* ── Barras ── */}
+      {vista === 'barras' && (
+        <div className="bg-white border border-warm-200 rounded-2xl px-3 py-2" ref={lienzo}>
+          {/* Cómo se lee la barra. Es parte del dato, no decoración: sin esto la
+              sombra parece un segundo color y el punto, un adorno. */}
+          <div className="flex flex-wrap gap-x-5 gap-y-1.5 px-2 py-2 border-b border-warm-200 mb-1">
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-warm-500">
+              <i className="w-4 h-2.5 rounded-sm bg-forest-500/10 border-2 border-forest-500" />
+              lo que hay
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-warm-500">
+              <i className="w-4 h-2.5 rounded-sm bg-warm-200 border-t-2 border-dashed border-warm-400" />
+              lo que se fue
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-warm-500">
+              <i className="w-0.5 h-3 bg-gold-500" />
+              llegó mercadería
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-warm-500">
+              <i className="w-[9px] h-[9px] rounded-full bg-warm-700 ring-2 ring-white" />
+              lo que contaron · el palito hasta la barra es la diferencia
+            </span>
+          </div>
+
+          {cargando && <p className="text-sm text-warm-400 text-center py-10">Cargando…</p>}
+          {!cargando && error && <p className="text-sm text-danger-700 text-center py-10">{error}</p>}
+          {!cargando && !error && filas.length === 0 && (
+            <p className="text-sm text-warm-400 text-center py-10">
+              {periodo === 'hoy' ? 'Todavía no se movió ningún insumo hoy.' : 'Ningún insumo con ese filtro.'}
+            </p>
+          )}
+          {!cargando && !error && filas.map(it => (
+            <FilaBarra key={it.producto_id} it={it} span={span} desdeUtc={desdeUtc}
+              onAbrir={() => setFichaDe(it.producto_id)} onGlobo={setGloboNodo} />
+          ))}
+        </div>
+      )}
+
       {/* ── Tabla ── */}
+      {vista === 'tabla' && (
       <div className="bg-white border border-warm-200 rounded-2xl px-3 py-2 overflow-x-auto">
         <div className="min-w-[1080px]">
           {/* encabezado */}
@@ -405,6 +597,7 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
           })}
         </div>
       </div>
+      )}
 
       {/* Una columna de ceros sin explicación se lee como un bug, y en los
           períodos anteriores a que «Armar pedido» guardara lo que manda, «Pedí»
@@ -418,16 +611,37 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
         </p>
       )}
 
+      {globoNodo && (
+        <div ref={globoRef} role="status" aria-live="polite"
+          className="fixed z-50 pointer-events-none bg-warm-700 text-warm-50 rounded-lg px-3 py-2
+            text-[12px] leading-snug max-w-[270px] shadow-lg">
+          {globoNodo}
+        </div>
+      )}
+
+      {vista === 'barras' && !cargando && !error && filas.length > 0 && (
+        <p className="text-[11.5px] text-warm-500 bg-warm-50 border border-warm-200 rounded-xl px-3 py-2 leading-relaxed">
+          <b>Cada fila tiene su propia escala vertical.</b> Un insumo se mide en gramos y otro en
+          unidades: una escala compartida diría que el café es mil veces más importante que las
+          pulpas, y es otra unidad. Lo comparable entre filas es <b>la forma</b> —si baja parejo,
+          si se agota, si el conteo se despega siempre para el mismo lado—; las cantidades van
+          escritas. Tocá una fila para abrir su ficha.
+        </p>
+      )}
+
       {/* La cuenta que la tabla permite hacer, escrita. Antes faltaban «arrancó» y
           «otros», y por eso una fila como «entró 180, vendió 167, queda 70» no
           daba: los 57 de diferencia eran lo que ya había en el estante. */}
+      {vista === 'tabla' && (
       <p className="text-[12px] text-warm-600 bg-warm-50 border border-warm-200 rounded-xl px-3 py-2 leading-relaxed">
         <b>Cada fila cierra:</b> <span className="font-mono">arrancó + entró + otros − vendió − merma − traslado − preparó − sin causa = queda</span>.
         <b> «Otros ±»</b> junta lo que mueve el saldo sin ser una compra ni una salida normal —lo que
         vino de la otra sede, lo que se preparó acá, anulaciones y ajustes de conteo—; abrí la ficha
         para ver de qué está hecho.
       </p>
+      )}
 
+      {vista === 'tabla' && (
       <p className="text-[11.5px] text-warm-400 leading-relaxed px-1">
         <b>«Pedí»</b> = lo que mandaste por escrito a un proveedor, en la unidad del insumo. Al lado va
         lo que <b>entró</b>: la resta entre las dos es lo que no te trajeron.
@@ -435,6 +649,7 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
         Tocá una columna para ordenar, una fila para abrir su ficha. Los <b>ajustes de conteo</b> no entran en lo que salió:
         no son una causa, son faltante viejo que apareció al contar.
       </p>
+      )}
 
       {/* La fila viaja con la ficha. No es un caché: es EXACTAMENTE el mismo
           objeto que la ficha va a recibir en `resumen` —la arma la misma función

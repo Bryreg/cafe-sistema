@@ -291,9 +291,10 @@ class Producto(Base):
     # de facturas). Manda sobre el promedio de FacturaCompraItem en rentabilidad:
     # las lecturas automáticas con ruido no ensucian un costo confirmado a mano.
     precio_costo = Column(Numeric(12, 4, asdecimal=False), nullable=True)
-    # El cliente lo pide o no lo pide: azúcar en tubos, Splenda, el mezclador, la
-    # servilleta. NINGUNA receta puede predecir cuánto sale, porque no depende
-    # del producto vendido sino de a quién se lo vendieron.
+    # No sale de la receta de ningún producto: el azúcar en tubos y el mezclador
+    # se gastan según lo pida el cliente, el limpiapisos y la bolsa de basura
+    # según se opere el local. En los dos casos NINGUNA receta puede predecir
+    # cuánto sale, porque no depende de lo que se vendió.
     #
     # Sin esta bandera el sistema los trataba igual que a un insumo con la receta
     # mal configurada, y la pantalla mostraba «vendió 0» como un agujero por

@@ -236,7 +236,7 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
           )}
           {it.consumo_opcional ? (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-warm-100 text-warm-600"
-              title="El cliente lo pide o no lo pide, así que ninguna receta puede predecirlo y la caja nunca lo descuenta. Acá el conteo no es un control: es la medición.">
+              title="Se gasta según lo pida el cliente o según se opere el local, no según lo que se vendió: ninguna receta puede predecirlo y la caja nunca lo descuenta. Acá el conteo no es un control, es la medición.">
               opcional
             </span>
           ) : it.no_se_mide && (

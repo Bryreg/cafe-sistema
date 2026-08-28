@@ -393,11 +393,12 @@ export default function FichaInsumo({
                 <div className="flex flex-col gap-1.5 min-w-0">
                   {esOpcional ? (
                     <>
-                      <span className="text-[13.5px] font-extrabold text-warm-700">Lo pide el cliente, así que la caja no puede descontarlo</span>
+                      <span className="text-[13.5px] font-extrabold text-warm-700">No sale de una receta, así que la caja no puede descontarlo</span>
                       <span className="text-[12.5px] text-warm-600 leading-relaxed">
-                        No hay receta que lo prediga: depende de a quién se lo vendieron, no de qué se vendió.
-                        Para este insumo el <b>conteo no es un control, es la medición</b> — el número de arriba
-                        sale de restar dos conteos y lo que entró en medio, y es con el que se decide cuánto pedir.
+                        Se gasta según lo pida el cliente —el azúcar en tubos, el mezclador— o según se opere el
+                        local —el limpiapisos, la bolsa de basura—, no según lo que se vendió. Para este insumo el
+                        <b> conteo no es un control, es la medición</b>: el número de arriba sale de restar dos
+                        conteos y lo que entró en medio, y es con el que se decide cuánto pedir.
                       </span>
                     </>
                   ) : (
@@ -405,8 +406,9 @@ export default function FichaInsumo({
                       <span className="text-[13.5px] font-extrabold text-gold-700">Este insumo no se descuenta cuando se vende</span>
                       <span className="text-[12.5px] text-gold-700 leading-relaxed">
                         La caja no lo resta. El <b>0</b> de «se vendió» no significa que no se usó — significa
-                        que nadie lo está midiendo. Puede ser que le falte la receta… o que sea de los que el
-                        cliente pide y ninguna receta puede predecir.
+                        que nadie lo está midiendo. Puede ser que le falte la receta… o que sea de los que
+                        ninguna receta puede predecir, porque se gastan según lo pida el cliente o según se
+                        opere el local.
                       </span>
                     </>
                   )}
@@ -418,7 +420,7 @@ export default function FichaInsumo({
                         : 'bg-white border-gold-200 text-gold-700 hover:bg-gold-50'} disabled:opacity-50`}>
                     {guardando ? 'Guardando…'
                       : esOpcional ? 'No, sí debería descontarse por receta'
-                      : 'Lo pide el cliente: no hay receta que lo mida'}
+                      : 'No sale de una receta: medirlo por venta es imposible'}
                   </button>
                 </div>
               </div>

@@ -284,12 +284,21 @@ class CurvaInsumoTest(unittest.TestCase):
         self.assertEqual(max(p["v"] for p in c["puntos"]),
                          max(p["v"] for p in c["puntos"] if p["k"] != "salida"))
         self.assertAlmostEqual(c["puntos"][-1]["v"], f["queda"], places=2)
-        # Y cada salida que quedó dice cuánto salió DESDE el punto anterior, no
-        # cuánto salió en el último de los movimientos que representa.
+        # Y cada salida que quedó dice cuánto salió DESDE el punto anterior que
+        # quedó, no cuánto salió en el último de los movimientos que representa.
+        # Es la invariante fuerte: si algún día vuelve a fallar, es que un tramo
+        # volvió a cruzar algo que no era una venta y se llevó su cantidad.
         for antes, p in zip(c["puntos"], c["puntos"][1:]):
             if p["k"] == "salida":
-                self.assertAlmostEqual(p["c"], antes["v"] - p["v"], places=2)
-                self.assertGreater(p["c"], 10.0, "un punto raleado agrupa varias ventas")
+                self.assertAlmostEqual(p["c"], antes["v"] - p["v"], places=2,
+                                       msg=f'el escalón de {p["causa"]} no coincide con la caída')
+        # Nada se pierde y nada se cuenta dos veces: las 400 ventas de 10 siguen
+        # sumando 4.000 repartidas entre los pocos escalones que quedaron. Y
+        # alguno agrupa de verdad: si `n` fuera 1 en todos, no se raleó nada.
+        self.assertAlmostEqual(sum(p["c"] for p in c["puntos"]
+                                   if p["k"] == "salida"), 4000.0, places=2)
+        self.assertGreater(max(p.get("n", 1) for p in c["puntos"]), 1,
+                           "el raleo no agrupó ninguna venta")
 
     # ── el consumo medido: para un opcional es el único número que hay ───────
     def test_el_azucar_en_tubos_se_mide_contra_el_conteo_no_contra_el_libro(self):
@@ -343,6 +352,51 @@ class CurvaInsumoTest(unittest.TestCase):
 
         _, ahora = self.fila(splenda)
         self.assertTrue(ahora["consumo_opcional"])
+
+    def test_el_instante_de_arranque_viaja_con_su_zona(self):
+        # Sin la «Z», `new Date()` en el navegador lo toma como hora LOCAL: en la
+        # tablet (UTC−5) eso corría todos los globos cinco horas y un conteo de
+        # cierre de las 8 de la noche se mostraba a la 1 de la mañana.
+        agua = self.producto("AGUA MEDIUM BOTELLA", stock=57, unidad="und")
+        self.mov(agua, TipoMovInvEnum.salida, 7, "Venta POS", dias=3)
+
+        cuerpo, _ = self.fila(agua)
+        self.assertTrue(cuerpo["desde_utc"].endswith("Z"), cuerpo["desde_utc"])
+        # Y es de verdad el arranque del día COLOMBIA, no del día UTC.
+        from datetime import datetime
+        d = datetime.fromisoformat(cuerpo["desde_utc"].replace("Z", "+00:00"))
+        self.assertEqual((d.hour, d.minute), (5, 0))
+
+    def test_el_raleo_no_le_cambia_la_causa_a_lo_que_junta(self):
+        # Con el raleo viejo, el punto que sobrevivía se quedaba con la SUMA de
+        # los descartados pero con SU causa: en producción los globos del café
+        # sumaban 22.710 gr de «se vendió» cuando 9.540 eran preparaciones y
+        # traslados. Ahora sólo se ralean las VENTAS.
+        cafe = self.producto("Cafe Alta Tostion x2500", stock=0)
+        for i in range(120):
+            self.mov(cafe, TipoMovInvEnum.salida, 10, "Venta POS", dias=5, minutos=i)
+        self.mov(cafe, TipoMovInvEnum.salida, 900, "Preparación: MEZCLA GRANIZADO", dias=4)
+        self.mov(cafe, TipoMovInvEnum.salida, 300, "Traslado a Palmetto", dias=4, minutos=5)
+        self.mov(cafe, TipoMovInvEnum.salida, 150, "Daño: se derramó", dias=4, minutos=10)
+
+        _, f = self.fila(cafe)
+        pts = f["curva"]["puntos"]
+        self.assertLess(len(pts), f["curva"]["puntos_total"], "esta curva se raleó")
+        # Lo que suman los globos, por causa, contra lo que dice la fila.
+        suma: dict = {}
+        for p in pts:
+            if p["k"] == "salida":
+                suma[p["causa"]] = suma.get(p["causa"], 0) + p["c"]
+        self.assertAlmostEqual(suma.get("preparaciones", 0), 900, places=2)
+        self.assertAlmostEqual(suma.get("traslados", 0), 300, places=2)
+        self.assertAlmostEqual(suma.get("mermas", 0), 150, places=2)
+        self.assertAlmostEqual(suma.get("ventas", 0), f["ventas"], places=2)
+        # Y no sobra ni falta un gramo en el total.
+        self.assertAlmostEqual(sum(suma.values()), f["total_salio"], places=2)
+        # Y un escalón raleado dice cuántos movimientos junta.
+        juntos = [p for p in pts if p.get("n")]
+        self.assertTrue(juntos, "algún escalón junta varias ventas")
+        self.assertTrue(all(p["causa"] == "ventas" for p in juntos))
 
     def test_sin_pedirla_la_curva_no_viaja(self):
         agua = self.producto("AGUA MEDIUM BOTELLA", stock=57, unidad="und")

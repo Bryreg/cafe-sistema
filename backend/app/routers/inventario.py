@@ -1073,7 +1073,12 @@ def movimiento_insumos(
         "hasta": hasta.isoformat(),
         # Los `t` de la curva son segundos desde acá. Sin este ancla la pantalla
         # no puede convertirlos en una hora que mostrar.
-        "desde_utc": inicio_dia_col_utc(desde).isoformat(),
+        #
+        # Va con la «Z» EXPLÍCITA. `isoformat()` de un datetime naive no lleva
+        # marca de zona, y `new Date()` en el navegador interpreta eso como hora
+        # LOCAL: en la tablet (UTC−5) corría todos los globos cinco horas, y un
+        # conteo de cierre de las 8 de la noche se mostraba a la 1 de la mañana.
+        "desde_utc": inicio_dia_col_utc(desde).isoformat() + "Z",
         "insumos": filas,
         "resumen": {
             "n_insumos": len(filas),

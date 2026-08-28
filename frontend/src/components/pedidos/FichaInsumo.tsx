@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import api from '../../api/client'
+import { diaCol } from '../../utils/fechaLocal'
 import { AlertTriangle, Info, X, FileText, ArrowDown, ArrowUp, Clock } from 'lucide-react'
 
 /**
@@ -77,6 +78,9 @@ export interface PuntoCurva {
   t: number; v: number
   k: 'inicio' | 'entrada' | 'salida' | 'ajuste' | 'fin'
   c?: number; causa?: string
+  /** Cuántos movimientos junta este escalón cuando la curva se raleó. Sin
+   *  esto, un escalón de 340 gr se presenta como una venta única de 340. */
+  n?: number
   /** El saldo salió de suponer que el producto arrancó en cero antes del ajuste
    *  más viejo. Es un supuesto y se dibuja como tal. */
   est?: boolean
@@ -166,12 +170,10 @@ const fmtC = (v: number) => {
     ? n.toLocaleString('es-CO', { maximumFractionDigits: 2 })
     : Math.round(n).toLocaleString('es-CO')
 }
-const fmtFecha = (s: string | null) => {
-  if (!s) return '—'
-  const [a, m, d] = s.slice(0, 10).split('-')
-  const MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
-  return `${d} ${MES[Number(m) - 1] ?? m}${a ? '' : ''}`
-}
+/** Cortar el ISO a secas mostraba el día UTC: un movimiento de las 8 de la
+ *  noche en Colombia ya es del día siguiente en UTC, así que todo el cierre del
+ *  turno se fechaba un día tarde. */
+const fmtFecha = (s: string | null) => diaCol(s)
 
 /** Los renglones de «salió», en el idioma del dueño. «Sin causa» va primero
  *  porque es lo único que merece investigarse; el resto solo si es distinto de

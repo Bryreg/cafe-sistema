@@ -104,34 +104,76 @@ def conteos_rango(db, tienda_id: int, desde: date, hasta: date,
 
 
 def _ralear(puntos: list[dict], muestras: int) -> list[dict]:
-    """Deja alrededor de `muestras` puntos sin tocar la silueta.
+    """Deja alrededor de `muestras` puntos sin tocar la silueta NI la causa.
 
-    Se conservan siempre los extremos y todo lo que SUBE (entradas, ajustes,
-    reversas); de las salidas se guarda la última de cada tramo, que es el nivel
-    con el que ese tramo termina y contra el que sigue el escalón siguiente.
+    Se conservan siempre los extremos, todo lo que SUBE (entradas, ajustes,
+    reversas) y toda salida que no sea una venta. De las ventas se guarda la
+    última de cada tramo, que es el nivel con el que ese tramo termina.
+
+    LO QUE SE TIRA SE SUMA A LA SIGUIENTE VENTA QUE QUEDÓ, no al punto que venga
+    después. Esa distinción es el bug: la primera versión reescribía la cantidad
+    de cada salida contra el punto anterior (`antes.v − p.v`), y con eso una
+    merma que venía después de tres ventas descartadas se quedaba con la suma de
+    las cuatro y con el rótulo «merma». En producción los globos del café de
+    Palmetto sumaban 22.710 gr de «se vendió» cuando la tabla decía 12.160 de
+    venta, 7.040 de preparación, 2.500 de traslado y 2.000 de merma: nueve mil
+    kilos cambiados de renglón, en 19 de las 26 filas raleadas.
+
+    Como sólo se ralean ventas, todo lo descartado ES una venta y pertenece a la
+    siguiente venta conservada — que existe siempre, porque de cada tramo se
+    guarda la última. Las salidas que no son venta llevan su cantidad exacta.
 
     `muestras` es un objetivo, no un tope duro: si un insumo tuviera más entradas
-    que el cupo entero, se mandan todas igual. Recortar ahí achataría el techo de
-    la sombra, que es justamente lo que la barra viene a mostrar.
-
-    La cantidad de una salida se REESCRIBE contra el punto que quedó antes: si se
-    tiraron cuatro ventas en el medio, el globo tiene que decir cuánto salió
-    entre los dos puntos que se ven, no cuánto salió en la última de las cuatro.
+    o más salidas-no-venta que el cupo entero, se mandan todas igual. Recortar
+    ahí achataría el techo de la sombra o volvería a mentir sobre la causa, que
+    es justamente lo que esto viene a evitar.
     """
-    if len(puntos) > muestras:
-        fijos = {0, len(puntos) - 1}
-        fijos.update(i for i, p in enumerate(puntos) if p["k"] != "salida")
-        salidas = [i for i in range(len(puntos)) if i not in fijos]
-        cupo = max(0, muestras - len(fijos))
-        if cupo and salidas:
-            paso = len(salidas) / cupo
-            fijos.update(salidas[min(len(salidas) - 1, int((k + 1) * paso) - 1)]
-                         for k in range(cupo))
-        puntos = [puntos[i] for i in sorted(fijos)]
-    for antes, p in zip(puntos, puntos[1:]):
-        if p["k"] == "salida":
-            p["c"] = round(antes["v"] - p["v"], 3)
-    return puntos
+    if len(puntos) <= muestras:
+        return puntos
+
+    es_venta = lambda p: p["k"] == "salida" and p.get("causa") == "ventas"
+
+    # Obligatorios: todo lo que no es una venta —el arranque, el cierre, las
+    # entradas, los ajustes, las mermas, los traslados, las preparaciones.
+    fijos = {i for i, p in enumerate(puntos) if not es_venta(p)}
+
+    # Y con ellos, la última venta anterior a cada uno: NINGÚN TRAMO PUEDE CRUZAR
+    # UN PUNTO QUE NO SEA VENTA. Los tramos se reparten sobre la lista de ventas
+    # sin mirar qué hay en el medio, así que uno podía empezar antes de una
+    # entrega y terminar después, y las ventas descartadas de antes se sumaban a
+    # una venta posterior a la entrega: el escalón dibujado dejaba de coincidir
+    # con la caída que se ve. Cerrando el tramo justo antes, lo pendiente se
+    # descarga sin cruzar nada.
+    guardas = set()
+    for i in sorted(fijos):
+        j = i - 1
+        while j >= 0 and not es_venta(puntos[j]):
+            j -= 1
+        if j >= 0:
+            guardas.add(j)
+    fijos |= guardas
+
+    # Recién ahora se reparte el cupo que queda entre las ventas sobrantes. El
+    # orden importa: si el cupo se repartiera primero, las guardas se sumarían
+    # encima y el resultado pasaría de `muestras`.
+    ventas = [i for i in range(len(puntos)) if i not in fijos]
+    cupo = max(0, muestras - len(fijos))
+    if cupo and ventas:
+        paso = len(ventas) / cupo
+        fijos.update(ventas[min(len(ventas) - 1, int((k + 1) * paso) - 1)]
+                     for k in range(cupo))
+
+    salida, pendiente, juntados = [], 0.0, 0
+    for i, p in enumerate(puntos):
+        if i not in fijos:
+            pendiente += p.get("c", 0.0)   # siempre una venta
+            juntados += 1
+            continue
+        if es_venta(p) and juntados:
+            p = {**p, "c": round(p.get("c", 0.0) + pendiente, 3), "n": juntados + 1}
+            pendiente, juntados = 0.0, 0
+        salida.append(p)
+    return salida
 
 
 def consumo_entre_conteos(movs, conteos: list[dict], d_utc: datetime,

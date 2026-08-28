@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import api from '../../api/client'
+import { fechaHoraCol, instanteCol } from '../../utils/fechaLocal'
 import {
   AlertTriangle, ArrowDown, ArrowUp, Search, ChevronRight,
 } from 'lucide-react'
@@ -161,10 +162,13 @@ function Celda({ v, tono = 'normal' }: { v: number; tono?: 'normal' | 'alerta' |
 
 // ─── Componente ───────────────────────────────────────────────────────────────
 
-/** La hora de un punto, a partir del arranque del rango y sus segundos. */
+/** La hora de un punto, a partir del arranque del rango y sus segundos.
+ *
+ *  `desde_utc` viene sin marca de zona, así que `new Date()` lo tomaba como hora
+ *  local y en la tablet (UTC−5) corría todo cinco horas: un conteo de cierre de
+ *  las 8:07 de la noche se mostraba a la 1:07 de la mañana. */
 const horaDe = (desdeUtc: string | undefined, t: number) =>
-  !desdeUtc ? '' : new Date(new Date(desdeUtc).getTime() + t * 1000)
-    .toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
+  !desdeUtc ? '' : fechaHoraCol(new Date(instanteCol(desdeUtc).getTime() + t * 1000))
 
 const NOMBRE_CAUSA: Record<string, string> = {
   entradas: 'Llegó con factura', traslados_recibidos: 'Vino de la otra sede',
@@ -191,6 +195,7 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
         : p.k === 'entrada' ? `Llegaron ${num(p.c ?? 0)} ${it.unidad}`
         : p.k === 'ajuste' ? `Se aplicó un conteo: el saldo quedó en ${num(p.v)} ${it.unidad}`
         : `Salieron ${num(p.c ?? 0)} ${it.unidad}`}</b>
+      {p.k === 'salida' && p.n != null && <> <span className="opacity-75">en {p.n} movimientos</span></>}
       {p.k !== 'inicio' && p.k !== 'fin' && <><br />{horaDe(desdeUtc, p.t)}</>}
       {p.causa && <><br /><span className="opacity-70">{NOMBRE_CAUSA[p.causa] ?? p.causa}</span></>}
       <br />Quedan <b>{num(p.v)} {it.unidad}</b>
@@ -198,8 +203,13 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
 
   const globoConteo = (c: ConteoCurva) => onGlobo(
     <>
-      <b>Conteo de {c.tipos.join(' + ')}</b>{c.es_atajo && <> · atajo</>}
+      <b>Conteo de {c.tipos[0]}</b>{c.es_atajo && <> · atajo</>}
       <br />{horaDe(desdeUtc, c.t)}
+      {c.tipos.length > 1 && (
+        <><br /><span className="opacity-75">
+          la {c.tipos.slice(1).join(' y la ')} del día siguiente repitió el mismo número
+        </span></>
+      )}
       <br />El sistema decía <b>{num(c.sistema)}</b>
       <br />Contaron <b>{num(c.real)}</b>
       <br /><span className="opacity-75">
@@ -281,12 +291,23 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
             consumo medido entre conteos sí lo es, y es el número con el que se
             decide cuánto pedir. Se muestra sólo donde el libro no lo sabe: en
             los demás la ficha ya trae el desglose por causa. */}
+        {/* Un consumo NEGATIVO no es consumo: es que el estante creció más de lo
+            que entró registrado. Decía «usó −1.960 · −102/día» en verde y en
+            negrita, contradiciendo al chip «entró sin registrar» que está dos
+            centímetros más arriba en la misma fila. */}
         {(it.consumo_opcional || it.no_se_mide) && it.curva?.consumo_medido && (
-          <span className="font-mono text-[11px] text-forest-500 tabular-nums font-semibold"
-            title={`Medido entre ${it.curva.consumo_medido.tramos + 1} conteos, ${it.curva.consumo_medido.dias} días`}>
-            usó {fmtCant(it.curva.consumo_medido.usado)}
-            {it.curva.consumo_medido.por_dia != null && <> · {fmtCant(it.curva.consumo_medido.por_dia)}/día</>}
-          </span>
+          it.curva.consumo_medido.usado >= 0 ? (
+            <span className="font-mono text-[11px] text-forest-500 tabular-nums font-semibold"
+              title={`Medido entre ${it.curva.consumo_medido.tramos + 1} conteos, ${it.curva.consumo_medido.dias} días`}>
+              usó {fmtCant(it.curva.consumo_medido.usado)}
+              {it.curva.consumo_medido.por_dia != null && <> · {fmtCant(it.curva.consumo_medido.por_dia)}/día</>}
+            </span>
+          ) : (
+            <span className="font-mono text-[11px] text-gold-700 tabular-nums font-semibold"
+              title="Entre dos conteos apareció más mercadería de la que entró registrada. No se puede medir el consumo hasta que eso se explique.">
+              entraron {fmtCant(-it.curva.consumo_medido.usado)} sin registrar
+            </span>
+          )
         )}
         {!it.cuadra && <span className="text-[10px] font-bold text-danger-600">no cierra</span>}
       </span>
@@ -493,7 +514,7 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
             </span>
             <span className="inline-flex items-center gap-1.5 text-[11px] text-warm-500">
               <i className="w-4 h-2.5 rounded-sm bg-warm-200 border-t-2 border-dashed border-warm-400" />
-              lo que se fue
+              el hueco contra su punto más lleno
             </span>
             <span className="inline-flex items-center gap-1.5 text-[11px] text-warm-500">
               <i className="w-0.5 h-3 bg-gold-500" />

@@ -118,8 +118,10 @@ export const CHIP_VEREDICTO: Record<ClaveVeredicto, string> = {
 export function bajoDeCero(curva: Curva | undefined): boolean {
   const pts = curva?.puntos
   if (!pts || !pts.length) return false
-  const ultAj = pts.reduce((a, p, k) => (p.k === 'ajuste' ? k : a), -1)
-  return pts.slice(ultAj + 1).some(p => p.v < -EPS)
+  // Cualquier punto FIRME por debajo de cero, esté antes o después de un ajuste.
+  // Se excluyen los estimados porque ahí el negativo puede ser de la
+  // reconstrucción («arrancó en cero») y no del estante.
+  return pts.some(p => p.v < -EPS && !p.est)
 }
 
 interface Props {
@@ -197,19 +199,36 @@ export default function BarraInsumo({ curva, span, onConteo, onPunto }: Props) {
         )}
 
         {/* Bajo cero: imposible en el estante, así que es una certeza y no una sospecha. */}
-        {bajoCero && piso < 0 && (
+        {/* LA RAYA DEL CERO SE DIBUJA SIEMPRE QUE HAYA ALGO DEBAJO. Antes sólo
+            salía si el hundimiento era posterior al último ajuste, y con eso 23
+            filas dibujaban curva bajo cero sin una sola marca: el café de Vida
+            tocó −11.996 gr y la fila mostraba un tranquilo «6.024». El cero es
+            la única referencia vertical del gráfico; apagarla justo donde hace
+            falta es lo contrario de lo que debía hacer.
+            El TINTE rojo sigue reservado al tramo posterior al último ajuste,
+            que es donde el negativo es dato y no reconstrucción. */}
+        {piso < 0 && (
           <>
-            <rect x={X(0)} y={Y(0)} width={X(1) - X(0)} height={Y(piso) - Y(0)}
-              fill={C.alerta} opacity=".14" />
+            {bajoCero && (
+              <rect x={X(0)} y={Y(0)} width={X(1) - X(0)} height={Y(piso) - Y(0)}
+                fill={C.alerta} opacity=".14" />
+            )}
             <line x1={X(0)} x2={X(1)} y1={Y(0)} y2={Y(0)} strokeWidth="1.5" strokeDasharray="4 3"
               vectorEffect="non-scaling-stroke" stroke={C.alerta} />
           </>
         )}
 
-        {paso.filter(s => s.p.k === 'entrada').map((s, i) => (
-          <line key={`e${i}`} x1={X(s.x)} x2={X(s.x)} y1={Y(piso)} y2={Y(s.v)}
+        {/* EL PALO MIDE LA ENTREGA, NO EL SALDO. Iba del piso hasta el nivel de
+            después, y la altura —que es el canal que uno lee como cantidad—
+            terminaba codificando el saldo resultante: siete entregas de 50
+            unidades de almojábanas se dibujaban con alturas del 51% al 100%, y
+            una entrega de 96 salía más alta que una de 12 por razones que no
+            eran su tamaño. Ahora es sólo el escalón que subió. */}
+        {paso.map((s, i) => (s.p.k !== 'entrada' ? null : (
+          <line key={`e${i}`} x1={X(s.x)} x2={X(s.x)}
+            y1={Y(i > 0 ? paso[i - 1].v : s.v)} y2={Y(s.v)}
             strokeWidth="2.5" vectorEffect="non-scaling-stroke" stroke={C.entra} />
-        ))}
+        )))}
 
         {/* El palito entre la curva y el conteo: la diferencia, a escala. */}
         {marcas.filter(m => Math.abs(m.yr - m.yc) > 1.5).map((m, i) => (

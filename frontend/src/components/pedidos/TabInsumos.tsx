@@ -327,8 +327,9 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
         {it.valor_total_salio > 0 && (
           <span className="font-mono text-[11px] text-warm-500 tabular-nums"
             title={`Lo que salió del estante en el período, al costo de referencia `
-              + `($${it.valor_unitario.toLocaleString('es-CO', { maximumFractionDigits: 2 })} por ${it.unidad}).`}>
-            {fmt$(it.valor_total_salio)}
+              + `($${it.valor_unitario.toLocaleString('es-CO', { maximumFractionDigits: 2 })} por ${it.unidad}). `
+              + `No es lo que pagaste: eso son las facturas.`}>
+            costó {fmt$(it.valor_total_salio)}
           </span>
         )}
         {/* Cuando la caja no lo descuenta, «vendió 0» no es una respuesta. El
@@ -343,27 +344,25 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
           it.curva.consumo_medido.usado >= 0 ? (
             <span className="font-mono text-[11px] text-forest-500 tabular-nums font-semibold"
               title={`Medido entre ${it.curva.consumo_medido.tramos + 1} conteos, ${it.curva.consumo_medido.dias} días`}>
-              usó {fmtCant(it.curva.consumo_medido.usado)}
-              {it.curva.consumo_medido.por_dia != null && <> · {fmtCant(it.curva.consumo_medido.por_dia)}/día</>}
+              usó {fmtCant(it.curva.consumo_medido.usado)} {it.unidad}
             </span>
           ) : (
             <span className="font-mono text-[11px] text-gold-700 tabular-nums font-semibold"
               title="Entre dos conteos apareció más mercadería de la que entró registrada. No se puede medir el consumo hasta que eso se explique.">
-              entraron {fmtCant(-it.curva.consumo_medido.usado)} sin registrar
+              entraron {fmtCant(-it.curva.consumo_medido.usado)} {it.unidad} sin registrar
             </span>
           )
         )}
-        {/* Y el ritmo, en los 100 insumos donde el libro SÍ mide pero nadie lo
-            veía: estaba calculado y viajando en la respuesta, y para leerlo
-            había que abrir la ficha. Es el número con el que se decide cuánto
-            pedir. Va apagado y sin el «usó»: ahí arriba el desglose por causa
-            ya está, esto es sólo el ritmo. */}
-        {!it.consumo_opcional && !it.no_se_mide
-          && it.curva?.consumo_medido && it.curva.consumo_medido.usado > 0
+        {/* El ritmo, para TODOS los insumos donde se pudo medir —hasta ahora
+            sólo se pintaba en los opcionales, y en los otros 100 estaba
+            calculado, viajando en la respuesta y escondido—. Es el número con
+            el que se decide cuánto pedir, así que tiene que decir de qué
+            habla: «899» solo no es nada, «se van 899 gr por día» sí. */}
+        {it.curva?.consumo_medido && it.curva.consumo_medido.usado > 0
           && it.curva.consumo_medido.por_dia != null && (
           <span className="font-mono text-[11px] text-warm-400 tabular-nums"
-            title={`Medido contra los conteos del estante, no contra el libro: ${it.curva.consumo_medido.tramos + 1} conteos en ${it.curva.consumo_medido.dias} días. Es con lo que se decide cuánto pedir.`}>
-            {fmtCant(it.curva.consumo_medido.por_dia)}/día
+            title={`El promedio que salió del estante por día, medido entre conteos y no contra el libro: ${it.curva.consumo_medido.tramos + 1} conteos en ${it.curva.consumo_medido.dias} días. Es con lo que se decide cuánto pedir.`}>
+            se van {fmtCant(it.curva.consumo_medido.por_dia)} {it.unidad}/día
           </span>
         )}
         {!it.cuadra && <span className="text-[10px] font-bold text-danger-600">no cierra</span>}
@@ -580,8 +579,14 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
           manda la plata: ver la nota del tipo. */}
       {r && r.valor_total_salio != null && (
         <div className="bg-white border border-warm-200 rounded-2xl px-5 py-4 flex flex-col gap-1">
+          {/* «$9.721.900 salieron del estante» no le dice a nadie QUÉ es esa
+              plata. Lo que es: el costo de todo lo que se consumió en el
+              período. Y lo que NO es —y es la confusión cara— lo que se pagó
+              este mes: buena parte de eso se compró el mes pasado y estaba en
+              el estante, y la mitad de las facturas de este mes todavía está
+              guardada sin usar. */}
           <p className="text-[21px] font-extrabold text-warm-700 leading-snug">
-            <span className="font-mono">{fmt$(r.valor_total_salio)}</span> salieron del estante
+            <span className="font-mono">{fmt$(r.valor_total_salio)}</span> costó lo que se usó
           </p>
           <span className="text-[12.5px] text-warm-500">
             en <b className="text-warm-700">{r.n_con_salida}</b> de {r.n_insumos} insumos de {sedeNombre}
@@ -591,6 +596,12 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
             )}
             {r.n_no_se_mide > 0 && <> · <b className="text-gold-700">{r.n_no_se_mide}</b> no se miden (la caja no los descuenta)</>}
             {r.n_en_negativo > 0 && <> · <b className="text-danger-700">{r.n_en_negativo}</b> en negativo</>}
+          </span>
+          <span className="text-[11.5px] text-warm-400 leading-relaxed mt-1">
+            Es lo que costó lo que salió del estante —lo que se vendió, lo que se preparó, la merma
+            y lo que se mandó a la otra sede—, al costo de referencia de cada insumo.
+            <b className="text-warm-500"> No es lo que pagaste este mes</b>: eso son las facturas.
+            Parte de esto se compró antes y ya estaba en el estante.
           </span>
         </div>
       )}
@@ -691,14 +702,18 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
                     <div className="flex items-center gap-1.5 mt-1">
                       <ChipOrigen origen={it.origen} />
                       {it.proveedor && <span className="text-[11px] text-warm-500 truncate">{it.proveedor}</span>}
-                      {/* La plata va acá y no en una columna nueva: la tabla ya
-                          mide 1080 px y la celda del nombre tiene el espacio. */}
-                      {it.valor_total_salio > 0 && (
-                        <span className="font-mono text-[11px] text-warm-400 tabular-nums shrink-0">
-                          {fmt$(it.valor_total_salio)}
-                        </span>
-                      )}
                     </div>
+                    {/* La plata va acá y no en una columna nueva: la tabla ya mide
+                        1080 px. En su propio renglón y no al lado del proveedor:
+                        compartiendo la línea, «costó $1.595.083» dejaba a
+                        Cafexcoop en «C…», y de dónde viene el insumo es media
+                        razón de existir de esta tabla. */}
+                    {it.valor_total_salio > 0 && (
+                      <span className="block font-mono text-[10.5px] text-warm-400 tabular-nums"
+                        title="Lo que costó lo que salió del estante en el período. No es lo que pagaste: eso son las facturas.">
+                        costó {fmt$(it.valor_total_salio)}
+                      </span>
+                    )}
                   </div>
                   {/* Lo que había al empezar. Es el término que faltaba: sin él,
                       «entró 180, vendió 167, queda 70» no da, y el que hace la
@@ -790,10 +805,10 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
           <b>Cada fila tiene su propia escala vertical.</b> Un insumo se mide en gramos y otro en
           unidades: una escala compartida diría que el café es mil veces más importante que las
           pulpas, y es otra unidad. Lo comparable entre filas es <b>la forma</b> —si baja parejo,
-          si se agota, si el conteo se despega siempre para el mismo lado— y <b>la plata</b>, que va
-          escrita a la derecha y es con lo que está ordenada la lista. Debajo, donde se pudo medir
-          contra los conteos, va <b>el ritmo por día</b>: es el número con el que se decide cuánto
-          pedir. Tocá una fila para abrir su ficha.
+          si se agota, si el conteo se despega siempre para el mismo lado— y <b>lo que costó</b>, que va
+          escrito a la derecha y es con lo que está ordenada la lista. Debajo, donde hubo dos conteos
+          o más, va <b>cuánto se va por día</b>: el promedio que salió del estante medido entre esos
+          conteos, que es el número con el que se decide cuánto pedir. Tocá una fila para abrir su ficha.
         </p>
       )}
 
@@ -814,8 +829,9 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
         <b>«Pedí»</b> = lo que mandaste por escrito a un proveedor, en la unidad del insumo. Al lado va
         lo que <b>entró</b>: la resta entre las dos es lo que no te trajeron.
         <b> «Comprás vos»</b> = lo traés del supermercado, sin pedido ni precio acordado — ahí lo que salió es tu lista de mercado.
-        Al lado del proveedor va <b>la plata que salió</b> de ese insumo, y la tabla arranca ordenada por ahí:
-        es lo único comparable entre dos filas, porque una se mide en gramos y otra en unidades.
+        Al lado del proveedor va <b>lo que costó lo que se usó</b> de ese insumo —no lo que pagaste: eso son
+        las facturas—, y la tabla arranca ordenada por ahí: es lo único comparable entre dos filas,
+        porque una se mide en gramos y otra en unidades.
         Tocá una columna para ordenar por otra cosa, una fila para abrir su ficha. Los <b>ajustes de conteo</b> no entran en lo que salió:
         no son una causa, son faltante viejo que apareció al contar.
       </p>

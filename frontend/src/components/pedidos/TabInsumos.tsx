@@ -21,8 +21,16 @@ import BarraInsumo, { veredicto, bajoDeCero, CHIP_VEREDICTO, num, firmado } from
  *    Cafexcoop hay pedido y precio acordado; en Makro no hay pedido que
  *    incumplir y la resta es, en la práctica, la lista de mercado. Es el 25% de
  *    la plata: filtrar por eso es una de las razones de existir de la tabla.
- *  · «Sin causa» va destacada y ordena la tabla por defecto: es lo único que
- *    merece investigarse, y en pesos, que es como duele.
+ *  · «Sin causa» va destacada: es lo único que merece investigarse, y en pesos,
+ *    que es como duele. Ordenaba la tabla por defecto hasta que se midió que
+ *    esa columna está en CERO en las 246 filas de las dos sedes —buena noticia
+ *    de por sí—: todas empataban y la lista salía alfabética sin decirlo. El
+ *    orden por defecto es ahora la plata que salió, y lo sin explicar grita
+ *    desde el titular.
+ *  · LA PLATA es lo único comparable entre dos filas. La barra de cada insumo
+ *    tiene su propia escala vertical porque uno se mide en gramos y otro en
+ *    unidades; en pesos, en cambio, el café y la mezcla de granizado son la
+ *    mitad del gasto del mes de una sede.
  *  · «No se mide» se DICE. Un 0 en «vendió» para los vasos no es una buena
  *    noticia: es que la caja no los descuenta. Callarlo sería peor que no
  *    mostrar la fila.
@@ -43,6 +51,19 @@ interface ResumenTabla {
   n_insumos: number
   n_sin_causa: number
   valor_sin_causa: number
+  /** La plata que salió del estante en el rango. Es lo único comparable ENTRE
+   *  insumos —uno se mide en gramos y otro en unidades— y no aparecía en
+   *  ninguna lista: había que abrir la ficha de uno en uno.
+   *
+   *  OPCIONAL a propósito: el front sale por Cloudflare y el backend por
+   *  Render, y no terminan de desplegarse al mismo tiempo. Durante esos
+   *  minutos la pantalla nueva puede estar hablando con el backend viejo, que
+   *  no manda estos dos campos; sin la marca de opcional el titular diría
+   *  «$0 salieron del estante», que es una mentira, en vez de no dibujarse. */
+  valor_total_salio?: number
+  /** De cuántos insumos salió esa plata. No es `n_insumos`: hoy pueden haberse
+   *  movido 28 de 123, y decir «en 123 insumos» sería contar los quietos. */
+  n_con_salida?: number
   n_no_se_mide: number
   n_compra_directa: number
   n_con_pedido: number
@@ -108,8 +129,19 @@ const PERIODOS: { k: PeriodoKey; label: string }[] = [
   { k: 'anterior', label: 'Mes pasado' },
 ]
 
-type OrdenKey = 'valor_sin_causa' | 'arranco' | 'pedi' | 'entradas' | 'ventas' | 'mermas' | 'traslados'
+type OrdenKey = 'valor_total_salio' | 'valor_sin_causa' | 'arranco' | 'pedi' | 'entradas' | 'ventas' | 'mermas' | 'traslados'
   | 'preparaciones' | 'otras_salidas' | 'otros' | 'queda' | 'producto'
+
+/** Con qué se ordena la vista de BARRAS. La tabla se ordena tocando cualquier
+ *  columna, pero en barras no hay columnas que tocar y el orden quedaba
+ *  heredado de la tabla, sin nada en pantalla que lo dijera. Sólo se ofrece lo
+ *  comparable ENTRE insumos: los pesos —cada barra tiene su propia escala, así
+ *  que las cantidades de dos filas no se comparan— y el nombre. */
+const ORDEN_BARRAS: { k: OrdenKey; label: string; dir: 'asc' | 'desc' }[] = [
+  { k: 'valor_total_salio', label: 'Por plata', dir: 'desc' },
+  { k: 'valor_sin_causa', label: 'Sin explicar', dir: 'desc' },
+  { k: 'producto', label: 'Por nombre', dir: 'asc' },
+]
 
 type FiltroOrigen = 'todos' | 'proveedor' | 'directa'
 
@@ -287,6 +319,18 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
           {fmtCant(it.queda)} <span className="text-[10px] text-warm-400">{it.unidad}</span>
         </span>
         <span className="font-mono text-[11px] text-warm-500 tabular-nums">{firmado(delta)} en el período</span>
+        {/* La plata. Es el único número comparable ENTRE filas —cada barra tiene
+            su propia escala vertical justamente porque una se mide en gramos y
+            otra en unidades—, y no estaba en ninguna lista: para saber que el
+            café y la mezcla de granizado son la mitad del gasto del mes había
+            que abrir 123 fichas de a una. */}
+        {it.valor_total_salio > 0 && (
+          <span className="font-mono text-[11px] text-warm-500 tabular-nums"
+            title={`Lo que salió del estante en el período, al costo de referencia `
+              + `($${it.valor_unitario.toLocaleString('es-CO', { maximumFractionDigits: 2 })} por ${it.unidad}).`}>
+            {fmt$(it.valor_total_salio)}
+          </span>
+        )}
         {/* Cuando la caja no lo descuenta, «vendió 0» no es una respuesta. El
             consumo medido entre conteos sí lo es, y es el número con el que se
             decide cuánto pedir. Se muestra sólo donde el libro no lo sabe: en
@@ -309,6 +353,19 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
             </span>
           )
         )}
+        {/* Y el ritmo, en los 100 insumos donde el libro SÍ mide pero nadie lo
+            veía: estaba calculado y viajando en la respuesta, y para leerlo
+            había que abrir la ficha. Es el número con el que se decide cuánto
+            pedir. Va apagado y sin el «usó»: ahí arriba el desglose por causa
+            ya está, esto es sólo el ritmo. */}
+        {!it.consumo_opcional && !it.no_se_mide
+          && it.curva?.consumo_medido && it.curva.consumo_medido.usado > 0
+          && it.curva.consumo_medido.por_dia != null && (
+          <span className="font-mono text-[11px] text-warm-400 tabular-nums"
+            title={`Medido contra los conteos del estante, no contra el libro: ${it.curva.consumo_medido.tramos + 1} conteos en ${it.curva.consumo_medido.dias} días. Es con lo que se decide cuánto pedir.`}>
+            {fmtCant(it.curva.consumo_medido.por_dia)}/día
+          </span>
+        )}
         {!it.cuadra && <span className="text-[10px] font-bold text-danger-600">no cierra</span>}
       </span>
     </button>
@@ -325,7 +382,13 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
   const [q, setQ] = useState('')
   const [filtro, setFiltro] = useState<FiltroOrigen>('todos')
   const [soloMovidos, setSoloMovidos] = useState(true)
-  const [orden, setOrden] = useState<OrdenKey>('valor_sin_causa')
+  // Por defecto ordenaba por «sin causa», que es lo que merece investigarse
+  // primero… salvo que esa columna está en CERO en las 246 filas de las dos
+  // sedes, así que todas empataban y la lista caía al desempate: el nombre.
+  // El dueño abría Insumos y arriba le aparecía AGUA MEDIUM BOTELLA. Ahora
+  // manda la plata que salió, y lo sin explicar tiene su propio titular
+  // arriba, que es donde grita mejor.
+  const [orden, setOrden] = useState<OrdenKey>('valor_total_salio')
   const [dir, setDir] = useState<'asc' | 'desc'>('desc')
   // Qué insumo tiene la ficha abierta. El rango viaja con él: la ficha
   // muestra EL MISMO período que la tabla, o los números no se corresponderían.
@@ -384,6 +447,13 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
       if (orden === 'producto') return signo * a.producto.localeCompare(b.producto, 'es')
       const va = Number(a[orden] ?? 0), vb = Number(b[orden] ?? 0)
       if (va !== vb) return signo * (va - vb)
+      // Y cuando empatan, la plata ANTES que el nombre. Ordenar por una columna
+      // que está en cero en todas las filas dejaba la lista alfabética sin
+      // decirlo; con este desempate, «sin causa» sigue subiendo lo que hay que
+      // investigar y debajo queda lo que más pesa, no lo que empieza con A.
+      // El desempate es siempre de mayor a menor: no es la columna elegida.
+      const pa = a.valor_total_salio || 0, pb = b.valor_total_salio || 0
+      if (pa !== pb) return pb - pa
       return a.producto.localeCompare(b.producto, 'es')
     })
   }, [data, q, filtro, orden, dir, soloMovidos])
@@ -476,6 +546,18 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
             }`}>
             Solo los que se movieron
           </button>
+          {vista === 'barras' && (
+            <div className="flex gap-1 bg-warm-100 rounded-xl p-0.5">
+              {ORDEN_BARRAS.map(o => (
+                <button key={o.k} onClick={() => { setOrden(o.k); setDir(o.dir) }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    orden === o.k ? 'bg-white text-warm-700 shadow-sm' : 'text-warm-500 hover:text-warm-700'
+                  }`}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex gap-1 bg-warm-100 rounded-xl p-0.5">
             {([['todos', 'Todos'], ['proveedor', 'Con proveedor'], ['directa', 'Compra directa']] as const).map(([k, label]) => (
               <button key={k} onClick={() => setFiltro(k)}
@@ -489,15 +571,26 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
         </div>
       </div>
 
-      {/* ── Titular ── */}
-      {r && r.valor_sin_causa > 0 && (
+      {/* ── Titular ──
+          Antes sólo aparecía cuando había plata sin explicar, o sea nunca: esa
+          columna está en cero en las 246 filas de las dos sedes. El bloque más
+          grande de la pantalla no se dibujaba jamás. Ahora titula lo que SÍ
+          pasa siempre —la plata que salió del estante— y lo sin explicar entra
+          como alarma al lado cuando existe. Se calla si el backend todavía no
+          manda la plata: ver la nota del tipo. */}
+      {r && r.valor_total_salio != null && (
         <div className="bg-white border border-warm-200 rounded-2xl px-5 py-4 flex flex-col gap-1">
           <p className="text-[21px] font-extrabold text-warm-700 leading-snug">
-            <span className="font-mono text-danger-700">{fmt$(r.valor_sin_causa)}</span> salieron sin explicación
+            <span className="font-mono">{fmt$(r.valor_total_salio)}</span> salieron del estante
           </p>
           <span className="text-[12.5px] text-warm-500">
-            en <b className="text-warm-700">{r.n_sin_causa}</b> de {r.n_insumos} insumos
+            en <b className="text-warm-700">{r.n_con_salida}</b> de {r.n_insumos} insumos de {sedeNombre}
+            {r.valor_sin_causa > 0 && (
+              <> · <b className="font-mono text-danger-700">{fmt$(r.valor_sin_causa)}</b> sin
+                explicación en <b className="text-danger-700">{r.n_sin_causa}</b></>
+            )}
             {r.n_no_se_mide > 0 && <> · <b className="text-gold-700">{r.n_no_se_mide}</b> no se miden (la caja no los descuenta)</>}
+            {r.n_en_negativo > 0 && <> · <b className="text-danger-700">{r.n_en_negativo}</b> en negativo</>}
           </span>
         </div>
       )}
@@ -598,6 +691,13 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
                     <div className="flex items-center gap-1.5 mt-1">
                       <ChipOrigen origen={it.origen} />
                       {it.proveedor && <span className="text-[11px] text-warm-500 truncate">{it.proveedor}</span>}
+                      {/* La plata va acá y no en una columna nueva: la tabla ya
+                          mide 1080 px y la celda del nombre tiene el espacio. */}
+                      {it.valor_total_salio > 0 && (
+                        <span className="font-mono text-[11px] text-warm-400 tabular-nums shrink-0">
+                          {fmt$(it.valor_total_salio)}
+                        </span>
+                      )}
                     </div>
                   </div>
                   {/* Lo que había al empezar. Es el término que faltaba: sin él,
@@ -690,8 +790,10 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
           <b>Cada fila tiene su propia escala vertical.</b> Un insumo se mide en gramos y otro en
           unidades: una escala compartida diría que el café es mil veces más importante que las
           pulpas, y es otra unidad. Lo comparable entre filas es <b>la forma</b> —si baja parejo,
-          si se agota, si el conteo se despega siempre para el mismo lado—; las cantidades van
-          escritas. Tocá una fila para abrir su ficha.
+          si se agota, si el conteo se despega siempre para el mismo lado— y <b>la plata</b>, que va
+          escrita a la derecha y es con lo que está ordenada la lista. Debajo, donde se pudo medir
+          contra los conteos, va <b>el ritmo por día</b>: es el número con el que se decide cuánto
+          pedir. Tocá una fila para abrir su ficha.
         </p>
       )}
 
@@ -712,7 +814,9 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
         <b>«Pedí»</b> = lo que mandaste por escrito a un proveedor, en la unidad del insumo. Al lado va
         lo que <b>entró</b>: la resta entre las dos es lo que no te trajeron.
         <b> «Comprás vos»</b> = lo traés del supermercado, sin pedido ni precio acordado — ahí lo que salió es tu lista de mercado.
-        Tocá una columna para ordenar, una fila para abrir su ficha. Los <b>ajustes de conteo</b> no entran en lo que salió:
+        Al lado del proveedor va <b>la plata que salió</b> de ese insumo, y la tabla arranca ordenada por ahí:
+        es lo único comparable entre dos filas, porque una se mide en gramos y otra en unidades.
+        Tocá una columna para ordenar por otra cosa, una fila para abrir su ficha. Los <b>ajustes de conteo</b> no entran en lo que salió:
         no son una causa, son faltante viejo que apareció al contar.
       </p>
       )}

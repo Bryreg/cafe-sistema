@@ -283,11 +283,25 @@ class TablaTest(MovimientoInsumosBase):
         self.factura("Makro", vaso, 500)
         self.mov(vaso, TipoMovInvEnum.entrada, 500, "Factura #2 — Makro")
 
-        r = self.get()["resumen"]
+        d = self.get()
+        r = d["resumen"]
         self.assertEqual(r["n_sin_causa"], 1)
         self.assertGreater(r["valor_sin_causa"], 0)
         self.assertEqual(r["n_no_se_mide"], 1)
         self.assertEqual(r["n_compra_directa"], 1)
+        # La plata que salió del estante: es el titular de la pantalla y lo
+        # único comparable entre insumos, así que tiene que ser la suma exacta
+        # de las filas y no un número que el frontend arme por su cuenta.
+        self.assertAlmostEqual(r["valor_total_salio"],
+                               sum(f["valor_total_salio"] for f in d["insumos"]), places=2)
+        # Y contiene a lo sin explicar: el café salió 300 por venta y 100 sin
+        # causa, así que el total es mayor que la parte.
+        self.assertGreater(r["valor_total_salio"], r["valor_sin_causa"])
+        self.assertAlmostEqual(r["valor_total_salio"], 400 * 50.0, places=2)
+        # Y de cuántos insumos salió: el vaso entró pero no salió, así que es 1
+        # de 2 — decir «en 2 insumos» contaría uno que no se movió.
+        self.assertEqual(r["n_con_salida"], 1)
+        self.assertEqual(r["n_insumos"], 2)
 
     def test_cada_sede_ve_lo_suyo(self):
         cafe = self.producto("Café")

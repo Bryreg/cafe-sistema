@@ -1084,6 +1084,17 @@ def movimiento_insumos(
             "n_insumos": len(filas),
             "n_sin_causa": sum(1 for f in filas if f["otras_salidas"] > 0),
             "valor_sin_causa": round(sum(f["valor_sin_causa"] for f in filas), 2),
+            # La plata que salió del estante en el rango. Es LO ÚNICO comparable
+            # entre insumos: uno se mide en gramos y otro en unidades, y por eso
+            # cada barra tiene su propia escala vertical. En pesos, el café y la
+            # mezcla de granizado son la mitad del gasto del mes de una sede
+            # ($1,56 M y $1,52 M de $7,69 M en Palmetto en agosto) y eso no
+            # aparecía en ninguna pantalla: había que abrir la ficha de uno en
+            # uno para verlo.
+            "valor_total_salio": round(sum(f["valor_total_salio"] for f in filas), 2),
+            # De cuántos insumos salió esa plata. Sin este número el titular
+            # decía «$356.499 en 123 insumos» un día en que sólo se movieron 28.
+            "n_con_salida": sum(1 for f in filas if f["valor_total_salio"] > 0),
             "n_no_se_mide": sum(1 for f in filas if f["no_se_mide"]),
             "n_compra_directa": sum(1 for f in filas if f["origen"] == "directa"),
             # Cuántos insumos tienen pedido escrito en el rango. Sirve para que la

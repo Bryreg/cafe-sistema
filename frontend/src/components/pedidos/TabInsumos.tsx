@@ -4,7 +4,7 @@ import {
   AlertTriangle, ArrowDown, ArrowUp, Search, ChevronRight,
 } from 'lucide-react'
 import FichaInsumo, { type Resumen, type ConteoCurva, type PuntoCurva } from './FichaInsumo'
-import BarraInsumo, { veredicto, CHIP_VEREDICTO, num, firmado } from './BarraInsumo'
+import BarraInsumo, { veredicto, bajoDeCero, CHIP_VEREDICTO, num, firmado } from './BarraInsumo'
 
 /**
  * «Qué pasó con cada insumo», la tabla que el dueño pidió: en un mismo sitio lo
@@ -231,8 +231,20 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
               {ver.texto}
             </span>
           )}
-          {it.en_negativo && (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-danger-100 text-danger-700">bajó de cero</span>
+          {/* Dos estados distintos, los dos imposibles en el estante: uno sigue
+              en negativo AHORA y el otro se hundió y volvió a subir. El segundo
+              es el que se pasa por alto —el saldo ya se ve bien— y era el que
+              dibujaba la banda roja sin una sola palabra que la nombrara. */}
+          {it.en_negativo ? (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-danger-100 text-danger-700"
+              title="El sistema dice que hay menos que cero. Es imposible en el estante: falta registrar un movimiento.">
+              hoy en negativo
+            </span>
+          ) : bajoDeCero(it.curva) && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-danger-50 text-danger-700"
+              title="En algún momento del período el saldo estuvo por debajo de cero y después se recuperó. Suele ser una venta registrada antes que la factura que trajo la mercadería.">
+              bajó de cero
+            </span>
           )}
           {it.consumo_opcional ? (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-warm-100 text-warm-600"
@@ -494,6 +506,10 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
             <span className="inline-flex items-center gap-1.5 text-[11px] text-warm-500">
               <i className="w-4 h-0 border-t-2 border-dashed border-forest-500 opacity-70" />
               tramo reconstruido, no medido
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-warm-500">
+              <i className="w-4 h-0 border-t-2 border-dashed border-danger-500" />
+              la raya del cero · debajo es imposible, falta registrar algo
             </span>
           </div>
 

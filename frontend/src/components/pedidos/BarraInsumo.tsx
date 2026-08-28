@@ -105,6 +105,23 @@ export const CHIP_VEREDICTO: Record<ClaveVeredicto, string> = {
   mixto: 'bg-warm-100 text-warm-600',
 }
 
+/** ¿El saldo estuvo por debajo de cero en el período?
+ *
+ *  No es lo mismo que `en_negativo`, que mira sólo cómo terminó. Un insumo puede
+ *  hundirse a −5 el martes —se vendieron croissants antes de cargar la factura
+ *  que los trajo— y volver a subir el jueves cuando alguien la registró. El
+ *  saldo se arregla solo, pero el hecho no se borra: durante esos días el
+ *  sistema no sabía lo que tenía, y cualquier pedido de esos días salió mal.
+ *
+ *  Se mira sólo DESPUÉS del último ajuste, porque antes de un ajuste el saldo es
+ *  reconstrucción y un negativo puede ser de la reconstrucción, no del estante. */
+export function bajoDeCero(curva: Curva | undefined): boolean {
+  const pts = curva?.puntos
+  if (!pts || !pts.length) return false
+  const ultAj = pts.reduce((a, p, k) => (p.k === 'ajuste' ? k : a), -1)
+  return pts.slice(ultAj + 1).some(p => p.v < -EPS)
+}
+
 interface Props {
   curva: Curva
   /** Segundos que dura el rango. Fija el eje horizontal para TODAS las filas:

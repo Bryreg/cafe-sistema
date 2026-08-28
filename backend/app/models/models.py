@@ -291,6 +291,16 @@ class Producto(Base):
     # de facturas). Manda sobre el promedio de FacturaCompraItem en rentabilidad:
     # las lecturas automáticas con ruido no ensucian un costo confirmado a mano.
     precio_costo = Column(Numeric(12, 4, asdecimal=False), nullable=True)
+    # El cliente lo pide o no lo pide: azúcar en tubos, Splenda, el mezclador, la
+    # servilleta. NINGUNA receta puede predecir cuánto sale, porque no depende
+    # del producto vendido sino de a quién se lo vendieron.
+    #
+    # Sin esta bandera el sistema los trataba igual que a un insumo con la receta
+    # mal configurada, y la pantalla mostraba «vendió 0» como un agujero por
+    # tapar. No hay nada que tapar: para estos el LIBRO nunca va a saber cuánto
+    # se usó, y el conteo físico deja de ser un control para pasar a ser la
+    # única medición que existe.
+    consumo_opcional = Column(Boolean, default=False, server_default="false")
     # Producto intercambiable de RESERVA: al consumir este insumo por receta, si su
     # stock no alcanza, el resto se descuenta del sustituto (ej. Leche Entera →
     # Deslactosada). NULL = sin sustituto (comportamiento normal).

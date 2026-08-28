@@ -135,6 +135,7 @@ def productos(db: Session = Depends(get_db), user: Usuario = Depends(get_current
              # conteo diario (vasos, tapas, helado) — incluir_en_conteo False.
              "incluir_en_conteo": p.incluir_en_conteo is not False,
              "grupo_conteo": p.grupo_conteo,
+             "consumo_opcional": bool(p.consumo_opcional),
              # Recibir: convertir "N empaques" → gr/ml (botella Baileys = 1000).
              "contenido_por_empaque": p.contenido_por_empaque} for p in rows]
 
@@ -177,6 +178,7 @@ def editar_producto(producto_id: int, data: ProductoUpdate, db: Session = Depend
     if data.lead_time_dias is not None: p.lead_time_dias = data.lead_time_dias
     if data.proveedor is not None: p.proveedor = data.proveedor if data.proveedor.strip() else None
     if data.incluir_en_conteo is not None: p.incluir_en_conteo = data.incluir_en_conteo
+    if data.consumo_opcional is not None: p.consumo_opcional = data.consumo_opcional
     if data.fraccionable is not None: p.fraccionable = data.fraccionable
     if data.envase is not None:
         if data.envase not in ("", "bolsa", "botella"):
@@ -203,6 +205,7 @@ def editar_producto(producto_id: int, data: ProductoUpdate, db: Session = Depend
     return {"id": p.id, "nombre": p.nombre, "categoria": p.categoria.value,
             "unidad_medida": p.unidad_medida, "controla_stock": p.controla_stock,
             "incluir_en_conteo": p.incluir_en_conteo,
+            "consumo_opcional": p.consumo_opcional,
             "fraccionable": p.fraccionable, "envase": p.envase,
             "contenido_por_unidad": p.contenido_por_unidad,
             "orden_conteo": p.orden_conteo, "grupo_conteo": p.grupo_conteo,
@@ -823,7 +826,8 @@ def _pedido_por_producto(db: Session, tienda_id: int, d_utc: datetime, h_utc: da
     return out
 
 
-def _fila_insumo(p: dict, proveedor: str | None, pedido: dict | None = None) -> dict:
+def _fila_insumo(p: dict, proveedor: str | None, pedido: dict | None = None,
+                 opcional: bool = False) -> dict:
     """Una fila de «qué pasó con este insumo», a partir del renglón que ya
     calculó la escalera de conciliación, más el proveedor y lo que se le pidió.
 
@@ -920,6 +924,12 @@ def _fila_insumo(p: dict, proveedor: str | None, pedido: dict | None = None) -> 
         # medido — marcarlo mandaría a revisar un agujero que no existe.
         "no_se_mide": (entradas > 0 and salidas["ventas"] == 0
                        and salidas["preparaciones"] == 0),
+        # El cliente lo pide o no: azúcar en tubos, Splenda, el mezclador. Viaja
+        # PEGADO a `no_se_mide` porque son la misma casilla vista de dos formas:
+        # `no_se_mide` dice que el libro no lo ve, y esto dice si eso es un
+        # agujero de configuración o simplemente cómo es el insumo. Sin separar
+        # los dos, la pantalla grita por algo que no tiene arreglo.
+        "consumo_opcional": bool(opcional),
         # MENOS QUE CERO ES IMPOSIBLE. No es «se acabó» —eso es cero— es la
         # prueba aritmética de que el libro está incompleto: o entró mercadería
         # que nadie registró, o una receta descuenta un insumo que no es.
@@ -1025,10 +1035,15 @@ def movimiento_insumos(
     pedidos = _pedido_por_producto(db, tienda_id,
                                    inicio_dia_col_utc(desde), fin_dia_col_utc(hasta))
 
+    opcionales = {
+        pid for (pid,) in db.query(Producto.id)
+        .filter(Producto.consumo_opcional.is_(True)).all()
+    }
     filas = [
         _fila_insumo(p, prov_rango.get(p.get("producto_id"))
                      or prov_ficha.get(p.get("producto_id")),
-                     pedidos.get(p.get("producto_id")))
+                     pedidos.get(p.get("producto_id")),
+                     p.get("producto_id") in opcionales)
         for p in escalera.get("productos", [])
     ]
 
@@ -1179,9 +1194,10 @@ def ficha_insumo(
         # responde la ficha vacía en vez de un 404, porque la pregunta («¿qué
         # pasó con esto acá?») tiene una respuesta legítima: nada.
         fila = _fila_insumo({"producto_id": producto_id, "producto_nombre": prod.nombre,
-                             "unidad_medida": prod.unidad_medida}, proveedor, pedido)
+                             "unidad_medida": prod.unidad_medida}, proveedor, pedido,
+                            bool(prod.consumo_opcional))
     else:
-        fila = _fila_insumo(crudo, proveedor, pedido)
+        fila = _fila_insumo(crudo, proveedor, pedido, bool(prod.consumo_opcional))
 
     # ── Hacía falta ─────────────────────────────────────────────────────────
     sugerido = None
@@ -1327,7 +1343,21 @@ def ficha_insumo(
     total_movs = len(filtrados)
     movimientos = filtrados[:_MAX_MOVS_FICHA]
 
+    from app.services import curvas as curvas_svc
+    ctx_curva = esc._Ctx(db, horizonte=desde, solo_ids=solo)
+    inv_filas, movs_prod = ctx_curva.sede(tienda_id)
+    curva = None
+    for inv_row, p_row in inv_filas:
+        if p_row.id != producto_id:
+            continue
+        ms = movs_prod.get(producto_id, [])
+        curva = curvas_svc.curva_producto(
+            ms, ctx_curva.saldos(tienda_id, producto_id, ms, inv_row.stock_actual),
+            d_utc, h_utc, fila["arranco"], fila["arranque_estimado"], fila["queda"],
+            curvas_svc.conteos_rango(db, tienda_id, desde, hasta, solo).get(producto_id, []))
+
     return {
+        "curva": curva,
         "producto": {
             "id": prod.id,
             "nombre": prod.nombre,

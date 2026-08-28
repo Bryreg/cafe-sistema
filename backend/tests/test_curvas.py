@@ -291,6 +291,59 @@ class CurvaInsumoTest(unittest.TestCase):
                 self.assertAlmostEqual(p["c"], antes["v"] - p["v"], places=2)
                 self.assertGreater(p["c"], 10.0, "un punto raleado agrupa varias ventas")
 
+    # ── el consumo medido: para un opcional es el único número que hay ───────
+    def test_el_azucar_en_tubos_se_mide_contra_el_conteo_no_contra_el_libro(self):
+        # El cliente lo pide o no lo pide: la caja nunca lo descuenta, así que
+        # el libro dice que salió CERO. Entre dos conteos, en cambio, la cuenta
+        # es del estante y no del libro:
+        #     lo contado antes + lo que entró en medio − lo contado después
+        tubos = self.producto("Azúcar Blanca Tubos", stock=200, unidad="und")
+        t1, t2 = self.turno(), self.turno()
+        self.conteo(t1, TipoConteoEnum.cierre, [(tubos, 200.0)], dias=5)
+        self.mov(tubos, TipoMovInvEnum.entrada, 100, "Factura #91 — Makro", dias=4)
+        self.conteo(t2, TipoConteoEnum.cierre, [(tubos, 230.0)], dias=2)
+
+        _, f = self.fila(tubos)
+        self.assertEqual(f["ventas"], 0.0, "la caja no descuenta un opcional")
+        cm = f["curva"]["consumo_medido"]
+        self.assertEqual(cm["usado"], 70.0)          # 200 + 100 − 230
+        self.assertEqual(cm["tramos"], 1)
+        self.assertAlmostEqual(cm["por_dia"], 70 / cm["dias"], places=2)
+
+    def test_el_ajuste_no_cuenta_como_algo_que_llegó_al_estante(self):
+        # Un ajuste fija el saldo del SISTEMA; no pone ni saca nada del estante.
+        # Contarlo como entrada inflaría el consumo medido.
+        mez = self.producto("Mezclador Ecológico", stock=500, unidad="und")
+        t1, t2 = self.turno(), self.turno()
+        self.conteo(t1, TipoConteoEnum.cierre, [(mez, 500.0)], dias=5)
+        self.mov(mez, TipoMovInvEnum.ajuste, 480, "Conteo #9 — ajuste", dias=4)
+        self.conteo(t2, TipoConteoEnum.cierre, [(mez, 430.0)], dias=2)
+
+        _, f = self.fila(mez)
+        self.assertEqual(f["curva"]["consumo_medido"]["usado"], 70.0)   # 500 − 430
+
+    def test_con_un_solo_conteo_no_hay_consumo_que_medir(self):
+        # Hace falta un ANTES y un DESPUÉS: con una sola mirada no hay tramo, y
+        # devolver 0 diría que no se gastó nada, que es otra cosa.
+        pan = self.producto("SERVILLETAS", stock=50, unidad="und")
+        self.conteo(self.turno(), TipoConteoEnum.cierre, [(pan, 48.0)], dias=3)
+
+        _, f = self.fila(pan)
+        self.assertIsNone(f["curva"]["consumo_medido"])
+
+    def test_un_insumo_opcional_viaja_marcado(self):
+        splenda = self.producto("ENDULZANTE DIET O STEVIA", stock=100, unidad="und")
+        _, antes = self.fila(splenda)
+        self.assertFalse(antes["consumo_opcional"])
+
+        r = self.client.patch(f"/api/v1/inventario/productos/{splenda.id}",
+                              json={"consumo_opcional": True})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertTrue(r.json()["consumo_opcional"])
+
+        _, ahora = self.fila(splenda)
+        self.assertTrue(ahora["consumo_opcional"])
+
     def test_sin_pedirla_la_curva_no_viaja(self):
         agua = self.producto("AGUA MEDIUM BOTELLA", stock=57, unidad="und")
         self.mov(agua, TipoMovInvEnum.salida, 7, "Venta POS", dias=3)

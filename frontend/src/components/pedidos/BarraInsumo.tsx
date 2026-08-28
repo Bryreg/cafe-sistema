@@ -65,27 +65,41 @@ export const firmado = (v: number) =>
  *  se juzga todo lo demás. Con siete miradas lo que importa no es cada
  *  diferencia sino si el desacuerdo va SIEMPRE para el mismo lado — eso separa
  *  una fuga de la forma de contar. */
-export type ClaveVeredicto = 'cuadra' | 'sobra' | 'falta' | 'mixto'
+export type ClaveVeredicto = 'cuadra' | 'sobra' | 'falta' | 'mixto' | 'medido'
 export interface Veredicto {
   clave: ClaveVeredicto; texto: string
   n: number; mas: number; menos: number; tipico: number
 }
 
-export function veredicto(cs: ConteoCurva[] | undefined): Veredicto | null {
+export function veredicto(cs: ConteoCurva[] | undefined, opcional = false): Veredicto | null {
   if (!cs || !cs.length) return null
   const mas = cs.filter(c => c.dif > EPS).length
   const menos = cs.filter(c => c.dif < -EPS).length
   const abs = cs.map(c => Math.abs(c.dif)).filter(v => v > EPS).sort((a, b) => a - b)
+  const tipico = abs.length ? abs[Math.floor(abs.length / 2)] : 0
+  // EN UN INSUMO OPCIONAL EL DESACUERDO NO ES UNA FUGA. El cliente pide azúcar
+  // en tubos o no lo pide, así que la caja nunca lo descuenta y el saldo del
+  // sistema se queda quieto mientras el estante se vacía: cada conteo TIENE que
+  // dar por debajo, y esa distancia es el consumo. Llamarlo «siempre falta»
+  // mandaría al dueño a buscar un ladrón donde sólo hay clientes.
+  //
+  // Lo que sí es raro es al revés: si el conteo da POR ENCIMA, apareció
+  // mercadería que nadie registró.
+  if (opcional) {
+    const clave: ClaveVeredicto = mas ? 'sobra' : 'medido'
+    return { clave, n: cs.length, mas, menos, tipico,
+             texto: mas ? 'entró sin registrar' : 'el conteo lo mide' }
+  }
   const clave: ClaveVeredicto =
     !mas && !menos ? 'cuadra' : !menos ? 'sobra' : !mas ? 'falta' : 'mixto'
   const texto = { cuadra: 'el conteo cuadra', sobra: 'siempre sobra',
                   falta: 'siempre falta', mixto: 'va y viene' }[clave]
-  return { clave, texto, n: cs.length, mas, menos,
-           tipico: abs.length ? abs[Math.floor(abs.length / 2)] : 0 }
+  return { clave, texto, n: cs.length, mas, menos, tipico }
 }
 
 export const CHIP_VEREDICTO: Record<ClaveVeredicto, string> = {
   cuadra: 'bg-forest-50 text-forest-500',
+  medido: 'bg-forest-50 text-forest-500',
   sobra: 'bg-warm-100 text-warm-600',
   falta: 'bg-warm-100 text-warm-600',
   mixto: 'bg-warm-100 text-warm-600',

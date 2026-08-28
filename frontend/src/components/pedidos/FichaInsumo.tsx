@@ -61,6 +61,10 @@ export interface Resumen {
   /** El stock quedó por debajo de cero. No es «se acabó»: es imposible, y por
    *  eso es una certeza y no una sospecha — falta registrar algo. */
   en_negativo: boolean
+  /** El cliente lo pide o no lo pide —azúcar en tubos, Splenda, el mezclador—.
+   *  Va pegado a `no_se_mide`: ese dice que el libro no lo ve, y este dice si
+   *  eso es un agujero de configuración o simplemente cómo es el insumo. */
+  consumo_opcional: boolean
   /** Sólo cuando se pide `con_curva`: CUÁNDO pasó lo que los totales resumen. */
   curva?: Curva
 }
@@ -88,9 +92,19 @@ export interface ConteoCurva {
   es_atajo: boolean; aplicado: boolean
 }
 
+/** Lo que de verdad salió del estante, medido entre dos conteos y sin pasar por
+ *  el libro: contado antes + lo que entró en medio − contado después. Para un
+ *  insumo opcional es el ÚNICO número que existe, porque la caja nunca lo
+ *  descuenta. `null` con menos de dos conteos: sin un antes y un después no hay
+ *  tramo que medir, y un 0 diría que no se gastó nada. */
+export interface ConsumoMedido {
+  usado: number; por_dia: number | null; dias: number; tramos: number
+}
+
 export interface Curva {
   puntos: PuntoCurva[]; puntos_total: number
   conteos: ConteoCurva[]; n_movs: number
+  consumo_medido: ConsumoMedido | null
   ancla: 'libro' | 'estimado'
 }
 interface HaciaFalta {
@@ -127,6 +141,7 @@ interface Movimiento {
   motivo: string | null; causa: string; barista: string | null
 }
 interface Ficha {
+  curva: Curva | null
   producto: { id: number; nombre: string; unidad: string; proveedor: string | null; origen: string; contenido_por_empaque: number | null }
   periodo: { desde: string; hasta: string }
   resumen: Resumen
@@ -216,6 +231,12 @@ export default function FichaInsumo({
   // TAPAN lo que se vino a mirar (el café real tiene 2.561 en dos meses, y sus
   // 250 últimos son 239 ventas).
   const [causa, setCausa] = useState<string | null>(null)
+  // Marcar el insumo como opcional se hace ACÁ, que es donde el dueño está
+  // mirando cuando se da cuenta: el aviso dice «nadie lo está midiendo» y él
+  // sabe que no hay nada que medir porque depende de si el cliente lo pide.
+  // Mandarlo al catálogo a buscar el producto sería perder el momento.
+  const [opcional, setOpcional] = useState<boolean | null>(null)
+  const [guardando, setGuardando] = useState(false)
 
   useEffect(() => {
     let cancel = false
@@ -223,7 +244,7 @@ export default function FichaInsumo({
     api.get<Ficha>(`/inventario/insumo/${productoId}/ficha`, {
       params: { tienda_id: tiendaId, desde, hasta, ...(causa ? { causa } : {}) },
     })
-      .then(r => { if (!cancel) setD(r.data) })
+      .then(r => { if (!cancel) { setD(r.data); setOpcional(r.data.resumen.consumo_opcional) } })
       .catch(() => { if (!cancel) setError('No se pudo cargar la ficha de este insumo.') })
       .finally(() => { if (!cancel) setCargando(false) })
     return () => { cancel = true }
@@ -238,6 +259,24 @@ export default function FichaInsumo({
 
   // La respuesta manda; la fila del clic solo cubre el hueco mientras llega.
   const r = d?.resumen ?? filaPrevia
+  // Lo que el usuario acaba de marcar manda sobre lo que trajo la respuesta:
+  // el interruptor tiene que responder al toque, no al viaje de vuelta.
+  const esOpcional = opcional ?? r?.consumo_opcional ?? false
+  const medido = d?.curva?.consumo_medido ?? null
+
+  const marcarOpcional = async () => {
+    if (guardando) return
+    setGuardando(true)
+    const nuevo = !esOpcional
+    try {
+      await api.patch(`/inventario/productos/${productoId}`, { consumo_opcional: nuevo })
+      setOpcional(nuevo)
+    } catch {
+      setError('No se pudo guardar. Probá de nuevo.')
+    } finally {
+      setGuardando(false)
+    }
+  }
   const pl = d?.pedi_llego
   const u = r?.unidad ?? ''
   const nombre = d?.producto.nombre ?? filaPrevia?.producto
@@ -284,10 +323,31 @@ export default function FichaInsumo({
             {/* ── 1 · El titular ── */}
             <div className="bg-white border border-warm-200 rounded-2xl px-5 py-4 flex flex-col gap-2">
               <p className="text-[20px] sm:text-[23px] font-extrabold text-warm-700 leading-snug">
-                Salieron <span className="font-mono text-danger-700">{fmtC(r.total_salio)} {u}</span>,
-                {' '}entraron <span className="font-mono text-forest-700">{fmtC(r.entradas)} {u}</span>
-                {' '}y quedan <span className="font-mono">{fmtC(r.queda)} {u}</span>
+                {/* «Salieron 0» es exactamente la frase que confunde en un insumo
+                    opcional: el libro dice cero porque la caja no lo descuenta,
+                    no porque el estante siga lleno. Ahí manda el consumo medido
+                    entre conteos, que es el único número real que hay. */}
+                {esOpcional && medido
+                  ? <>Se usaron <span className="font-mono text-danger-700">{fmtC(medido.usado)} {u}</span>,
+                      {' '}entraron <span className="font-mono text-forest-700">{fmtC(r.entradas)} {u}</span>
+                      {' '}y quedan <span className="font-mono">{fmtC(r.queda)} {u}</span></>
+                  : <>Salieron <span className="font-mono text-danger-700">{fmtC(r.total_salio)} {u}</span>,
+                      {' '}entraron <span className="font-mono text-forest-700">{fmtC(r.entradas)} {u}</span>
+                      {' '}y quedan <span className="font-mono">{fmtC(r.queda)} {u}</span></>}
               </p>
+              {esOpcional && medido && (
+                <span className="text-[12.5px] text-warm-500">
+                  Medido entre <b className="text-warm-700">{medido.tramos + 1} conteos</b> en {fmtC(medido.dias)} días
+                  {medido.por_dia != null && <> — <b className="font-mono text-warm-700">{fmtC(medido.por_dia)} {u}</b> por día</>}.
+                  La caja no lo descuenta, así que «se vendió» no puede contestar esto.
+                </span>
+              )}
+              {esOpcional && !medido && (
+                <span className="text-[12.5px] text-warm-500">
+                  Hacen falta <b className="text-warm-700">dos conteos</b> en el período para poder medir cuánto se usó:
+                  con una sola mirada no hay un antes y un después que restar.
+                </span>
+              )}
               {r.valor_total_salio > 0 && (
                 <span className="text-[12.5px] text-warm-500">
                   Eso son <b className="font-mono text-warm-700">{fmt$(r.valor_total_salio)}</b> que salieron del estante
@@ -324,14 +384,42 @@ export default function FichaInsumo({
                 </div>
               </div>
             )}
-            {r.no_se_mide && (
-              <div className="bg-gold-50 border border-gold-200 rounded-2xl px-4 py-3 flex items-start gap-2.5">
-                <AlertTriangle size={18} className="text-gold-700 shrink-0 mt-px" />
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[13.5px] font-extrabold text-gold-700">Este insumo no se descuenta cuando se vende</span>
-                  <span className="text-[12.5px] text-gold-700 leading-relaxed">
-                    La caja no lo resta. El <b>0</b> de «se vendió» no significa que no se usó — significa que nadie lo está midiendo.
-                  </span>
+            {(r.no_se_mide || esOpcional) && (
+              <div className={`border rounded-2xl px-4 py-3 flex items-start gap-2.5 ${
+                esOpcional ? 'bg-warm-50 border-warm-200' : 'bg-gold-50 border-gold-200'}`}>
+                {esOpcional
+                  ? <Info size={18} className="text-warm-500 shrink-0 mt-px" />
+                  : <AlertTriangle size={18} className="text-gold-700 shrink-0 mt-px" />}
+                <div className="flex flex-col gap-1.5 min-w-0">
+                  {esOpcional ? (
+                    <>
+                      <span className="text-[13.5px] font-extrabold text-warm-700">Lo pide el cliente, así que la caja no puede descontarlo</span>
+                      <span className="text-[12.5px] text-warm-600 leading-relaxed">
+                        No hay receta que lo prediga: depende de a quién se lo vendieron, no de qué se vendió.
+                        Para este insumo el <b>conteo no es un control, es la medición</b> — el número de arriba
+                        sale de restar dos conteos y lo que entró en medio, y es con el que se decide cuánto pedir.
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-[13.5px] font-extrabold text-gold-700">Este insumo no se descuenta cuando se vende</span>
+                      <span className="text-[12.5px] text-gold-700 leading-relaxed">
+                        La caja no lo resta. El <b>0</b> de «se vendió» no significa que no se usó — significa
+                        que nadie lo está midiendo. Puede ser que le falte la receta… o que sea de los que el
+                        cliente pide y ninguna receta puede predecir.
+                      </span>
+                    </>
+                  )}
+                  <button
+                    onClick={marcarOpcional} disabled={guardando}
+                    className={`self-start text-[12px] font-bold px-3 py-1.5 rounded-xl border transition-colors ${
+                      esOpcional
+                        ? 'bg-white border-warm-200 text-warm-600 hover:text-warm-700'
+                        : 'bg-white border-gold-200 text-gold-700 hover:bg-gold-50'} disabled:opacity-50`}>
+                    {guardando ? 'Guardando…'
+                      : esOpcional ? 'No, sí debería descontarse por receta'
+                      : 'Lo pide el cliente: no hay receta que lo mida'}
+                  </button>
                 </div>
               </div>
             )}
@@ -448,9 +536,22 @@ export default function FichaInsumo({
                     <span className="font-mono text-[18px] font-bold text-forest-700">{fmtC(r.entradas)} {u}</span>
                   </div>
                 </div>
-                {r.entradas < r.total_salio && (
+                {r.entradas < r.total_salio && !esOpcional && (
                   <span className="text-[12.5px] font-semibold text-danger-700">
                     Se compró menos de lo que salió: el estante se está vaciando.
+                  </span>
+                )}
+                {/* Los tres números de arriba salen de lo que la CAJA descontó, y
+                    en un insumo opcional eso es cero por definición. Decirlo es
+                    obligatorio: si no, la ficha muestra «hoy hay que pedir 0» tres
+                    centímetros debajo de «se usaron 9», y una de las dos miente. */}
+                {esOpcional && (
+                  <span className="text-[12.5px] text-warm-600 leading-relaxed">
+                    <b>Estos tres números salen de lo que la caja descontó, que en este insumo es cero.</b>
+                    {medido?.por_dia != null
+                      ? <> Para pedir, andá por el consumo medido: <b className="font-mono text-warm-700">{fmtC(medido.por_dia)} {u}</b> por
+                          día, o sea unos <b className="font-mono text-warm-700">{fmtC(medido.por_dia * 7)} {u}</b> por semana.</>
+                      : <> Con dos conteos en el período se puede medir el consumo real y usarlo para pedir.</>}
                   </span>
                 )}
               </Bloque>

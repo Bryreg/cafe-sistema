@@ -134,6 +134,39 @@ def _ralear(puntos: list[dict], muestras: int) -> list[dict]:
     return puntos
 
 
+def consumo_entre_conteos(movs, conteos: list[dict], d_utc: datetime,
+                          h_utc: datetime) -> dict | None:
+    """Lo que de verdad se usó, medido entre dos conteos y sin pasar por el libro.
+
+        usado = lo contado antes + lo que entró en medio − lo contado después
+
+    Es la única forma de saber cuánto se gasta de un insumo OPCIONAL —el azúcar
+    en tubos, la Splenda, el mezclador—: el cliente lo pide o no lo pide, ninguna
+    receta puede predecirlo y por eso la caja nunca lo descuenta. Ahí el conteo
+    deja de ser un control sobre el libro y pasa a ser la medición.
+
+    Sirve igual para un insumo que SÍ se descuenta: al no mirar el libro, mide lo
+    que salió del estante esté registrado o no. Los ajustes no entran — fijan el
+    saldo del sistema, pero no ponen ni sacan nada del estante.
+    """
+    if not conteos or len(conteos) < 2:
+        return None
+    entradas = [(m.fecha, float(m.cantidad or 0)) for m in movs
+                if m.fecha is not None and esc._tipo(m) == "entrada"
+                and d_utc <= m.fecha <= h_utc]
+    usado = 0.0
+    for a, b in zip(conteos, conteos[1:]):
+        entro = sum(c for f, c in entradas if a["fecha"] < f <= b["fecha"])
+        usado += a["real"] + entro - b["real"]
+    dias = (conteos[-1]["fecha"] - conteos[0]["fecha"]).total_seconds() / 86400
+    return {
+        "usado": round(usado, 3),
+        "por_dia": round(usado / dias, 3) if dias > 0.5 else None,
+        "dias": round(dias, 2),
+        "tramos": len(conteos) - 1,
+    }
+
+
 def curva_producto(movs, saldos, d_utc: datetime, h_utc: datetime,
                    inicial: float, inicial_estimado: bool, final: float,
                    conteos: list[dict], muestras: int = MUESTRAS) -> dict:
@@ -187,6 +220,9 @@ def curva_producto(movs, saldos, d_utc: datetime, h_utc: datetime,
         "puntos": _ralear(puntos, muestras),
         "puntos_total": len(puntos),
         "conteos": fuera,
+        # Lo que salió del estante de verdad, medido contra los conteos y no
+        # contra el libro. Para un insumo opcional es el único número que hay.
+        "consumo_medido": consumo_entre_conteos(movs, conteos, d_utc, h_utc),
         "n_movs": n_movs,
         # De dónde salió la altura: del libro atado al stock vivo de hoy, o de
         # suponer que el producto arrancó en cero antes del ajuste más viejo.

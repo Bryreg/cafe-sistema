@@ -103,6 +103,11 @@ with engine.connect() as _conn:
         # Saneo: alinear precio_venta a NOT NULL (el modelo lo declara así). SQLite ignora ALTER COLUMN.
         "UPDATE productos SET precio_venta = 0 WHERE precio_venta IS NULL",
         "ALTER TABLE productos ALTER COLUMN precio_venta SET NOT NULL",
+        # Insumo que el cliente pide o no pide (azúcar en tubos, Splenda, el
+        # mezclador): ninguna receta puede predecirlo, así que «vendió 0» no es
+        # un agujero de configuración sino la naturaleza del insumo.
+        "ALTER TABLE productos ADD COLUMN consumo_opcional BOOLEAN DEFAULT FALSE",
+        "UPDATE productos SET consumo_opcional = FALSE WHERE consumo_opcional IS NULL",
         # POS: descuento por ticket (suma) y por linea de producto
         "ALTER TABLE tickets ADD COLUMN descuento NUMERIC(12,2) DEFAULT 0",
         "ALTER TABLE ticket_items ADD COLUMN descuento NUMERIC(12,2) DEFAULT 0",

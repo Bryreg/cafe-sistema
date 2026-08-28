@@ -181,7 +181,7 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
   onAbrir: () => void
   onGlobo: (nodo: React.ReactNode | null) => void
 }) {
-  const ver = veredicto(it.curva?.conteos)
+  const ver = veredicto(it.curva?.conteos, it.consumo_opcional)
   const delta = it.queda - it.arranco
 
   const globoPunto = (p: PuntoCurva) => onGlobo(
@@ -234,8 +234,16 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
           {it.en_negativo && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-danger-100 text-danger-700">bajó de cero</span>
           )}
-          {it.no_se_mide && (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gold-100 text-gold-700">no se mide</span>
+          {it.consumo_opcional ? (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-warm-100 text-warm-600"
+              title="El cliente lo pide o no lo pide, así que ninguna receta puede predecirlo y la caja nunca lo descuenta. Acá el conteo no es un control: es la medición.">
+              opcional
+            </span>
+          ) : it.no_se_mide && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gold-100 text-gold-700"
+              title="Tuvo entradas pero la caja no lo descuenta en ninguna venta ni preparación. O le falta la receta, o es un insumo opcional sin marcar.">
+              no se mide
+            </span>
           )}
           {it.curva?.ancla === 'estimado' && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-warm-100 text-warm-600"
@@ -257,6 +265,17 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
           {fmtCant(it.queda)} <span className="text-[10px] text-warm-400">{it.unidad}</span>
         </span>
         <span className="font-mono text-[11px] text-warm-500 tabular-nums">{firmado(delta)} en el período</span>
+        {/* Cuando la caja no lo descuenta, «vendió 0» no es una respuesta. El
+            consumo medido entre conteos sí lo es, y es el número con el que se
+            decide cuánto pedir. Se muestra sólo donde el libro no lo sabe: en
+            los demás la ficha ya trae el desglose por causa. */}
+        {(it.consumo_opcional || it.no_se_mide) && it.curva?.consumo_medido && (
+          <span className="font-mono text-[11px] text-forest-500 tabular-nums font-semibold"
+            title={`Medido entre ${it.curva.consumo_medido.tramos + 1} conteos, ${it.curva.consumo_medido.dias} días`}>
+            usó {fmtCant(it.curva.consumo_medido.usado)}
+            {it.curva.consumo_medido.por_dia != null && <> · {fmtCant(it.curva.consumo_medido.por_dia)}/día</>}
+          </span>
+        )}
         {!it.cuadra && <span className="text-[10px] font-bold text-danger-600">no cierra</span>}
       </span>
     </button>

@@ -24,6 +24,7 @@ class ProductoUpdate(BaseModel):
     lead_time_dias: Optional[int] = None
     proveedor: Optional[str] = None
     incluir_en_conteo: Optional[bool] = None
+    consumo_opcional: Optional[bool] = None   # el cliente lo pide; ninguna receta lo predice
     fraccionable: Optional[bool] = None
     envase: Optional[str] = None  # "" (quitar) | "bolsa" | "botella"
     contenido_por_unidad: Optional[float] = None  # gr por unidad sellada (0 = quitar)

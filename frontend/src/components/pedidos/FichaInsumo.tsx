@@ -206,7 +206,7 @@ const CAUSA_LABEL: Record<string, string> = {
  *  rango: sin el ancla con zona, sumarlos a un `new Date` del ISO pelado corre
  *  todo cinco horas en la tablet. */
 const horaFicha = (desdeUtc: string | undefined, t: number) =>
-  !desdeUtc ? '' : fechaHoraCol(new Date(instanteCol(desdeUtc).getTime() + t * 1000))
+  !desdeUtc ? '' : fechaHoraCol(new Date(instanteCol(desdeUtc).getTime() + t * 1000)) + ' · '
 
 /** Una sección de la hoja. NO es una tarjeta: la ficha entera es UN papel y las
  *  secciones se separan con una línea, no con un hueco.
@@ -508,13 +508,13 @@ export default function FichaInsumo({
                   onPunto={p => setDetalle(
                     p.k === 'inicio' ? `Al arrancar el período quedaban ${fmtC(p.v)} ${u}`
                     : p.k === 'fin' ? `Al cerrar quedaban ${fmtC(p.v)} ${u}`
-                    : p.k === 'entrada' ? `${horaFicha(d?.desde_utc, p.t)} · llegaron ${fmtC(p.c ?? 0)} ${u} — quedan ${fmtC(p.v)}`
-                    : p.k === 'ajuste' ? `${horaFicha(d?.desde_utc, p.t)} · se aplicó un conteo: el saldo quedó en ${fmtC(p.v)} ${u}`
-                    : `${horaFicha(d?.desde_utc, p.t)} · salieron ${fmtC(p.c ?? 0)} ${u}`
+                    : p.k === 'entrada' ? `${horaFicha(d?.desde_utc, p.t)}llegaron ${fmtC(p.c ?? 0)} ${u} — quedan ${fmtC(p.v)}`
+                    : p.k === 'ajuste' ? `${horaFicha(d?.desde_utc, p.t)}se aplicó un conteo: el saldo quedó en ${fmtC(p.v)} ${u}`
+                    : `${horaFicha(d?.desde_utc, p.t)}salieron ${fmtC(p.c ?? 0)} ${u}`
                       + `${p.n != null ? ` en ${p.n} movimientos` : ''}`
                       + `${p.causa ? ` · ${CAUSA_LABEL[p.causa] ?? p.causa}` : ''} — quedan ${fmtC(p.v)}`)}
                   onConteo={c => setDetalle(
-                    `${horaFicha(d?.desde_utc, c.t)} · conteo de ${c.tipos[0]}: el sistema decía `
+                    `${horaFicha(d?.desde_utc, c.t)}conteo de ${c.tipos[0]}: el sistema decía `
                     + `${fmtC(c.sistema)} y contaron ${fmtC(c.real)} ${u}`
                     + `${Math.abs(c.dif) <= 0.001 ? ' — coincidió exacto'
                        : c.dif > 0 ? ` — sobran ${fmtC(c.dif)}` : ` — faltan ${fmtC(-c.dif)}`}`)} />

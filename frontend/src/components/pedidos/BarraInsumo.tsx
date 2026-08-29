@@ -1,5 +1,6 @@
 import { useId, useMemo } from 'react'
 import type { Curva, PuntoCurva, ConteoCurva } from './FichaInsumo'
+import { instanteCol } from '../../utils/fechaLocal'
 
 /**
  * La vida de un insumo en una barra.
@@ -34,6 +35,94 @@ import type { Curva, PuntoCurva, ConteoCurva } from './FichaInsumo'
 
 const W = 1000, H = 52, PAD = 3
 const EPS = 0.001
+
+/** Dónde cae, en % del ancho, un instante del rango (0 = arranque, 1 = cierre).
+ *  La regla de tiempo y la barra tienen que usar exactamente esta función: si
+ *  cada una hiciera su cuenta, los 3 px de PAD alcanzarían para que la raya del
+ *  día quedara medio día corrida respecto del escalón que nombra. */
+export const posPct = (u: number) =>
+  ((PAD + Math.max(0, Math.min(1, u)) * (W - PAD * 2)) / W) * 100
+
+const MESES_CORTO = ['ene', 'feb', 'mar', 'abr', 'may', 'jun',
+                     'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+
+export interface MarcaTiempo { u: number; texto: string }
+
+/** Las marcas del eje horizontal: sin ellas la barra dice CUÁNDO en relación a
+ *  sí misma —«bajó al principio y se llenó al final»— pero no contra el
+ *  calendario, y la pregunta que uno le hace mirando es «¿qué día fue eso?».
+ *
+ *  El paso se elige para dejar unas diez etiquetas, sea el rango de un día o de
+ *  ocho semanas: más se pisan entre ellas en la tablet, menos y hay que contar
+ *  con el dedo. En un solo día la referencia son las horas de servicio y no la
+ *  fecha, que es una sola. */
+export function marcasTiempo(desdeUtc: string | undefined, span: number): MarcaTiempo[] {
+  if (!desdeUtc || !(span > 0)) return []
+  const t0 = instanteCol(desdeUtc).getTime()
+  if (Number.isNaN(t0)) return []
+  const marcas: MarcaTiempo[] = []
+
+  if (span <= 1.6 * 86400) {
+    for (let h = 0; h * 3600 <= span; h += 4) {
+      marcas.push({
+        u: (h * 3600) / span,
+        texto: h === 0 ? '12am' : h === 12 ? '12m' : h < 12 ? `${h}am` : `${h - 12}pm`,
+      })
+    }
+    return marcas
+  }
+
+  const dias = span / 86400
+  // Once y no diez: con diez, el mes de 31 días saltaba al paso semanal y el de
+  // 28 se quedaba en el de tres, así que dos rangos casi iguales se leían con
+  // reglas distintas.
+  const paso = [1, 2, 3, 7, 14, 28].find(p => dias / p <= 11) ?? 28
+  // El día se lee en hora de COLOMBIA y no del dispositivo, por lo mismo que el
+  // resto de la pantalla: la fecha del negocio es una sola.
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit',
+  })
+  let mesPrevio = -1
+  for (let k = 0; k * 86400 <= span + 1; k += paso) {
+    const [, mm, dd] = fmt.format(new Date(t0 + k * 86400000)).split('-')
+    const mes = Number(mm)
+    // El mes se escribe sólo cuando cambia: repetirlo en las diez marcas es
+    // ruido, y no ponerlo nunca deja «1» sin saber de qué mes es.
+    const cambio = mes !== mesPrevio
+    mesPrevio = mes
+    marcas.push({
+      u: (k * 86400) / span,
+      texto: cambio ? `${Number(dd)} ${MESES_CORTO[mes - 1] ?? mm}` : `${Number(dd)}`,
+    })
+  }
+  return marcas
+}
+
+/** La regla de tiempo. Va arriba y abajo de la lista, no en cada fila: son 110
+ *  filas y repetir el calendario en todas taparía las barras. */
+export function EjeTiempo({ desdeUtc, span }: { desdeUtc?: string; span: number }) {
+  const marcas = useMemo(() => marcasTiempo(desdeUtc, span), [desdeUtc, span])
+  if (marcas.length < 2) return null
+  return (
+    <div className="relative h-[17px] select-none" aria-hidden="true">
+      {marcas.map((m, i) => {
+        const p = posPct(m.u)
+        const tira = i === 0 ? 'translateX(0)'
+          : i === marcas.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)'
+        return (
+          <span key={i} className="absolute top-0 flex flex-col items-start"
+            style={{ left: `${p}%`, transform: tira }}>
+            <i className="w-px h-[4px] bg-warm-300"
+              style={{ marginLeft: i === 0 ? 0 : i === marcas.length - 1 ? '100%' : '50%' }} />
+            <span className="font-mono text-[9.5px] leading-none text-warm-400 whitespace-nowrap mt-[3px]">
+              {m.texto}
+            </span>
+          </span>
+        )
+      })}
+    </div>
+  )
+}
 
 /** Los tokens del `tailwind.config.js` resueltos a hex. Van literales y no como
  *  clases porque adentro del dibujo hacen falta alfas (`#00713e1a`) y Tailwind
@@ -130,11 +219,16 @@ interface Props {
    *  sin esto cada barra escalaría a su último movimiento y el miércoles de una
    *  fila caería en un sitio distinto que el de la otra. */
   span: number
+  /** Dónde caen las marcas de la regla de tiempo, en 0..1. Se dibujan adentro
+   *  de la barra para poder BAJAR LA VISTA desde un escalón hasta la fecha: con
+   *  la regla sólo arriba, en una fila que está 40 cm más abajo hay que adivinar
+   *  a ojo, y a ojo el miércoles y el jueves son el mismo píxel. */
+  guias?: number[]
   onConteo?: (c: ConteoCurva) => void
   onPunto?: (p: PuntoCurva) => void
 }
 
-export default function BarraInsumo({ curva, span, onConteo, onPunto }: Props) {
+export default function BarraInsumo({ curva, span, guias, onConteo, onPunto }: Props) {
   const uid = useId().replace(/:/g, '')
   const g = useMemo(() => geometria(curva, span), [curva, span])
   if (!g) return <div className="h-[52px]" />
@@ -160,6 +254,14 @@ export default function BarraInsumo({ curva, span, onConteo, onPunto }: Props) {
         <path d={escalones('techo')} fill="none" strokeWidth="1.5" strokeDasharray="4 4"
           vectorEffect="non-scaling-stroke" stroke={C.sombraBorde} />
         <path d={area('v')} fill={C.stockRelleno} />
+
+        {/* Las rayas del calendario. Van apagadísimas y por debajo de la curva:
+            son la referencia contra la que se lee el dibujo, no parte de él. */}
+        {guias?.map((u, i) => (
+          <line key={`g${i}`} x1={(u * (W - PAD * 2)) + PAD} x2={(u * (W - PAD * 2)) + PAD}
+            y1={0} y2={H} strokeWidth="1" vectorEffect="non-scaling-stroke"
+            stroke={C.sombraBorde} opacity=".3" />
+        ))}
 
         {/* EL TRAMO ESTIMADO. El saldo previo a un ajuste viejo no quedó
             registrado en ninguna parte, así que la escalera lo deduce suponiendo

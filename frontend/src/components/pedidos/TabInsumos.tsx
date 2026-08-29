@@ -5,7 +5,8 @@ import {
   AlertTriangle, ArrowDown, ArrowUp, Search, ChevronRight,
 } from 'lucide-react'
 import FichaInsumo, { type Resumen, type ConteoCurva, type PuntoCurva } from './FichaInsumo'
-import BarraInsumo, { veredicto, bajoDeCero, CHIP_VEREDICTO, num, firmado } from './BarraInsumo'
+import BarraInsumo, { EjeTiempo, marcasTiempo, veredicto, bajoDeCero,
+  CHIP_VEREDICTO, num, firmado } from './BarraInsumo'
 
 /**
  * «Qué pasó con cada insumo», la tabla que el dueño pidió: en un mismo sitio lo
@@ -122,6 +123,18 @@ function rangoDe(k: PeriodoKey): { desde: string; hasta: string } {
   return { desde: iso(ini), hasta: iso(hoy) }
 }
 
+/** El enrejado de la vista de barras, compartido por la regla de tiempo y por
+ *  cada fila. La última columna va FIJA y no en `auto`, y ese es el punto:
+ *  cada fila es su propio grid, así que con `auto` esa columna se medía contra
+ *  su propio texto —212 px en la de «entraron 1.960 und sin registrar», 104 en
+ *  la de un insumo quieto— y la barra arrancaba entre el píxel 334 y el 524
+ *  según la fila. El eje horizontal era el mismo pero la geometría no, así que
+ *  el mismo miércoles caía 190 px más a la derecha en una fila que en otra: lo
+ *  que el eje compartido venía justamente a evitar, y lo que hacía imposible
+ *  poner una sola regla de fechas arriba. Lo que no entra en 156 px —una sola
+ *  frase, la del insumo que creció sin registro— pasa a dos renglones. */
+const REJILLA = 'grid grid-cols-[minmax(110px,1.3fr)_minmax(170px,3fr)_156px] gap-3 px-2'
+
 const PERIODOS: { k: PeriodoKey; label: string }[] = [
   { k: 'hoy', label: 'Hoy' },
   { k: 'mes', label: 'Este mes' },
@@ -212,8 +225,8 @@ const NOMBRE_CAUSA: Record<string, string> = {
 }
 
 /** Una fila de la vista de barras. */
-function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
-  it: Insumo; span: number; desdeUtc?: string
+function FilaBarra({ it, span, guias, desdeUtc, onAbrir, onGlobo }: {
+  it: Insumo; span: number; guias: number[]; desdeUtc?: string
   onAbrir: () => void
   onGlobo: (nodo: React.ReactNode | null) => void
 }) {
@@ -255,9 +268,8 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
     <button
       onClick={onAbrir}
       onMouseLeave={() => onGlobo(null)}
-      className="w-full text-left grid grid-cols-[minmax(140px,1.3fr)_minmax(200px,3fr)_minmax(104px,auto)]
-        gap-3 items-center px-2 py-3 rounded-xl hover:bg-warm-50 transition-colors
-        border-b border-warm-100 last:border-b-0"
+      className={`w-full text-left ${REJILLA} items-center py-3 rounded-xl hover:bg-warm-50
+        transition-colors border-b border-warm-100 last:border-b-0`}
     >
       <div className="min-w-0 flex flex-col gap-1">
         <div className="flex items-center gap-1.5 min-w-0">
@@ -310,7 +322,8 @@ function FilaBarra({ it, span, desdeUtc, onAbrir, onGlobo }: {
 
       <div className="min-w-0">
         {it.curva
-          ? <BarraInsumo curva={it.curva} span={span} onPunto={globoPunto} onConteo={globoConteo} />
+          ? <BarraInsumo curva={it.curva} span={span} guias={guias}
+              onPunto={globoPunto} onConteo={globoConteo} />
           : <div className="h-[52px]" />}
       </div>
 
@@ -468,6 +481,10 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
     return 1
   }, [data])
   const desdeUtc = data?.desde_utc
+  // Las mismas marcas para la regla y para las rayas de adentro de las 110
+  // barras: calcularlas dos veces es cómo se separan dos cosas que tienen que
+  // caer en el mismo píxel.
+  const guias = useMemo(() => marcasTiempo(desdeUtc, span).map(m => m.u), [desdeUtc, span])
 
   const r = data?.resumen
   // Cuántos se movieron en el período, del total. En «Hoy» es el número que
@@ -645,10 +662,31 @@ export default function TabInsumos({ tiendaId, sedeNombre }: { tiendaId: number 
               {periodo === 'hoy' ? 'Todavía no se movió ningún insumo hoy.' : 'Ningún insumo con ese filtro.'}
             </p>
           )}
+          {/* La regla del calendario. Va arriba Y abajo: son 110 filas, y desde
+              la última hasta un encabezado que quedó tres pantallas más arriba
+              no hay forma de saber qué día se está mirando. */}
+          {!cargando && !error && filas.length > 0 && (
+            <div className={`${REJILLA} pt-1 pb-2`}>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-warm-400 self-end">
+                Cuándo pasó
+              </span>
+              <EjeTiempo desdeUtc={desdeUtc} span={span} />
+              <span />
+            </div>
+          )}
+
           {!cargando && !error && filas.map(it => (
-            <FilaBarra key={it.producto_id} it={it} span={span} desdeUtc={desdeUtc}
+            <FilaBarra key={it.producto_id} it={it} span={span} guias={guias} desdeUtc={desdeUtc}
               onAbrir={() => setFichaDe(it.producto_id)} onGlobo={setGloboNodo} />
           ))}
+
+          {!cargando && !error && filas.length > 3 && (
+            <div className={`${REJILLA} pt-2 pb-1`}>
+              <span />
+              <EjeTiempo desdeUtc={desdeUtc} span={span} />
+              <span />
+            </div>
+          )}
         </div>
       )}
 

@@ -33,7 +33,7 @@ import { instanteCol } from '../../utils/fechaLocal'
  * píxeles del punto.
  */
 
-const W = 1000, H = 52, PAD = 3
+const W = 1000, ALTO = 52, PAD = 3
 const EPS = 0.001
 
 /** Dónde cae, en % del ancho, un instante del rango (0 = arranque, 1 = cierre).
@@ -224,14 +224,20 @@ interface Props {
    *  la regla sólo arriba, en una fila que está 40 cm más abajo hay que adivinar
    *  a ojo, y a ojo el miércoles y el jueves son el mismo píxel. */
   guias?: number[]
+  /** Alto en px. En la lista son 52 —110 filas en una tablet—, pero en la ficha
+   *  hay una sola barra y el ancho de la pantalla entera: a 52 px de alto y 830
+   *  de ancho la curva queda planchada y deja de mostrar la forma, que es lo
+   *  único que la barra tiene para decir. */
+  alto?: number
   onConteo?: (c: ConteoCurva) => void
   onPunto?: (p: PuntoCurva) => void
 }
 
-export default function BarraInsumo({ curva, span, guias, onConteo, onPunto }: Props) {
+export default function BarraInsumo({ curva, span, guias, alto = ALTO, onConteo, onPunto }: Props) {
   const uid = useId().replace(/:/g, '')
-  const g = useMemo(() => geometria(curva, span), [curva, span])
-  if (!g) return <div className="h-[52px]" />
+  const H = alto
+  const g = useMemo(() => geometria(curva, span, H), [curva, span, H])
+  if (!g) return <div style={{ height: H }} />
 
   const { paso, marcas, X, Y, piso, tope, ultAj, bajoCero, finEstimado } = g
   const escalones = (campo: 'v' | 'techo') => {
@@ -247,7 +253,7 @@ export default function BarraInsumo({ curva, span, guias, onConteo, onPunto }: P
   return (
     <div className="relative">
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img"
-        className="block w-full h-[52px] overflow-visible"
+        style={{ height: H }} className="block w-full overflow-visible"
         aria-label={`Arranca en ${num(paso[0].v)} y queda en ${num(paso[paso.length - 1].v)}`}>
         {/* La sombra: el espacio que el insumo llegó a ocupar y ya no ocupa. */}
         <path d={area('techo')} fill={C.sombra} />
@@ -338,11 +344,21 @@ export default function BarraInsumo({ curva, span, guias, onConteo, onPunto }: P
             strokeWidth="1.5" vectorEffect="non-scaling-stroke" stroke={C.palito} />
         ))}
 
-        {onPunto && paso.map((s, i) => (
-          <rect key={`h${i}`} x={X(s.x) - 5} y={0} width={10} height={H} fill="transparent"
-            style={{ pointerEvents: 'all' }}
-            onMouseEnter={() => onPunto(s.p)} />
-        ))}
+        {/* El área para tocar cada escalón se reparte TODO el ancho: de la mitad
+            del hueco con el punto anterior a la mitad del hueco con el
+            siguiente. Eran 10 unidades fijas centradas en cada punto —el 1% del
+            ancho—, y en un insumo con pocos movimientos eso deja el gráfico
+            lleno de huecos muertos: en la ficha grande el dedo caía entre dos
+            escalones y no pasaba nada. Ahora cada píxel pertenece a alguno. */}
+        {onPunto && paso.map((s, i) => {
+          const izq = i === 0 ? 0 : (X(paso[i - 1].x) + X(s.x)) / 2
+          const der = i === paso.length - 1 ? W : (X(s.x) + X(paso[i + 1].x)) / 2
+          return (
+            <rect key={`h${i}`} x={izq} y={0} width={Math.max(1, der - izq)} height={H}
+              fill="transparent" style={{ pointerEvents: 'all' }}
+              onMouseEnter={() => onPunto(s.p)} />
+          )
+        })}
       </svg>
 
       {/* El punto lleva el tono más fuerte de la pantalla porque es lo único que
@@ -367,7 +383,7 @@ export default function BarraInsumo({ curva, span, guias, onConteo, onPunto }: P
 
 // ─── Geometría ────────────────────────────────────────────────────────────────
 
-function geometria(curva: Curva, span: number) {
+function geometria(curva: Curva, span: number, H: number) {
   const pts = curva.puntos
   if (!pts || pts.length < 2) return null
   const dur = span || 1

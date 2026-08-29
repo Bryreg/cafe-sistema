@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import api from '../../api/client'
-import { diaCol } from '../../utils/fechaLocal'
+import { diaCol, instanteCol, fechaHoraCol } from '../../utils/fechaLocal'
 import { AlertTriangle, Info, X, FileText, ArrowDown, ArrowUp, Clock } from 'lucide-react'
+import BarraInsumo, { EjeTiempo, marcasTiempo } from './BarraInsumo'
 
 /**
  * La ficha de UN insumo: qué hacía falta, qué llegó, por dónde salió y qué
@@ -146,6 +147,10 @@ interface Movimiento {
 }
 interface Ficha {
   curva: Curva | null
+  /** Arranque del rango en UTC y con su marca de zona. Los `t` de la curva
+   *  son segundos desde acá; sin esto la regla de fechas tendría que suponer
+   *  el huso, que es como se corrieron cinco horas todas las horas. */
+  desde_utc: string
   producto: { id: number; nombre: string; unidad: string; proveedor: string | null; origen: string; contenido_por_empaque: number | null }
   periodo: { desde: string; hasta: string }
   resumen: Resumen
@@ -196,14 +201,71 @@ const CAUSA_LABEL: Record<string, string> = {
   reversas: 'Reversa', unificaciones: 'Unificación',
 }
 
-function Bloque({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+
+/** La hora de un punto de la curva. Los `t` son segundos desde el arranque del
+ *  rango: sin el ancla con zona, sumarlos a un `new Date` del ISO pelado corre
+ *  todo cinco horas en la tablet. */
+const horaFicha = (desdeUtc: string | undefined, t: number) =>
+  !desdeUtc ? '' : fechaHoraCol(new Date(instanteCol(desdeUtc).getTime() + t * 1000))
+
+/** Una sección de la hoja. NO es una tarjeta: la ficha entera es UN papel y las
+ *  secciones se separan con una línea, no con un hueco.
+ *
+ *  Antes era un `Bloque` con borde, esquinas redondeadas y fondo blanco, y la
+ *  ficha era una pila de once tarjetas flotando sobre el velo oscuro. Cada
+ *  hueco entre dos tarjetas leía como «acá se terminó una cosa y empieza otra»,
+ *  once veces, para lo que en realidad es una sola respuesta —qué pasó con este
+ *  insumo— contada por partes. */
+function Seccion({ titulo, extra, children }: {
+  titulo?: string; extra?: React.ReactNode; children: React.ReactNode
+}) {
   return (
-    <div className="bg-white border border-warm-200 rounded-2xl px-4 py-3.5 flex flex-col gap-2.5">
-      <span className="text-[10.5px] font-bold uppercase tracking-wider text-warm-500">{titulo}</span>
+    <section className="px-4 sm:px-5 py-4 flex flex-col gap-3">
+      {titulo && (
+        <div className="flex items-baseline justify-between gap-3">
+          <h3 className="text-[10.5px] font-bold uppercase tracking-[0.09em] text-warm-400">{titulo}</h3>
+          {extra}
+        </div>
+      )}
       {children}
+    </section>
+  )
+}
+
+/** Un dato suelto: el rótulo chico arriba y el número abajo. Sin caja: el fondo
+ *  de color en cada dato convertía cada sección en otra grilla de tarjetitas. */
+function Dato({ label, valor, nota, tono = 'normal' }: {
+  label: string; valor: React.ReactNode; nota?: React.ReactNode
+  tono?: 'normal' | 'bueno' | 'malo' | 'aviso'
+}) {
+  const color = tono === 'bueno' ? 'text-forest-700' : tono === 'malo' ? 'text-danger-700'
+    : tono === 'aviso' ? 'text-gold-700' : 'text-warm-700'
+  return (
+    <div className="flex flex-col gap-0.5 min-w-0">
+      <span className="text-[11px] text-warm-500 leading-tight">{label}</span>
+      <span className={`font-mono text-[17px] font-bold leading-none ${color}`}>{valor}</span>
+      {nota && <span className="text-[11px] text-warm-400 leading-tight">{nota}</span>}
     </div>
   )
 }
+
+/** Un aviso en línea. Va dentro de la sección que lo necesita y no como una
+ *  tarjeta propia: «el arranque es un cálculo» ocupaba un módulo entero del
+ *  ancho de la pantalla para decir una frase. */
+function Aviso({ tono, children }: { tono: 'rojo' | 'ambar' | 'gris'; children: React.ReactNode }) {
+  const cls = tono === 'rojo' ? 'bg-danger-50 text-danger-700 border-danger-100'
+    : tono === 'ambar' ? 'bg-gold-50 text-gold-700 border-gold-200'
+    : 'bg-warm-50 text-warm-600 border-warm-200'
+  const Icono = tono === 'gris' ? Info : AlertTriangle
+  return (
+    <div className={`flex items-start gap-2 rounded-xl border px-3 py-2 ${cls}`}>
+      <Icono size={14} className="shrink-0 mt-[2px]" />
+      <div className="text-[12.5px] leading-relaxed min-w-0">{children}</div>
+    </div>
+  )
+}
+
+// ─── Componente ───────────────────────────────────────────────────────────────
 
 // ─── Componente ───────────────────────────────────────────────────────────────
 
@@ -239,6 +301,10 @@ export default function FichaInsumo({
   // Mandarlo al catálogo a buscar el producto sería perder el momento.
   const [opcional, setOpcional] = useState<boolean | null>(null)
   const [guardando, setGuardando] = useState(false)
+  // Qué está señalando el dedo sobre la barra. Va a un renglón fijo debajo
+  // del gráfico y no a un globo flotante: en una tablet el globo tapa
+  // justamente el escalón que se está tocando.
+  const [detalle, setDetalle] = useState<string | null>(null)
 
   useEffect(() => {
     let cancel = false
@@ -285,15 +351,47 @@ export default function FichaInsumo({
   // Nunca hubo nada que mostrar: se abrió sin fila previa y todavía no llegó.
   const enBlanco = !r
 
+  // La curva de ESTE insumo, a lo ancho de la ficha. En la lista mide 52 px de
+  // alto porque hay 110; acá hay una sola y la pantalla entera.
+  const curva = d?.curva ?? null
+  const spanFicha = curva?.puntos.length ? curva.puntos[curva.puntos.length - 1].t : 0
+  const guias = marcasTiempo(d?.desde_utc, spanFicha).map(m => m.u)
+  const salidaPorCausa = RENGLONES
+    .map(x => ({ ...x, v: Number(r?.[x.k] ?? 0) }))
+    .filter(x => x.siempre || x.v !== 0)
+  const mayorSalida = Math.max(...salidaPorCausa.map(x => Math.abs(x.v)), 0.0001)
+  // El ritmo con el que se decide cuánto pedir. Primero el medido contra los
+  // conteos —mide el estante, no el libro—; si no hay dos conteos, lo que la
+  // caja descontó, que es lo único que queda.
+  const porDia = medido?.por_dia ?? d?.hacia_falta.consumo_diario ?? null
+  const porDiaMedido = medido?.por_dia != null
+
+  // El aire de arriba y abajo va en el PAPEL y no en el velo: con relleno en el
+  // velo, la cabecera pegada se detiene 32 px más abajo del borde de la pantalla
+  // y por esa franja se ve pasar el contenido que va subiendo.
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/25 px-2 py-4 sm:px-4 sm:py-8"
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-warm-700/35 px-2 sm:px-4"
          onClick={onClose}>
-      <div className="w-full max-w-[880px] flex flex-col gap-3" onClick={e => e.stopPropagation()}>
+      {/* UN SOLO PAPEL. Antes eran once tarjetas con borde y esquinas
+          redondeadas separadas por huecos, y cada hueco decía «acá se terminó
+          una cosa» — once veces, para una sola respuesta contada por partes.
+          Ahora las secciones se separan con una línea. */}
+      {/* SIN `overflow-hidden`. Medido: recortar el papel lo convierte en el
+          contenedor de scroll de sus hijos, y ahí la cabecera pegada deja de
+          pegarse —bajando 900 px se iba a −867, o sea se fue con el resto y el
+          botón de cerrar quedó fuera de la pantalla—. Las esquinas se redondean
+          en la cabecera y en el papel, que es lo único que tiene fondo. */}
+      <div className="w-full max-w-[880px] mx-auto my-4 sm:my-8 bg-white border border-warm-200
+                      rounded-2xl shadow-xl"
+           onClick={e => e.stopPropagation()}>
 
         {/* ── Cabecera ── */}
-        <div className="bg-white border border-warm-200 rounded-2xl px-4 py-3 flex items-start justify-between gap-3 sticky top-0 z-10">
+        <div className="sticky top-0 z-10 bg-white border-b border-warm-200 rounded-t-2xl
+                        px-4 sm:px-5 py-3 flex items-start justify-between gap-3">
           <div className="flex flex-col gap-1 min-w-0">
-            <span className="text-[16px] font-bold text-warm-700 truncate">{nombre ?? 'Cargando…'}</span>
+            <span className="text-[17px] font-bold text-warm-700 leading-tight truncate">
+              {nombre ?? 'Cargando…'}
+            </span>
             <div className="flex items-center gap-2 flex-wrap">
               {r && (
                 <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-full ${
@@ -305,441 +403,389 @@ export default function FichaInsumo({
               )}
               {r?.proveedor && <span className="text-[11.5px] text-warm-500">{r.proveedor}</span>}
               {r && <span className="text-[11.5px] text-warm-400">· se mide en {u}</span>}
+              {d && (
+                <span className="text-[11.5px] text-warm-400">
+                  · {fmtFecha(d.periodo.desde)} a {fmtFecha(d.periodo.hasta)}
+                </span>
+              )}
             </div>
           </div>
           <button onClick={onClose} aria-label="Cerrar"
-            className="shrink-0 w-9 h-9 rounded-full bg-warm-50 border border-warm-200 flex items-center justify-center text-warm-500 hover:bg-warm-100 transition-colors">
+            className="shrink-0 w-9 h-9 rounded-full bg-warm-50 border border-warm-200 flex items-center
+                       justify-center text-warm-500 hover:bg-warm-100 transition-colors">
             <X size={16} />
           </button>
         </div>
 
-        {/* El cartel de carga a pantalla completa queda SOLO para el caso en que
-            de verdad no hay nada que mostrar (una ficha abierta sin venir de la
-            tabla). Cuando se abrió desde una fila, sus números ya están acá y
-            taparlos con «Cargando…» era esconder lo que el dueño vino a ver. */}
-        {cargando && enBlanco && <div className="bg-white border border-warm-200 rounded-2xl py-14 text-center text-sm text-warm-400">Cargando…</div>}
-        {!cargando && error && <div className="bg-white border border-warm-200 rounded-2xl py-14 text-center text-sm text-danger-700">{error}</div>}
+        {/* El cartel de carga queda SOLO para la ficha abierta sin venir de la
+            tabla. Con la fila previa los números ya están acá, y taparlos con
+            «Cargando…» sería esconder lo que el dueño vino a ver. */}
+        {cargando && enBlanco && (
+          <p className="py-16 text-center text-sm text-warm-400">Cargando…</p>
+        )}
+        {!cargando && error && (
+          <p className="py-16 text-center text-sm text-danger-700">{error}</p>
+        )}
 
         {r && !error && (
-          <>
-            {/* ── 1 · El titular ── */}
-            <div className="bg-white border border-warm-200 rounded-2xl px-5 py-4 flex flex-col gap-2">
-              <p className="text-[20px] sm:text-[23px] font-extrabold text-warm-700 leading-snug">
-                {/* «Salieron 0» es exactamente la frase que confunde en un insumo
-                    opcional: el libro dice cero porque la caja no lo descuenta,
-                    no porque el estante siga lleno. Ahí manda el consumo medido
-                    entre conteos, que es el único número real que hay. */}
-                {esOpcional && medido
-                  ? <>Se usaron <span className="font-mono text-danger-700">{fmtC(medido.usado)} {u}</span>,
-                      {' '}entraron <span className="font-mono text-forest-700">{fmtC(r.entradas)} {u}</span>
-                      {' '}y quedan <span className="font-mono">{fmtC(r.queda)} {u}</span></>
-                  : <>Salieron <span className="font-mono text-danger-700">{fmtC(r.total_salio)} {u}</span>,
-                      {' '}entraron <span className="font-mono text-forest-700">{fmtC(r.entradas)} {u}</span>
-                      {' '}y quedan <span className="font-mono">{fmtC(r.queda)} {u}</span></>}
-              </p>
-              {esOpcional && medido && (
-                <span className="text-[12.5px] text-warm-500">
-                  Medido entre <b className="text-warm-700">{medido.tramos + 1} conteos</b> en {fmtC(medido.dias)} días
-                  {medido.por_dia != null && <> — <b className="font-mono text-warm-700">{fmtC(medido.por_dia)} {u}</b> por día</>}.
-                  La caja no lo descuenta, así que «se vendió» no puede contestar esto.
+          <div className="divide-y divide-warm-100">
+
+            {/* ── 1 · Cuánto queda, y la cuenta que lleva hasta ahí ──
+                Antes esto eran TRES módulos: el titular en prosa arriba, la
+                resta en una franja de color en el medio, y «Queda» otra vez en
+                una tarjeta propia al final. Es un solo dato con su derivación. */}
+            <Seccion>
+              <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+                <div className="flex flex-col gap-1">
+                  <span className="text-[11px] text-warm-500 leading-none">
+                    Queda ahora <span className="text-warm-400">· lo que dice el sistema</span>
+                  </span>
+                  <span className={`font-mono text-[34px] font-extrabold leading-none ${
+                    r.en_negativo ? 'text-danger-700' : 'text-warm-700'}`}>
+                    {fmtC(r.queda)} <span className="text-[15px] font-bold text-warm-400">{u}</span>
+                  </span>
+                  {d?.hacia_falta.stock_minimo ? (
+                    <span className="text-[11px] text-warm-400">
+                      mínimo <b className="font-mono">{fmtC(d.hacia_falta.stock_minimo)} {u}</b>
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="flex flex-col items-start sm:items-end gap-1 min-w-0">
+                  <span className="font-mono text-[12.5px] text-warm-500 leading-relaxed">
+                    {fmtC(r.arranco)}<span className="text-warm-400"> arrancó</span>
+                    {' + '}{fmtC(r.entradas)}<span className="text-warm-400"> entró</span>
+                    {Math.abs(r.otros) > 0.001 && (
+                      <>{r.otros >= 0 ? ' + ' : ' − '}{fmtC(Math.abs(r.otros))}
+                        <span className="text-warm-400"> otros</span></>
+                    )}
+                    {' − '}{fmtC(r.total_salio)}<span className="text-warm-400"> salió</span>
+                    {' = '}<b className="text-warm-700">{fmtC(r.queda)}</b>
+                  </span>
+                  <span className={`text-[11px] font-bold ${
+                    r.cuadra ? 'text-forest-700' : 'text-danger-700'}`}>
+                    {r.cuadra ? 'la cuenta cierra' : 'la cuenta NO cierra'}
+                  </span>
+                  {r.valor_total_salio > 0 && (
+                    <span className="text-[11.5px] text-warm-500">
+                      costó <b className="font-mono text-warm-700">{fmt$(r.valor_total_salio)}</b> lo que salió
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {r.arranque_estimado && (
+                <span className="text-[11.5px] text-warm-400 leading-relaxed">
+                  El <b>arranque</b> es un cálculo, no un dato: nadie registró cuánto había antes.
                 </span>
               )}
-              {esOpcional && !medido && (
-                <span className="text-[12.5px] text-warm-500">
-                  Hacen falta <b className="text-warm-700">dos conteos</b> en el período para poder medir cuánto se usó:
-                  con una sola mirada no hay un antes y un después que restar.
-                </span>
-              )}
-              {r.valor_total_salio > 0 && (
-                <span className="text-[12.5px] text-warm-500">
-                  Eso son <b className="font-mono text-warm-700">{fmt$(r.valor_total_salio)}</b> que salieron del estante
-                </span>
+
+              {r.en_negativo && (
+                <Aviso tono="rojo">
+                  <b>El sistema dice que hay menos que cero.</b> Eso no puede pasar en el estante, así
+                  que el libro está incompleto. Son dos cosas y sólo dos: entró mercadería que nadie
+                  registró, o una receta está descontando este insumo cuando debería descontar otro.
+                  No es que se haya acabado — mirá los movimientos de abajo.
+                </Aviso>
               )}
               {r.otras_salidas > 0 && (
-                <div className="flex items-center gap-2 bg-danger-50 border border-danger-100 rounded-xl px-3 py-2.5">
-                  <AlertTriangle size={16} className="text-danger shrink-0" />
-                  <span className="text-[13px] font-bold text-danger-700">
-                    Hay <span className="font-mono">{fmtC(r.otras_salidas)} {u}</span> que salieron sin que nadie anotara por qué
-                    {r.valor_sin_causa > 0 && <> — <span className="font-mono">{fmt$(r.valor_sin_causa)}</span></>}
-                  </span>
-                </div>
+                <Aviso tono="rojo">
+                  Hay <b className="font-mono">{fmtC(r.otras_salidas)} {u}</b> que salieron sin que nadie
+                  anotara por qué{r.valor_sin_causa > 0 && <> — <b className="font-mono">{fmt$(r.valor_sin_causa)}</b></>}.
+                </Aviso>
               )}
-            </div>
+            </Seccion>
 
-            {/* ── 2 · Carteles de honestidad ── */}
-            {/* El negativo va PRIMERO y en rojo: los otros dos carteles avisan de
-                algo que puede estar mal; este es aritmética. Menos que cero no
-                existe en una nevera. */}
-            {r.en_negativo && (
-              <div className="bg-danger-50 border border-danger-200 rounded-2xl px-4 py-3 flex items-start gap-2.5">
-                <AlertTriangle size={18} className="text-danger shrink-0 mt-px" />
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[13.5px] font-extrabold text-danger-700">
-                    El sistema dice que hay menos que cero
-                  </span>
-                  <span className="text-[12.5px] text-danger-700 leading-relaxed">
-                    Eso no puede pasar en el estante, así que el libro está incompleto. Son dos
-                    cosas y solo dos: <b>entró mercadería que nadie registró</b>, o <b>una receta
-                    está descontando este insumo cuando debería descontar otro</b>. No es que se
-                    haya acabado — mirá los movimientos de abajo.
+            {/* ── 2 · Cómo se movió, día por día ──
+                La curva estaba viajando en la respuesta y no se dibujaba en
+                ningún lado: la ficha pedía `con_curva` y sólo usaba el consumo
+                medido. Acá hay una sola barra y la pantalla entera, así que va
+                alta y con la regla de fechas encima. */}
+            {curva && curva.puntos.length > 1 && (
+              <Seccion titulo="Cómo se movió">
+                <EjeTiempo desdeUtc={d?.desde_utc} span={spanFicha} />
+                <BarraInsumo curva={curva} span={spanFicha} guias={guias} alto={130}
+                  onPunto={p => setDetalle(
+                    p.k === 'inicio' ? `Al arrancar el período quedaban ${fmtC(p.v)} ${u}`
+                    : p.k === 'fin' ? `Al cerrar quedaban ${fmtC(p.v)} ${u}`
+                    : p.k === 'entrada' ? `${horaFicha(d?.desde_utc, p.t)} · llegaron ${fmtC(p.c ?? 0)} ${u} — quedan ${fmtC(p.v)}`
+                    : p.k === 'ajuste' ? `${horaFicha(d?.desde_utc, p.t)} · se aplicó un conteo: el saldo quedó en ${fmtC(p.v)} ${u}`
+                    : `${horaFicha(d?.desde_utc, p.t)} · salieron ${fmtC(p.c ?? 0)} ${u}`
+                      + `${p.n != null ? ` en ${p.n} movimientos` : ''}`
+                      + `${p.causa ? ` · ${CAUSA_LABEL[p.causa] ?? p.causa}` : ''} — quedan ${fmtC(p.v)}`)}
+                  onConteo={c => setDetalle(
+                    `${horaFicha(d?.desde_utc, c.t)} · conteo de ${c.tipos[0]}: el sistema decía `
+                    + `${fmtC(c.sistema)} y contaron ${fmtC(c.real)} ${u}`
+                    + `${Math.abs(c.dif) <= 0.001 ? ' — coincidió exacto'
+                       : c.dif > 0 ? ` — sobran ${fmtC(c.dif)}` : ` — faltan ${fmtC(-c.dif)}`}`)} />
+                {/* La línea de detalle ocupa el lugar de la leyenda mientras se
+                    recorre la barra: en una tablet un globo flotante tapa
+                    justamente lo que el dedo está señalando. */}
+                <div className="min-h-[32px] flex items-center rounded-xl bg-warm-50 px-3 py-2">
+                  <span className="text-[12px] text-warm-600 leading-snug">
+                    {detalle ?? (
+                      <span className="text-warm-400">
+                        La línea verde es lo que había; la sombra gris, el hueco contra su punto más
+                        lleno. El palito naranja es mercadería que llegó y el punto negro, un conteo.
+                        Tocá la barra para ver qué pasó en cada momento.
+                      </span>
+                    )}
                   </span>
                 </div>
-              </div>
+              </Seccion>
             )}
+
+            {/* ── 3 · Cuando la caja no lo descuenta ──
+                Cambia cómo se lee TODO lo de abajo, así que va antes que los
+                números de pedido y no perdido al final. */}
             {(r.no_se_mide || esOpcional) && (
-              <div className={`border rounded-2xl px-4 py-3 flex items-start gap-2.5 ${
-                esOpcional ? 'bg-warm-50 border-warm-200' : 'bg-gold-50 border-gold-200'}`}>
-                {esOpcional
-                  ? <Info size={18} className="text-warm-500 shrink-0 mt-px" />
-                  : <AlertTriangle size={18} className="text-gold-700 shrink-0 mt-px" />}
-                <div className="flex flex-col gap-1.5 min-w-0">
+              <Seccion titulo={esOpcional ? 'Este insumo se mide contando' : 'Este insumo no se está midiendo'}>
+                <span className="text-[12.5px] text-warm-600 leading-relaxed">
                   {esOpcional ? (
-                    <>
-                      <span className="text-[13.5px] font-extrabold text-warm-700">No sale de una receta, así que la caja no puede descontarlo</span>
-                      <span className="text-[12.5px] text-warm-600 leading-relaxed">
-                        Se gasta según lo pida el cliente —el azúcar en tubos, el mezclador— o según se opere el
-                        local —el limpiapisos, la bolsa de basura—, no según lo que se vendió. Para este insumo el
-                        <b> conteo no es un control, es la medición</b>: el número de arriba sale de restar dos
-                        conteos y lo que entró en medio, y es con el que se decide cuánto pedir.
-                      </span>
-                    </>
+                    <>Se gasta según lo pida el cliente —el azúcar en tubos, el mezclador— o según se
+                    opere el local —el limpiapisos, la bolsa de basura—, no según lo que se vendió.
+                    Ninguna receta puede predecirlo, así que la caja nunca lo descuenta y el
+                    <b> conteo deja de ser un control para ser la medición</b>.</>
                   ) : (
-                    <>
-                      <span className="text-[13.5px] font-extrabold text-gold-700">Este insumo no se descuenta cuando se vende</span>
-                      <span className="text-[12.5px] text-gold-700 leading-relaxed">
-                        La caja no lo resta. El <b>0</b> de «se vendió» no significa que no se usó — significa
-                        que nadie lo está midiendo. Puede ser que le falte la receta… o que sea de los que
-                        ninguna receta puede predecir, porque se gastan según lo pida el cliente o según se
-                        opere el local.
-                      </span>
-                    </>
+                    <>La caja no lo resta cuando se vende. El <b>0</b> de «se vendió» no significa que no
+                    se usó: significa que nadie lo está midiendo. Puede ser que le falte la receta… o
+                    que sea de los que ninguna receta puede predecir, porque se gastan según lo pida
+                    el cliente o según se opere el local.</>
                   )}
-                  <button
-                    onClick={marcarOpcional} disabled={guardando}
-                    className={`self-start text-[12px] font-bold px-3 py-1.5 rounded-xl border transition-colors ${
-                      esOpcional
-                        ? 'bg-white border-warm-200 text-warm-600 hover:text-warm-700'
-                        : 'bg-white border-gold-200 text-gold-700 hover:bg-gold-50'} disabled:opacity-50`}>
-                    {guardando ? 'Guardando…'
-                      : esOpcional ? 'No, sí debería descontarse por receta'
-                      : 'No sale de una receta: medirlo por venta es imposible'}
-                  </button>
-                </div>
-              </div>
-            )}
-            {r.arranque_estimado && (
-              <div className="bg-warm-100 border border-warm-200 rounded-2xl px-4 py-2.5 flex items-start gap-2.5">
-                <Info size={15} className="text-warm-500 shrink-0 mt-px" />
-                <span className="text-[12.5px] text-warm-600">
-                  El arranque del período es un cálculo, no un dato: nadie registró cuánto había antes.
                 </span>
-              </div>
+                {esOpcional && medido && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+                    <Dato label="Se usó, medido entre conteos" tono="malo"
+                      valor={<>{fmtC(medido.usado)} {u}</>}
+                      nota={`${medido.tramos + 1} conteos en ${fmtC(medido.dias)} días`} />
+                    {medido.por_dia != null && (
+                      <Dato label="Se van por día" valor={<>{fmtC(medido.por_dia)} {u}</>}
+                        nota={<>unos {fmtC(medido.por_dia * 7)} {u} por semana</>} />
+                    )}
+                    <Dato label="Entró en el período" tono="bueno" valor={<>{fmtC(r.entradas)} {u}</>} />
+                  </div>
+                )}
+                {esOpcional && !medido && (
+                  <Aviso tono="gris">
+                    Hacen falta <b>dos conteos</b> en el período para medir cuánto se usó: con una sola
+                    mirada no hay un antes y un después que restar.
+                  </Aviso>
+                )}
+                <button
+                  onClick={marcarOpcional} disabled={guardando}
+                  className={`self-start text-[12px] font-bold px-3 py-1.5 rounded-xl border transition-colors ${
+                    esOpcional
+                      ? 'bg-white border-warm-200 text-warm-600 hover:text-warm-700'
+                      : 'bg-white border-gold-200 text-gold-700 hover:bg-gold-50'} disabled:opacity-50`}>
+                  {guardando ? 'Guardando…'
+                    : esOpcional ? 'No, sí debería descontarse por receta'
+                    : 'No sale de una receta: medirlo por venta es imposible'}
+                </button>
+              </Seccion>
             )}
 
-            {/* Los cuatro bloques de arriba salen de la fila que la tabla ya
-                tenía: se dibujan en el mismo instante del clic. Los de acá abajo
-                necesitan la respuesta —facturas una por una, pedidos escritos,
-                el motor de consumo— y hasta que llega va este hueco, del alto
-                aproximado de lo que viene, para que nada salte cuando aparezca. */}
-            {!d ? (
-              <div className="bg-white border border-warm-200 rounded-2xl px-4 py-10 flex flex-col items-center gap-1.5">
-                <span className="text-[13px] text-warm-400 animate-pulse">Buscando el detalle…</span>
-                <span className="text-[11.5px] text-warm-400">pedidos, facturas y movimiento por movimiento</span>
+            {/* ── 4 · ¿Hay que pedir? ──
+                Antes eran DOS secciones —«pedí vs. llegó» y «hacía falta»— con
+                seis recuadros de colores entre las dos, y una de ellas se
+                dibujaba entera para decir «no pediste nada». Es una sola
+                pregunta: la decisión arriba y la evidencia al lado. */}
+            <Seccion titulo="¿Hay que pedir?">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-4">
+                <Dato label="Hoy hay que pedir" tono="aviso"
+                  valor={d?.hacia_falta.hoy_hay_que_pedir == null
+                    ? '—' : <>{fmtC(d.hacia_falta.hoy_hay_que_pedir)} {u}</>}
+                  nota={d?.hacia_falta.empaques_sugeridos != null
+                    ? <>≈ {fmtC(d.hacia_falta.empaques_sugeridos)} empaques</>
+                    : d?.hacia_falta.accion === 'preparar' && d.hacia_falta.tandas_sugeridas != null
+                      ? <>no se compra: son {d.hacia_falta.tandas_sugeridas} tandas</> : undefined} />
+                <Dato label="Se van por día"
+                  valor={porDia == null ? '—' : <>{fmtC(porDia)} {u}</>}
+                  nota={porDia == null ? 'hacen falta dos conteos'
+                    : porDiaMedido ? 'medido contra los conteos' : 'según lo que descontó la caja'} />
+                <Dato label="Pedí por escrito"
+                  valor={<>{fmtC(pl?.pedi ?? r.pedi)} {u}</>}
+                  nota={pl && pl.n_pedidos > 0
+                    ? `en ${pl.n_pedidos} pedido${pl.n_pedidos !== 1 ? 's' : ''}${
+                        pl.proveedores.length ? ` · ${pl.proveedores.join(', ')}` : ''}`
+                    : 'a ningún proveedor'} />
+                <Dato label="Llegó con factura" tono="bueno"
+                  valor={<>{fmtC(pl?.llego_con_factura ?? r.entradas)} {u}</>}
+                  nota={pl && pl.pedi > 0
+                    ? (pl.diferencia > 0 ? <span className="text-danger-700">faltó {fmtC(pl.diferencia)} {u}</span>
+                      : pl.diferencia < 0 ? <>llegó {fmtC(-pl.diferencia)} de más</>
+                      : <span className="text-forest-700">cuadra con lo pedido</span>)
+                    : undefined} />
               </div>
-            ) : (
-              <>
-              {/* ── 3 · Pedí vs. llegó ── */}
-              {/* La pregunta que motivó guardar el pedido: ¿trajeron lo que pedí?
-                  Se compara contra lo que entró CON FACTURA y no contra todo lo que
-                  entró: la mercadería cargada a mano no respalda un pedido, y
-                  contarla haría cuadrar entregas que nadie hizo. */}
-              <Bloque titulo="Pedí vs. llegó">
-                {!pl ? null : pl.pedi === 0 ? (
-                  <span className="text-[12.5px] text-warm-500 leading-relaxed">
-                    {Object.keys(pl.en_otra_unidad).length > 0 ? (
-                      <>
-                        Se pidió <b className="font-mono">
-                          {Object.entries(pl.en_otra_unidad).map(([un, c]) => `${fmtC(c)} ${un}`).join(' · ')}
-                        </b>, en una unidad distinta a la del insumo ({u}). No se resta contra lo que
-                        llegó porque no son la misma cosa, pero se dice para que el cero de arriba no
-                        se lea como «no pediste nada».
-                      </>
-                    ) : (
-                      <>No le pediste este insumo a ningún proveedor en este período. Los pedidos
-                      quedan escritos desde que se mandan con el botón «Pedir a…» de la pestaña
-                      Pedido.</>
-                    )}
-                  </span>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                      <div className="bg-warm-50 rounded-xl px-3 py-2.5 flex flex-col gap-0.5">
-                        <span className="text-[11.5px] text-warm-500 leading-tight">Pedí</span>
-                        <span className="font-mono text-[18px] font-bold text-warm-700">{fmtC(pl.pedi)} {u}</span>
-                        <span className="text-[11px] text-warm-400">
-                          en {pl.n_pedidos} pedido{pl.n_pedidos !== 1 ? 's' : ''}
-                          {pl.proveedores.length > 0 && ` · ${pl.proveedores.join(', ')}`}
-                        </span>
-                      </div>
-                      <div className="bg-forest-50 rounded-xl px-3 py-2.5 flex flex-col gap-0.5">
-                        <span className="text-[11.5px] text-forest-700 leading-tight">Llegó con factura</span>
-                        <span className="font-mono text-[18px] font-bold text-forest-700">{fmtC(pl.llego_con_factura)} {u}</span>
-                      </div>
-                      <div className={`rounded-xl px-3 py-2.5 flex flex-col gap-0.5 ${
-                        pl.diferencia > 0 ? 'bg-danger-50' : 'bg-warm-50'}`}>
-                        <span className={`text-[11.5px] leading-tight ${
-                          pl.diferencia > 0 ? 'text-danger-700' : 'text-warm-500'}`}>
-                          {pl.diferencia > 0 ? 'Faltó' : pl.diferencia < 0 ? 'Llegó de más' : 'Cuadra'}
-                        </span>
-                        <span className={`font-mono text-[18px] font-bold ${
-                          pl.diferencia > 0 ? 'text-danger-700' : 'text-warm-700'}`}>
-                          {pl.diferencia === 0 ? '✓' : `${fmtC(Math.abs(pl.diferencia))} ${u}`}
-                        </span>
-                      </div>
-                    </div>
-                    {pl.diferencia > 0 && (
-                      <span className="text-[12.5px] text-warm-500 leading-relaxed">
-                        Puede ser que no lo trajeron, que llegó después del período, o que entró sin
-                        factura — mirá «Llegó», más abajo, antes de reclamarle a nadie.
+
+              {r.entradas < r.total_salio && !esOpcional && (
+                <span className="text-[12.5px] font-semibold text-danger-700">
+                  Se compró menos de lo que salió: el estante se está vaciando.
+                </span>
+              )}
+              {pl && pl.pedi > 0 && pl.diferencia > 0 && (
+                <span className="text-[12px] text-warm-500 leading-relaxed">
+                  Puede ser que no lo trajeron, que llegó después del período, o que entró sin
+                  factura — mirá «Llegó», más abajo, antes de reclamarle a nadie.
+                </span>
+              )}
+              {pl && Object.keys(pl.en_otra_unidad).length > 0 && (
+                <span className="text-[12px] text-warm-500 leading-relaxed">
+                  Aparte se pidió <b className="font-mono">{Object.entries(pl.en_otra_unidad)
+                    .map(([un, c]) => `${fmtC(c)} ${un}`).join(' · ')}</b>, en otra unidad: no entra en la
+                  resta porque no son la misma cosa, pero se dice para que el cero no se lea como
+                  «no pediste nada».
+                </span>
+              )}
+              {esOpcional && (
+                <span className="text-[12px] text-warm-500 leading-relaxed">
+                  <b>«Hoy hay que pedir» sale de lo que la caja descontó, que en este insumo es cero.</b>
+                  {medido?.por_dia != null
+                    ? <> Para pedir andá por el consumo medido: {fmtC(medido.por_dia)} {u} por día,
+                        o sea unos {fmtC(medido.por_dia * 7)} {u} por semana.</>
+                    : <> Con dos conteos en el período se puede medir el consumo real y usarlo para pedir.</>}
+                </span>
+              )}
+            </Seccion>
+
+            {/* ── 5 · Por dónde se fue ──
+                Con una barra por renglón: en una lista de números sueltos hay
+                que leer los seis y compararlos de cabeza para ver quién manda. */}
+            <Seccion titulo="Por dónde se fue"
+              extra={<span className="font-mono text-[13px] font-bold text-warm-700">
+                {fmtC(r.total_salio)} {u}
+                {r.valor_total_salio > 0 && <span className="font-normal text-warm-400"> · {fmt$(r.valor_total_salio)}</span>}
+              </span>}>
+              <div className="flex flex-col gap-2.5">
+                {salidaPorCausa.map(x => (
+                  <div key={x.k} className="flex flex-col gap-1">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className={`text-[13px] font-semibold flex items-center gap-1.5 ${
+                        x.alerta && x.v > 0 ? 'text-danger-700' : 'text-warm-700'}`}>
+                        {x.alerta && x.v > 0 && <AlertTriangle size={13} className="shrink-0" />}
+                        {x.label}
                       </span>
-                    )}
-                    {Object.keys(pl.en_otra_unidad).length > 0 && (
-                      <span className="text-[11.5px] text-warm-400 leading-relaxed">
-                        Aparte, se pidió {Object.entries(pl.en_otra_unidad)
-                          .map(([un, c]) => `${fmtC(c)} ${un}`).join(' · ')} — otra unidad, no entra en la resta.
+                      <span className="shrink-0 text-right">
+                        <span className={`font-mono text-[13.5px] font-bold ${
+                          x.alerta && x.v > 0 ? 'text-danger-700' : 'text-warm-700'}`}>
+                          {fmtC(x.v)} {u}
+                        </span>
+                        {x.alerta && r.valor_sin_causa > 0 && (
+                          <span className="font-mono text-[11px] text-danger-500"> · {fmt$(r.valor_sin_causa)}</span>
+                        )}
                       </span>
-                    )}
-                  </>
-                )}
-              </Bloque>
-
-              {/* ── 4 · Hacía falta ── */}
-              {/* Convive con «pedí» y no lo reemplaza: uno es lo que el sistema
-                  calcula y el otro lo que el dueño decidió. La diferencia entre
-                  los dos es su criterio de compra. */}
-              <Bloque titulo="Hacía falta">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                  <div className="bg-warm-50 rounded-xl px-3 py-2.5 flex flex-col gap-0.5">
-                    <span className="text-[11.5px] text-warm-500 leading-tight">Para reponer lo que salió</span>
-                    <span className="font-mono text-[18px] font-bold text-warm-700">{fmtC(r.total_salio)} {u}</span>
-                  </div>
-                  <div className="bg-gold-50 rounded-xl px-3 py-2.5 flex flex-col gap-0.5">
-                    <span className="text-[11.5px] text-gold-700 leading-tight">Hoy hay que pedir</span>
-                    <span className="font-mono text-[18px] font-bold text-gold-700">
-                      {d.hacia_falta.hoy_hay_que_pedir == null ? '—' : `${fmtC(d.hacia_falta.hoy_hay_que_pedir)} ${u}`}
-                    </span>
-                    {d.hacia_falta.empaques_sugeridos != null && (
-                      <span className="text-[11px] text-gold-600">≈ {fmtC(d.hacia_falta.empaques_sugeridos)} empaques</span>
-                    )}
-                    {d.hacia_falta.accion === 'preparar' && d.hacia_falta.tandas_sugeridas != null && (
-                      <span className="text-[11px] text-gold-600">no se compra: son {d.hacia_falta.tandas_sugeridas} tandas</span>
-                    )}
-                  </div>
-                  <div className="bg-forest-50 rounded-xl px-3 py-2.5 flex flex-col gap-0.5">
-                    <span className="text-[11.5px] text-forest-700 leading-tight">Se compró</span>
-                    <span className="font-mono text-[18px] font-bold text-forest-700">{fmtC(r.entradas)} {u}</span>
-                  </div>
-                </div>
-                {r.entradas < r.total_salio && !esOpcional && (
-                  <span className="text-[12.5px] font-semibold text-danger-700">
-                    Se compró menos de lo que salió: el estante se está vaciando.
-                  </span>
-                )}
-                {/* Los tres números de arriba salen de lo que la CAJA descontó, y
-                    en un insumo opcional eso es cero por definición. Decirlo es
-                    obligatorio: si no, la ficha muestra «hoy hay que pedir 0» tres
-                    centímetros debajo de «se usaron 9», y una de las dos miente. */}
-                {esOpcional && (
-                  <span className="text-[12.5px] text-warm-600 leading-relaxed">
-                    <b>Estos tres números salen de lo que la caja descontó, que en este insumo es cero.</b>
-                    {medido?.por_dia != null
-                      ? <> Para pedir, andá por el consumo medido: <b className="font-mono text-warm-700">{fmtC(medido.por_dia)} {u}</b> por
-                          día, o sea unos <b className="font-mono text-warm-700">{fmtC(medido.por_dia * 7)} {u}</b> por semana.</>
-                      : <> Con dos conteos en el período se puede medir el consumo real y usarlo para pedir.</>}
-                  </span>
-                )}
-              </Bloque>
-
-              {/* ── 5 · Lo que se pidió por escrito ── */}
-              {/* Bitácora de las dos clases de pedido, cada línea con su origen a
-                  la vista. Las del dueño ya están sumadas arriba; las del kiosko
-                  no se suman nunca —la barista teclea la unidad libre— y por eso
-                  la etiqueta importa: sin ella, dos líneas idénticas en pantalla
-                  significarían cosas distintas y nadie podría notarlo. */}
-              <Bloque titulo="Lo que se pidió por escrito">
-                {d.pedido_escrito.length === 0 ? (
-                  <span className="text-[12.5px] text-warm-500 leading-relaxed">
-                    Nadie pidió este insumo por escrito en este período: ni vos a un proveedor, ni la
-                    barista desde el kiosko.
-                  </span>
-                ) : (
-                  <>
-                    <div className="flex flex-col gap-1.5">
-                      {d.pedido_escrito.map((p, i) => (
-                        <div key={`${p.solicitud_id}-${i}`}
-                             className="flex items-center justify-between gap-3 bg-warm-50 rounded-lg px-3 py-2">
-                          <span className="text-[13px] text-warm-700">
-                            <b className="font-mono">{fmtFecha(p.fecha)}</b> · {fmtC(p.cantidad)} {p.unidad}
-                            {p.proveedor && <span className="text-warm-500"> · a {p.proveedor}</span>}
-                          </span>
-                          {p.origen === 'admin' ? (
-                            <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full uppercase bg-forest-50 text-forest-700 whitespace-nowrap">
-                              lo pediste vos
-                            </span>
-                          ) : (
-                            <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-full uppercase whitespace-nowrap ${
-                              p.estado === 'rechazada' ? 'bg-danger-50 text-danger-700'
-                              : p.estado === 'aprobada' ? 'bg-warm-100 text-warm-600'
-                              : 'bg-gold-50 text-gold-700'}`}>kiosko · {p.estado}</span>
-                          )}
-                        </div>
-                      ))}
                     </div>
-                    <span className="text-[11.5px] text-warm-400 leading-relaxed">
-                      Lo del <b>kiosko</b> es la barista avisando que falta algo, y se muestra tal cual lo
-                      tecleó, sin sumarse: el mismo insumo se pide en unidades distintas según el día.
-                      Ahí «aprobada» quiere decir que lo viste, no que se mandó.
-                    </span>
-                  </>
-                )}
-              </Bloque>
+                    <div className="h-[5px] rounded-full bg-warm-100 overflow-hidden">
+                      <div className={`h-full rounded-full ${x.alerta && x.v > 0 ? 'bg-danger-400' : 'bg-warm-400'}`}
+                        style={{ width: `${Math.max(0, Math.min(100, (Math.abs(x.v) / mayorSalida) * 100))}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {(r.ajustes_conteo !== 0 || r.ajustes !== 0) && (
+                <Aviso tono="gris">
+                  <b>Aparte · ajustes de conteo: <span className="font-mono">{fmtC(r.ajustes_conteo + r.ajustes)} {u}</span>.</b>{' '}
+                  Esto no salió ahora: es faltante viejo que apareció al contar y recién se anotó.
+                </Aviso>
+              )}
+            </Seccion>
 
-              {/* ── 6 · Llegó ── */}
-              <Bloque titulo="Llegó">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[13.5px] font-semibold text-warm-700">
-                    Con factura
-                    {d.llego.facturas.length > 0 && (
-                      <span className="font-normal text-warm-500"> · {d.llego.facturas.length} factura{d.llego.facturas.length > 1 ? 's' : ''}</span>
-                    )}
-                  </span>
-                  <span className="font-mono text-[15px] font-bold text-forest-700">{fmtC(d.llego.con_factura)} {u}</span>
-                </div>
-                {d.llego.facturas.length > 0 && (
-                  <div className="flex flex-col gap-1 pl-3 border-l-2 border-warm-100">
+            {/* ── 6 · Lo que llegó ── */}
+            {d && (
+              <Seccion titulo="Lo que llegó"
+                extra={<span className="font-mono text-[13px] font-bold text-forest-700">
+                  {fmtC(d.llego.con_factura)} {u}
+                  <span className="font-normal text-warm-400"> · con factura</span>
+                </span>}>
+                {d.llego.facturas.length === 0 ? (
+                  <span className="text-[12.5px] text-warm-400">No entró nada con factura en el período.</span>
+                ) : (
+                  <div className="flex flex-col">
                     {d.llego.facturas.map(f => (
-                      <div key={f.factura_id} className="flex items-center justify-between gap-3 text-[11.5px] text-warm-500">
-                        <span className="truncate">
-                          {fmtFecha(f.fecha)} · {f.proveedor}{f.numero_factura ? ` · N° ${f.numero_factura}` : ' · sin N°'}
+                      <div key={f.factura_id}
+                        className="flex items-center justify-between gap-3 py-1.5 border-b border-warm-100 last:border-0">
+                        <span className="text-[12px] text-warm-600 truncate">
+                          <b className="font-mono text-warm-700">{fmtFecha(f.fecha)}</b> · {f.proveedor}
+                          {f.numero_factura ? ` · N° ${f.numero_factura}` : ' · sin N°'}
                         </span>
-                        <span className="font-mono shrink-0">
-                          {fmtC(f.cantidad)} {u}{f.total != null && ` · ${fmt$(f.total)}`}
+                        <span className="font-mono text-[12px] text-warm-700 shrink-0">
+                          {fmtC(f.cantidad)} {u}
+                          {f.total != null && <span className="text-warm-400"> · {fmt$(f.total)}</span>}
                         </span>
                       </div>
                     ))}
                   </div>
                 )}
-                {Math.abs(d.llego.sin_papel) > 0.01 && (
-                  <div className="flex items-center justify-between gap-3 pt-2 border-t border-warm-100">
-                    <span className="text-[13px] font-semibold text-gold-700">Cargado a mano, sin papel</span>
-                    <span className="font-mono text-[14px] font-bold text-gold-700">{fmtC(d.llego.sin_papel)} {u}</span>
-                  </div>
-                )}
-                {(d.llego.vino_de_la_otra_sede > 0 || d.llego.se_produjo_aca > 0) && (
-                  <div className="bg-warm-50 rounded-xl px-3 py-2.5 flex flex-col gap-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-warm-400">No se compró</span>
+                {(Math.abs(d.llego.sin_papel) > 0.01 || d.llego.vino_de_la_otra_sede > 0 || d.llego.se_produjo_aca > 0) && (
+                  <div className="flex flex-col gap-1 pt-1">
+                    {Math.abs(d.llego.sin_papel) > 0.01 && (
+                      <div className="flex justify-between gap-3 text-[12.5px]">
+                        <span className="font-semibold text-gold-700">Cargado a mano, sin papel</span>
+                        <span className="font-mono font-bold text-gold-700">{fmtC(d.llego.sin_papel)} {u}</span>
+                      </div>
+                    )}
                     {d.llego.vino_de_la_otra_sede > 0 && (
-                      <div className="flex justify-between text-[12.5px] text-warm-600">
-                        <span>Vino de la otra sede</span><span className="font-mono font-bold">{fmtC(d.llego.vino_de_la_otra_sede)} {u}</span>
+                      <div className="flex justify-between gap-3 text-[12.5px] text-warm-600">
+                        <span>Vino de la otra sede</span>
+                        <span className="font-mono font-bold">{fmtC(d.llego.vino_de_la_otra_sede)} {u}</span>
                       </div>
                     )}
                     {d.llego.se_produjo_aca > 0 && (
-                      <div className="flex justify-between text-[12.5px] text-warm-600">
-                        <span>Se produjo acá</span><span className="font-mono font-bold">{fmtC(d.llego.se_produjo_aca)} {u}</span>
+                      <div className="flex justify-between gap-3 text-[12.5px] text-warm-600">
+                        <span>Se produjo acá</span>
+                        <span className="font-mono font-bold">{fmtC(d.llego.se_produjo_aca)} {u}</span>
                       </div>
                     )}
                   </div>
                 )}
-              </Bloque>
-              </>
+              </Seccion>
             )}
 
-            {/* ── 7 · Salió ── */}
-            <Bloque titulo="Salió · por qué">
-              <div className="flex flex-col">
-                {RENGLONES.filter(x => x.siempre || Number(r[x.k]) !== 0).map(x => {
-                  const v = Number(r[x.k] ?? 0)
-                  return (
-                    <div key={x.k}
-                      className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl ${
-                        x.alerta ? 'bg-danger-50 border border-danger-100 mb-1.5' : 'border-b border-warm-100'}`}>
-                      <span className={`text-[13.5px] font-semibold flex items-center gap-2 ${x.alerta ? 'text-danger-700' : 'text-warm-700'}`}>
-                        {x.alerta && <AlertTriangle size={14} className="shrink-0" />}
-                        {x.label}
+            {/* ── 7 · Los pedidos escritos ──
+                Sólo si los hay: la sección que se dibujaba entera para decir
+                «nadie pidió nada» es un módulo gastado en un hueco. Cuando no
+                hay, «Pedí por escrito 0 · a ningún proveedor» ya lo dijo. */}
+            {d && d.pedido_escrito.length > 0 && (
+              <Seccion titulo="Lo que se pidió por escrito">
+                <div className="flex flex-col">
+                  {d.pedido_escrito.map((p, i) => (
+                    <div key={`${p.solicitud_id}-${i}`}
+                      className="flex items-center justify-between gap-3 py-1.5 border-b border-warm-100 last:border-0">
+                      <span className="text-[12.5px] text-warm-700">
+                        <b className="font-mono">{fmtFecha(p.fecha)}</b> · {fmtC(p.cantidad)} {p.unidad}
+                        {p.proveedor && <span className="text-warm-500"> · a {p.proveedor}</span>}
                       </span>
-                      <span className="text-right shrink-0">
-                        <span className={`font-mono text-[15px] font-bold ${x.alerta ? 'text-danger-700' : 'text-warm-700'}`}>
-                          {fmtC(v)} {u}
+                      {p.origen === 'admin' ? (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-forest-50 text-forest-700 whitespace-nowrap">
+                          lo pediste vos
                         </span>
-                        {x.alerta && r.valor_sin_causa > 0 && (
-                          <><br /><span className="font-mono text-[11px] text-danger-500">{fmt$(r.valor_sin_causa)}</span></>
-                        )}
-                      </span>
+                      ) : (
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase whitespace-nowrap ${
+                          p.estado === 'rechazada' ? 'bg-danger-50 text-danger-700'
+                          : p.estado === 'aprobada' ? 'bg-warm-100 text-warm-600'
+                          : 'bg-gold-50 text-gold-700'}`}>kiosko · {p.estado}</span>
+                      )}
                     </div>
-                  )
-                })}
-                <div className="flex items-center justify-between gap-3 px-3 pt-3 mt-1 border-t-2 border-warm-200">
-                  <span className="text-[14px] font-extrabold text-warm-700">TOTAL QUE SALIÓ</span>
-                  <span className="text-right">
-                    <span className="font-mono text-[17px] font-extrabold text-warm-700">{fmtC(r.total_salio)} {u}</span>
-                    {r.valor_total_salio > 0 && (
-                      <><br /><span className="font-mono text-[11.5px] text-warm-500">{fmt$(r.valor_total_salio)}</span></>
-                    )}
-                  </span>
+                  ))}
                 </div>
-              </div>
+                <span className="text-[11.5px] text-warm-400 leading-relaxed">
+                  Lo del <b>kiosko</b> es la barista avisando que falta algo, y va tal cual lo tecleó, sin
+                  sumarse: el mismo insumo se pide en unidades distintas según el día. Ahí «aprobada»
+                  quiere decir que lo viste, no que se mandó.
+                </span>
+              </Seccion>
+            )}
 
-              {(r.ajustes_conteo !== 0 || r.ajustes !== 0) && (
-                <div className="bg-warm-100 rounded-xl px-3 py-2.5 flex flex-col gap-1">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[12.5px] font-bold text-warm-600">APARTE · Ajustes de conteo</span>
-                    <span className="font-mono text-[14px] font-bold text-warm-600">{fmtC(r.ajustes_conteo + r.ajustes)} {u}</span>
-                  </div>
-                  <span className="text-[11.5px] text-warm-500 leading-relaxed">
-                    Esto no salió ahora: es faltante viejo que apareció al contar y recién se anotó en el sistema.
-                  </span>
+            {/* ── 8 · Movimiento por movimiento ── */}
+            {!d ? (
+              <Seccion>
+                <div className="py-8 flex flex-col items-center gap-1.5">
+                  <span className="text-[13px] text-warm-400 animate-pulse">Buscando el detalle…</span>
+                  <span className="text-[11.5px] text-warm-400">pedidos, facturas y movimiento por movimiento</span>
                 </div>
-              )}
-            </Bloque>
-
-            {/* ── La cuenta, escrita con los números de arriba ──
-                No se afirma que cierra: se muestra la resta para que el lector la
-                pueda seguir, y si algún día deja de dar, la pantalla lo dice sola
-                en vez de mostrar números que no se corresponden. */}
-            <div className={`rounded-2xl px-4 py-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 border ${
-              r.cuadra ? 'bg-forest-50 border-forest-100' : 'bg-danger-50 border-danger-200'}`}>
-              <span className="font-mono text-[13px] text-warm-600">
-                {fmtC(r.arranco)}
-                <span className="text-warm-400"> arrancó</span>
-                {' + '}{fmtC(r.entradas)}<span className="text-warm-400"> entró</span>
-                {Math.abs(r.otros) > 0.001 && <>{r.otros >= 0 ? ' + ' : ' − '}{fmtC(Math.abs(r.otros))}<span className="text-warm-400"> otros</span></>}
-                {' − '}{fmtC(r.ventas + r.mermas + r.traslados + r.preparaciones + r.otras_salidas)}
-                <span className="text-warm-400"> salió</span>
-                {' = '}<b className="text-[15px] text-warm-700">{fmtC(r.queda)} {u}</b>
-              </span>
-              <span className={`ml-auto text-[11.5px] font-bold ${r.cuadra ? 'text-forest-700' : 'text-danger-700'}`}>
-                {r.cuadra ? 'la cuenta cierra' : 'la cuenta NO cierra'}
-              </span>
-            </div>
-
-            {/* ── 8 · Queda ── */}
-            <div className="bg-white border border-warm-200 rounded-2xl px-4 py-3.5 flex items-center justify-between gap-4">
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10.5px] font-bold uppercase tracking-wider text-warm-500">Queda</span>
-                <span className="text-[11.5px] text-warm-500">Lo que dice el sistema, no lo que hay en el estante.</span>
-              </div>
-              <div className="text-right shrink-0">
-                <span className="font-mono text-[24px] font-extrabold text-warm-700">{fmtC(r.queda)} {u}</span>
-                {d?.hacia_falta.stock_minimo ? (
-                  <><br /><span className="text-[11.5px] text-warm-500">mínimo <b className="font-mono">{fmtC(d.hacia_falta.stock_minimo)}</b></span></>
-                ) : null}
-              </div>
-            </div>
-
-            {d && (
-              <>
-              {/* ── 9 · Movimientos ── */}
-              <Bloque titulo={`Movimiento por movimiento · ${d.movimientos_total}`}>
+              </Seccion>
+            ) : (
+              <Seccion titulo="Movimiento por movimiento"
+                extra={<span className="font-mono text-[12px] text-warm-400">{d.movimientos_total}</span>}>
                 {/* Los chips salen de `causas`, que cuenta sobre el rango COMPLETO
                     aunque haya filtro: así el número de cada uno es de verdad. */}
                 <div className="flex flex-wrap gap-1.5">
@@ -748,19 +794,17 @@ export default function FichaInsumo({
                       causa === null ? 'bg-warm-700 text-white' : 'bg-warm-100 text-warm-600 hover:bg-warm-200'}`}>
                     Todos
                   </button>
-                  {Object.entries(d.causas)
-                    .sort((a, b) => b[1] - a[1])
-                    .map(([k, n]) => (
-                      <button key={k} onClick={() => setCausa(k)}
-                        className={`text-[11.5px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
-                          causa === k
-                            ? (k === 'otras_salidas' ? 'bg-danger text-white' : 'bg-warm-700 text-white')
-                            : k === 'otras_salidas'
-                              ? 'bg-danger-50 text-danger-700 hover:bg-danger-100'
-                              : 'bg-warm-100 text-warm-600 hover:bg-warm-200'}`}>
-                        {CAUSA_LABEL[k] ?? k} <span className="font-mono opacity-70">{n}</span>
-                      </button>
-                    ))}
+                  {Object.entries(d.causas).sort((a, b) => b[1] - a[1]).map(([k, n]) => (
+                    <button key={k} onClick={() => setCausa(k)}
+                      className={`text-[11.5px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
+                        causa === k
+                          ? (k === 'otras_salidas' ? 'bg-danger text-white' : 'bg-warm-700 text-white')
+                          : k === 'otras_salidas'
+                            ? 'bg-danger-50 text-danger-700 hover:bg-danger-100'
+                            : 'bg-warm-100 text-warm-600 hover:bg-warm-200'}`}>
+                      {CAUSA_LABEL[k] ?? k} <span className="font-mono opacity-70">{n}</span>
+                    </button>
+                  ))}
                 </div>
                 {d.movimientos.length === 0 ? (
                   <span className="text-[12.5px] text-warm-400">
@@ -805,11 +849,9 @@ export default function FichaInsumo({
                     </span>
                   </>
                 )}
-              </Bloque>
-              </>
+              </Seccion>
             )}
-
-          </>
+          </div>
         )}
       </div>
     </div>

@@ -77,9 +77,19 @@ export function instanteCol(s: string): Date {
 
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
 
-/** «13 ago» en hora de Colombia. */
+/** «13 ago» en hora de Colombia.
+ *
+ *  Un `YYYY-MM-DD` pelado NO es un instante: es un día del negocio, y hay que
+ *  leerlo tal cual. Pasarlo por `instanteCol` lo convierte en medianoche UTC,
+ *  que en Bogotá son las 7 de la tarde del DÍA ANTERIOR: el encabezado de la
+ *  ficha decía «31 jul a 28 ago» para el período del 1 al 28 de agosto. Es el
+ *  mismo error de zona que corría las horas, pero al revés y un día entero. */
 export function diaCol(s: string | null): string {
   if (!s) return '—'
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [, m, dd] = s.split('-')
+    return `${dd} ${MESES[Number(m) - 1] ?? m}`
+  }
   const d = instanteCol(s)
   if (Number.isNaN(d.getTime())) return s.slice(0, 10)
   const [, m, dd] = new Intl.DateTimeFormat('en-CA', {

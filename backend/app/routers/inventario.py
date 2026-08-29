@@ -1384,6 +1384,11 @@ def ficha_insumo(
             "origen": fila["origen"],
         },
         "periodo": {"desde": desde.isoformat(), "hasta": hasta.isoformat()},
+        # El arranque del rango en UTC y CON su marca de zona, igual que en
+        # `/movimiento-insumos`: los `t` de la curva son segundos desde acá, y
+        # sin este ancla la ficha tendría que suponer el huso —que es
+        # exactamente el bug que corrimos las horas cinco horas.
+        "desde_utc": inicio_dia_col_utc(desde).isoformat() + "Z",
         "resumen": fila,
         "hacia_falta": hacia_falta,
         "pedi_llego": pedi_llego,

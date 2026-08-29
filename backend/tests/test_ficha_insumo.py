@@ -190,6 +190,19 @@ class MismosNumerosQueLaTablaTest(FichaBase):
 class HaciaFaltaTest(FichaBase):
     """El reemplazo honesto de la columna «pedí»."""
 
+    def test_el_arranque_del_rango_viaja_con_su_zona(self):
+        """Los `t` de la curva son segundos desde el arranque del rango, así que
+        la ficha tiene que decir CUÁL es ese instante y en qué huso. Sin la Z, la
+        tablet lo lee como hora local y corre cinco horas todo el eje: es el
+        mismo error que mostraba un conteo de cierre de las 8 de la noche como
+        «la 1 de la mañana del día siguiente»."""
+        cafe = self.producto("Café")
+        d = self.ficha(cafe)
+        self.assertTrue(d["desde_utc"].endswith("Z"), d["desde_utc"])
+        # Y apunta a la medianoche COLOMBIANA del primer día, que en UTC son las
+        # 5 de la mañana: el día del negocio no es el día UTC.
+        self.assertTrue(d["desde_utc"].endswith("T05:00:00Z"), d["desde_utc"])
+
     def test_las_tres_cifras_son_las_del_periodo(self):
         cafe = self.producto("Café")
         self.factura("Cafexcoop", cafe, 8000)

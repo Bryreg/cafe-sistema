@@ -81,7 +81,18 @@ export default function InventarioMensual() {
           if (raw) {
             const d = JSON.parse(raw)
             if (d.ts && Date.now() - d.ts <= 20 * 3600 * 1000 && d.valores && Object.keys(d.valores).length) {
-              merged = { ...v, ...d.valores }
+              // EL BORRADOR NO PUEDE BORRAR LO QUE EL SERVIDOR YA TIENE. Era
+              // `{ ...v, ...d.valores }`, y ahí una casilla vacía del borrador
+              // —quedó vacía porque alguien borró el número para retipearlo, y
+              // el autoguardado pasó justo en ese instante— tapaba el valor
+              // confirmado. En un conteo que cruza dos días eso se ve como
+              // «ayer contamos 51 y hoy la pantalla los muestra en blanco»,
+              // con los 51 sanos en la base. Ahora el borrador sólo aporta
+              // donde ESCRIBE algo, o donde el servidor no tiene nada.
+              merged = { ...v }
+              for (const [id, val] of Object.entries(d.valores as Record<string, string>)) {
+                if (val !== '' || merged[Number(id)] === undefined) merged[Number(id)] = val
+              }
               setDirty(true)
               setBorradorInfo(new Date(d.ts).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }))
             } else {
@@ -136,6 +147,28 @@ export default function InventarioMensual() {
   )
 
   const contados = useMemo(() => Object.values(valores).filter(v => v !== '').length, [valores])
+
+  /** Renglones que el SERVIDOR tiene contados y que en pantalla están en blanco.
+   *
+   *  Nunca deberían existir —el borrador ya no puede pisar lo guardado— pero se
+   *  dicen igual, porque el modo en que fallaba era invisible desde el piso: la
+   *  barista ve una casilla vacía y no tiene forma de saber si nadie lo contó o
+   *  si lo contó ella ayer y la pantalla no se lo está mostrando. Las dos cosas
+   *  se ven idénticas y llevan a decisiones opuestas: recontar todo, o cerrar el
+   *  mes creyendo que faltaba. */
+  const perdidos = useMemo(
+    () => (inv?.items ?? []).filter(
+      it => it.fue_contado && it.cantidad_real != null && (valores[it.id] ?? '') === ''),
+    [inv, valores],
+  )
+  const recuperarContado = () => {
+    setValores(p => {
+      const n = { ...p }
+      perdidos.forEach(it => { n[it.id] = String(it.cantidad_real) })
+      return n
+    })
+    setDirty(true)
+  }
 
   const dif = (it: Item) => {
     const v = valores[it.id]
@@ -234,6 +267,21 @@ export default function InventarioMensual() {
               </div>
             )}
 
+            {!cerrado && perdidos.length > 0 && (
+              <div className="rounded-xl px-4 py-3 flex items-start gap-2 text-sm bg-amber-50 border border-amber-200 text-amber-800">
+                <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p><b>{perdidos.length}</b> producto{perdidos.length !== 1 ? 's' : ''} que ya
+                    se habían contado {perdidos.length !== 1 ? 'aparecen' : 'aparece'} en blanco.
+                    Lo contado está guardado — no se perdió.</p>
+                  <button onClick={recuperarContado}
+                    className="mt-1.5 font-bold underline underline-offset-2">
+                    Volver a ponerlo{perdidos.length !== 1 ? 's' : ''}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* El recorrido del local, en el mismo orden que apertura y cierre */}
             <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <div className="divide-y divide-gray-50">
@@ -248,6 +296,16 @@ export default function InventarioMensual() {
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate">{it.producto_nombre}</p>
                           <p className="text-xs text-gray-400">Sistema: {Math.round(it.cantidad_sistema)} {it.unidad_medida}</p>
+                          {/* Lo guardado, cuando la casilla está vacía: desde el
+                              piso «nadie lo contó» y «lo contaste y no se ve»
+                              son el mismo cuadrito en blanco. */}
+                          {!cerrado && it.fue_contado && it.cantidad_real != null
+                            && (valores[it.id] ?? '') === '' && (
+                            <button onClick={() => setValor(it.id, String(it.cantidad_real))}
+                              className="text-xs font-bold text-amber-600 underline underline-offset-2">
+                              contaron {Math.round((it.cantidad_real ?? 0) * 100) / 100} — poner
+                            </button>
+                          )}
                         </div>
                         {cerrado ? (
                           <div className="text-right">

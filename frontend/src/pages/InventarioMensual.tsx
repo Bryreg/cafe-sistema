@@ -25,19 +25,36 @@ interface Inv {
   contados: number; total_items: number
 }
 
-/** Lo tecleado → número, aceptando la coma como separador decimal.
+/** Lo tecleado → número. Acepta la coma como decimal y SUMAS: «12+8» son 20.
  *
- *  El campo era `type="number"`, y ahí el navegador TIRA lo que no entiende sin
- *  decir nada: tecleando «1,5» entrega «15». Medido en la pantalla real. En un
- *  conteo eso no es un renglón que no guarda, es un renglón que guarda DIEZ
- *  VECES de más, y nadie se entera hasta que la conciliación muestra una fuga
- *  que no existió. Acá el campo es de texto y la coma se convierte. */
+ *  Las dos cosas salieron del piso, no de una idea de diseño:
+ *
+ *  · La coma. El campo era `type="number"` y ahí el navegador tira lo que no
+ *    entiende sin decir nada: tecleando «1,5» entregaba «15». En un conteo eso
+ *    no es un renglón que no guarda, es uno que guarda DIEZ VECES de más, y no
+ *    se descubre hasta que la conciliación muestra una fuga que no existió.
+ *
+ *  · La suma. Así se cuenta de verdad: hay seis en la vitrina y ocho en la
+ *    bodega, y la barista escribe «6+8». Con `type="number"` el navegador
+ *    MOSTRABA «6+8» y entregaba vacío, así que el renglón viajaba sin valor:
+ *    la pantalla decía una cosa y se guardaba otra. Ese era el «el botón no
+ *    guarda lo que queda escrito».
+ *
+ *  Se evalúa con una gramática de sumas y restas, no con `eval`: una suma de
+ *  términos decimales y nada más. Cualquier otra cosa devuelve `null`, se pinta
+ *  en rojo y NO se manda — inventar un número es peor que no guardar. */
 export const aNumero = (v: string): number | null => {
-  const t = (v ?? '').trim().replace(',', '.')
+  const t = (v ?? '').replace(/\s+/g, '').replace(/,/g, '.')
   if (t === '') return null
-  const n = Number(t)
-  return Number.isFinite(n) ? n : null
+  const partes = t.match(/[+-]?\d*\.?\d+/g)
+  if (!partes || partes.join('') !== t) return null
+  const total = partes.reduce((a, x) => a + Number(x), 0)
+  return Number.isFinite(total) ? total : null
 }
+
+/** Está a medio escribir («12+»): no es un error todavía, así que no se pinta
+ *  en rojo mientras el dedo sigue sobre el teclado. */
+const aMedias = (v: string) => /[+\-.,]$/.test((v ?? '').trim())
 
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
@@ -386,12 +403,22 @@ export default function InventarioMensual() {
                             onChange={(s, n) => setValor(it.id, String(s + n))}
                           />
                         ) : (
-                          <input type="text" inputMode="decimal" value={valores[it.id] ?? ''}
-                            onChange={e => setValor(it.id, e.target.value.replace(/[^\d.,-]/g, ''))}
-                            placeholder="—"
-                            className={`w-20 border-2 rounded-xl px-2 py-1.5 text-center font-mono font-bold focus:outline-none focus:border-forest ${
-                              (valores[it.id] ?? '') !== '' && aNumero(valores[it.id]) === null
-                                ? 'border-red-400 bg-red-50' : 'border-gray-200'}`} />
+                          <div className="flex flex-col items-end gap-0.5">
+                            <input type="text" inputMode="decimal" value={valores[it.id] ?? ''}
+                              onChange={e => setValor(it.id, e.target.value.replace(/[^\d.,+\-\s]/g, ''))}
+                              placeholder="—"
+                              className={`w-28 border-2 rounded-xl px-2 py-1.5 text-center font-mono font-bold text-[15px] focus:outline-none focus:border-forest ${
+                                (valores[it.id] ?? '') !== '' && !aMedias(valores[it.id])
+                                  && aNumero(valores[it.id]) === null
+                                  ? 'border-red-400 bg-red-50' : 'border-gray-200'}`} />
+                            {/* Cuando escribió una suma se muestra el total: si la
+                                pantalla va a guardar 20, tiene que decir 20. */}
+                            {/[+-]/.test((valores[it.id] ?? '').slice(1)) && aNumero(valores[it.id]) !== null && (
+                              <span className="text-[11px] font-bold text-forest font-mono">
+                                = {aNumero(valores[it.id])}
+                              </span>
+                            )}
+                          </div>
                         )}
                         <div className="w-14 text-right">
                           {d != null && d !== 0 && (

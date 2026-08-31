@@ -25,6 +25,20 @@ interface Inv {
   contados: number; total_items: number
 }
 
+/** Lo tecleado → número, aceptando la coma como separador decimal.
+ *
+ *  El campo era `type="number"`, y ahí el navegador TIRA lo que no entiende sin
+ *  decir nada: tecleando «1,5» entrega «15». Medido en la pantalla real. En un
+ *  conteo eso no es un renglón que no guarda, es un renglón que guarda DIEZ
+ *  VECES de más, y nadie se entera hasta que la conciliación muestra una fuga
+ *  que no existió. Acá el campo es de texto y la coma se convierte. */
+export const aNumero = (v: string): number | null => {
+  const t = (v ?? '').trim().replace(',', '.')
+  if (t === '') return null
+  const n = Number(t)
+  return Number.isFinite(n) ? n : null
+}
+
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
 export default function InventarioMensual() {
@@ -37,6 +51,10 @@ export default function InventarioMensual() {
   const [cerrando, setCerrando] = useState(false)
   const [msg, setMsg] = useState('')
   const [borradorInfo, setBorradorInfo] = useState<string | null>(null)
+  // Un guardado que falló NO puede avisarse con un renglón gris que se borra
+  // solo a los 1,5 segundos: en un conteo de 123 productos, quien mira el
+  // estante y no la pantalla se entera cuando ya cerró el mes.
+  const [falloGuardar, setFalloGuardar] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Último estado confirmado por el servidor (para poder descartar el borrador)
@@ -146,7 +164,7 @@ export default function InventarioMensual() {
     [inv],
   )
 
-  const contados = useMemo(() => Object.values(valores).filter(v => v !== '').length, [valores])
+  const contados = useMemo(() => Object.values(valores).filter(v => aNumero(v) !== null).length, [valores])
 
   /** Renglones que el SERVIDOR tiene contados y que en pantalla están en blanco.
    *
@@ -171,21 +189,39 @@ export default function InventarioMensual() {
   }
 
   const dif = (it: Item) => {
-    const v = valores[it.id]
-    if (v === undefined || v === '') return null
-    return Number(v) - it.cantidad_sistema
+    const n = aNumero(valores[it.id] ?? '')
+    if (n === null) return null
+    return n - it.cantidad_sistema
   }
 
-  const guardar = async () => {
-    if (!inv) return
-    setGuardando(true); setMsg('')
+  /** Guarda y CONFIRMA contra lo que volvió. Devuelve si quedó todo guardado.
+   *
+   *  No alcanza con el 200: el servidor ignora en silencio un renglón cuya
+   *  cantidad no le sirve —probado contra producción, contesta 200 y no guarda
+   *  nada— así que se compara renglón por renglón contra la respuesta. Si algo
+   *  no quedó, se dice y no se toca el borrador: lo contado sigue en pantalla. */
+  const guardar = async (): Promise<boolean> => {
+    if (!inv) return false
+    setGuardando(true); setMsg(''); setFalloGuardar(null)
     try {
       const genAlEnviar = editGen.current
       const items = Object.entries(valores)
-        .filter(([, v]) => v !== '')
-        .map(([id, v]) => ({ id: Number(id), cantidad_real: Number(v) }))
+        .map(([id, v]) => ({ id: Number(id), cantidad_real: aNumero(v) }))
+        .filter((x): x is { id: number; cantidad_real: number } => x.cantidad_real !== null)
       const { data } = await api.patch<Inv>(`/inventario-mensual/${inv.id}/guardar`, items)
-      setInv(data); setMsg('Guardado')
+      setInv(data)
+      const porId = new Map(data.items.map(it => [it.id, it]))
+      const noLlegaron = items.filter(x => {
+        const it = porId.get(x.id)
+        return !it || !it.fue_contado || it.cantidad_real == null
+          || Math.abs(Number(it.cantidad_real) - x.cantidad_real) > 0.001
+      })
+      if (noLlegaron.length) {
+        setFalloGuardar(`El servidor respondió, pero ${noLlegaron.length} de ${items.length} `
+          + 'renglones no quedaron guardados. Lo que contaste sigue en la pantalla.')
+        return false
+      }
+      setMsg('Guardado')
       serverVals.current = valoresDesde(data.items)
       if (editGen.current === genAlEnviar) {
         // Nada se tipeó durante el request: lo guardado ya vive en el servidor
@@ -193,7 +229,12 @@ export default function InventarioMensual() {
         setDirty(false); setBorradorInfo(null)
       }
       setTimeout(() => setMsg(''), 1500)
-    } catch { setMsg('Error al guardar') } finally { setGuardando(false) }
+      return true
+    } catch {
+      setFalloGuardar('No se pudo guardar: el envío no llegó al servidor. Lo que contaste sigue '
+        + 'en la pantalla y no se perdió — revisá la señal y tocá «Reintentar».')
+      return false
+    } finally { setGuardando(false) }
   }
 
   const cerrar = async () => {
@@ -210,7 +251,10 @@ export default function InventarioMensual() {
     if (!window.confirm(aviso)) return
     setCerrando(true); setMsg('')
     try {
-      await guardar()
+      // Si el guardado no quedó, NO se cierra: cerrar congela el mes y a lo no
+      // contado le pone el valor del sistema. Cerrar encima de un guardado
+      // fallido es perder el conteo del día sin traza.
+      if (!(await guardar())) { setCerrando(false); return }
       const { data } = await api.post<Inv>(`/inventario-mensual/${inv.id}/cerrar`)
       setInv(data)
       limpiarBorrador()   // conteo cerrado: el borrador ya cumplió
@@ -264,6 +308,20 @@ export default function InventarioMensual() {
                 <button onClick={descartarBorrador} className="p-1 rounded-lg" aria-label="Descartar borrador">
                   <X size={14} />
                 </button>
+              </div>
+            )}
+
+            {falloGuardar && (
+              <div className="rounded-xl px-4 py-3 flex items-start gap-2 text-sm bg-red-50 border-2 border-red-300 text-red-800">
+                <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold">No quedó guardado</p>
+                  <p className="mt-0.5">{falloGuardar}</p>
+                  <button onClick={guardar} disabled={guardando}
+                    className="mt-2 bg-red-600 text-white font-bold px-4 py-2 rounded-xl text-sm disabled:opacity-40">
+                    {guardando ? 'Guardando…' : 'Reintentar'}
+                  </button>
+                </div>
               </div>
             )}
 
@@ -328,10 +386,12 @@ export default function InventarioMensual() {
                             onChange={(s, n) => setValor(it.id, String(s + n))}
                           />
                         ) : (
-                          <input type="number" inputMode="numeric" value={valores[it.id] ?? ''}
-                            onChange={e => setValor(it.id, e.target.value)}
+                          <input type="text" inputMode="decimal" value={valores[it.id] ?? ''}
+                            onChange={e => setValor(it.id, e.target.value.replace(/[^\d.,-]/g, ''))}
                             placeholder="—"
-                            className="w-20 border-2 border-gray-200 rounded-xl px-2 py-1.5 text-center font-mono font-bold focus:outline-none focus:border-forest" />
+                            className={`w-20 border-2 rounded-xl px-2 py-1.5 text-center font-mono font-bold focus:outline-none focus:border-forest ${
+                              (valores[it.id] ?? '') !== '' && aNumero(valores[it.id]) === null
+                                ? 'border-red-400 bg-red-50' : 'border-gray-200'}`} />
                         )}
                         <div className="w-14 text-right">
                           {d != null && d !== 0 && (

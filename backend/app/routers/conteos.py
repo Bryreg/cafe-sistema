@@ -85,12 +85,18 @@ def listar_verificaciones(tienda_id: int, estado: Optional[str] = Query(None),
 async def responder_verificacion(verificacion_id: int,
                                  cantidad: float = Form(...),
                                  nota: Optional[str] = Form(None),
+                                 confirmar_igual: bool = Form(False),
                                  db: Session = Depends(get_db),
                                  user: Usuario = Depends(get_current_user),
                                  barista: tuple = Depends(get_barista_actor)):
-    """Barista (kiosko): responde el recuento físico solicitado."""
+    """Barista (kiosko): responde el recuento físico solicitado.
+
+    Devuelve 409 si la respuesta repite el número del conteo y el producto se
+    movió desde entonces; con `confirmar_igual=true` la barista afirma que sí
+    contó ahora y se acepta."""
     return svc.responder_verificacion(db, verificacion_id, cantidad, nota, user.id,
-                                      barista_id=barista[0], barista_nombre=barista[1])
+                                      barista_id=barista[0], barista_nombre=barista[1],
+                                      confirmar_igual=confirmar_igual)
 
 
 @router.post("/verificaciones/{verificacion_id}/resolver")

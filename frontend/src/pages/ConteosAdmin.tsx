@@ -59,6 +59,11 @@ interface Verif {
   cantidad_verificada: number | null
   nota_barista: string | null
   barista_nombre: string | null
+  /** El recuento repite el número del conteo aunque el producto se movió desde
+   *  entonces: aprobarlo escribe ese número como stock de AHORA y pisa lo que
+   *  pasó en el medio. */
+  copia_el_conteo?: boolean
+  movido_desde_conteo?: number
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -457,6 +462,14 @@ export default function ConteosAdmin() {
                                       <span className="text-[11px] text-gray-600" title={v.nota_barista ?? ''}>
                                         recontó <strong className="font-mono">{fmtN(v.cantidad_verificada ?? 0)}</strong>
                                       </span>
+                                      {v.copia_el_conteo && (
+                                        <span
+                                          className="text-[10px] font-bold px-1.5 py-0.5 rounded-full w-full text-right sm:w-auto"
+                                          style={{ background: 'oklch(96% 0.06 75)', color: 'oklch(45% 0.14 60)' }}
+                                          title={`Es el mismo número del conteo, pero desde entonces ${(v.movido_desde_conteo ?? 0) > 0 ? 'entraron' : 'salieron'} ${Math.abs(v.movido_desde_conteo ?? 0)}. Aprobar escribe ese número como stock de ahora y pisa ese movimiento.`}>
+                                          ⚠ repite el conteo
+                                        </span>
+                                      )}
                                       <button onClick={() => resolver(v.id, true, key)} disabled={ocupado}
                                         className="text-[11px] font-bold px-2 py-0.5 rounded-full text-white disabled:opacity-40"
                                         style={{ background: 'oklch(48% 0.15 155)' }}>Aprobar</button>

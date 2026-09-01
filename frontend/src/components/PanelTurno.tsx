@@ -8,6 +8,7 @@ import { dark } from '../constants/darkTheme'
 import api from '../api/client'
 import type { RutinaEstado, BitacoraEntry } from '../hooks/useRutinasEstado'
 import type { Turno } from '../contexts/TurnoContext'
+import { instanteCol, fechaHoraCol } from '../utils/fechaLocal'
 
 interface Props {
   turno: Turno
@@ -34,6 +35,10 @@ interface VerifPendiente {
   unidad: string
   cantidad_conteo: number
   cantidad_sistema: number
+  /** Cuándo se tomó el conteo que se está verificando (UTC ISO). */
+  fecha_conteo: string | null
+  /** Neto que entró (+) o salió (−) de ese producto DESPUÉS del conteo. */
+  movido_desde_conteo: number
 }
 
 /** Verificaciones de conteo pedidas por el admin: la barista recuenta el producto
@@ -43,6 +48,8 @@ function VerificacionesConteo({ tiendaId }: { tiendaId: number }) {
   const [valores, setValores] = useState<Record<number, string>>({})
   const [notas, setNotas] = useState<Record<number, string>>({})
   const [enviando, setEnviando] = useState<number | null>(null)
+  /** id → texto del 409: la respuesta repite el conteo y el producto se movió. */
+  const [choque, setChoque] = useState<Record<number, string>>({})
 
   const cargar = () => {
     api.get(`/conteos/verificaciones/${tiendaId}`, { params: { estado: 'solicitada' } })
@@ -51,7 +58,7 @@ function VerificacionesConteo({ tiendaId }: { tiendaId: number }) {
   }
   useEffect(() => { cargar() }, [tiendaId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const responder = async (id: number) => {
+  const responder = async (id: number, confirmarIgual = false) => {
     const cantidad = Number(valores[id])
     if (Number.isNaN(cantidad) || valores[id] === undefined || valores[id] === '') return
     setEnviando(id)
@@ -59,8 +66,17 @@ function VerificacionesConteo({ tiendaId }: { tiendaId: number }) {
       const fd = new FormData()
       fd.append('cantidad', String(cantidad))
       if ((notas[id] ?? '').trim()) fd.append('nota', notas[id].trim())
+      if (confirmarIgual) fd.append('confirmar_igual', 'true')
       await api.post(`/conteos/verificaciones/${id}/responder`, fd)
+      setChoque(c => { const n = { ...c }; delete n[id]; return n })
       cargar()
+    } catch (e: unknown) {
+      // 409 = estás repitiendo el número del conteo y el producto se movió.
+      // No es un error: es una pregunta, y se contesta sin perder lo escrito.
+      const err = e as { response?: { status?: number; data?: { detail?: string } } }
+      if (err.response?.status === 409) {
+        setChoque(c => ({ ...c, [id]: err.response?.data?.detail ?? '' }))
+      } else { throw e }
     } finally { setEnviando(null) }
   }
 
@@ -79,10 +95,38 @@ function VerificacionesConteo({ tiendaId }: { tiendaId: number }) {
           <div key={v.id} className="rounded-2xl border p-3"
             style={{ background: dark.amberTint, borderColor: dark.amberDim }}>
             <p className="m-0 font-bold" style={{ fontSize: 13, color: dark.ink }}>{v.producto_nombre}</p>
+            {/* NO se muestran ni el conteo anterior ni el stock del sistema. Verlos
+                convierte el recuento en una copia: es lo que pasó el 1-sep-2026,
+                cuando se repitieron 1.664 y 4.949 después de una preparación que
+                se había llevado 900 y 1.800 gr. Se cuenta lo que hay AHORA. */}
             <p className="m-0 mt-0.5" style={{ fontSize: 11, color: dark.inkMuted }}>
-              Contá de nuevo este producto. El conteo dijo <strong className="font-mono">{v.cantidad_conteo}</strong>
-              {' '}(el sistema decía {v.cantidad_sistema}).
+              Contá este producto <strong>ahora</strong> y escribí lo que haya en este momento.
             </p>
+            {v.movido_desde_conteo !== 0 && (
+              <p className="m-0 mt-1 font-semibold" style={{ fontSize: 11, color: dark.amber }}>
+                Ojo: desde el conteo{v.fecha_conteo ? ` de ${fechaHoraCol(instanteCol(v.fecha_conteo))}` : ''}
+                {v.movido_desde_conteo > 0 ? ' entraron ' : ' salieron '}
+                <span className="font-mono">{Math.abs(v.movido_desde_conteo)}</span> {v.unidad}.
+                El número de esa hora ya no es el de ahora.
+              </p>
+            )}
+            {choque[v.id] && (
+              <div className="mt-2 rounded-xl p-2" style={{ background: dark.surface, border: `1px solid ${dark.amber}` }}>
+                <p className="m-0" style={{ fontSize: 11, color: dark.ink }}>{choque[v.id]}</p>
+                <div className="flex gap-2 mt-2">
+                  <button onClick={() => responder(v.id, true)} disabled={enviando === v.id}
+                    className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-white disabled:opacity-40"
+                    style={{ background: dark.amber }}>
+                    Sí, conté ahora y da eso
+                  </button>
+                  <button onClick={() => setChoque(c => { const n = { ...c }; delete n[v.id]; return n })}
+                    className="px-3 py-1.5 rounded-lg text-[11px] font-bold"
+                    style={{ background: 'transparent', border: `1px solid ${dark.border}`, color: dark.inkMuted }}>
+                    Vuelvo a contar
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="flex items-center gap-2 mt-2">
               <input
                 type="number" min="0" step="0.5" inputMode="decimal"

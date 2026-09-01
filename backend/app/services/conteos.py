@@ -371,10 +371,49 @@ def solicitar_verificacion(db: Session, conteo_id: int, producto_id: int, usuari
     return v
 
 
+def _movido_desde_conteo(db: Session, v: ConteoVerificacion) -> float:
+    """Cuánto ENTRÓ o SALIÓ de ese producto en esa sede después de tomarse el
+    conteo que se está verificando.
+
+    Es el dato que convierte «repetí el número del conteo» en una afirmación
+    revisable: si acá sale 0, copiar el conteo anterior no puede esconder nada
+    —es la premisa con la que se diseñó el botón «Coincide»—; si sale distinto
+    de 0, el número de esa hora ya no describe el presente y copiarlo escribe
+    stock equivocado, que es exactamente lo que pasó el 1-sep-2026.
+
+    Los AJUSTES no entran en la suma: no son un delta sino un valor absoluto
+    (`stock_actual = cantidad`), así que sumarlos daría un número sin sentido.
+    Su efecto sobre «¿esto se movió?» ya lo cuentan los movimientos reales.
+    """
+    conteo = db.query(ConteoFisico).filter(ConteoFisico.id == v.conteo_id).first()
+    if not conteo or not conteo.fecha_registro:
+        return 0.0
+    movs = (
+        db.query(MovimientoInventario)
+        .filter(MovimientoInventario.producto_id == v.producto_id,
+                MovimientoInventario.tienda_id == v.tienda_id,
+                MovimientoInventario.fecha > conteo.fecha_registro)
+        .all()
+    )
+    neto = 0.0
+    for m in movs:
+        t = _tipo(m)
+        if t == "entrada":
+            neto += float(m.cantidad or 0)
+        elif t == "salida":
+            neto -= float(m.cantidad or 0)
+    return round(neto, 3)
+
+
 def responder_verificacion(db: Session, verificacion_id: int, cantidad: float,
                            nota: str | None, usuario_id: int,
-                           barista_id: int | None = None, barista_nombre: str | None = None):
-    """Barista (kiosko): responde con el recuento físico del producto."""
+                           barista_id: int | None = None, barista_nombre: str | None = None,
+                           confirmar_igual: bool = False):
+    """Barista (kiosko): responde con el recuento físico del producto.
+
+    `confirmar_igual=True` es la barista diciendo «sí, conté ahora y da lo mismo
+    que el conteo» cuando el producto se movió en el medio (ver
+    `_movido_desde_conteo`). Sin esa afirmación, esa respuesta se rechaza."""
     v = db.query(ConteoVerificacion).filter(ConteoVerificacion.id == verificacion_id).first()
     if not v:
         raise HTTPException(status_code=404, detail="Verificación no encontrada")
@@ -382,6 +421,23 @@ def responder_verificacion(db: Session, verificacion_id: int, cantidad: float,
         raise HTTPException(status_code=400, detail="Esta verificación ya fue respondida")
     if cantidad < 0:
         raise HTTPException(status_code=400, detail="La cantidad no puede ser negativa")
+
+    # Repetir el número del conteo cuando el producto SÍ se movió desde entonces
+    # no es un recuento: es una copia, y al aprobarla se escribe como stock de
+    # ahora y se borra lo que pasó en el medio. No se prohíbe —puede ser cierto
+    # que el saldo haya vuelto al mismo número— pero deja de ser un tap: hay que
+    # afirmarlo. `confirmar_igual` es esa afirmación.
+    movido = _movido_desde_conteo(db, v)
+    if (not confirmar_igual
+            and movido != 0
+            and round(cantidad - float(v.cantidad_conteo or 0), 3) == 0):
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Desde el conteo {'entraron' if movido > 0 else 'salieron'} "
+                    f"{abs(movido):g} y estás poniendo el mismo número de esa hora. "
+                    f"Si de verdad contaste esto ahora, confirmalo."),
+        )
+
     v.estado = "respondida"
     v.cantidad_verificada = cantidad
     v.nota_barista = nota
@@ -400,7 +456,18 @@ def responder_verificacion(db: Session, verificacion_id: int, cantidad: float,
 def resolver_verificacion(db: Session, verificacion_id: int, aprobar: bool,
                           usuario_id: int, nota: str | None = None):
     """Admin: aprueba (el recuento pasa a ser el stock, con ajuste auditado si difiere)
-    o rechaza (queda el registro, sin tocar stock)."""
+    o rechaza (queda el registro, sin tocar stock).
+
+    EL RECUENTO ES LA VERDAD DEL INSTANTE EN QUE SE CONTÓ, no de cuando el admin
+    aprueba. Es la misma regla que `aplicar_conteo_inventario` ya aplica —y por
+    la misma razón medida— pero acá faltaba: se escribía `stock = lo verificado`
+    a secas, así que todo lo vendido entre la respuesta de la barista y el clic
+    de «Aprobar» desaparecía del saldo. El 1-sep-2026 se comió una venta de
+    almojabanas en Palmetto (respuesta 9:03, aprobación 9:06, venta 8:55) y la
+    preparación de granizado de Vida.
+
+        stock = lo verificado + (lo que entró − lo que salió DESDE la respuesta)
+    """
     v = db.query(ConteoVerificacion).filter(ConteoVerificacion.id == verificacion_id).first()
     if not v:
         raise HTTPException(status_code=404, detail="Verificación no encontrada")
@@ -416,11 +483,29 @@ def resolver_verificacion(db: Session, verificacion_id: int, aprobar: bool,
         v.estado = "aprobada"
         inv = db.query(Inventario).filter_by(producto_id=v.producto_id, tienda_id=v.tienda_id).first()
         stock_actual = float(inv.stock_actual or 0) if inv else 0.0
-        if round(stock_actual - float(v.cantidad_verificada or 0), 3) != 0:
-            # El recuento verificado pasa a ser el stock oficial (movimiento tipo ajuste).
+
+        # Lo que le pasó al producto DESPUÉS de que la barista respondiera.
+        posteriores = (
+            db.query(MovimientoInventario)
+            .filter(MovimientoInventario.producto_id == v.producto_id,
+                    MovimientoInventario.tienda_id == v.tienda_id,
+                    MovimientoInventario.fecha > v.fecha_respuesta)
+            .all()
+        ) if v.fecha_respuesta else []
+        movido = sum((float(m.cantidad or 0) if _tipo(m) == "entrada"
+                      else -float(m.cantidad or 0))
+                     for m in posteriores if _tipo(m) in ("entrada", "salida"))
+        # Un ajuste posterior es un anclaje al físico más nuevo que este recuento:
+        # pisarlo sería deshacer una corrección buena. Mismo criterio que
+        # `aplicar_conteo_inventario`.
+        pisado = any(_tipo(m) == "ajuste" for m in posteriores)
+        objetivo = max(0.0, round(float(v.cantidad_verificada or 0) + movido, 4))
+
+        if not pisado and round(stock_actual - objetivo, 3) != 0:
+            # El recuento verificado, rodado hasta hoy, pasa a ser el stock oficial.
             registrar_movimiento(
                 db, producto_id=v.producto_id, tienda_id=v.tienda_id,
-                tipo="ajuste", cantidad=float(v.cantidad_verificada or 0),
+                tipo="ajuste", cantidad=objetivo,
                 motivo=f"Verificación de conteo aprobada (conteo #{v.conteo_id})",
                 usuario_id=usuario_id, commit=False,
             )
@@ -442,6 +527,15 @@ def get_verificaciones(db: Session, tienda_id: int, estado: str | None = None) -
     if estado:
         q = q.filter(ConteoVerificacion.estado == estado)
     rows = q.order_by(ConteoVerificacion.fecha_solicitud.desc()).limit(100).all()
+    fechas = dict(
+        db.query(ConteoFisico.id, ConteoFisico.fecha_registro)
+        .filter(ConteoFisico.id.in_([v.conteo_id for v, _ in rows])).all()
+    ) if rows else {}
+    movidos = {
+        v.id: (fechas[v.conteo_id].isoformat() if fechas.get(v.conteo_id) else None,
+               _movido_desde_conteo(db, v))
+        for v, _ in rows
+    }
     return [{
         "id": v.id, "conteo_id": v.conteo_id, "producto_id": v.producto_id,
         "producto_nombre": p.nombre, "unidad": p.unidad_medida,
@@ -452,6 +546,18 @@ def get_verificaciones(db: Session, tienda_id: int, estado: str | None = None) -
         "barista_nombre": v.barista_nombre,
         "fecha_solicitud": v.fecha_solicitud.isoformat() if v.fecha_solicitud else None,
         "fecha_respuesta": v.fecha_respuesta.isoformat() if v.fecha_respuesta else None,
+        # Contexto para no recontar a ciegas del TIEMPO: cuándo se tomó el conteo
+        # y qué se movió desde entonces. Con esto la pantalla puede decir «el
+        # número de esa hora ya no sirve» en vez de ofrecerlo para copiar.
+        "fecha_conteo": movidos[v.id][0],
+        "movido_desde_conteo": movidos[v.id][1],
+        # La respuesta repite el conteo a pesar de que el producto se movió: al
+        # aprobarla se pisaría ese movimiento. El admin tiene que verlo.
+        "copia_el_conteo": (
+            v.cantidad_verificada is not None
+            and movidos[v.id][1] != 0
+            and round(float(v.cantidad_verificada) - float(v.cantidad_conteo or 0), 3) == 0
+        ),
     } for v, p in rows]
 
 

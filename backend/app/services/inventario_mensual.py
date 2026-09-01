@@ -5,7 +5,9 @@ cada ítem referencia un producto real. La existencia teórica se toma del Inven
 vigente y la diferencia se valoriza con el costo unitario de `services/conciliacion`,
 que es la MISMA fuente que usa el P&L.
 """
+import math
 from datetime import datetime
+
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.models import (
@@ -291,23 +293,91 @@ def get_actual(db: Session, tienda_id: int, anio: int, mes: int):
     return _serializar(inv) if inv else None
 
 
+def _leer_contado(valor) -> tuple:
+    """Lo tecleado → (cantidad, motivo por el que NO es un conteo).
+
+    Un conteo físico es lo que hay en el estante: nunca es texto, nunca es
+    infinito y NUNCA ES NEGATIVO. Lo último dejó de ser hipotético cuando la
+    casilla aprendió a sumar: quien escribe «6+8» también escribe «8-10», y ese
+    −2 entraba como existencia física. Al cerrar, el mes lo convertía en una
+    diferencia contra el sistema —dos unidades menos que lo contado, más todo
+    el stock teórico— o sea una fuga en pesos que nunca ocurrió. Medido: con
+    100 de sistema, un −7 tecleado cierra el mes con −107 unidades y −$535.000
+    de faltante inventado.
+
+    Guardar de menos se recupera contando otra vez. Un número inventado que
+    cuadra la contabilidad no se recupera nunca, porque nadie lo sale a buscar.
+    """
+    if valor is None:
+        return None, "vino sin cantidad"
+    if isinstance(valor, bool):
+        return None, "no es un número"
+    try:
+        n = float(valor)
+    except (TypeError, ValueError):
+        return None, "no es un número"
+    if not math.isfinite(n):
+        return None, "no es un número finito"
+    if n < 0:
+        return None, "es negativo, y en un estante no hay cantidades negativas"
+    return n, None
+
+
 def guardar(db: Session, inv_id: int, items: list) -> dict:
-    """Guarda la existencia física (cantidad_real) de los ítems. items: [{id, cantidad_real}]."""
+    """Guarda la existencia física (cantidad_real) de los ítems. items: [{id, cantidad_real}].
+
+    Guarda lo que SÍ es un conteo y DEVUELVE LO QUE NO PUDO GUARDAR, en
+    `no_guardados`. Antes un renglón que no servía se descartaba en silencio y
+    la respuesta era un 200 con el inventario entero: desde el piso eso se veía
+    como «el botón no guarda lo que queda escrito en la pantalla» —el reporte
+    real que abrió esta serie de arreglos— y no había forma de distinguirlo de
+    un guardado bueno.
+
+    Si NADA se pudo guardar no hay trabajo parcial que perder, así que el
+    request falla con 400: cualquier cliente, por viejo que sea su bundle, ve un
+    error en vez de un «Guardado» que miente. Si algo se guardó, se conserva —
+    perder 64 renglones buenos por uno malo es peor— y el detalle viaja en la
+    respuesta para que la pantalla lo diga.
+    """
     inv = db.query(InventarioMensual).filter_by(id=inv_id).first()
     if not inv:
         raise HTTPException(404, "Inventario no encontrado")
     if inv.estado == "cerrado":
         raise HTTPException(400, "El inventario ya está cerrado")
     by_id = {it.id: it for it in inv.items}
+    no_guardados = []
+    guardados = 0
     for upd in items:
+        if not isinstance(upd, dict):
+            no_guardados.append({"id": None, "producto": "", "motivo": "renglón ilegible"})
+            continue
         it = by_id.get(upd.get("id"))
-        if it is not None and upd.get("cantidad_real") is not None:
-            it.cantidad_real = float(upd["cantidad_real"])
-            # Acá es donde una PERSONA pone el número: es el único momento del
-            # flujo en que "contado" significa contado. El cierre solo lo hereda.
-            it.fue_contado = True
+        if it is None:
+            no_guardados.append({"id": upd.get("id"), "producto": "",
+                                 "motivo": "no es un renglón de este conteo"})
+            continue
+        cantidad, motivo = _leer_contado(upd.get("cantidad_real"))
+        if motivo:
+            no_guardados.append({
+                "id": it.id,
+                "producto": it.producto.nombre if it.producto else "",
+                "motivo": motivo,
+            })
+            continue
+        it.cantidad_real = cantidad
+        # Acá es donde una PERSONA pone el número: es el único momento del
+        # flujo en que "contado" significa contado. El cierre solo lo hereda.
+        it.fue_contado = True
+        guardados += 1
+    if no_guardados and guardados == 0:
+        db.rollback()
+        raise HTTPException(400, "No se guardó ningún renglón: "
+                            + "; ".join(f"{x['producto'] or x['id']} {x['motivo']}"
+                                        for x in no_guardados[:5]))
     db.commit()
-    return _serializar(inv)
+    data = _serializar(inv)
+    data["no_guardados"] = no_guardados
+    return data
 
 
 def cerrar(db: Session, inv_id: int, usuario_id: int) -> dict:
@@ -553,8 +623,16 @@ def corregir_item(db: Session, item_id: int, cantidad_real: float, usuario_id: i
     if inv.fecha_aplicado:
         raise HTTPException(400, "Este conteo ya fue aplicado al inventario — es histórico")
 
+    # La misma regla que en el kiosko: un conteo no es negativo ni infinito.
+    # Acá el número lo pone el admin desde la conciliación, sobre un mes CERRADO
+    # y a un clic de aplicarse al inventario — o sea donde un dedazo con signo
+    # cuesta más caro, no menos.
+    cantidad, motivo = _leer_contado(cantidad_real)
+    if motivo:
+        raise HTTPException(400, f"Esa cantidad no puede ser un conteo: {motivo}")
+
     antes = it.cantidad_real
-    it.cantidad_real = float(cantidad_real)
+    it.cantidad_real = cantidad
     # Alguien puso este número a mano: pasa a contar como contado aunque el cierre
     # lo hubiera rellenado antes con el sistema.
     it.fue_contado = True

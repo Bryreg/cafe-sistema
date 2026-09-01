@@ -23,6 +23,9 @@ interface Inv {
   // Cobertura real del conteo, calculada en el servidor. Después de cerrar no se
   // puede derivar del físico: el cierre rellena todo lo no contado con el sistema.
   contados: number; total_items: number
+  // Renglones que el servidor NO guardó y por qué. Ahora los dice en vez de
+  // descartarlos en silencio; viene solo en la respuesta de guardar.
+  no_guardados?: { id: number | null; producto: string; motivo: string }[]
 }
 
 /** Lo tecleado → número. Acepta la coma como decimal y SUMAS: «12+8» son 20.
@@ -42,14 +45,37 @@ interface Inv {
  *
  *  Se evalúa con una gramática de sumas y restas, no con `eval`: una suma de
  *  términos decimales y nada más. Cualquier otra cosa devuelve `null`, se pinta
- *  en rojo y NO se manda — inventar un número es peor que no guardar. */
+ *  en rojo y NO se manda — inventar un número es peor que no guardar.
+ *
+ *  Y UN TOTAL NEGATIVO TAMPOCO ES UN CONTEO. Es la contracara de haber
+ *  enseñado a sumar: quien escribe «6+8» también escribe «8-10», y ese −2
+ *  entraba como existencia física. Al cerrar el mes se volvía una diferencia
+ *  contra el sistema —los −2 más todo el stock teórico— o sea un faltante en
+ *  pesos que nunca pasó. En el estante no hay cantidades negativas: si la
+ *  cuenta da abajo de cero, está mal tecleada. */
 export const aNumero = (v: string): number | null => {
   const t = (v ?? '').replace(/\s+/g, '').replace(/,/g, '.')
   if (t === '') return null
   const partes = t.match(/[+-]?\d*\.?\d+/g)
   if (!partes || partes.join('') !== t) return null
   const total = partes.reduce((a, x) => a + Number(x), 0)
-  return Number.isFinite(total) ? total : null
+  return Number.isFinite(total) && total >= 0 ? total : null
+}
+
+/** Por qué la casilla está en rojo, cuando hay algo corto y útil que decir.
+ *
+ *  «8-10» no es un dedazo evidente como «1..2»: la resta es válida y el error
+ *  es de signo, así que el borde rojo solo se lee como «no me deja escribir».
+ *  Que diga qué pasa, o quien cuenta va a pelearse con la casilla en vez de
+ *  corregir la cuenta. */
+const motivoInvalido = (v: string): string | null => {
+  const t = (v ?? '').replace(/\s+/g, '').replace(/,/g, '.')
+  const partes = t.match(/[+-]?\d*\.?\d+/g)
+  if (partes && partes.join('') === t) {
+    const total = partes.reduce((a, x) => a + Number(x), 0)
+    if (Number.isFinite(total) && total < 0) return `da ${total}: no se puede contar en negativo`
+  }
+  return null
 }
 
 /** Está a medio escribir («12+»): no es un error todavía, así que no se pinta
@@ -211,12 +237,25 @@ export default function InventarioMensual() {
     return n - it.cantidad_sistema
   }
 
+  /** Renglones con algo escrito que NO es un número: no viajan, así que la
+   *  pantalla tiene que nombrarlos antes de decir «Guardado». Una casilla en
+   *  «8-10» y el resto vacías mandaba una lista vacía, el servidor contestaba
+   *  200 y la pantalla decía «Guardado» sin haber guardado nada — la misma
+   *  mentira que veníamos sacando, ahora por el lado del filtro. */
+  const invalidos = useMemo(
+    () => (inv?.items ?? []).filter(
+      it => (valores[it.id] ?? '') !== '' && aNumero(valores[it.id]) === null),
+    [inv, valores],
+  )
+
   /** Guarda y CONFIRMA contra lo que volvió. Devuelve si quedó todo guardado.
    *
-   *  No alcanza con el 200: el servidor ignora en silencio un renglón cuya
-   *  cantidad no le sirve —probado contra producción, contesta 200 y no guarda
-   *  nada— así que se compara renglón por renglón contra la respuesta. Si algo
-   *  no quedó, se dice y no se toca el borrador: lo contado sigue en pantalla. */
+   *  No alcanza con el 200: el servidor ignoraba en silencio un renglón cuya
+   *  cantidad no le sirve —probado contra producción, contestaba 200 y no
+   *  guardaba nada— así que se compara renglón por renglón contra la respuesta.
+   *  Hoy el servidor además los NOMBRA en `no_guardados`, pero la comparación se
+   *  queda: es lo que atrapa un backend viejo, y no cuesta nada. Si algo no
+   *  quedó, se dice y no se toca el borrador: lo contado sigue en pantalla. */
   const guardar = async (): Promise<boolean> => {
     if (!inv) return false
     setGuardando(true); setMsg(''); setFalloGuardar(null)
@@ -234,8 +273,24 @@ export default function InventarioMensual() {
           || Math.abs(Number(it.cantidad_real) - x.cantidad_real) > 0.001
       })
       if (noLlegaron.length) {
+        // El servidor ahora dice cuáles rechazó y por qué; si lo dice, se
+        // muestra su motivo — «LECHE es negativo» se corrige, «2 de 65 no
+        // quedaron» solo asusta.
+        const detalle = (data.no_guardados ?? [])
+          .slice(0, 3).map(x => `${x.producto || `#${x.id}`}: ${x.motivo}`).join(' · ')
         setFalloGuardar(`El servidor respondió, pero ${noLlegaron.length} de ${items.length} `
-          + 'renglones no quedaron guardados. Lo que contaste sigue en la pantalla.')
+          + 'renglones no quedaron guardados. Lo que contaste sigue en la pantalla.'
+          + (detalle ? ` (${detalle})` : ''))
+        return false
+      }
+      if (invalidos.length) {
+        // Lo bueno YA quedó guardado arriba: un renglón mal tecleado no puede
+        // costar los otros 64. Pero el envío no fue completo, así que devuelve
+        // false y CERRAR no pasa por encima.
+        setFalloGuardar(`Se guardó lo contado, pero ${invalidos.length} renglón(es) no viajaron `
+          + 'porque lo escrito no es una cantidad: '
+          + `${invalidos.slice(0, 3).map(it => it.producto_nombre).join(', ')}`
+          + `${invalidos.length > 3 ? '…' : ''}. Corregilos y volvé a guardar.`)
         return false
       }
       setMsg('Guardado')
@@ -416,6 +471,11 @@ export default function InventarioMensual() {
                             {/[+-]/.test((valores[it.id] ?? '').slice(1)) && aNumero(valores[it.id]) !== null && (
                               <span className="text-[11px] font-bold text-forest font-mono">
                                 = {aNumero(valores[it.id])}
+                              </span>
+                            )}
+                            {!aMedias(valores[it.id]) && motivoInvalido(valores[it.id]) && (
+                              <span className="text-[11px] font-bold text-red-600 font-mono">
+                                {motivoInvalido(valores[it.id])}
                               </span>
                             )}
                           </div>

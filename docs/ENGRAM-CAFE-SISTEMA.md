@@ -37,6 +37,14 @@ tiene ninguna observación guardada**. Engram tampoco tiene prompts capturados
 
 ## Entradas que contradicen HALLAZGOS-2026-09-01
 
+> **Resueltas el 1-sep.** Las 10 se revisaron una por una contra el código y
+> contra producción; el veredicto de cada una está en la sección 8 de
+> `docs/HALLAZGOS-2026-09-01.md`. Resumen: [94] y [141] juntas explican la causa
+> raíz del bug de verificación (el botón «Coincide» + la escritura absoluta al
+> aprobar) y se incorporaron allá; [268], [129], [157], [123], [126], [127] y
+> [124] quedaron desactualizadas por cambios posteriores; [203] tiene un precio
+> de aromáticas por confirmar contra factura.
+
 Diez en total, todas del espacio `cafe-sistema`. El detalle de cada choque está
 en la nota bajo el encabezado de la entrada.
 

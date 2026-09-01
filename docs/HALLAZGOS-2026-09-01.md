@@ -34,6 +34,28 @@ lotes FIFO y deja movimiento auditable. Motivo:
 instante del conteo. Todo lo que se movió entre el conteo y la aprobación se
 borra en silencio.
 
+**No es código mal escrito: es un punto ciego de dos diseños buenos.** El volcado
+de Engram lo aclara y obliga a matizar esta sección:
+
+- **obs [94] (2-jul)** — la semántica absoluta se eligió a propósito («opción
+  recomendada»): la verificación es un circuito de CORRECCIÓN, el recuento
+  aprobado pasa a ser el stock. Bien pensado *cuando se aprueba enseguida*.
+- **obs [141] (5-jul)** — la pantalla de conteo tiene un botón **«Coincide» por
+  producto** que copia el conteo anterior, con esta premisa explícita del dueño:
+  *«copiar el conteo anterior NO puede esconder faltantes: si el producto se
+  movió, el sistema ya lo descontó y la diferencia aparece sola»*. Cierto en la
+  pantalla de conteo, donde `registrar_conteo` solo registra y compara.
+
+**Al cruzarse, la premisa se cae.** La barista no re-digitó 1.664 y 4.949: tocó
+«Coincide». Y esa copia, al pasar por la aprobación de la verificación, sí escribe
+stock — con el número de hace dos horas. Los dos mecanismos son correctos por
+separado y peligrosos juntos.
+
+**Por eso el arreglo tiene dos frentes**, no uno: que la aprobación ruede los
+movimientos posteriores, y que «Coincide» no esté disponible (o avise) dentro del
+circuito de verificación, donde copiar no es un atajo sino una afirmación sobre
+el presente.
+
 **Ocurrió dos veces el 1-sep:**
 
 | Sede | Producto | Contado | Se movió después | Quedó mal | Corregido a |
@@ -184,3 +206,46 @@ Puede ser intencional (el mokaccino ya lleva chocolate) o carga errónea.
 - `/inventario/tienda/{id}` excluye lo que tiene `incluir_en_conteo=False`
   (vasos, tapas, helado); esos salen por `/inventario/desechables/{id}`. Para
   barrer el catálogo completo hay que consultar los dos.
+
+
+---
+
+## 8. Cruce con el volcado de Engram
+
+`docs/ENGRAM-CAFE-SISTEMA.md` (256 entradas, jun–ago 2026) marcó **10 choques**
+con este documento. Revisados uno por uno el 1-sep, esto es lo que queda:
+
+### Lo que Engram enseñó y aquí faltaba
+
+- **obs [94] + [141]** — la causa raíz real del §2: el botón «Coincide» copiando
+  el conteo anterior + la semántica absoluta de la aprobación. Ya incorporado
+  arriba.
+
+### Lo que quedó desactualizado en Engram (este documento manda)
+
+- **obs [268] (4-ago)** dice que aplicar el inventario mensual **clampea a 0** los
+  negativos sin frenar. Ya no: `inventario_mensual.aplicar` frena en seco por
+  defecto y ofrece `omitir_negativos=True`; el propio código llama al clamp «el
+  bug viejo, silencioso e irreversible». Lo que se observó el 1-sep (bloqueo) es
+  el comportamiento vigente.
+- **obs [129] (4-jul) y [157] (7-jul)** traen la receta vieja de MEZCLA GRANIZADO
+  (café 420, condensada 800, leche en polvo 420, azúcar 360, rinde 2.820).
+  Verificado contra producción el 1-sep: la vigente es **café 440, condensada
+  600, leche en polvo 300, azúcar 300, rinde 2.500**. La preparación de las 8:12
+  am fueron 3 tandas exactas (1.320 / 1.800 / 900 / 900 → +7.500), así que el
+  ajuste del §2 es correcto.
+- **obs [123], [126], [127]** fijan las salsas en 30 gr (y las sodas en 30 + 20 de
+  saborizante). Desde el 1-sep son **34 gr**, por medición, no por receta de
+  papel. Las porciones de 20 gr siguen en 20.
+- **obs [124]** carga la Cocoa como producto único. Desde el 1-sep la bebida y el
+  polvo están separados, con receta de 6 gr.
+
+### Un número que hay que confirmar
+
+- **obs [203] (13-jul)** costeó la caja de aromáticas en **$3.600** ($180 la
+  bolsita, margen 96,9%, una bolsita por bebida). El 1-sep el dueño dio **$8.500**
+  la caja ($425 la bolsita) y confirmó **2 bolsitas por bebida**. Se dejó el dato
+  nuevo. La misma entrada aclara que el $3.600 nunca tuvo factura detrás
+  («NO estaban en Makro ni en ninguna factura»), así que probablemente era un
+  estimado — pero si el precio real subió de $3.600 a $8.500 en seis semanas, vale
+  la pena mirar la factura antes de cerrar el mes.

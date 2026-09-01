@@ -293,6 +293,20 @@ def get_actual(db: Session, tienda_id: int, anio: int, mes: int):
     return _serializar(inv) if inv else None
 
 
+def tienda_de(db: Session, inv_id: int) -> int:
+    """A qué sede pertenece este conteo.
+
+    Lo necesita el router para no dejar que una barista escriba en el conteo de
+    OTRA sede: los endpoints de escritura reciben un `inv_id` y nada más, y los
+    ids son consecutivos —el conteo de la sede de al lado está a un número de
+    distancia—, así que sin este dato no hay nada que comparar contra el usuario.
+    """
+    inv = db.query(InventarioMensual).filter_by(id=inv_id).first()
+    if not inv:
+        raise HTTPException(404, "Inventario no encontrado")
+    return inv.tienda_id
+
+
 def _leer_contado(valor) -> tuple:
     """Lo tecleado → (cantidad, motivo por el que NO es un conteo).
 

@@ -153,7 +153,13 @@ def guardar(
     inv_id: int, items: list = Body(...),
     db: Session = Depends(get_db), user: Usuario = Depends(get_current_user),
 ):
-    """Guarda la existencia física contada. items: [{id, cantidad_real}]."""
+    """Guarda la existencia física contada. items: [{id, cantidad_real}].
+
+    Devuelve el conteo más `no_guardados`: los renglones que NO entraron y por
+    qué (sin cantidad, no numérica, negativa, o de otro conteo). Si no entró
+    ninguno, responde 400 — un 200 sobre un guardado vacío se lee en el kiosko
+    como «Guardado» y ahí se pierde el conteo del día sin que nadie se entere."""
+    ensure_tienda_access(user, svc.tienda_de(db, inv_id))
     return svc.guardar(db, inv_id, items)
 
 
@@ -163,4 +169,5 @@ def cerrar(
     db: Session = Depends(get_db), user: Usuario = Depends(get_current_user),
 ):
     """Cierra el conteo y calcula las diferencias valorizadas."""
+    ensure_tienda_access(user, svc.tienda_de(db, inv_id))
     return svc.cerrar(db, inv_id, user.id)

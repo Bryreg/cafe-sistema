@@ -1,5 +1,5 @@
 """
-Carga los COMBOS del POS (precio fijo, grupos de opciones) — solo sede Vida.
+Carga los COMBOS del POS (precio fijo, grupos de opciones).
 
 - Match por nombre normalizado (sin acentos, mayúsculas, espacios colapsados),
   igual que cargar_menu_venta.py.
@@ -9,6 +9,11 @@ Carga los COMBOS del POS (precio fijo, grupos de opciones) — solo sede Vida.
   grilla del POS ni descuenta stock).
 - Los PRODUCTOS componentes deben existir en la DB: si falta alguno, el script
   falla con la lista de faltantes (no los inventa).
+- Cada combo declara EN QUÉ SEDES se vende (clave `sedes`). Antes había una
+  constante global `TIENDA_COMBOS = "Vida"` que asociaba TODOS los combos a esa
+  única sede, así que un combo de otra sede no se podía cargar sin mover los
+  demás. La disponibilidad solo se AGREGA: lo que ya esté habilitado a mano
+  desde la pantalla de Combos no se toca (el Combo 03 vive así en las dos).
 - Idempotente: correrlo dos veces no duplica nada.
 
 Uso:
@@ -30,7 +35,9 @@ from app.models.models import (
     Combo, ComboGrupo, ComboOpcion, ComboOpcionProducto, ComboTienda,
 )
 
-TIENDA_COMBOS = "Vida"   # los combos SOLO están disponibles en esta sede
+# Sede por defecto cuando un combo no declara `sedes`. Los combos 01-03 nacieron
+# como "solo Vida" y lo siguen siendo de forma explícita.
+SEDES_POR_DEFECTO = ["Vida"]
 
 # Estructura: cada opción lista sus productos reales (nombre, cantidad).
 # Una opción puede componerse de VARIOS productos (ej. "Americano Grande" =
@@ -41,6 +48,7 @@ COMBOS = [
         "nombre": "Combo 01",
         "precio": 9900,
         "orden": 1,
+        "sedes": ["Vida"],
         "grupos": [
             {"nombre": "Bebida", "opciones": [
                 {"nombre": "Americano Medium", "productos": [("Americano Medium", 1)]},
@@ -56,6 +64,7 @@ COMBOS = [
         "nombre": "Combo 02",
         "precio": 15900,
         "orden": 2,
+        "sedes": ["Vida"],
         "grupos": [
             {"nombre": "Bebida", "opciones": [
                 {"nombre": "Cafe Latte", "productos": [("Cafe Latte", 1)]},
@@ -73,6 +82,7 @@ COMBOS = [
         "nombre": "Combo 03",
         "precio": 27900,
         "orden": 3,
+        "sedes": ["Vida"],
         "grupos": [
             # Grupo FIJO: una sola opción → sin elección, ×2 cappuccinos
             {"nombre": "Bebidas", "opciones": [
@@ -82,6 +92,32 @@ COMBOS = [
             {"nombre": "Torta", "opciones": [
                 {"nombre": "Torta Naranja", "productos": [("Torta Naranja", 1)]},
                 {"nombre": "Torta Chocolate", "productos": [("Torta Chocolate", 1)]},
+            ]},
+        ],
+    },
+    {
+        # Pedido del dueño para Palmetto. Los dos grupos son FIJOS (una sola
+        # opción cada uno): no hay nada que elegir, así que el POS los
+        # auto-selecciona y el combo se vende de un toque.
+        #
+        # OJO con el nombre de la bebida: el pedido decía «mokaccino
+        # tradicional» y en el catálogo NO existe ese producto. El único
+        # mokaccino sin sabor agregado es «Mokaccino Medium» ($12.900) — los
+        # demás son Canela, Vainilla, Macadamia, Baileys, Amaretto, Vienes. Se
+        # asume ese. Si la bebida era otra, es cambiar este nombre y volver a
+        # correr el script (es idempotente).
+        #
+        # Suelto: 12.900 + 7.900 = 20.800 → el combo a 18.000 descuenta 2.800.
+        "nombre": "Combo Borondo",
+        "precio": 18000,
+        "orden": 4,
+        "sedes": ["Palmetto"],
+        "grupos": [
+            {"nombre": "Bebida", "opciones": [
+                {"nombre": "Mokaccino Medium", "productos": [("Mokaccino Medium", 1)]},
+            ]},
+            {"nombre": "Acompañamiento", "opciones": [
+                {"nombre": "Croissant Mantequilla", "productos": [("Croissant Mantequilla", 1)]},
             ]},
         ],
     },
@@ -132,9 +168,29 @@ def run(dry_run: bool = False, db=None):
             )
 
         tiendas_idx = {norm(t.nombre): t for t in db.query(Tienda).all()}
-        tienda = tiendas_idx.get(norm(TIENDA_COMBOS))
-        if not tienda:
-            raise ValueError(f"Tienda '{TIENDA_COMBOS}' no encontrada en la DB")
+        # Las sedes se validan TODAS de una, antes de crear nada: un nombre mal
+        # escrito tiene que frenar el script, no dejar un combo creado y sin
+        # sede (vendible en ninguna parte y sin que nadie se entere).
+        sedes_por_combo = {
+            cdef["nombre"]: list(cdef.get("sedes") or SEDES_POR_DEFECTO)
+            for cdef in COMBOS
+        }
+        sedes_malas = sorted({
+            nombre for sedes in sedes_por_combo.values()
+            for nombre in sedes if norm(nombre) not in tiendas_idx
+        })
+        if sedes_malas:
+            raise ValueError(
+                "Sedes NO encontradas en la DB (corregir el nombre): "
+                + ", ".join(sedes_malas)
+                + " — disponibles: " + ", ".join(sorted(t.nombre for t in tiendas_idx.values()))
+            )
+        sin_sede = sorted(n for n, sedes in sedes_por_combo.items() if not sedes)
+        if sin_sede:
+            raise ValueError(
+                "Combos sin ninguna sede: no se venderían en ninguna parte — "
+                + ", ".join(sin_sede)
+            )
 
         combos_idx = {norm(c.nombre): c for c in db.query(Combo).all()}
 
@@ -258,14 +314,20 @@ def run(dry_run: bool = False, db=None):
                     print(f"    - grupo   {combo.nombre} / {grupo.nombre} (retirado)")
                     db.delete(grupo)
 
-            # ── Disponibilidad: SOLO la sede Vida
-            asociado = db.query(ComboTienda).filter(
-                ComboTienda.combo_id == combo.id,
-                ComboTienda.tienda_id == tienda.id,
-            ).first()
-            if not asociado:
-                db.add(ComboTienda(combo_id=combo.id, tienda_id=tienda.id))
-                print(f"    + tienda  {combo.nombre} -> {tienda.nombre}")
+            # ── Disponibilidad: las sedes que declara ESTE combo.
+            # Solo se AGREGA. No se quita lo que no esté en la lista: la
+            # pantalla de Combos también habilita sedes a mano (así vive hoy el
+            # Combo 03 en las dos), y borrar acá apagaría en silencio un combo
+            # que alguien prendió desde la app.
+            for nombre_sede in sedes_por_combo[cdef["nombre"]]:
+                t = tiendas_idx[norm(nombre_sede)]
+                asociado = db.query(ComboTienda).filter(
+                    ComboTienda.combo_id == combo.id,
+                    ComboTienda.tienda_id == t.id,
+                ).first()
+                if not asociado:
+                    db.add(ComboTienda(combo_id=combo.id, tienda_id=t.id))
+                    print(f"    + tienda  {combo.nombre} -> {t.nombre}")
 
         if dry_run:
             db.rollback()
@@ -276,7 +338,8 @@ def run(dry_run: bool = False, db=None):
         print(f"\n[OK] Combos creados      : {creados}")
         print(f"[OK] Combos actualizados : {actualizados}")
         print(f"[OK] Sin cambio          : {sin_cambio}")
-        print(f"[OK] Disponibles en      : {tienda.nombre}")
+        for nombre_combo, sedes in sedes_por_combo.items():
+            print(f"[OK] {nombre_combo:16} -> {', '.join(sedes)}")
 
     except Exception:
         db.rollback()

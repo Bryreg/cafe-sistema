@@ -587,13 +587,19 @@ class CombosTestCase(unittest.TestCase):
     # ── Seed idempotente (cargar_combos) ─────────────────────────────────────
 
     def _productos_reales(self):
-        nombres = [
-            "Americano Medium", "Cafe con Leche", "Almojabanas",
-            "Croissant Mantequilla", "Cafe Latte", "Bebida Agrandada",
-            "Pastel de Pollo", "Esponjado de Queso",
-            "Cappuccino Tradicional Medium", "Torta Naranja", "Torta Chocolate",
-        ]
-        for n in nombres:
+        """Los productos que la definición de combos referencia, SACADOS de esa
+        misma definición. Antes era una lista escrita a mano acá, y agregar un
+        combo nuevo al script rompía este test con «Producto NO encontrado» —
+        un fallo que no dice nada del combo agregado y manda a editar el test."""
+        import cargar_combos
+        nombres = {
+            nombre
+            for cdef in cargar_combos.COMBOS
+            for gdef in cdef["grupos"]
+            for odef in gdef["opciones"]
+            for nombre, _ in odef["productos"]
+        }
+        for n in sorted(nombres):
             self.crear_producto(n, 1000)
 
     def test_seed_combos_es_idempotente(self):
@@ -603,18 +609,30 @@ class CombosTestCase(unittest.TestCase):
         cargar_combos.run(db=self.db)
         cargar_combos.run(db=self.db)  # segunda corrida: no duplica
 
+        # Lo esperado se deriva de la definición: así el test sigue verificando
+        # que el seed refleja el script, en vez de una foto de cómo era el script
+        # el día que se escribió el test.
+        esperado = {(c["nombre"], float(c["precio"])) for c in cargar_combos.COMBOS}
+        n_grupos = sum(len(c["grupos"]) for c in cargar_combos.COMBOS)
+        n_opciones = sum(len(g["opciones"]) for c in cargar_combos.COMBOS for g in c["grupos"])
+
         combos = self.db.query(Combo).all()
-        self.assertEqual(len(combos), 3)
-        self.assertEqual(
-            {(c.nombre, c.precio_venta) for c in combos},
-            {("Combo 01", 9900.0), ("Combo 02", 15900.0), ("Combo 03", 27900.0)},
-        )
-        self.assertEqual(self.db.query(ComboGrupo).count(), 6)
-        self.assertEqual(self.db.query(ComboOpcion).count(), 11)
-        # Asociados SOLO a la tienda Vida
-        asociaciones = self.db.query(ComboTienda).all()
-        self.assertEqual(len(asociaciones), 3)
-        self.assertTrue(all(a.tienda_id == self.tienda_1.id for a in asociaciones))
+        self.assertEqual(len(combos), len(cargar_combos.COMBOS))
+        self.assertEqual({(c.nombre, c.precio_venta) for c in combos}, esperado)
+        self.assertEqual(self.db.query(ComboGrupo).count(), n_grupos)
+        self.assertEqual(self.db.query(ComboOpcion).count(), n_opciones)
+
+        # Cada combo queda en LAS SEDES QUE DECLARA, no todos en una sola: el
+        # script tenía una constante global que forzaba Vida para todos, así que
+        # un combo de Palmetto no se podía cargar sin mover los demás.
+        por_nombre = {c.nombre: c for c in combos}
+        ids_sede = {"Vida": self.tienda_1.id, "Palmetto": self.tienda_2.id}
+        for cdef in cargar_combos.COMBOS:
+            combo = por_nombre[cdef["nombre"]]
+            declaradas = cdef.get("sedes") or cargar_combos.SEDES_POR_DEFECTO
+            reales = {a.tienda_id for a in
+                      self.db.query(ComboTienda).filter_by(combo_id=combo.id).all()}
+            self.assertEqual(reales, {ids_sede[s] for s in declaradas}, cdef["nombre"])
         # Opción compuesta: "Americano Grande" del Combo 02 consume DOS productos
         combo2 = next(c for c in combos if c.nombre == "Combo 02")
         grupo_bebida = next(g for g in combo2.grupos if g.nombre == "Bebida")
@@ -625,6 +643,24 @@ class CombosTestCase(unittest.TestCase):
         grupo_fijo = next(g for g in combo3.grupos if g.nombre == "Bebidas")
         self.assertEqual(len(grupo_fijo.opciones), 1)
         self.assertEqual(grupo_fijo.opciones[0].productos[0].cantidad, 2)
+
+    def test_seed_aborta_si_una_sede_declarada_no_existe(self):
+        """Una sede mal escrita tiene que frenar el script ANTES de crear nada.
+        Si pasara, el combo quedaría creado y sin sede: no se vende en ninguna
+        parte y nadie se entera, porque la pantalla de Combos lo muestra igual."""
+        import cargar_combos
+        self._productos_reales()
+        self.db.delete(self.tienda_2)   # se va Palmetto, que algún combo declara
+        self.db.flush()
+        declara_palmetto = any(
+            "Palmetto" in (c.get("sedes") or cargar_combos.SEDES_POR_DEFECTO)
+            for c in cargar_combos.COMBOS)
+        if not declara_palmetto:
+            self.skipTest("ningún combo declara Palmetto")
+        with self.assertRaises(ValueError) as ctx:
+            cargar_combos.run(db=self.db)
+        self.assertIn("Palmetto", str(ctx.exception))
+        self.assertEqual(self.db.query(Combo).count(), 0)
 
     def test_seed_falla_claro_si_falta_un_producto(self):
         import cargar_combos

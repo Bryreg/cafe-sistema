@@ -30,10 +30,10 @@ import sys, os, re, unicodedata
 sys.path.append(os.path.dirname(__file__))
 
 from app.models import models  # noqa
-from app.models.models import (
-    Producto, Tienda, CategoriaProductoEnum,
-    Combo, ComboGrupo, ComboOpcion, ComboOpcionProducto, ComboTienda,
-)
+from fastapi import HTTPException
+
+from app.models.models import Combo, ComboTienda, Producto, Tienda
+from app.services import combos as combos_svc
 
 # Sede por defecto cuando un combo no declara `sedes`. Los combos 01-03 nacieron
 # como "solo Vida" y lo siguen siendo de forma explícita.
@@ -192,127 +192,56 @@ def run(dry_run: bool = False, db=None):
                 + ", ".join(sin_sede)
             )
 
-        combos_idx = {norm(c.nombre): c for c in db.query(Combo).all()}
-
-        # Un producto REAL con el nombre de un combo NO se adopta como sombra:
-        # la sombra debe ser inerte (precio_venta=0, controla_stock=False).
-        conflictos = []
+        # Validación PREVIA de todas las definiciones: una corrida que crea dos
+        # combos y aborta en el tercero deja el trabajo a medias y hay que
+        # deshacerlo a mano. El servicio habla en HTTPException porque lo usa la
+        # API; acá, que es una consola, se traduce.
         for cdef in COMBOS:
-            if norm(cdef["nombre"]) in combos_idx:
-                continue  # combo ya existente: su sombra se validó al crearse
-            p = productos_idx.get(norm(cdef["nombre"]))
-            if p is not None and (float(p.precio_venta or 0) > 0 or p.controla_stock):
-                conflictos.append(
-                    f"'{cdef['nombre']}' (producto id={p.id}, precio_venta={p.precio_venta}, "
-                    f"controla_stock={p.controla_stock})"
-                )
-        if conflictos:
-            raise ValueError(
-                "Producto REAL en colisión de nombre con un combo — no se adopta como "
-                "sombra (renombrar el combo o el producto): " + "; ".join(conflictos)
-            )
+            definicion_seca = {
+                "nombre": cdef["nombre"], "precio": cdef["precio"],
+                "orden": cdef["orden"],
+                "grupos": [
+                    {"nombre": g["nombre"], "opciones": [
+                        {"nombre": o["nombre"], "productos": [
+                            {"producto_id": productos_idx[norm(n)].id, "cantidad": c}
+                            for n, c in o["productos"]]}
+                        for o in g["opciones"]]}
+                    for g in cdef["grupos"]],
+            }
+            try:
+                combos_svc.validar_definicion(definicion_seca)
+                combos_svc.verificar_sombra(db, cdef["nombre"])
+            except HTTPException as e:
+                raise ValueError(f"{cdef['nombre']}: {e.detail}") from e
 
         creados, actualizados, sin_cambio = 0, 0, 0
 
+        # El armado del combo (sombra, grupos, opciones, productos) vive en
+        # `services/combos.sincronizar_combo`: la MISMA función que usa el
+        # endpoint de la app. Estaba acá adentro, y por eso crear un combo
+        # obligaba a correr este script en el servidor. Dos copias de esta
+        # lógica se habrían separado enseguida.
         for cdef in COMBOS:
-            combo = combos_idx.get(norm(cdef["nombre"]))
-            precio = float(cdef["precio"])
-
-            if combo is None:
-                # Producto sombra para la línea del ticket (precio 0: invisible en la grilla)
-                sombra = productos_idx.get(norm(cdef["nombre"]))
-                if sombra is None:
-                    sombra = Producto(
-                        nombre=cdef["nombre"],
-                        # Inerte para la grilla (precio 0); analytics la ignora vía Combo.producto_id
-                        categoria=CategoriaProductoEnum.bebida,
-                        unidad_medida="und",
-                        controla_stock=False,
-                        incluir_en_conteo=False,
-                        precio_venta=0,
-                    )
-                    db.add(sombra)
-                    db.flush()
-                    productos_idx[norm(sombra.nombre)] = sombra
-                combo = Combo(nombre=cdef["nombre"], precio_venta=precio,
-                              activo=True, orden=cdef["orden"], producto_id=sombra.id)
-                db.add(combo)
-                db.flush()
-                combos_idx[norm(combo.nombre)] = combo
-                print(f"  + combo   {combo.nombre}  (${int(precio)})")
+            definicion = {
+                "nombre": cdef["nombre"],
+                "precio": cdef["precio"],
+                "orden": cdef["orden"],
+                "grupos": [
+                    {"nombre": gdef["nombre"], "opciones": [
+                        {"nombre": odef["nombre"], "productos": [
+                            {"producto_id": productos_idx[norm(nombre)].id,
+                             "cantidad": cant}
+                            for nombre, cant in odef["productos"]]}
+                        for odef in gdef["opciones"]]}
+                    for gdef in cdef["grupos"]],
+            }
+            combo, estado = combos_svc.sincronizar_combo(db, definicion, log=print)
+            if estado == "creado":
                 creados += 1
+            elif estado == "actualizado":
+                actualizados += 1
             else:
-                cambio = False
-                if float(combo.precio_venta or 0) != precio:
-                    print(f"  ~ precio  {combo.nombre}: {combo.precio_venta} -> {precio}")
-                    combo.precio_venta = precio
-                    cambio = True
-                if combo.orden != cdef["orden"]:
-                    combo.orden = cdef["orden"]
-                    cambio = True
-                if not combo.activo:
-                    combo.activo = True
-                    cambio = True
-                if cambio:
-                    actualizados += 1
-                else:
-                    sin_cambio += 1
-
-            # ── Sincronizar grupos/opciones/productos (match por nombre normalizado)
-            grupos_db = {norm(g.nombre): g for g in combo.grupos}
-            grupos_def = set()
-            for gi, gdef in enumerate(cdef["grupos"]):
-                grupos_def.add(norm(gdef["nombre"]))
-                grupo = grupos_db.get(norm(gdef["nombre"]))
-                if grupo is None:
-                    grupo = ComboGrupo(combo_id=combo.id, nombre=gdef["nombre"], orden=gi)
-                    db.add(grupo)
-                    db.flush()
-                    print(f"    + grupo   {combo.nombre} / {grupo.nombre}")
-                else:
-                    grupo.orden = gi
-
-                opciones_db = {norm(o.nombre): o for o in grupo.opciones}
-                opciones_def = set()
-                for oi, odef in enumerate(gdef["opciones"]):
-                    opciones_def.add(norm(odef["nombre"]))
-                    opcion = opciones_db.get(norm(odef["nombre"]))
-                    if opcion is None:
-                        opcion = ComboOpcion(grupo_id=grupo.id, nombre=odef["nombre"], orden=oi)
-                        db.add(opcion)
-                        db.flush()
-                        print(f"      + opcion  {grupo.nombre} / {opcion.nombre}")
-                    else:
-                        opcion.orden = oi
-
-                    # Productos de la opción: upsert por producto_id, borrar sobrantes
-                    deseados = {
-                        productos_idx[norm(nombre)].id: cant
-                        for nombre, cant in odef["productos"]
-                    }
-                    existentes = {op.producto_id: op for op in opcion.productos}
-                    for pid, op in existentes.items():
-                        if pid not in deseados:
-                            db.delete(op)
-                    for pid, cant in deseados.items():
-                        op = existentes.get(pid)
-                        if op is None:
-                            db.add(ComboOpcionProducto(
-                                opcion_id=opcion.id, producto_id=pid, cantidad=cant))
-                        elif op.cantidad != cant:
-                            op.cantidad = cant
-
-                # Opciones que ya no están en la definición → fuera
-                for key, opcion in opciones_db.items():
-                    if key not in opciones_def:
-                        print(f"      - opcion  {grupo.nombre} / {opcion.nombre} (retirada)")
-                        db.delete(opcion)
-
-            # Grupos que ya no están en la definición → fuera
-            for key, grupo in grupos_db.items():
-                if key not in grupos_def:
-                    print(f"    - grupo   {combo.nombre} / {grupo.nombre} (retirado)")
-                    db.delete(grupo)
+                sin_cambio += 1
 
             # ── Disponibilidad: las sedes que declara ESTE combo.
             # Solo se AGREGA. No se quita lo que no esté en la lista: la

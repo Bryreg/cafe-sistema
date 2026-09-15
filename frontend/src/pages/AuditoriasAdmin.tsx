@@ -1026,6 +1026,11 @@ function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] 
   const [tendencia, setTendencia] = useState<CPTendencia | null>(null)
   const [verTendencia, setVerTendencia] = useState(false)
   const [subiendo, setSubiendo] = useState<string | null>(null)
+  // Qué revisión está desplegada. Sin esto el registro era ILEGIBLE: el resumen
+  // decía «15 cumplen de 15» y las respuestas no se podían ver por ningún lado.
+  // Peor con VoBo puesto, porque ahí desaparece «Editar» y no quedaba ni ese
+  // camino indirecto. Ver no es editar: el detalle se abre siempre.
+  const [detalle, setDetalle] = useState<number | null>(null)
 
   const cargar = () => {
     setLoading(true)
@@ -1374,10 +1379,18 @@ function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] 
         </div>
       )}
 
-      {!abierto && historial.map(a => (
+      {!abierto && historial.map(a => {
+        const abiertoDet = detalle === a.id
+        return (
         <div key={a.id} className="bg-white rounded-2xl border border-gray-200 p-4">
           <div className="flex items-start gap-3 flex-wrap">
-            <div className="flex-1 min-w-0">
+            <button onClick={() => setDetalle(abiertoDet ? null : a.id)}
+              title={abiertoDet ? 'Ocultar el detalle' : 'Ver las 15 respuestas'}
+              className="text-gray-400 hover:text-gray-700 mt-0.5 shrink-0">
+              {abiertoDet ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+            <div className="flex-1 min-w-0 cursor-pointer"
+              onClick={() => setDetalle(abiertoDet ? null : a.id)}>
               <p className="text-sm font-bold text-gray-800 flex items-center gap-2 flex-wrap">
                 {a.fecha_revision}
                 {todasLasSedes && (
@@ -1397,6 +1410,9 @@ function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] 
                 {a.sin_responder > 0 && <span> · {a.sin_responder} sin responder</span>}
                 {' '}de {a.total} · registró {a.usuario}
               </p>
+              {!abiertoDet && (
+                <p className="text-[11px] text-gray-400 mt-0.5">Tocá para ver las respuestas</p>
+              )}
             </div>
             {!a.vobo && (
               <div className="flex gap-1.5 shrink-0">
@@ -1440,8 +1456,54 @@ function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] 
               {a.observaciones}
             </p>
           )}
+
+          {/* ── Cómo estuvo la revisión: las 15 respuestas ──────────────── */}
+          {abiertoDet && formato && (
+            <div className="mt-3 pt-3 border-t border-gray-100 space-y-3">
+              {formato.secciones.map(sec => (
+                <div key={sec.key}>
+                  <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide">
+                    {sec.nombre}
+                  </p>
+                  <div className="mt-1 space-y-1">
+                    {sec.preguntas.map(p => {
+                      const r = a.respuestas[p.key]
+                      const v = r?.cumple ?? null
+                      return (
+                        <div key={p.key} className="flex items-start gap-2 text-xs">
+                          {/* Tres estados, tres marcas. «Sin responder» NO se
+                              dibuja como una falla: nadie lo revisó. */}
+                          <span className={`shrink-0 w-[92px] font-bold ${
+                            v === true ? 'text-green-700'
+                              : v === false ? 'text-red-600' : 'text-gray-400'}`}>
+                            {v === true ? '✓ Sí' : v === false ? '✕ No' : '— sin revisar'}
+                          </span>
+                          <span className={`flex-1 ${v === false ? 'text-gray-800' : 'text-gray-600'}`}>
+                            {p.label}
+                            {r?.nota && (
+                              <span className="text-gray-500"> — {r.nota}</span>
+                            )}
+                            {r?.foto_url && (
+                              <a href={r.foto_url} target="_blank" rel="noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                className="ml-1.5 underline text-blue-600">foto</a>
+                            )}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+              <p className="text-[11px] text-gray-400 pt-1">
+                Registró {a.usuario}
+                {a.vobo && a.vobo_por ? ` · VoBo de ${a.vobo_por}` : ''}
+                {a.vobo ? ' · cerrada, no se puede editar' : ''}
+              </p>
+            </div>
+          )}
         </div>
-      ))}
+      )})}
     </div>
   )
 }

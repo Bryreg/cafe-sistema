@@ -4,7 +4,7 @@ import api from '../api/client'
 import {
   ClipboardCheck, Package, Plus, X, ChevronDown, ChevronUp,
   Trash2, Search, CheckSquare, Square, ShieldCheck, Lock,
-  AlertCircle, CheckCircle2, Clock,
+  AlertCircle, CheckCircle2, Clock, AlertTriangle,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -963,9 +963,323 @@ function TabLimpieza({ tiendaId }: { tiendaId: number }) {
 }
 
 
+
+// ─── ═══════════════════════ TAB: CONTROL DEL PUNTO ═════════════════════════ ─
+
+interface CPPregunta { key: string; label: string }
+interface CPSeccion { key: string; nombre: string; descripcion: string | null; preguntas: CPPregunta[] }
+interface CPFormato { secciones: CPSeccion[]; total_preguntas: number }
+interface CPAuditoria {
+  id: number
+  tienda_id: number
+  tienda_nombre: string
+  fecha_revision: string
+  observaciones: string | null
+  vobo: boolean
+  vobo_por: string | null
+  usuario: string
+  respuestas: Record<string, boolean | null>
+  cumplen: number
+  fallan: number
+  sin_responder: number
+  total: number
+  incumplidas: string[]
+}
+
+/**
+ * Control del punto — el Google Form «Control de Médium Café», acá adentro.
+ *
+ * Había un formulario POR SEDE, así que comparar Vida contra Palmetto era abrir
+ * dos formularios y dos hojas de respuestas. Acá la sede es el selector de
+ * arriba y el historial se puede ver junto.
+ *
+ * Tres estados por pregunta, no dos: Sí, No y SIN RESPONDER. Un checkbox habría
+ * convertido «no lo revisé» en «no cumple», y eso manda al dueño a corregir
+ * cosas que nadie verificó. El resumen los cuenta por separado por la misma
+ * razón.
+ */
+function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] }) {
+  const [formato, setFormato] = useState<CPFormato | null>(null)
+  const [historial, setHistorial] = useState<CPAuditoria[]>([])
+  const [todasLasSedes, setTodasLasSedes] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [guardando, setGuardando] = useState(false)
+
+  // Formulario en curso. `editando` = id de la auditoría que se está corrigiendo.
+  const [abierto, setAbierto] = useState(false)
+  const [editando, setEditando] = useState<number | null>(null)
+  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10))
+  const [respuestas, setRespuestas] = useState<Record<string, boolean | null>>({})
+  const [observaciones, setObservaciones] = useState('')
+
+  const cargar = () => {
+    setLoading(true)
+    Promise.all([
+      api.get<CPFormato>('/auditorias/control-punto/formato'),
+      api.get<CPAuditoria[]>('/auditorias/control-punto',
+        { params: todasLasSedes ? {} : { tienda_id: tiendaId } }),
+    ]).then(([f, h]) => { setFormato(f.data); setHistorial(h.data) })
+      .catch(() => setError('No se pudo cargar el control del punto'))
+      .finally(() => setLoading(false))
+  }
+  useEffect(cargar, [tiendaId, todasLasSedes])
+
+  const nuevo = () => {
+    setEditando(null)
+    setFecha(new Date().toISOString().slice(0, 10))
+    setRespuestas({})
+    setObservaciones('')
+    setAbierto(true)
+  }
+
+  const editar = (a: CPAuditoria) => {
+    setEditando(a.id)
+    setFecha(a.fecha_revision)
+    setRespuestas({ ...a.respuestas })
+    setObservaciones(a.observaciones ?? '')
+    setAbierto(true)
+  }
+
+  // Tocar la opción ya marcada la DESMARCA: es la única forma de volver a «sin
+  // responder» después de un clic equivocado. Sin esto, un Sí puesto por error
+  // solo se puede cambiar por un No, que es otra afirmación falsa.
+  const marcar = (key: string, valor: boolean) =>
+    setRespuestas(r => ({ ...r, [key]: r[key] === valor ? null : valor }))
+
+  const contadas = formato
+    ? formato.secciones.flatMap(s => s.preguntas)
+        .filter(p => respuestas[p.key] === true || respuestas[p.key] === false).length
+    : 0
+  const fallanAhora = Object.values(respuestas).filter(v => v === false).length
+
+  const guardar = async () => {
+    setGuardando(true); setError('')
+    try {
+      if (editando !== null) {
+        await api.patch(`/auditorias/control-punto/${editando}`,
+          { respuestas, observaciones: observaciones || null },
+          { params: { tienda_id: tiendaId } })
+      } else {
+        await api.post('/auditorias/control-punto', {
+          tienda_id: tiendaId, fecha_revision: fecha,
+          respuestas, observaciones: observaciones || null,
+        })
+      }
+      setAbierto(false); cargar()
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'No se pudo guardar')
+    } finally { setGuardando(false) }
+  }
+
+  const darVobo = async (a: CPAuditoria) => {
+    if (!window.confirm(`¿Dar visto bueno a la revisión del ${a.fecha_revision}?\n\n`
+      + 'Después del VoBo no se puede editar: el registro queda como lo que se revisó ese día.')) return
+    try {
+      await api.patch(`/auditorias/control-punto/${a.id}/vobo`, null,
+        { params: { tienda_id: a.tienda_id } })
+      cargar()
+    } catch (e: any) { setError(e.response?.data?.detail || 'No se pudo dar VoBo') }
+  }
+
+  const eliminar = async (a: CPAuditoria) => {
+    if (!window.confirm(`¿Eliminar la revisión del ${a.fecha_revision}?`)) return
+    try {
+      await api.delete(`/auditorias/control-punto/${a.id}`,
+        { params: { tienda_id: a.tienda_id } })
+      cargar()
+    } catch (e: any) { setError(e.response?.data?.detail || 'No se pudo eliminar') }
+  }
+
+  if (loading) return <p className="text-sm text-gray-400 text-center py-10">Cargando...</p>
+
+  const sedeNombre = sedes.find(s => s.id === tiendaId)?.nombre ?? ''
+
+  return (
+    <div className="space-y-4">
+      {error && (
+        <div className="flex items-center gap-2 text-sm px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-red-600">
+          <AlertTriangle size={14} /> {error}
+        </div>
+      )}
+
+      {!abierto && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <button onClick={nuevo}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold text-white bg-amber-500 hover:bg-amber-600">
+            <ClipboardCheck size={15} /> Nueva revisión — {sedeNombre}
+          </button>
+          <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 cursor-pointer">
+            <input type="checkbox" checked={todasLasSedes}
+              onChange={e => setTodasLasSedes(e.target.checked)} />
+            Ver las dos sedes
+          </label>
+        </div>
+      )}
+
+      {/* ── Formulario ─────────────────────────────────────────────────── */}
+      {abierto && formato && (
+        <div className="bg-white rounded-2xl border-2 border-amber-200 p-5 space-y-5">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-sm font-bold text-gray-800">
+                {editando !== null ? 'Corregir revisión' : `Nueva revisión — ${sedeNombre}`}
+              </p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                {contadas} de {formato.total_preguntas} respondidas
+                {fallanAhora > 0 && <span className="text-red-600 font-semibold"> · {fallanAhora} no cumplen</span>}
+              </p>
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-500 mb-1">
+                Fecha de revisión
+              </label>
+              <input type="date" value={fecha} max={new Date().toISOString().slice(0, 10)}
+                onChange={e => setFecha(e.target.value)} disabled={editando !== null}
+                className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs disabled:bg-gray-50" />
+            </div>
+          </div>
+
+          {formato.secciones.map(sec => (
+            <div key={sec.key}>
+              <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">{sec.nombre}</p>
+              {sec.descripcion && (
+                <p className="text-[11px] text-gray-400 mt-0.5">{sec.descripcion}</p>
+              )}
+              <div className="mt-2 space-y-1.5">
+                {sec.preguntas.map(p => {
+                  const v = respuestas[p.key]
+                  return (
+                    <div key={p.key}
+                      className={`flex items-start gap-3 px-3 py-2 rounded-lg ${
+                        v === false ? 'bg-red-50' : v === true ? 'bg-green-50' : 'bg-gray-50'}`}>
+                      <span className="flex-1 text-sm text-gray-700">{p.label}</span>
+                      <span className="flex gap-1 shrink-0">
+                        <button type="button" onClick={() => marcar(p.key, true)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold border-2 ${
+                            v === true ? 'bg-green-600 text-white border-green-600'
+                                       : 'bg-white text-gray-400 border-gray-200'}`}>
+                          Sí
+                        </button>
+                        <button type="button" onClick={() => marcar(p.key, false)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold border-2 ${
+                            v === false ? 'bg-red-600 text-white border-red-600'
+                                        : 'bg-white text-gray-400 border-gray-200'}`}>
+                          No
+                        </button>
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+
+          <div>
+            <label className="block text-[11px] font-semibold text-gray-500 mb-1">
+              Observaciones
+            </label>
+            <textarea value={observaciones} onChange={e => setObservaciones(e.target.value)}
+              rows={3} placeholder="Qué se encontró y qué se pidió corregir"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+          </div>
+
+          {contadas < formato.total_preguntas && (
+            <p className="text-xs text-gray-400">
+              Quedan {formato.total_preguntas - contadas} sin responder. Se guardan como
+              «sin responder», no como incumplidas — una revisión a medias no es una con fallas.
+            </p>
+          )}
+
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setAbierto(false)}
+              className="px-4 py-2 rounded-lg text-xs font-semibold text-gray-500 border border-gray-200">
+              Cancelar
+            </button>
+            <button onClick={guardar} disabled={guardando}
+              className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-amber-500 disabled:opacity-50">
+              {guardando ? 'Guardando...' : editando !== null ? 'Guardar cambios' : 'Registrar revisión'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Historial ──────────────────────────────────────────────────── */}
+      {!abierto && historial.length === 0 && (
+        <div className="bg-white rounded-2xl border border-gray-200 p-10 text-center">
+          <ClipboardCheck size={30} className="text-gray-300 mx-auto mb-3" />
+          <p className="text-sm text-gray-400">Todavía no hay revisiones registradas</p>
+        </div>
+      )}
+
+      {!abierto && historial.map(a => (
+        <div key={a.id} className="bg-white rounded-2xl border border-gray-200 p-4">
+          <div className="flex items-start gap-3 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-gray-800 flex items-center gap-2 flex-wrap">
+                {a.fecha_revision}
+                {todasLasSedes && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                    {a.tienda_nombre}
+                  </span>
+                )}
+                {a.vobo && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">
+                    VoBo{a.vobo_por ? ` · ${a.vobo_por}` : ''}
+                  </span>
+                )}
+              </p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                <span className="text-green-700 font-semibold">{a.cumplen} cumplen</span>
+                {a.fallan > 0 && <span className="text-red-600 font-semibold"> · {a.fallan} no cumplen</span>}
+                {a.sin_responder > 0 && <span> · {a.sin_responder} sin responder</span>}
+                {' '}de {a.total} · registró {a.usuario}
+              </p>
+            </div>
+            {!a.vobo && (
+              <div className="flex gap-1.5 shrink-0">
+                <button onClick={() => editar(a)}
+                  className="text-xs font-semibold px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:border-gray-400">
+                  Editar
+                </button>
+                <button onClick={() => darVobo(a)}
+                  className="text-xs font-semibold px-2.5 py-1 rounded-lg border border-green-300 text-green-700 hover:bg-green-50">
+                  VoBo
+                </button>
+                <button onClick={() => eliminar(a)}
+                  className="text-red-300 hover:text-red-600 px-1">
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {a.incumplidas.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-gray-100">
+              <p className="text-[11px] font-bold text-red-600 uppercase tracking-wide">
+                No cumplen
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {a.incumplidas.map((t, i) => (
+                  <li key={i} className="text-xs text-red-700">· {t}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {a.observaciones && (
+            <p className="text-xs text-gray-500 mt-2 pt-2 border-t border-gray-100 whitespace-pre-wrap">
+              {a.observaciones}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ─── ════════════════════════════ PÁGINA PRINCIPAL ══════════════════════════ ─
 
-type Tab = 'inventario' | 'limpieza'
+type Tab = 'inventario' | 'limpieza' | 'control'
 
 export default function AuditoriasAdmin() {
   const { user } = useAuth()
@@ -983,6 +1297,7 @@ export default function AuditoriasAdmin() {
   const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: 'inventario', label: 'Inventario', icon: <Package size={15} /> },
     { key: 'limpieza',   label: 'Limpieza',   icon: <CheckSquare size={15} /> },
+    { key: 'control',    label: 'Control del punto', icon: <ClipboardCheck size={15} /> },
   ]
 
   return (
@@ -993,7 +1308,9 @@ export default function AuditoriasAdmin() {
           <ClipboardCheck size={20} className="text-amber-600" />
           Auditorías
         </h1>
-        <p className="text-sm text-gray-500 mt-0.5">Control de inventario y cronograma de aseo</p>
+        <p className="text-sm text-gray-500 mt-0.5">
+          Control de inventario, cronograma de aseo y control del punto
+        </p>
       </div>
 
       {/* Selector de sede */}
@@ -1033,6 +1350,7 @@ export default function AuditoriasAdmin() {
       {/* Contenido del tab activo */}
       {tiendaId && tab === 'inventario' && <TabInventario tiendaId={tiendaId} />}
       {tiendaId && tab === 'limpieza' && <TabLimpieza tiendaId={tiendaId} />}
+      {tiendaId && tab === 'control' && <TabControlPunto tiendaId={tiendaId} sedes={sedes} />}
     </div>
   )
 }

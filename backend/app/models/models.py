@@ -820,6 +820,48 @@ class AuditoriaLimpiezaItem(Base):
     auditoria = relationship("AuditoriaLimpieza", back_populates="items")
 
 
+class AuditoriaControlPunto(Base):
+    """Control del punto — la revisión que el dueño hacía en un Google Form.
+
+    Cuatro secciones de preguntas Sí/No (operativo, máquina espresso,
+    presentación personal, administrativo) más la fecha de la revisión. Una por
+    sede y por visita: el formulario de Google era uno por sede, y así había que
+    mirar en dos lados para comparar.
+    """
+    __tablename__ = "auditorias_control_punto"
+    id = Column(Integer, primary_key=True)
+    tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False, index=True)
+    # La fecha que declara quien revisa, no la del registro: se puede cargar una
+    # visita de ayer. `created_at` guarda cuándo se digitó.
+    fecha_revision = Column(Date, nullable=False)
+    observaciones = Column(Text, nullable=True)
+    vobo = Column(Boolean, default=False, nullable=False)
+    vobo_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    vobo_fecha = Column(DateTime, nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    tienda = relationship("Tienda")
+    usuario = relationship("Usuario", foreign_keys=[usuario_id])
+    vobo_usuario = relationship("Usuario", foreign_keys=[vobo_por_id])
+    items = relationship("AuditoriaControlPuntoItem", back_populates="auditoria",
+                         cascade="all, delete-orphan")
+
+
+class AuditoriaControlPuntoItem(Base):
+    __tablename__ = "auditorias_control_punto_items"
+    id = Column(Integer, primary_key=True)
+    auditoria_id = Column(Integer, ForeignKey("auditorias_control_punto.id"),
+                          nullable=False, index=True)
+    pregunta_key = Column(String(40), nullable=False)
+    # NULLABLE A PROPÓSITO: tres estados, Sí / No / sin responder. Un Boolean con
+    # default False convertiría «nadie lo revisó» en «no cumple», que es una
+    # falla inventada — el mismo error que costó caro en el conteo mensual, donde
+    # lo no contado se leía como cuadrado. El formulario de Google también
+    # permitía dejar la pregunta en blanco.
+    cumple = Column(Boolean, nullable=True)
+    auditoria = relationship("AuditoriaControlPunto", back_populates="items")
+
+
 class AuditLog(Base):
     """Etapa 1: Registro inmutable de acciones críticas del sistema."""
     __tablename__ = "audit_log"

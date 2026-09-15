@@ -1,11 +1,13 @@
-from datetime import datetime
+from datetime import date, datetime
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.models import (
     AuditoriaInventario, AuditoriaInventarioItem,
     AuditoriaLimpieza, AuditoriaLimpiezaItem,
+    AuditoriaControlPunto, AuditoriaControlPuntoItem,
     Inventario, EstadoAuditoriaEnum,
 )
+from app.services import audit
 
 # ─── Tareas fijas de limpieza (del Cronograma de Aseo físico) ─────────────────
 TAREAS_LIMPIEZA = [
@@ -239,3 +241,207 @@ def _serial_limp(a: AuditoriaLimpieza) -> dict:
 
 def get_tareas() -> list[dict]:
     return [{"key": k, "label": lbl} for k, lbl in TAREAS_LIMPIEZA]
+
+# ─── Control del punto ───────────────────────────────────────────────────────
+#
+# Portado del Google Form «Control de Médium Café». Había uno por sede, así que
+# comparar Vida contra Palmetto era abrir dos formularios y dos hojas de
+# respuestas; acá es la misma revisión con la sede como un campo.
+#
+# El texto de las preguntas es el del formulario, con la ortografía normalizada
+# («Si»/«Sí» alternaban entre preguntas) y los signos de interrogación sueltos
+# quitados. Las claves NO se renombran nunca: son lo que ata las respuestas
+# guardadas a su pregunta, así que cambiar una clave despega el histórico.
+#
+# Dos cosas se dejaron COMO ESTÁN EN EL FORMULARIO, a propósito, aunque parezcan
+# deslices, porque cambiarlas sería cambiarle el formato al dueño sin permiso:
+#   · «Formularios llenos correctamente» y «Limpieza general del punto» viven
+#     bajo «Máquina espresso» y no son cosas de la máquina.
+#   · «Pastelería rotulada» era de tipo CASILLAS en Google, o sea que admitía
+#     marcar Sí y No a la vez. Acá es Sí/No como las otras quince: eso no se
+#     podía portar fiel sin portar el error.
+CONTROL_PUNTO_SECCIONES = [
+    ("operativo", "Operativo",
+     "Se hace la respectiva revisión de limpieza y presentación personal del punto.", [
+         ("past_rotulada",     "Pastelería rotulada"),
+         ("past_estado",       "Pastelería en buen estado, buen tamaño de las porciones "
+                               "y cubiertas limpias"),
+         ("salsas_rotuladas",  "Salsas y granizados rotulados y con fecha"),
+     ]),
+    ("espresso", "Máquina espresso", None, [
+        ("loza",              "Loza limpia y seca"),
+        ("apisonar",          "Preparación y apisonado apropiados"),
+        ("velinos",           "Limpieza de los velinos y licores"),
+        ("plasticos",         "Limpieza de los plásticos donde van las cucharas y el azúcar"),
+        ("calentamiento",     "Calentamiento apropiado de la pastelería"),
+        ("formularios",       "Formularios llenos correctamente"),
+        ("limpieza_general",  "Limpieza general del punto: mesones, vitrinas, sillas y mesas"),
+    ]),
+    ("presentacion", "Presentación personal", None, [
+        ("sin_joyas",         "Presentación sin aretes, anillos ni pulseras"),
+        ("unas",              "Uñas cortas y sin esmalte"),
+        ("maquillaje",        "Presentación adecuada con poco maquillaje"),
+        ("uniforme",          "Uniforme completo: gorra, camiseta, delantal y cofia"),
+    ]),
+    ("administrativo", "Administrativo", None, [
+        ("caja_cuadrada",     "Caja cuadrada y sin novedad"),
+    ]),
+]
+
+CONTROL_PUNTO_KEYS = [k for _, _, _, pregs in CONTROL_PUNTO_SECCIONES for k, _ in pregs]
+
+
+def get_control_punto_formato() -> dict:
+    """El formato en blanco: secciones y preguntas, para que la pantalla lo pinte
+    sin tener el texto duplicado en el front."""
+    return {
+        "secciones": [
+            {"key": sk, "nombre": nombre, "descripcion": desc,
+             "preguntas": [{"key": k, "label": lbl} for k, lbl in pregs]}
+            for sk, nombre, desc, pregs in CONTROL_PUNTO_SECCIONES
+        ],
+        "total_preguntas": len(CONTROL_PUNTO_KEYS),
+    }
+
+
+def _serial_cp(a: AuditoriaControlPunto) -> dict:
+    respuestas = {it.pregunta_key: it.cumple for it in a.items}
+    # El resumen que de verdad se lee. `sin_responder` va aparte y NO se suma a
+    # los «No»: una revisión a medias y una con fallas son cosas distintas, y
+    # meterlas en el mismo número deja al dueño persiguiendo fallas que nadie
+    # verificó. Es la misma distinción que `fue_contado` en el conteo mensual.
+    cumplen = sum(1 for v in respuestas.values() if v is True)
+    fallan = sum(1 for v in respuestas.values() if v is False)
+    sin_responder = len(CONTROL_PUNTO_KEYS) - cumplen - fallan
+    return {
+        "id": a.id,
+        "tienda_id": a.tienda_id,
+        "tienda_nombre": a.tienda.nombre if a.tienda else "",
+        "fecha_revision": a.fecha_revision.isoformat() if a.fecha_revision else None,
+        "observaciones": a.observaciones,
+        "vobo": bool(a.vobo),
+        "vobo_por": a.vobo_usuario.nombre if a.vobo_usuario else None,
+        "vobo_fecha": a.vobo_fecha.isoformat() if a.vobo_fecha else None,
+        "usuario": a.usuario.nombre if a.usuario else "",
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "respuestas": {k: respuestas.get(k) for k in CONTROL_PUNTO_KEYS},
+        "cumplen": cumplen,
+        "fallan": fallan,
+        "sin_responder": sin_responder,
+        "total": len(CONTROL_PUNTO_KEYS),
+        # Los que fallaron, con su texto: es lo que hay que ir a arreglar.
+        "incumplidas": [lbl for _, _, _, pregs in CONTROL_PUNTO_SECCIONES
+                        for k, lbl in pregs if respuestas.get(k) is False],
+    }
+
+
+def _get_cp(db: Session, auditoria_id: int, tienda_id: int) -> AuditoriaControlPunto:
+    a = db.query(AuditoriaControlPunto).filter(
+        AuditoriaControlPunto.id == auditoria_id,
+        AuditoriaControlPunto.tienda_id == tienda_id,
+    ).first()
+    if not a:
+        raise HTTPException(404, "Control del punto no encontrado")
+    return a
+
+
+def _escribir_items(db: Session, a: AuditoriaControlPunto, respuestas: dict) -> None:
+    """Deja una fila por pregunta del formato, siempre las mismas.
+
+    Se recorre el CATÁLOGO, no lo que mandó el cliente: así una pregunta nueva
+    aparece en las auditorías viejas como «sin responder» —que es la verdad— y
+    una clave inventada por el cliente no entra a la tabla."""
+    existentes = {it.pregunta_key: it for it in a.items}
+    for k in CONTROL_PUNTO_KEYS:
+        valor = respuestas.get(k, None)
+        if valor is not None:
+            valor = bool(valor)
+        it = existentes.get(k)
+        if it is None:
+            db.add(AuditoriaControlPuntoItem(auditoria_id=a.id, pregunta_key=k, cumple=valor))
+        else:
+            it.cumple = valor
+
+
+def crear_control_punto(db: Session, tienda_id: int, fecha_revision: date,
+                        respuestas: dict, usuario_id: int,
+                        observaciones: str | None = None) -> dict:
+    if fecha_revision is None:
+        raise HTTPException(400, "La fecha de revisión es obligatoria")
+    if fecha_revision > date.today():
+        raise HTTPException(400, "La fecha de revisión no puede ser futura")
+    a = AuditoriaControlPunto(
+        tienda_id=tienda_id, fecha_revision=fecha_revision,
+        observaciones=(observaciones or None), usuario_id=usuario_id)
+    db.add(a)
+    db.flush()
+    _escribir_items(db, a, respuestas or {})
+    audit.registrar(db, accion="control_punto_creado", tabla="auditorias_control_punto",
+                    registro_id=a.id, usuario_id=usuario_id, tienda_id=tienda_id,
+                    datos_despues={"fecha_revision": fecha_revision.isoformat()})
+    db.commit()
+    db.refresh(a)
+    return _serial_cp(a)
+
+
+def listar_control_punto(db: Session, tienda_id: int | None = None,
+                         limite: int = 50) -> list[dict]:
+    """Historial, el más reciente primero. Sin `tienda_id` trae las dos sedes —
+    que es el punto de haberlo traído acá: el Google Form era uno por sede y
+    comparar obligaba a abrir dos hojas."""
+    q = db.query(AuditoriaControlPunto)
+    if tienda_id is not None:
+        q = q.filter(AuditoriaControlPunto.tienda_id == tienda_id)
+    filas = (q.order_by(AuditoriaControlPunto.fecha_revision.desc(),
+                        AuditoriaControlPunto.id.desc())
+             .limit(max(1, min(limite, 200))).all())
+    return [_serial_cp(a) for a in filas]
+
+
+def actualizar_control_punto(db: Session, auditoria_id: int, tienda_id: int,
+                             respuestas: dict, usuario_id: int,
+                             observaciones: str | None = None) -> dict:
+    a = _get_cp(db, auditoria_id, tienda_id)
+    if a.vobo:
+        raise HTTPException(400, "Este control ya tiene VoBo y no puede editarse")
+    antes = _serial_cp(a)
+    a.observaciones = (observaciones or None)
+    _escribir_items(db, a, respuestas or {})
+    audit.registrar(db, accion="control_punto_editado", tabla="auditorias_control_punto",
+                    registro_id=a.id, usuario_id=usuario_id, tienda_id=tienda_id,
+                    datos_antes={"cumplen": antes["cumplen"], "fallan": antes["fallan"]},
+                    datos_despues={"respuestas": {k: v for k, v in (respuestas or {}).items()}})
+    db.commit()
+    db.refresh(a)
+    return _serial_cp(a)
+
+
+def vobo_control_punto(db: Session, auditoria_id: int, tienda_id: int,
+                       usuario_id: int) -> dict:
+    """Cierra la revisión. Después del VoBo no se edita: si se pudiera, el
+    registro dejaría de ser lo que se revisó ese día."""
+    a = _get_cp(db, auditoria_id, tienda_id)
+    if a.vobo:
+        return _serial_cp(a)
+    a.vobo = True
+    a.vobo_por_id = usuario_id
+    a.vobo_fecha = datetime.utcnow()
+    audit.registrar(db, accion="control_punto_vobo", tabla="auditorias_control_punto",
+                    registro_id=a.id, usuario_id=usuario_id, tienda_id=tienda_id)
+    db.commit()
+    db.refresh(a)
+    return _serial_cp(a)
+
+
+def eliminar_control_punto(db: Session, auditoria_id: int, tienda_id: int,
+                           usuario_id: int) -> dict:
+    a = _get_cp(db, auditoria_id, tienda_id)
+    if a.vobo:
+        raise HTTPException(400, "Este control ya tiene VoBo y no se elimina")
+    audit.registrar(db, accion="control_punto_eliminado", tabla="auditorias_control_punto",
+                    registro_id=a.id, usuario_id=usuario_id, tienda_id=tienda_id,
+                    datos_antes=_serial_cp(a))
+    db.delete(a)
+    db.commit()
+    return {"ok": True}
+

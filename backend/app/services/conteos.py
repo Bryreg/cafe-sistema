@@ -821,6 +821,20 @@ def asegurar_solicitud_programada(db: Session, tienda_id: int) -> bool:
             return False
         if _ya_hubo_solicitud_hoy(db, tienda_id):
             return False
+        # YA HAY UNO PENDIENTE (de cualquier fecha): no se crea otro. El formato
+        # ya está en la pantalla del kiosko, que es todo el objetivo, y el resto
+        # del módulo asume UN pendiente por sede —`solicitar` a mano lo rechaza
+        # explícitamente, y `registrar` marca como respondida solo la primera
+        # que encuentra. Con dos pendientes, la barista llena el formato, se
+        # cierra una y la otra queda viva: el formato reaparece y no se va más.
+        #
+        # Caso real que lo destapó: Palmetto tenía un formato pedido a mano el
+        # lunes y sin responder. Sin esta guarda, el lunes siguiente le caía un
+        # segundo pendiente encima.
+        pendiente = db.query(SolicitudConteoDesechables).filter_by(
+            tienda_id=tienda_id, estado="pendiente").first()
+        if pendiente is not None:
+            return False
         # La fila exige un usuario y acá no hay nadie apretando: se firma con un
         # admin real y `automatica=True` deja dicho que no lo pidió esa persona.
         admin = (db.query(Usuario)

@@ -179,6 +179,30 @@ class FormatoDesechablesTest(unittest.TestCase):
         with self._en_dia(2026, 9, 13, hora_col=20):   # domingo 20:00 Colombia
             self.assertFalse(svc.asegurar_solicitud_programada(self.db, self.vida.id))
 
+    def test_no_apila_sobre_un_pendiente_viejo(self):
+        """Caso real: Palmetto tenía un formato pedido a mano el lunes y sin
+        responder. Un segundo pendiente encima rompe el módulo entero — la
+        barista llena el formato, se cierra uno y el otro queda vivo, así que el
+        formato reaparece y no se va más."""
+        with self._en_dia(2026, 9, 14):   # lunes: se pide a mano
+            svc.solicitar_conteo_desechables(self.db, self.vida.id, self.admin.id)
+        with self._en_dia(2026, 9, 18):   # viernes, y el del lunes sigue abierto
+            self.assertFalse(svc.asegurar_solicitud_programada(self.db, self.vida.id))
+        pendientes = self.db.query(SolicitudConteoDesechables).filter_by(
+            tienda_id=self.vida.id, estado="pendiente").count()
+        self.assertEqual(pendientes, 1)
+
+    def test_si_el_viejo_ya_se_respondio_el_viernes_si_sale(self):
+        """La guarda es «hay uno abierto», no «hubo alguno»: un formato ya
+        respondido no puede bloquear el siguiente."""
+        with self._en_dia(2026, 9, 14):
+            svc.asegurar_solicitud_programada(self.db, self.vida.id)
+            s = self.db.query(SolicitudConteoDesechables).first()
+            s.estado = "respondida"
+            self.db.commit()
+        with self._en_dia(2026, 9, 18):   # viernes
+            self.assertTrue(svc.asegurar_solicitud_programada(self.db, self.vida.id))
+
     def test_cada_sede_tiene_la_suya(self):
         with self._en_dia(2026, 9, 14):
             svc.asegurar_solicitud_programada(self.db, self.vida.id)

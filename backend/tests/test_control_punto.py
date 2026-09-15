@@ -63,8 +63,13 @@ class ControlPuntoTest(unittest.TestCase):
     def test_las_preguntas_por_seccion_son_las_del_formulario(self):
         f = {s["key"]: [p["key"] for p in s["preguntas"]]
              for s in svc.get_control_punto_formato()["secciones"]}
-        self.assertEqual(len(f["operativo"]), 3)
-        self.assertEqual(len(f["espresso"]), 7)
+        # «Formularios» y «Limpieza general» se movieron de espresso a operativo:
+        # no son cosas de la máquina. Las CLAVES no cambiaron.
+        self.assertEqual(len(f["operativo"]), 5)
+        self.assertIn("formularios", f["operativo"])
+        self.assertIn("limpieza_general", f["operativo"])
+        self.assertEqual(len(f["espresso"]), 5)
+        self.assertNotIn("formularios", f["espresso"])
         self.assertEqual(len(f["presentacion"]), 4)
         self.assertEqual(len(f["administrativo"]), 1)
 
@@ -88,7 +93,8 @@ class ControlPuntoTest(unittest.TestCase):
         self.assertEqual(r["cumplen"], 1)
         self.assertEqual(r["fallan"], 1)
         self.assertEqual(r["sin_responder"], 13)
-        self.assertEqual(r["incumplidas"], ["Uñas cortas y sin esmalte"])
+        self.assertEqual([i["label"] for i in r["incumplidas"]],
+                         ["Uñas cortas y sin esmalte"])
 
     def test_el_none_se_guarda_como_none_no_como_false(self):
         svc.crear_control_punto(self.db, self.vida.id, date.today(),
@@ -117,7 +123,7 @@ class ControlPuntoTest(unittest.TestCase):
         r = svc.crear_control_punto(self.db, self.palmetto.id, date.today(),
                                     {"past_rotulada": False, "uniforme": False,
                                      "loza": True}, self.admin.id)
-        self.assertEqual(r["incumplidas"],
+        self.assertEqual([i["label"] for i in r["incumplidas"]],
                          ["Pastelería rotulada",
                           "Uniforme completo: gorra, camiseta, delantal y cofia"])
 
@@ -219,6 +225,125 @@ class ControlPuntoTest(unittest.TestCase):
         self.assertEqual(self.db.query(AuditoriaControlPunto).count(), 0)
         self.assertEqual(self.db.query(AuditoriaControlPuntoItem).count(), 0)
 
+    # ── Nota y foto por hallazgo ──────────────────────────────────────────────
+    def test_la_nota_y_la_foto_viajan_con_el_hallazgo(self):
+        """Un «No» en «Pastelería rotulada» no dice CUÁL. La nota sí."""
+        r = svc.crear_control_punto(self.db, self.palmetto.id, date.today(), {
+            "past_rotulada": {"cumple": False, "nota": "las 3 tortas sin fecha",
+                              "foto_url": "https://ej/1.jpg"},
+        }, self.admin.id)
+        inc = r["incumplidas"][0]
+        self.assertEqual(inc["nota"], "las 3 tortas sin fecha")
+        self.assertEqual(inc["foto_url"], "https://ej/1.jpg")
+        self.assertEqual(r["respuestas"]["past_rotulada"]["nota"], "las 3 tortas sin fecha")
+
+    def test_el_booleano_suelto_sigue_funcionando(self):
+        """Las pruebas y los scripts mandan el valor pelado; la pantalla manda
+        objetos. Las dos formas entran."""
+        r = svc.crear_control_punto(self.db, self.vida.id, date.today(),
+                                    {"loza": True, "unas": False}, self.admin.id)
+        self.assertEqual(r["cumplen"], 1)
+        self.assertEqual(r["fallan"], 1)
+
+    def test_la_nota_no_se_borra_al_corregir(self):
+        """Cuando el hallazgo pasa a Sí, el detalle de qué estaba mal es justo lo
+        que se quiere releer en la visita siguiente."""
+        a = svc.crear_control_punto(self.db, self.vida.id, date.today(), {
+            "loza": {"cumple": False, "nota": "tazas con residuo"}}, self.admin.id)
+        r = svc.actualizar_control_punto(self.db, a["id"], self.vida.id,
+                                          {"loza": {"cumple": True}}, self.admin.id)
+        self.assertEqual(r["respuestas"]["loza"]["nota"], "tazas con residuo")
+        self.assertEqual(r["cumplen"], 1)
+
+    def test_la_nota_se_puede_vaciar_explicitamente(self):
+        a = svc.crear_control_punto(self.db, self.vida.id, date.today(), {
+            "loza": {"cumple": False, "nota": "me equivoqué"}}, self.admin.id)
+        r = svc.actualizar_control_punto(self.db, a["id"], self.vida.id,
+                                          {"loza": {"cumple": False, "nota": ""}},
+                                          self.admin.id)
+        self.assertIsNone(r["respuestas"]["loza"]["nota"])
+
+    def test_la_nota_larga_se_recorta_y_no_revienta(self):
+        r = svc.crear_control_punto(self.db, self.vida.id, date.today(), {
+            "loza": {"cumple": False, "nota": "x" * 900}}, self.admin.id)
+        self.assertEqual(len(r["respuestas"]["loza"]["nota"]), 300)
+
+    # ── La visita anterior ────────────────────────────────────────────────────
+    def test_sin_visitas_anteriores_devuelve_nada(self):
+        self.assertIsNone(svc.revision_anterior(self.db, self.vida.id))
+
+    def test_la_anterior_trae_lo_que_fallo(self):
+        """Una auditoría cuyas fallas nadie verifica en la visita siguiente es
+        teatro: esto las pone delante de quien revisa."""
+        svc.crear_control_punto(self.db, self.palmetto.id, date.today() - timedelta(days=8), {
+            "past_rotulada": {"cumple": False, "nota": "tortas sin fecha"},
+            "uniforme": False, "loza": True}, self.admin.id)
+        ant = svc.revision_anterior(self.db, self.palmetto.id)
+        self.assertEqual(ant["fallan"], 2)
+        self.assertEqual([i["label"] for i in ant["incumplidas"]],
+                         ["Pastelería rotulada",
+                          "Uniforme completo: gorra, camiseta, delantal y cofia"])
+        self.assertEqual(ant["incumplidas"][0]["nota"], "tortas sin fecha")
+
+    def test_la_anterior_es_la_de_SU_sede(self):
+        svc.crear_control_punto(self.db, self.vida.id, date.today(),
+                                self._todas(False), self.admin.id)
+        self.assertIsNone(svc.revision_anterior(self.db, self.palmetto.id))
+
+    def test_al_editar_la_anterior_no_es_ella_misma(self):
+        vieja = svc.crear_control_punto(self.db, self.vida.id, date.today() - timedelta(days=7),
+                                        {"loza": False}, self.admin.id)
+        nueva = svc.crear_control_punto(self.db, self.vida.id, date.today(),
+                                        {"loza": True}, self.admin.id)
+        ant = svc.revision_anterior(self.db, self.vida.id, excluir_id=nueva["id"])
+        self.assertEqual(ant["id"], vieja["id"])
+
+    # ── Tendencia por pregunta ────────────────────────────────────────────────
+    def test_la_tendencia_ordena_por_lo_que_mas_falla(self):
+        """«El rotulado falla 3 de 3» y «falló una vez» piden cosas distintas."""
+        hoy = date.today()
+        for i in range(3):
+            svc.crear_control_punto(self.db, self.palmetto.id, hoy - timedelta(days=i * 7),
+                                    {"past_rotulada": False, "loza": True,
+                                     "unas": True if i else False}, self.admin.id)
+        t = svc.tendencia_control_punto(self.db, self.palmetto.id)
+        self.assertEqual(t["visitas"], 3)
+        primero = t["items"][0]
+        self.assertEqual(primero["key"], "past_rotulada")
+        self.assertEqual(primero["fallan"], 3)
+        self.assertEqual(primero["respondidas"], 3)
+        unas = next(i for i in t["items"] if i["key"] == "unas")
+        self.assertEqual(unas["fallan"], 1)
+
+    def test_el_denominador_es_lo_respondido_no_las_visitas(self):
+        """Una pregunta contestada 2 veces y fallada las 2 es 2 de 2, no 2 de 9.
+        Mezclarlas diría que casi nunca falla cuando casi nunca se revisa."""
+        hoy = date.today()
+        for i in range(5):
+            respuestas = {"loza": True}
+            if i < 2:
+                respuestas["velinos"] = False
+            svc.crear_control_punto(self.db, self.vida.id, hoy - timedelta(days=i),
+                                    respuestas, self.admin.id)
+        t = svc.tendencia_control_punto(self.db, self.vida.id)
+        vel = next(i for i in t["items"] if i["key"] == "velinos")
+        self.assertEqual((vel["fallan"], vel["respondidas"], vel["sin_responder"]), (2, 2, 3))
+
+    def test_la_tendencia_solo_mira_las_ultimas_visitas_pedidas(self):
+        hoy = date.today()
+        for i in range(4):
+            svc.crear_control_punto(self.db, self.vida.id, hoy - timedelta(days=i),
+                                    {"loza": False}, self.admin.id)
+        t = svc.tendencia_control_punto(self.db, self.vida.id, visitas=2)
+        self.assertEqual(t["visitas"], 2)
+        self.assertEqual(next(i for i in t["items"] if i["key"] == "loza")["fallan"], 2)
+
+    def test_la_tendencia_sin_visitas_no_revienta(self):
+        t = svc.tendencia_control_punto(self.db, self.vida.id)
+        self.assertEqual(t["visitas"], 0)
+        self.assertEqual(len(t["items"]), 15)
+        self.assertTrue(all(i["fallan"] == 0 for i in t["items"]))
+
     # ── Una pregunta nueva no miente sobre el pasado ───────────────────────────
     def test_una_pregunta_nueva_sale_sin_responder_en_las_viejas(self):
         """Si mañana se agrega una pregunta al formato, las revisiones ya hechas
@@ -231,7 +356,7 @@ class ControlPuntoTest(unittest.TestCase):
                 ("nueva", "Sección nueva", None, [("pregunta_nueva", "Algo nuevo")]))
             svc.CONTROL_PUNTO_KEYS.append("pregunta_nueva")
             vieja = svc.listar_control_punto(self.db, self.vida.id)[0]
-            self.assertIsNone(vieja["respuestas"]["pregunta_nueva"])
+            self.assertIsNone(vieja["respuestas"]["pregunta_nueva"]["cumple"])
             self.assertEqual(vieja["cumplen"], 15)
             self.assertEqual(vieja["sin_responder"], 1)
             self.assertEqual(vieja["total"], 16)

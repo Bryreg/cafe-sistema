@@ -253,12 +253,13 @@ def get_tareas() -> list[dict]:
 # quitados. Las claves NO se renombran nunca: son lo que ata las respuestas
 # guardadas a su pregunta, así que cambiar una clave despega el histórico.
 #
-# Dos cosas se dejaron COMO ESTÁN EN EL FORMULARIO, a propósito, aunque parezcan
-# deslices, porque cambiarlas sería cambiarle el formato al dueño sin permiso:
-#   · «Formularios llenos correctamente» y «Limpieza general del punto» viven
-#     bajo «Máquina espresso» y no son cosas de la máquina.
+# Dos diferencias con el formulario original, las dos decididas por el dueño:
+#   · «Formularios llenos correctamente» y «Limpieza general del punto» estaban
+#     bajo «Máquina espresso» y no son cosas de la máquina: se movieron a
+#     Operativo. Las CLAVES no cambiaron, así que las revisiones ya registradas
+#     siguen atadas a su pregunta y solo se reordena cómo se muestran.
 #   · «Pastelería rotulada» era de tipo CASILLAS en Google, o sea que admitía
-#     marcar Sí y No a la vez. Acá es Sí/No como las otras quince: eso no se
+#     marcar Sí y No a la vez. Acá es Sí/No como las otras catorce: eso no se
 #     podía portar fiel sin portar el error.
 CONTROL_PUNTO_SECCIONES = [
     ("operativo", "Operativo",
@@ -267,6 +268,9 @@ CONTROL_PUNTO_SECCIONES = [
          ("past_estado",       "Pastelería en buen estado, buen tamaño de las porciones "
                                "y cubiertas limpias"),
          ("salsas_rotuladas",  "Salsas y granizados rotulados y con fecha"),
+         # Movidas desde «Máquina espresso»: no son cosas de la máquina.
+         ("formularios",       "Formularios llenos correctamente"),
+         ("limpieza_general",  "Limpieza general del punto: mesones, vitrinas, sillas y mesas"),
      ]),
     ("espresso", "Máquina espresso", None, [
         ("loza",              "Loza limpia y seca"),
@@ -274,8 +278,6 @@ CONTROL_PUNTO_SECCIONES = [
         ("velinos",           "Limpieza de los velinos y licores"),
         ("plasticos",         "Limpieza de los plásticos donde van las cucharas y el azúcar"),
         ("calentamiento",     "Calentamiento apropiado de la pastelería"),
-        ("formularios",       "Formularios llenos correctamente"),
-        ("limpieza_general",  "Limpieza general del punto: mesones, vitrinas, sillas y mesas"),
     ]),
     ("presentacion", "Presentación personal", None, [
         ("sin_joyas",         "Presentación sin aretes, anillos ni pulseras"),
@@ -305,7 +307,8 @@ def get_control_punto_formato() -> dict:
 
 
 def _serial_cp(a: AuditoriaControlPunto) -> dict:
-    respuestas = {it.pregunta_key: it.cumple for it in a.items}
+    por_key = {it.pregunta_key: it for it in a.items}
+    respuestas = {k: it.cumple for k, it in por_key.items()}
     # El resumen que de verdad se lee. `sin_responder` va aparte y NO se suma a
     # los «No»: una revisión a medias y una con fallas son cosas distintas, y
     # meterlas en el mismo número deja al dueño persiguiendo fallas que nadie
@@ -324,14 +327,25 @@ def _serial_cp(a: AuditoriaControlPunto) -> dict:
         "vobo_fecha": a.vobo_fecha.isoformat() if a.vobo_fecha else None,
         "usuario": a.usuario.nombre if a.usuario else "",
         "created_at": a.created_at.isoformat() if a.created_at else None,
-        "respuestas": {k: respuestas.get(k) for k in CONTROL_PUNTO_KEYS},
+        "respuestas": {
+            k: {
+                "cumple": respuestas.get(k),
+                "nota": por_key[k].nota if k in por_key else None,
+                "foto_url": por_key[k].foto_url if k in por_key else None,
+            } for k in CONTROL_PUNTO_KEYS
+        },
         "cumplen": cumplen,
         "fallan": fallan,
         "sin_responder": sin_responder,
         "total": len(CONTROL_PUNTO_KEYS),
-        # Los que fallaron, con su texto: es lo que hay que ir a arreglar.
-        "incumplidas": [lbl for _, _, _, pregs in CONTROL_PUNTO_SECCIONES
-                        for k, lbl in pregs if respuestas.get(k) is False],
+        # Los que fallaron, con su texto, su nota y su foto: es lo que hay que ir
+        # a arreglar, y el detalle es lo que lo hace accionable.
+        "incumplidas": [
+            {"key": k, "label": lbl,
+             "nota": por_key[k].nota if k in por_key else None,
+             "foto_url": por_key[k].foto_url if k in por_key else None}
+            for _, _, _, pregs in CONTROL_PUNTO_SECCIONES
+            for k, lbl in pregs if respuestas.get(k) is False],
     }
 
 
@@ -350,17 +364,113 @@ def _escribir_items(db: Session, a: AuditoriaControlPunto, respuestas: dict) -> 
 
     Se recorre el CATÁLOGO, no lo que mandó el cliente: así una pregunta nueva
     aparece en las auditorías viejas como «sin responder» —que es la verdad— y
-    una clave inventada por el cliente no entra a la tabla."""
+    una clave inventada por el cliente no entra a la tabla.
+
+    Cada respuesta puede venir como `{cumple, nota, foto_url}` o como el valor
+    suelto (True/False/None). Se aceptan las dos formas porque la pantalla manda
+    objetos y las pruebas y los scripts es más cómodo que manden el booleano.
+
+    La NOTA y la FOTO no se borran cuando la respuesta pasa a Sí: la corrección
+    se hizo, y el detalle de qué estaba mal es justamente lo que uno quiere
+    releer en la visita siguiente. Para quitarlas hay que mandarlas vacías."""
     existentes = {it.pregunta_key: it for it in a.items}
     for k in CONTROL_PUNTO_KEYS:
-        valor = respuestas.get(k, None)
+        cruda = respuestas.get(k, None)
+        if isinstance(cruda, dict):
+            valor = cruda.get("cumple")
+            nota = cruda.get("nota")
+            foto = cruda.get("foto_url")
+            trae_nota = "nota" in cruda
+            trae_foto = "foto_url" in cruda
+        else:
+            valor = cruda
+            nota = foto = None
+            trae_nota = trae_foto = False
         if valor is not None:
             valor = bool(valor)
+        nota = (nota or "").strip()[:300] or None
+        foto = (foto or "").strip() or None
+
         it = existentes.get(k)
         if it is None:
-            db.add(AuditoriaControlPuntoItem(auditoria_id=a.id, pregunta_key=k, cumple=valor))
+            db.add(AuditoriaControlPuntoItem(auditoria_id=a.id, pregunta_key=k,
+                                             cumple=valor, nota=nota, foto_url=foto))
         else:
             it.cumple = valor
+            if trae_nota:
+                it.nota = nota
+            if trae_foto:
+                it.foto_url = foto
+
+
+def revision_anterior(db: Session, tienda_id: int,
+                      excluir_id: int | None = None) -> dict | None:
+    """La última revisión de esa sede, para arrancar la siguiente mirándola.
+
+    Una auditoría que encuentra cuatro fallas y nadie verifica en la visita
+    siguiente si se corrigieron es teatro: la foto se repite y la tendencia no
+    existe. Los datos ya están, solo hay que ponerlos delante de quien revisa.
+
+    `excluir_id` es para cuando se está EDITANDO una revisión: la anterior a
+    ella, no ella misma."""
+    q = db.query(AuditoriaControlPunto).filter(
+        AuditoriaControlPunto.tienda_id == tienda_id)
+    if excluir_id is not None:
+        q = q.filter(AuditoriaControlPunto.id != excluir_id)
+    a = (q.order_by(AuditoriaControlPunto.fecha_revision.desc(),
+                    AuditoriaControlPunto.id.desc()).first())
+    if a is None:
+        return None
+    d = _serial_cp(a)
+    return {
+        "id": d["id"],
+        "fecha_revision": d["fecha_revision"],
+        "cumplen": d["cumplen"],
+        "fallan": d["fallan"],
+        "sin_responder": d["sin_responder"],
+        "total": d["total"],
+        "incumplidas": d["incumplidas"],
+    }
+
+
+def tendencia_control_punto(db: Session, tienda_id: int, visitas: int = 10) -> dict:
+    """Cuántas veces falló CADA pregunta en las últimas visitas de esa sede.
+
+    Es lo que separa un problema de proceso de un martes malo: «el rotulado
+    falla 7 de 9 visitas» y «falló una vez» piden cosas distintas, y con la
+    lista de una sola visita no se distinguen.
+
+    El denominador de cada pregunta es cuántas veces se RESPONDIÓ, no cuántas
+    visitas hubo: una pregunta contestada dos veces y fallada las dos es 2 de 2,
+    no 2 de 9. Mezclarlas diría que casi nunca falla cuando en realidad casi
+    nunca se revisa — y por eso también se devuelve `sin_responder`.
+    """
+    filas = (db.query(AuditoriaControlPunto)
+             .filter(AuditoriaControlPunto.tienda_id == tienda_id)
+             .order_by(AuditoriaControlPunto.fecha_revision.desc(),
+                       AuditoriaControlPunto.id.desc())
+             .limit(max(1, min(visitas, 60))).all())
+    etiquetas = {k: lbl for _, _, _, pregs in CONTROL_PUNTO_SECCIONES for k, lbl in pregs}
+    conteo = {k: {"fallan": 0, "respondidas": 0, "sin_responder": 0} for k in CONTROL_PUNTO_KEYS}
+    for a in filas:
+        vistos = {it.pregunta_key: it.cumple for it in a.items}
+        for k in CONTROL_PUNTO_KEYS:
+            v = vistos.get(k)
+            if v is None:
+                conteo[k]["sin_responder"] += 1
+            else:
+                conteo[k]["respondidas"] += 1
+                if v is False:
+                    conteo[k]["fallan"] += 1
+    items = [{
+        "key": k, "label": etiquetas.get(k, k),
+        "fallan": c["fallan"], "respondidas": c["respondidas"],
+        "sin_responder": c["sin_responder"],
+    } for k, c in conteo.items()]
+    # Primero lo que más falla; entre iguales, lo más veces respondido (más
+    # evidencia detrás del mismo número).
+    items.sort(key=lambda x: (-x["fallan"], -x["respondidas"], x["label"]))
+    return {"visitas": len(filas), "items": items}
 
 
 def crear_control_punto(db: Session, tienda_id: int, fecha_revision: date,

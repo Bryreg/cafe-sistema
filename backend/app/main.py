@@ -318,6 +318,12 @@ with engine.connect() as _conn:
         # solicitud que salió sola de la que pidió el admin. Las viejas son todas
         # pedidas a mano, así que el default FALSE las deja como estaban.
         "ALTER TABLE solicitudes_conteo_desechables ADD COLUMN automatica BOOLEAN DEFAULT FALSE",
+        # Control del punto: el detalle de lo que falló. La tabla se creó en el
+        # deploy anterior con create_all, así que estas dos columnas van por
+        # ALTER. Las revisiones ya cargadas quedan sin nota ni foto, que es la
+        # verdad: se registraron cuando el campo no existía.
+        "ALTER TABLE auditorias_control_punto_items ADD COLUMN nota VARCHAR(300)",
+        "ALTER TABLE auditorias_control_punto_items ADD COLUMN foto_url VARCHAR(500)",
         "UPDATE solicitudes_conteo_desechables SET automatica = FALSE WHERE automatica IS NULL",
         # El libro del banco con categoría: es lo que contesta «cuánto nos
         # estamos gastando en cada cosa» mes a mes, y lo que separa la plata

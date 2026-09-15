@@ -859,6 +859,13 @@ class AuditoriaControlPuntoItem(Base):
     # lo no contado se leía como cuadrado. El formulario de Google también
     # permitía dejar la pregunta en blanco.
     cumple = Column(Boolean, nullable=True)
+    # QUÉ falló, no solo QUE falló. Un «No» en «Pastelería rotulada» no dice cuál
+    # ni desde cuándo, y las observaciones generales del encabezado se vuelven un
+    # párrafo donde no se distingue a qué pregunta corresponde cada cosa.
+    nota = Column(String(300), nullable=True)
+    # La foto cierra discusiones y hace verificable la corrección. Sube por el
+    # mismo camino que el resto del sistema (`core/storage.upload_imagen`).
+    foto_url = Column(String(500), nullable=True)
     auditoria = relationship("AuditoriaControlPunto", back_populates="items")
 
 

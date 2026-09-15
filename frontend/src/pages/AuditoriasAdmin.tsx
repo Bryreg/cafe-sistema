@@ -969,6 +969,8 @@ function TabLimpieza({ tiendaId }: { tiendaId: number }) {
 interface CPPregunta { key: string; label: string }
 interface CPSeccion { key: string; nombre: string; descripcion: string | null; preguntas: CPPregunta[] }
 interface CPFormato { secciones: CPSeccion[]; total_preguntas: number }
+interface CPRespuesta { cumple: boolean | null; nota: string | null; foto_url: string | null }
+interface CPIncumplida { key: string; label: string; nota: string | null; foto_url: string | null }
 interface CPAuditoria {
   id: number
   tienda_id: number
@@ -978,13 +980,21 @@ interface CPAuditoria {
   vobo: boolean
   vobo_por: string | null
   usuario: string
-  respuestas: Record<string, boolean | null>
+  respuestas: Record<string, CPRespuesta>
   cumplen: number
   fallan: number
   sin_responder: number
   total: number
-  incumplidas: string[]
+  incumplidas: CPIncumplida[]
 }
+interface CPAnterior {
+  id: number; fecha_revision: string; cumplen: number; fallan: number
+  sin_responder: number; total: number; incumplidas: CPIncumplida[]
+}
+interface CPTendenciaItem {
+  key: string; label: string; fallan: number; respondidas: number; sin_responder: number
+}
+interface CPTendencia { visitas: number; items: CPTendenciaItem[] }
 
 /**
  * Control del punto — el Google Form «Control de Médium Café», acá adentro.
@@ -1010,8 +1020,12 @@ function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] 
   const [abierto, setAbierto] = useState(false)
   const [editando, setEditando] = useState<number | null>(null)
   const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10))
-  const [respuestas, setRespuestas] = useState<Record<string, boolean | null>>({})
+  const [respuestas, setRespuestas] = useState<Record<string, CPRespuesta>>({})
   const [observaciones, setObservaciones] = useState('')
+  const [anterior, setAnterior] = useState<CPAnterior | null>(null)
+  const [tendencia, setTendencia] = useState<CPTendencia | null>(null)
+  const [verTendencia, setVerTendencia] = useState(false)
+  const [subiendo, setSubiendo] = useState<string | null>(null)
 
   const cargar = () => {
     setLoading(true)
@@ -1019,11 +1033,24 @@ function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] 
       api.get<CPFormato>('/auditorias/control-punto/formato'),
       api.get<CPAuditoria[]>('/auditorias/control-punto',
         { params: todasLasSedes ? {} : { tienda_id: tiendaId } }),
-    ]).then(([f, h]) => { setFormato(f.data); setHistorial(h.data) })
+      api.get<CPTendencia>('/auditorias/control-punto/tendencia',
+        { params: { tienda_id: tiendaId } }).catch(() => ({ data: null })),
+    ]).then(([f, h, t]) => {
+      setFormato(f.data); setHistorial(h.data); setTendencia(t.data as CPTendencia | null)
+    })
       .catch(() => setError('No se pudo cargar el control del punto'))
       .finally(() => setLoading(false))
   }
   useEffect(cargar, [tiendaId, todasLasSedes])
+
+  // Al abrir una revisión se trae la anterior: lo que falló la vez pasada va
+  // ARRIBA del formulario. Una auditoría cuyas fallas nadie verifica en la
+  // visita siguiente es teatro, y los datos ya estaban.
+  const traerAnterior = (excluir?: number) =>
+    api.get<CPAnterior | null>('/auditorias/control-punto/anterior',
+      { params: { tienda_id: tiendaId, ...(excluir ? { excluir_id: excluir } : {}) } })
+      .then(r => setAnterior(r.data))
+      .catch(() => setAnterior(null))
 
   const nuevo = () => {
     setEditando(null)
@@ -1031,6 +1058,7 @@ function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] 
     setRespuestas({})
     setObservaciones('')
     setAbierto(true)
+    traerAnterior()
   }
 
   const editar = (a: CPAuditoria) => {
@@ -1039,19 +1067,38 @@ function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] 
     setRespuestas({ ...a.respuestas })
     setObservaciones(a.observaciones ?? '')
     setAbierto(true)
+    traerAnterior(a.id)
   }
 
   // Tocar la opción ya marcada la DESMARCA: es la única forma de volver a «sin
   // responder» después de un clic equivocado. Sin esto, un Sí puesto por error
   // solo se puede cambiar por un No, que es otra afirmación falsa.
+  const vacia: CPRespuesta = { cumple: null, nota: null, foto_url: null }
   const marcar = (key: string, valor: boolean) =>
-    setRespuestas(r => ({ ...r, [key]: r[key] === valor ? null : valor }))
+    setRespuestas(r => {
+      const act = r[key] ?? vacia
+      return { ...r, [key]: { ...act, cumple: act.cumple === valor ? null : valor } }
+    })
+  const setNota = (key: string, nota: string) =>
+    setRespuestas(r => ({ ...r, [key]: { ...(r[key] ?? vacia), nota } }))
+
+  const subirFoto = async (key: string, file: File) => {
+    setSubiendo(key); setError('')
+    try {
+      const fd = new FormData()
+      fd.append('imagen', file)
+      const r = await api.post<{ url: string }>('/auditorias/control-punto/foto', fd)
+      setRespuestas(prev => ({ ...prev, [key]: { ...(prev[key] ?? vacia), foto_url: r.data.url } }))
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'No se pudo subir la foto')
+    } finally { setSubiendo(null) }
+  }
 
   const contadas = formato
     ? formato.secciones.flatMap(s => s.preguntas)
-        .filter(p => respuestas[p.key] === true || respuestas[p.key] === false).length
+        .filter(p => respuestas[p.key]?.cumple === true || respuestas[p.key]?.cumple === false).length
     : 0
-  const fallanAhora = Object.values(respuestas).filter(v => v === false).length
+  const fallanAhora = Object.values(respuestas).filter(v => v?.cumple === false).length
 
   const guardar = async () => {
     setGuardando(true); setError('')
@@ -1114,6 +1161,47 @@ function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] 
               onChange={e => setTodasLasSedes(e.target.checked)} />
             Ver las dos sedes
           </label>
+          {tendencia && tendencia.visitas > 1 && (
+            <button onClick={() => setVerTendencia(v => !v)}
+              className="text-xs font-semibold text-gray-500 underline ml-auto">
+              {verTendencia ? 'ocultar' : 'qué falla más seguido'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Qué falla más seguido ──────────────────────────────────────── */}
+      {!abierto && verTendencia && tendencia && (
+        <div className="bg-white rounded-2xl border border-gray-200 p-4">
+          <p className="text-sm font-bold text-gray-800">
+            Qué falla más seguido — {sedeNombre}
+          </p>
+          <p className="text-xs text-gray-400 mt-0.5 mb-3">
+            Últimas {tendencia.visitas} visitas. El denominador de cada pregunta es
+            cuántas veces se <strong>respondió</strong>, no cuántas visitas hubo: «2 de 2»
+            y «2 de 10» dicen cosas muy distintas.
+          </p>
+          <div className="space-y-1">
+            {tendencia.items.filter(i => i.fallan > 0 || i.sin_responder === tendencia.visitas)
+              .map(i => (
+                <div key={i.key} className="flex items-center gap-3 text-xs">
+                  <span className="flex-1 text-gray-700">{i.label}</span>
+                  {i.respondidas === 0 ? (
+                    <span className="text-gray-400 shrink-0">nunca se revisó</span>
+                  ) : (
+                    <span className={`font-bold font-mono shrink-0 ${
+                      i.fallan / i.respondidas >= 0.5 ? 'text-red-600' : 'text-amber-600'}`}>
+                      {i.fallan} de {i.respondidas}
+                    </span>
+                  )}
+                </div>
+              ))}
+            {tendencia.items.every(i => i.fallan === 0 && i.respondidas > 0) && (
+              <p className="text-xs text-green-700">
+                Nada falló en las últimas {tendencia.visitas} visitas.
+              </p>
+            )}
+          </div>
         </div>
       )}
 
@@ -1140,6 +1228,40 @@ function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] 
             </div>
           </div>
 
+          {/* Lo que falló la vez pasada, ANTES de las preguntas: sin esto la
+              auditoría es una foto que se repite y nadie cierra nada. */}
+          {anterior && (
+            <div className={`rounded-xl border p-3 ${anterior.fallan > 0
+              ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
+              <p className="text-xs font-bold text-gray-700">
+                Visita anterior — {anterior.fecha_revision}
+              </p>
+              {anterior.fallan === 0 ? (
+                <p className="text-xs text-green-700 mt-0.5">
+                  No quedó nada pendiente ({anterior.cumplen} de {anterior.total} cumplían).
+                </p>
+              ) : (
+                <>
+                  <p className="text-xs text-amber-800 mt-0.5">
+                    Quedaron {anterior.fallan} sin cumplir. Revisá primero si se corrigieron:
+                  </p>
+                  <ul className="mt-1 space-y-0.5">
+                    {anterior.incumplidas.map(i => (
+                      <li key={i.key} className="text-xs text-amber-900">
+                        · {i.label}
+                        {i.nota && <span className="text-amber-700"> — {i.nota}</span>}
+                        {i.foto_url && (
+                          <a href={i.foto_url} target="_blank" rel="noreferrer"
+                            className="ml-1.5 underline text-blue-600">foto</a>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
+
           {formato.secciones.map(sec => (
             <div key={sec.key}>
               <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">{sec.nombre}</p>
@@ -1148,26 +1270,66 @@ function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] 
               )}
               <div className="mt-2 space-y-1.5">
                 {sec.preguntas.map(p => {
-                  const v = respuestas[p.key]
+                  const r = respuestas[p.key]
+                  const v = r?.cumple ?? null
+                  // Falló la vez pasada: se marca para que quien revisa mire ahí
+                  // primero. Es el punto de traer la visita anterior.
+                  const falloAntes = anterior?.incumplidas.some(i => i.key === p.key)
+                  // La nota se muestra cuando NO cumple, o cuando ya hay una
+                  // escrita: así corregir a Sí no la esconde ni la borra.
+                  const verNota = v === false || !!r?.nota
                   return (
                     <div key={p.key}
-                      className={`flex items-start gap-3 px-3 py-2 rounded-lg ${
+                      className={`px-3 py-2 rounded-lg ${
                         v === false ? 'bg-red-50' : v === true ? 'bg-green-50' : 'bg-gray-50'}`}>
-                      <span className="flex-1 text-sm text-gray-700">{p.label}</span>
-                      <span className="flex gap-1 shrink-0">
-                        <button type="button" onClick={() => marcar(p.key, true)}
-                          className={`px-3 py-1 rounded-lg text-xs font-bold border-2 ${
-                            v === true ? 'bg-green-600 text-white border-green-600'
-                                       : 'bg-white text-gray-400 border-gray-200'}`}>
-                          Sí
-                        </button>
-                        <button type="button" onClick={() => marcar(p.key, false)}
-                          className={`px-3 py-1 rounded-lg text-xs font-bold border-2 ${
-                            v === false ? 'bg-red-600 text-white border-red-600'
-                                        : 'bg-white text-gray-400 border-gray-200'}`}>
-                          No
-                        </button>
-                      </span>
+                      <div className="flex items-start gap-3">
+                        <span className="flex-1 text-sm text-gray-700">
+                          {p.label}
+                          {falloAntes && (
+                            <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 align-middle">
+                              falló la vez pasada
+                            </span>
+                          )}
+                        </span>
+                        <span className="flex gap-1 shrink-0">
+                          <button type="button" onClick={() => marcar(p.key, true)}
+                            className={`px-3 py-1 rounded-lg text-xs font-bold border-2 ${
+                              v === true ? 'bg-green-600 text-white border-green-600'
+                                         : 'bg-white text-gray-400 border-gray-200'}`}>
+                            Sí
+                          </button>
+                          <button type="button" onClick={() => marcar(p.key, false)}
+                            className={`px-3 py-1 rounded-lg text-xs font-bold border-2 ${
+                              v === false ? 'bg-red-600 text-white border-red-600'
+                                          : 'bg-white text-gray-400 border-gray-200'}`}>
+                            No
+                          </button>
+                        </span>
+                      </div>
+
+                      {verNota && (
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                          <input value={r?.nota ?? ''} onChange={e => setNota(p.key, e.target.value)}
+                            maxLength={300} placeholder="Qué encontraste — ej: las 3 tortas sin fecha"
+                            className="flex-1 min-w-[180px] border border-gray-300 rounded-lg px-2 py-1 text-xs" />
+                          {r?.foto_url ? (
+                            <a href={r.foto_url} target="_blank" rel="noreferrer"
+                              className="text-xs font-semibold text-blue-600 underline">
+                              ver foto
+                            </a>
+                          ) : (
+                            <label className="text-xs font-semibold text-gray-500 border border-gray-300 rounded-lg px-2 py-1 cursor-pointer hover:border-gray-500">
+                              {subiendo === p.key ? 'subiendo...' : '+ foto'}
+                              <input type="file" accept="image/*" capture="environment" hidden
+                                onChange={e => {
+                                  const f = e.target.files?.[0]
+                                  if (f) subirFoto(p.key, f)
+                                  e.target.value = ''
+                                }} />
+                            </label>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )
                 })}
@@ -1260,8 +1422,15 @@ function TabControlPunto({ tiendaId, sedes }: { tiendaId: number; sedes: Sede[] 
                 No cumplen
               </p>
               <ul className="mt-1 space-y-0.5">
-                {a.incumplidas.map((t, i) => (
-                  <li key={i} className="text-xs text-red-700">· {t}</li>
+                {a.incumplidas.map(i => (
+                  <li key={i.key} className="text-xs text-red-700">
+                    · {i.label}
+                    {i.nota && <span className="text-red-600"> — {i.nota}</span>}
+                    {i.foto_url && (
+                      <a href={i.foto_url} target="_blank" rel="noreferrer"
+                        className="ml-1.5 underline text-blue-600">foto</a>
+                    )}
+                  </li>
                 ))}
               </ul>
             </div>

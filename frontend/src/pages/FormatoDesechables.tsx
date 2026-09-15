@@ -147,8 +147,9 @@ export default function FormatoDesechables() {
         </Link>
         <h1 className="text-2xl font-bold text-gray-900">Formato de desechables</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Qué se le pide contar a las baristas, y qué días sale solo. Los desechables no entran
-          en el conteo diario: si este formato no se pide, no se cuentan.
+          Qué se le pide contar a las baristas. <strong>El conteo lo arranca la barista</strong> desde
+          su hub, cuando tiene un momento tranquilo. Los desechables no entran en el conteo diario:
+          si nadie arranca este formato, esos días no quedan medidos.
         </p>
       </div>
 
@@ -166,11 +167,13 @@ export default function FormatoDesechables() {
       {/* ── Programación ───────────────────────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-200 p-5">
         <p className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
-          <CalendarClock size={15} style={{ color: 'oklch(48% 0.12 155)' }} /> Sale solo estos días
+          <CalendarClock size={15} style={{ color: 'oklch(48% 0.12 155)' }} />
+          Red de seguridad <span className="text-[11px] font-semibold text-gray-400">(opcional)</span>
         </p>
         <p className="text-xs text-gray-400 mt-1 mb-3">
-          Aparece en el kiosko de las dos sedes con la primera consulta del día, así que
-          está listo cuando la sede abre. Si no marcás ningún día queda solo el botón manual.
+          Normalmente esto va apagado: el conteo lo arranca la barista. Si marcás días, el
+          formato aparece solo esos días cuando la sede abre —<strong>únicamente si nadie lo
+          arrancó ya</strong>— y sirve de piso para que no se pase una semana sin medición.
         </p>
         <div className="flex gap-2 flex-wrap">
           {DIAS_CORTOS.map((nombre, d) => {
@@ -186,8 +189,8 @@ export default function FormatoDesechables() {
           })}
         </div>
         {f.dias.length === 0 && (
-          <p className="text-xs text-amber-700 mt-3 flex items-center gap-1.5">
-            <AlertTriangle size={12} /> Apagado: el formato solo sale si alguien lo pide a mano.
+          <p className="text-xs text-gray-400 mt-3">
+            Apagada. El formato sale cuando la barista lo arranca, o cuando lo pedís desde Conteos.
           </p>
         )}
       </div>

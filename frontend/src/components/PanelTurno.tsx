@@ -168,33 +168,75 @@ function AlertasStockTurno({ tiendaId }: { tiendaId: number }) {
   )
 }
 
-/** Aviso de formato de desechables pendiente (lo pide el admin desde el hub). */
+/** Conteo de desechables: lo ARRANCA la barista, cuando tiene un hueco.
+ *
+ *  Antes este card solo aparecía si el admin pedía el formato, y el arranque era
+ *  suyo. Los desechables están fuera del conteo diario, así que eso significaba
+ *  que si nadie se acordaba no se contaban nunca — y cuando sí lo pedía, le caía
+ *  a la barista en el momento que a ella le tocara, que podía ser el peor del
+ *  día. Un conteo hecho entre clientes son números inventados.
+ *
+ *  Por eso ahora el card está SIEMPRE, y es el botón de arranque. Sigue
+ *  distinguiendo quién lo abrió: si lo pidió el admin (o salió de la
+ *  programación, si alguien la prende) se ve en ámbar como algo que hay que
+ *  hacer; si no hay nada abierto, se ve neutro como una acción disponible.
+ */
 function DesechablesPendiente({ tiendaId }: { tiendaId: number }) {
-  const [pendiente, setPendiente] = useState(false)
+  const [pendiente, setPendiente] = useState<boolean | null>(null)
+  const [automatica, setAutomatica] = useState(false)
+  const [arrancando, setArrancando] = useState(false)
   const navigate = useNavigate()
 
   useEffect(() => {
     api.get(`/conteos/desechables/pendiente/${tiendaId}`)
-      .then(r => setPendiente(!!r.data?.pendiente))
+      .then(r => { setPendiente(!!r.data?.pendiente); setAutomatica(!!r.data?.automatica) })
       .catch(() => setPendiente(false))
   }, [tiendaId])
 
-  if (!pendiente) return null
+  const arrancar = async () => {
+    setArrancando(true)
+    try {
+      const fd = new FormData()
+      fd.append('tienda_id', String(tiendaId))
+      await api.post('/conteos/desechables/iniciar', fd)
+      navigate('/conteo-desechables')
+    } catch {
+      setArrancando(false)
+    }
+  }
+
+  // Mientras no se sabe, no se dibuja nada: un card que aparece y cambia de
+  // color al segundo es peor que uno que llega un instante después.
+  if (pendiente === null) return null
+
+  const abierto = pendiente
   return (
-    <button type="button" onClick={() => navigate('/conteo-desechables')}
+    <button type="button"
+      onClick={abierto ? () => navigate('/conteo-desechables') : arrancar}
+      disabled={arrancando}
       className="w-full flex items-center gap-3 rounded-2xl border px-4 py-3 text-left"
-      style={{ background: dark.amberTint, borderColor: dark.amberDim, cursor: 'pointer' }}>
-      <Package size={16} style={{ color: dark.amber, flexShrink: 0 }} />
+      style={{
+        background: abierto ? dark.amberTint : dark.surface,
+        borderColor: abierto ? dark.amberDim : dark.border,
+        cursor: arrancando ? 'default' : 'pointer',
+        opacity: arrancando ? 0.6 : 1,
+      }}>
+      <Package size={16} style={{ color: abierto ? dark.amber : dark.inkMuted, flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <p className="m-0 font-bold" style={{ fontSize: 13, color: dark.amber }}>
-          El admin pidió el conteo de desechables
+        <p className="m-0 font-bold" style={{ fontSize: 13, color: abierto ? dark.amber : dark.ink }}>
+          {abierto
+            ? (automatica ? 'Toca contar los desechables' : 'El admin pidió el conteo de desechables')
+            : 'Conteo de desechables'}
         </p>
         <p className="m-0 mt-0.5" style={{ fontSize: 11, color: dark.inkMuted }}>
-          Tocá para llenar el formato (agrupado por proveedor)
+          {abierto
+            ? 'Tocá para llenar el formato (agrupado por proveedor)'
+            : 'Cuando tengas un momento tranquilo. Vasos, tapas y aseo.'}
         </p>
       </div>
-      <span className="rounded-xl font-bold text-white" style={{ padding: '5px 10px', fontSize: 11, background: dark.amber }}>
-        Llenar
+      <span className="rounded-xl font-bold text-white"
+        style={{ padding: '5px 10px', fontSize: 11, background: abierto ? dark.amber : dark.inkMuted }}>
+        {arrancando ? '...' : abierto ? 'Llenar' : 'Contar'}
       </span>
     </button>
   )

@@ -156,6 +156,19 @@ def set_programacion_desechables(dias: str = Form(...), db: Session = Depends(ge
     return svc.set_dias_programados(db, limpios, user.id)
 
 
+@router.post("/desechables/iniciar")
+def iniciar_desechables(tienda_id: int = Form(...), db: Session = Depends(get_db),
+                        user: Usuario = Depends(get_current_user),
+                        barista: tuple = Depends(get_barista_actor)):
+    """Barista: arranca ella misma el formato de desechables desde su hub.
+
+    No es solo-admin a propósito: el conteo lo arranca quien tiene el hueco para
+    contar. Si ya hay uno abierto devuelve ese mismo en vez de fallar — pedirlo
+    dos veces no es un error, es que ya estaba."""
+    ensure_tienda_access(user, tienda_id)
+    return svc.iniciar_por_barista(db, tienda_id, user.id, barista[0], barista[1])
+
+
 @router.get("/desechables/pendiente/{tienda_id}")
 def desechables_pendiente(tienda_id: int, db: Session = Depends(get_db),
                           user: Usuario = Depends(get_current_user)):

@@ -74,8 +74,16 @@ class FormatoDesechablesTest(unittest.TestCase):
             os.remove(self.db_path)
 
     # ── Días programados ──────────────────────────────────────────────────────
-    def test_por_defecto_lunes_y_viernes(self):
-        self.assertEqual(svc.dias_programados(self.db), [0, 4])
+    def test_por_defecto_la_programacion_esta_apagada(self):
+        """Decisión del dueño: lo arranca la barista desde su hub. La
+        programación queda como red, apagada, por si algún día se quiere un
+        piso («si el lunes nadie lo hizo, que salga solo»)."""
+        self.assertEqual(svc.dias_programados(self.db), [])
+
+    def test_el_lunes_no_sale_solo_si_no_se_prendio(self):
+        with self._en_dia(2026, 9, 14):   # lunes
+            self.assertFalse(svc.asegurar_solicitud_programada(self.db, self.vida.id))
+        self.assertEqual(self.db.query(SolicitudConteoDesechables).count(), 0)
 
     def test_se_pueden_cambiar_los_dias(self):
         r = svc.set_dias_programados(self.db, [1, 3], self.admin.id)
@@ -98,9 +106,10 @@ class FormatoDesechablesTest(unittest.TestCase):
             svc.set_dias_programados(self.db, [0, 9], self.admin.id)
 
     def test_config_corrupta_cae_al_default_sin_romper(self):
+        """Un valor que no son números no puede tumbar el poll del kiosko."""
         self.db.add(Configuracion(clave=svc.CLAVE_DIAS_DESECHABLES, valor="lunes,viernes"))
         self.db.commit()
-        self.assertEqual(svc.dias_programados(self.db), [0, 4])
+        self.assertEqual(svc.dias_programados(self.db), svc.DIAS_DESECHABLES_DEFECTO)
 
     # ── Materialización ───────────────────────────────────────────────────────
     @contextlib.contextmanager
@@ -126,7 +135,11 @@ class FormatoDesechablesTest(unittest.TestCase):
         with patch("app.core.tz.datetime", RelojFijo):
             yield
 
+    def _prender_lunes_y_viernes(self):
+        svc.set_dias_programados(self.db, [0, 4], self.admin.id)
+
     def test_el_lunes_sale_solo(self):
+        self._prender_lunes_y_viernes()
         # 2026-09-14 es lunes
         with self._en_dia(2026, 9, 14):
             creada = svc.asegurar_solicitud_programada(self.db, self.palmetto.id)
@@ -137,10 +150,12 @@ class FormatoDesechablesTest(unittest.TestCase):
         self.assertTrue(s.automatica)
 
     def test_el_viernes_tambien(self):
+        self._prender_lunes_y_viernes()
         with self._en_dia(2026, 9, 18):   # viernes
             self.assertTrue(svc.asegurar_solicitud_programada(self.db, self.vida.id))
 
     def test_el_miercoles_no(self):
+        self._prender_lunes_y_viernes()
         with self._en_dia(2026, 9, 16):   # miércoles
             self.assertFalse(svc.asegurar_solicitud_programada(self.db, self.vida.id))
         self.assertEqual(self.db.query(SolicitudConteoDesechables).count(), 0)
@@ -148,6 +163,7 @@ class FormatoDesechablesTest(unittest.TestCase):
     def test_no_se_duplica_en_el_mismo_dia(self):
         """El kiosko pregunta cada pocos segundos: sin esta guarda el lunes se
         llenaría de solicitudes."""
+        self._prender_lunes_y_viernes()
         with self._en_dia(2026, 9, 14):
             self.assertTrue(svc.asegurar_solicitud_programada(self.db, self.vida.id))
             for _ in range(5):
@@ -157,6 +173,7 @@ class FormatoDesechablesTest(unittest.TestCase):
     def test_no_reaparece_despues_de_responderla(self):
         """Mirar solo las PENDIENTES traería el formato de vuelta el mismo lunes
         en cuanto la barista lo responde."""
+        self._prender_lunes_y_viernes()
         with self._en_dia(2026, 9, 14):
             svc.asegurar_solicitud_programada(self.db, self.vida.id)
             s = self.db.query(SolicitudConteoDesechables).first()
@@ -169,6 +186,7 @@ class FormatoDesechablesTest(unittest.TestCase):
         """A las 20:00 de Colombia el UTC ya está en el día siguiente. Con la
         fecha UTC, el formato del viernes volvería a salir el viernes a las
         19:01 — y el domingo a las 19:01 saldría el del lunes."""
+        self._prender_lunes_y_viernes()
         with self._en_dia(2026, 9, 14, hora_col=8):
             svc.asegurar_solicitud_programada(self.db, self.vida.id)
         with self._en_dia(2026, 9, 14, hora_col=20):
@@ -176,6 +194,7 @@ class FormatoDesechablesTest(unittest.TestCase):
         self.assertEqual(self.db.query(SolicitudConteoDesechables).count(), 1)
 
     def test_el_domingo_de_noche_no_adelanta_el_lunes(self):
+        self._prender_lunes_y_viernes()
         with self._en_dia(2026, 9, 13, hora_col=20):   # domingo 20:00 Colombia
             self.assertFalse(svc.asegurar_solicitud_programada(self.db, self.vida.id))
 
@@ -184,6 +203,7 @@ class FormatoDesechablesTest(unittest.TestCase):
         responder. Un segundo pendiente encima rompe el módulo entero — la
         barista llena el formato, se cierra uno y el otro queda vivo, así que el
         formato reaparece y no se va más."""
+        self._prender_lunes_y_viernes()
         with self._en_dia(2026, 9, 14):   # lunes: se pide a mano
             svc.solicitar_conteo_desechables(self.db, self.vida.id, self.admin.id)
         with self._en_dia(2026, 9, 18):   # viernes, y el del lunes sigue abierto
@@ -195,6 +215,7 @@ class FormatoDesechablesTest(unittest.TestCase):
     def test_si_el_viejo_ya_se_respondio_el_viernes_si_sale(self):
         """La guarda es «hay uno abierto», no «hubo alguno»: un formato ya
         respondido no puede bloquear el siguiente."""
+        self._prender_lunes_y_viernes()
         with self._en_dia(2026, 9, 14):
             svc.asegurar_solicitud_programada(self.db, self.vida.id)
             s = self.db.query(SolicitudConteoDesechables).first()
@@ -204,6 +225,7 @@ class FormatoDesechablesTest(unittest.TestCase):
             self.assertTrue(svc.asegurar_solicitud_programada(self.db, self.vida.id))
 
     def test_cada_sede_tiene_la_suya(self):
+        self._prender_lunes_y_viernes()
         with self._en_dia(2026, 9, 14):
             svc.asegurar_solicitud_programada(self.db, self.vida.id)
             svc.asegurar_solicitud_programada(self.db, self.palmetto.id)
@@ -213,21 +235,67 @@ class FormatoDesechablesTest(unittest.TestCase):
     def test_sin_admin_activo_no_revienta_el_kiosko(self):
         """Lo llama el poll del kiosko: un problema de la programación no puede
         dejar la pantalla de la barista sin respuesta."""
+        self._prender_lunes_y_viernes()
         self.admin.activo = False
         self.db.commit()
         with self._en_dia(2026, 9, 14):
             self.assertFalse(svc.asegurar_solicitud_programada(self.db, self.vida.id))
 
     def test_el_poll_del_kiosko_la_materializa(self):
+        self._prender_lunes_y_viernes()
         with self._en_dia(2026, 9, 14):
             r = svc.get_solicitud_desechables(self.db, self.palmetto.id)
         self.assertTrue(r["pendiente"])
         self.assertTrue(r["automatica"])
 
     def test_apagada_no_sale_ni_el_lunes(self):
+        self._prender_lunes_y_viernes()
         svc.set_dias_programados(self.db, [], self.admin.id)
         with self._en_dia(2026, 9, 14):
             self.assertFalse(svc.asegurar_solicitud_programada(self.db, self.vida.id))
+
+    # ── Lo arranca la barista ─────────────────────────────────────────────────
+    def test_la_barista_arranca_el_conteo(self):
+        r = svc.iniciar_por_barista(self.db, self.palmetto.id, self.admin.id,
+                                    barista_id=7, barista_nombre="Luisa")
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["ya_estaba"])
+        s = self.db.query(SolicitudConteoDesechables).filter_by(
+            tienda_id=self.palmetto.id).first()
+        self.assertEqual(s.estado, "pendiente")
+        self.assertFalse(s.automatica)
+        self.assertEqual(s.barista_nombre, "Luisa")
+
+    def test_arrancar_dos_veces_devuelve_el_mismo(self):
+        """Tocar el botón dos veces no es un error, es que ya estaba abierto:
+        fallar ahí solo confundiría a quien va a contar."""
+        a = svc.iniciar_por_barista(self.db, self.vida.id, self.admin.id)
+        b = svc.iniciar_por_barista(self.db, self.vida.id, self.admin.id)
+        self.assertEqual(a["solicitud_id"], b["solicitud_id"])
+        self.assertTrue(b["ya_estaba"])
+        self.assertEqual(self.db.query(SolicitudConteoDesechables).count(), 1)
+
+    def test_se_puede_recontar_el_mismo_dia(self):
+        """Un recuento es legítimo —encontraron un descuadre y volvieron a
+        contar— y no se pierde nada: los dos conteos quedan en el historial con
+        su hora. Bloquearlo obligaría a dejar como bueno un conteo que la propia
+        barista sabe que está mal."""
+        svc.iniciar_por_barista(self.db, self.vida.id, self.admin.id)
+        s = self.db.query(SolicitudConteoDesechables).first()
+        s.estado = "respondida"
+        self.db.commit()
+        r = svc.iniciar_por_barista(self.db, self.vida.id, self.admin.id)
+        self.assertFalse(r["ya_estaba"])
+        self.assertEqual(self.db.query(SolicitudConteoDesechables).count(), 2)
+
+    def test_lo_que_arranca_la_barista_tapa_la_programacion_del_dia(self):
+        """Si ella lo hizo el lunes temprano, el piso programado no tiene que
+        volver a pedirlo ese día."""
+        self._prender_lunes_y_viernes()
+        with self._en_dia(2026, 9, 14):
+            svc.iniciar_por_barista(self.db, self.vida.id, self.admin.id)
+            self.assertFalse(svc.asegurar_solicitud_programada(self.db, self.vida.id))
+        self.assertEqual(self.db.query(SolicitudConteoDesechables).count(), 1)
 
     # ── Items del formato, iguales en las dos sedes ───────────────────────────
     def test_el_formato_reporta_cobertura_por_sede(self):

@@ -732,29 +732,41 @@ def get_referencia_conteo(db: Session, tienda_id: int, tipo: str) -> dict:
 # conteo por `grupo_conteo='desechables'`), así que si nadie lo pide no se
 # cuentan nunca y el faltante aparece recién cuando se acaba algo en plena venta.
 #
-# POR QUÉ NO ES UN SCHEDULER. El proyecto no tiene ninguno y es deliberado (ver
-# `services/costos.py`). Acá además habría fallado: el backend vive en un
-# contenedor que se duerme sin tráfico, así que un job a las 6am no dispara si
-# nadie entró todavía — y cuando despierta, la hora ya pasó y el lunes se perdió
-# sin que nadie se enterara. Peor con más de un worker: cada uno crearía la suya.
+# QUIÉN LO ARRANCA. Decisión del dueño: lo arranca la BARISTA desde su hub,
+# cuando tiene un hueco. El razonamiento es que un conteo hecho a las corridas
+# entre clientes son números inventados, y eso es peor que no contar; ella sabe
+# cuándo hay calma y el admin no.
 #
-# En vez de eso la solicitud se MATERIALIZA sola en la primera consulta del día:
-# el kiosko ya pregunta «¿hay formato pendiente?» y ahí se decide. Consecuencias
-# buenas: no depende de que el servidor esté despierto a una hora, aparece cuando
-# la sede abre (no a las 3am esperando), y es idempotente por construcción —
-# dos consultas simultáneas no crean dos solicitudes porque se busca por día.
+# El costo asumido, dicho para que quede escrito: el conteo pasa a ser
+# voluntario. Los desechables están FUERA del conteo diario, así que la semana
+# que nadie lo arranque no queda medición de esos días, y eso no se nota —la
+# pantalla se ve igual con o sin conteo.
+#
+# La programación sigue existiendo como RED, apagada por defecto: si algún día
+# se quiere un piso («si el lunes nadie lo hizo, que salga solo»), se prenden los
+# días desde la pantalla del formato, sin deploy y sin código nuevo.
+#
+# POR QUÉ NO ES UN SCHEDULER, cuando se prende. El proyecto no tiene ninguno y es
+# deliberado (ver `services/costos.py`). Acá además habría fallado: el backend
+# vive en un contenedor que se duerme sin tráfico, así que un job a las 6am no
+# dispara si nadie entró todavía — y cuando despierta, la hora ya pasó y el lunes
+# se perdió sin que nadie se enterara. Peor con más de un worker: cada uno
+# crearía la suya. En vez de eso la solicitud se MATERIALIZA en la primera
+# consulta del día, que el kiosko ya hace sola.
 CLAVE_DIAS_DESECHABLES = "desechables_dias"
-DIAS_DESECHABLES_DEFECTO = [0, 4]   # lunes y viernes (Monday=0, como weekday())
+# Apagada: la arranca la barista. Prenderla es marcar días en la pantalla.
+DIAS_DESECHABLES_DEFECTO: list[int] = []
 NOMBRE_DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 
 
 def dias_programados(db: Session) -> list[int]:
-    """Días de la semana en que el formato sale solo. Editables sin deploy.
+    """Días en que el formato sale solo. Vacío = solo lo arranca la barista.
 
-    SIN FILA y FILA VACÍA no son lo mismo, y confundirlos rompía el apagado:
-    «ningún día» se guarda como cadena vacía, y si eso cae al default el formato
-    sigue saliendo los lunes después de que el dueño lo apagó. Solo la ausencia
-    de la fila —nunca se configuró— usa el default."""
+    SIN FILA y FILA VACÍA se tratan distinto a propósito. Hoy el default también
+    es vacío, así que da lo mismo; pero si mañana se cambia el default, «ningún
+    día» tiene que seguir significando ninguno. Cuando el default era lunes y
+    viernes, tratarlos igual hacía que apagar la programación no apagara nada:
+    la cadena vacía caía al default y el formato seguía saliendo los lunes."""
     row = db.query(Configuracion).filter(
         Configuracion.clave == CLAVE_DIAS_DESECHABLES).first()
     if row is None:
@@ -963,3 +975,37 @@ def sincronizar_sedes(db: Session, usuario_id: int) -> dict:
                                        "total": len(creadas)})
     db.commit()
     return {**formato(db), "filas_creadas": creadas}
+
+def iniciar_por_barista(db: Session, tienda_id: int, usuario_id: int,
+                        barista_id: int | None = None,
+                        barista_nombre: str | None = None) -> dict:
+    """La barista arranca ella misma el conteo de desechables desde su hub.
+
+    Antes el formato solo aparecía si el admin lo pedía, y los desechables están
+    fuera del conteo diario: si nadie se acordaba, no se contaban nunca. Ahora el
+    arranque es de quien tiene el hueco para contar.
+
+    Se permite siempre que no haya OTRO pendiente abierto. En particular se
+    permite un segundo conteo el mismo día: un recuento es legítimo —encontraron
+    un descuadre y volvieron a contar— y no se pierde nada, porque cada conteo
+    queda en el historial con su hora y el admin ve los dos. Bloquearlo obligaría
+    a dejar como bueno un conteo que la propia barista sabe que está mal.
+    """
+    pendiente = db.query(SolicitudConteoDesechables).filter_by(
+        tienda_id=tienda_id, estado="pendiente").first()
+    if pendiente is not None:
+        # No es un error: ya está abierto, que es lo que ella quería.
+        return {"ok": True, "solicitud_id": pendiente.id, "ya_estaba": True}
+    s = SolicitudConteoDesechables(
+        tienda_id=tienda_id, solicitada_por_id=usuario_id, automatica=False,
+        fecha_solicitud=ahora_utc(), barista_id=barista_id, barista_nombre=barista_nombre)
+    db.add(s)
+    audit.registrar(db, accion="conteo_desechables_iniciado_barista",
+                    tabla="solicitudes_conteo_desechables", registro_id=None,
+                    usuario_id=usuario_id, tienda_id=tienda_id,
+                    datos_despues={"barista": barista_nombre})
+    db.commit()
+    db.refresh(s)
+    logger.info(f"Conteo desechables iniciado por barista (tienda {tienda_id})")
+    return {"ok": True, "solicitud_id": s.id, "ya_estaba": False}
+

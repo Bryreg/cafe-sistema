@@ -15,7 +15,10 @@ STACK TÉCNICO
 -------------
 Backend:  FastAPI 0.115, SQLAlchemy 2.0, SQLite (dev) / PostgreSQL (prod)
 Frontend: React 18.3, TypeScript 5.4, Vite 5.2, TailwindCSS 3.4, React Router 6.23
-Deploy:   Render (backend, rama develop), Cloudflare Pages (frontend, rama main)
+Deploy:   Render (backend) + Cloudflare Pages (frontend). LA RAMA PRINCIPAL ES
+          `develop` — ver DEPLOY.md seccion 1, que es la fuente de verdad.
+          (Este archivo decia "frontend, rama main": `main` es un archivo
+          historico con historia DISJUNTA, no produccion. Ver DEPLOY.md.)
 
 ================================================================================
 ARQUITECTURA ACTUAL (RECIÉN IMPLEMENTADA)
@@ -65,8 +68,9 @@ ESTADO ACTUAL (COMMITS COMPLETADOS)
 ✓ feat(turno): add tipo_turno field and 2-step shift opening flow (tipo → baristas)
 
 Todo pusheado a:
-- main (Cloudflare Pages frontend)
-- develop (Render backend)
+- develop (rama principal: backend en Render y frontend en Cloudflare)
+  OJO: este archivo es de una fase anterior del proyecto y quedo viejo en
+  varias partes. Para despliegue y ramas, DEPLOY.md manda.
 
 Deployments en progreso/completados.
 

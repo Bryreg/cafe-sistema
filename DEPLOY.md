@@ -1,14 +1,91 @@
 # Guía de Despliegue — Sistema Café
 
-## Arquitectura de 3 entornos
+> **Leé esta primera sección antes de mover una rama.** El resto del archivo
+> describe un montaje en VPS que **NO es el que está corriendo**, y confundirlos
+> puede terminar con el café mirando una base de datos vacía.
 
-```
-[Tu PC — rama dev]
-        ↓  git push origin sandbox
-[VPS — sandbox.tudominio.com]   ← pruebas antes de publicar
-        ↓  bash scripts/promote.sh
-[VPS — app.tudominio.com]       ← producción, siempre activo
-```
+---
+
+## 1. Cómo está desplegado HOY
+
+**`develop` es la rama principal del proyecto.** No `main`. Todo el trabajo va a
+`develop`, y desde ahí sale a producción.
+
+| Pieza | Dónde corre | Desde qué rama | Cómo se despliega |
+|-------|-------------|----------------|-------------------|
+| **Backend** | Render — `https://cafe-sistema-oert.onrender.com` | **`develop`** | automático al hacer push (~2 min) |
+| **Frontend** | Cloudflare Pages | se configura en el panel de Cloudflare, no en el repo | automático al hacer push |
+| **Base de datos** | PostgreSQL en Render | — | — |
+
+El backend en Render **auto-despliega desde `develop`**: medido tres veces el
+15-sep-2026, un endpoint nuevo apareció en producción entre 1 y 2 minutos
+después del push. O sea que **mergear a `develop` ES desplegar a producción**.
+No hay un paso de aprobación: lo que se empuja, sale.
+
+El frontend vive en Cloudflare Pages y **su configuración no está en este repo**
+(no hay `wrangler.toml` ni nada equivalente): la rama que construye se ve y se
+cambia en el panel de Cloudflare. Para comprobar desde la app qué rama está
+sirviendo, entrá como admin a **Conteos → «Editar formato»**: esa pantalla se
+agregó el 15-sep-2026 en `develop`. Si está, Cloudflare construye `develop`.
+
+### Lo que el deploy NO hace
+
+Algunas cosas son scripts que corren contra la base y **el deploy no los
+ejecuta**. Desplegar no las aplica:
+
+- `backend/cargar_combos.py` — carga/actualiza los combos del POS.
+  Correr con las variables de producción cargadas, primero con `--dry-run`.
+  (Desde el 15-sep-2026 los combos también se crean desde la app: Combos →
+  «Nuevo combo». El script quedó para la carga inicial.)
+
+---
+
+## 2. `main` es un archivo histórico, no producción
+
+**`main` y `develop` tienen historias DISJUNTAS: no comparten ni un commit.**
+Medido el 15-sep-2026:
+
+| | `main` | `develop` |
+|---|---|---|
+| Primer commit | 28-abr-2026 | 22-ago-2026 |
+| Último commit | 29-jul-2026 | (vigente) |
+| Archivos | 354 | 524 |
+| Commits que la otra no tiene | 387 | 58 |
+| Ancestro común | **ninguno** | |
+
+`develop` no salió de `main`: es una historia nueva empezada el 22 de agosto.
+`main` quedó como la foto de julio, con la historia larga de abril a julio
+colgando de ella. La diferencia de código entre las dos es de **264 archivos y
++86.848 líneas**, así que `develop` es el sistema y `main` es el archivo.
+
+**Consecuencias prácticas:**
+
+- No existe forma de «subir los commits que le faltan a `main`»: sin ancestro
+  común, un `merge` necesita `--allow-unrelated-histories` y da conflictos en
+  los 264 archivos. Lo único que se puede hacer es poner el árbol de `develop`
+  en `main` de una sola vez.
+- **Empujar a `main` dispara `.github/workflows/deploy-prod.yml`**, que hace SSH
+  a un VPS y levanta ahí el contenedor. Ese entorno usa **SQLite en un volumen
+  del servidor** (ver la sección 3), o sea **una base distinta** del PostgreSQL
+  de Render donde están las ventas, los turnos y el inventario reales. El
+  workflow pide aprobación manual (`environment: production`), así que no se
+  despliega solo — pero la aprobación está a un clic.
+- Si algún día se quiere revivir el camino del VPS, la decisión que hay que
+  tomar primero **no es de git, es de datos**: qué base sirve. Mover la rama es
+  lo fácil.
+
+---
+
+## 3. El montaje en VPS (NO EN USO)
+
+Lo que sigue documenta el despliegue en VPS con tres entornos
+(`dev` / `sandbox` / `main`) para el que se escribieron `docker-compose.prod.yml`,
+`docker-compose.sandbox.yml`, `nginx/` y `scripts/promote.sh`. **Hoy no es lo que
+sirve la aplicación** — el backend está en Render y el frontend en Cloudflare
+Pages, los dos desde `develop`.
+
+Se conserva porque los archivos siguen en el repo y los workflows siguen
+armados: si se empuja a `main` o a `sandbox`, esto se dispara de verdad.
 
 | Entorno | Rama git | URL | Base de datos | Deploy |
 |---------|----------|-----|---------------|--------|

@@ -1,5 +1,10 @@
 # Sistema Café — Guía de inicio
 
+> **Rama principal: `develop`.** Todo el trabajo va ahí, y empujar a `develop`
+> despliega a producción (backend en Render, frontend en Cloudflare Pages).
+> `main` es un archivo histórico con historia disjunta — no es producción.
+> El detalle está en [DEPLOY.md](DEPLOY.md).
+
 ## Requisitos
 - Python 3.11+
 - Node.js 18+

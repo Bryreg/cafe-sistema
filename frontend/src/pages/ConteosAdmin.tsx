@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
-import { ChevronDown, ChevronUp, Download, ListChecks, Sun, Moon, User, DatabaseZap, Boxes, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronUp, Download, ListChecks, Sun, Moon, User, DatabaseZap, Boxes, ChevronRight, Settings2} from 'lucide-react'
 import { hoyLocal, haceDiasLocal } from '../utils/fechaLocal'
 import { compararRecorrido } from '../utils/ordenConteo'
 
@@ -240,6 +240,13 @@ export default function ConteosAdmin() {
             style={{ background: 'oklch(56% 0.14 65)' }}>
             <ListChecks size={12} /> Pedir conteo desechables
           </button>
+          {/* El formato ya sale solo los lunes y viernes; el botón de arriba es
+              para pedirlo fuera de esos días. Acá se edita qué lleva. */}
+          <Link to="/formato-desechables"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border"
+            style={{ borderColor: 'oklch(84% 0.08 70)', color: 'oklch(48% 0.12 70)' }}>
+            <Settings2 size={12} /> Editar formato
+          </Link>
         </div>
 
         {/* Inventario mensual del mes en curso */}

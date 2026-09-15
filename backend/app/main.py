@@ -314,6 +314,11 @@ with engine.connect() as _conn:
         # que no lleva ALTER; esta columna sí, porque contratos_barista ya
         # existe en producción y el loop corre antes de create_all.
         "ALTER TABLE contratos_barista ADD COLUMN salario_en_smmlv FLOAT",
+        # Formato de desechables programado (lunes y viernes): distingue la
+        # solicitud que salió sola de la que pidió el admin. Las viejas son todas
+        # pedidas a mano, así que el default FALSE las deja como estaban.
+        "ALTER TABLE solicitudes_conteo_desechables ADD COLUMN automatica BOOLEAN DEFAULT FALSE",
+        "UPDATE solicitudes_conteo_desechables SET automatica = FALSE WHERE automatica IS NULL",
         # El libro del banco con categoría: es lo que contesta «cuánto nos
         # estamos gastando en cada cosa» mes a mes, y lo que separa la plata
         # personal de la del café. Plana la migración, FK real en el modelo

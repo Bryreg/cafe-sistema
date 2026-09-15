@@ -4,11 +4,13 @@ from datetime import datetime, date
 from app.models.models import (ConteoFisico, ConteoFisicoItem, Inventario,
                                 ChecklistDiario, CajaTurno, EstadoTurnoEnum,
                                 MovimientoInventario, Producto, ConteoVerificacion,
-                                SolicitudConteoDesechables)
+                                SolicitudConteoDesechables, Configuracion, RolEnum,
+                                Tienda, Usuario)
 from app.services.caja import get_turno_activo, _tick_checklist
 from app.services.inventario import registrar_movimiento
 from app.services import audit
-from app.core.tz import local_col, rango_col_utc
+from app.core.tz import (ahora_utc, fin_dia_col_utc, hoy_col, inicio_dia_col_utc,
+                         local_col, rango_col_utc)
 
 
 def _tipo(m) -> str:
@@ -150,7 +152,13 @@ def solicitar_conteo_desechables(db: Session, tienda_id: int, usuario_id: int):
 
 
 def get_solicitud_desechables(db: Session, tienda_id: int):
-    """Kiosko: ¿hay un formato de desechables pendiente por llenar?"""
+    """Kiosko: ¿hay un formato de desechables pendiente por llenar?
+
+    Acá se materializa la solicitud programada (lunes y viernes). Es el punto
+    justo: el kiosko ya pregunta esto solo, así que el formato aparece con la
+    primera consulta del día en vez de depender de que el servidor esté
+    despierto a una hora fija. Ver `asegurar_solicitud_programada`."""
+    asegurar_solicitud_programada(db, tienda_id)
     s = (db.query(SolicitudConteoDesechables)
          .filter_by(tienda_id=tienda_id, estado="pendiente")
          .order_by(SolicitudConteoDesechables.fecha_solicitud.desc())
@@ -158,6 +166,7 @@ def get_solicitud_desechables(db: Session, tienda_id: int):
     if not s:
         return {"pendiente": False}
     return {"pendiente": True, "solicitud_id": s.id,
+            "automatica": bool(s.automatica),
             "fecha_solicitud": s.fecha_solicitud.isoformat() if s.fecha_solicitud else None}
 
 
@@ -715,3 +724,228 @@ def get_referencia_conteo(db: Session, tienda_id: int, tipo: str) -> dict:
         "es_atajo": bool(c.es_atajo),
         "por_producto": {i.producto_id: i.cantidad_real for i in c.items},
     }
+
+# ─── Programación del formato de desechables ─────────────────────────────────
+#
+# El formato salía SOLO si el admin se acordaba de apretar «Pedir conteo de
+# desechables». Los vasos y las tapas no se cuentan a diario (están fuera del
+# conteo por `grupo_conteo='desechables'`), así que si nadie lo pide no se
+# cuentan nunca y el faltante aparece recién cuando se acaba algo en plena venta.
+#
+# POR QUÉ NO ES UN SCHEDULER. El proyecto no tiene ninguno y es deliberado (ver
+# `services/costos.py`). Acá además habría fallado: el backend vive en un
+# contenedor que se duerme sin tráfico, así que un job a las 6am no dispara si
+# nadie entró todavía — y cuando despierta, la hora ya pasó y el lunes se perdió
+# sin que nadie se enterara. Peor con más de un worker: cada uno crearía la suya.
+#
+# En vez de eso la solicitud se MATERIALIZA sola en la primera consulta del día:
+# el kiosko ya pregunta «¿hay formato pendiente?» y ahí se decide. Consecuencias
+# buenas: no depende de que el servidor esté despierto a una hora, aparece cuando
+# la sede abre (no a las 3am esperando), y es idempotente por construcción —
+# dos consultas simultáneas no crean dos solicitudes porque se busca por día.
+CLAVE_DIAS_DESECHABLES = "desechables_dias"
+DIAS_DESECHABLES_DEFECTO = [0, 4]   # lunes y viernes (Monday=0, como weekday())
+NOMBRE_DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+
+def dias_programados(db: Session) -> list[int]:
+    """Días de la semana en que el formato sale solo. Editables sin deploy.
+
+    SIN FILA y FILA VACÍA no son lo mismo, y confundirlos rompía el apagado:
+    «ningún día» se guarda como cadena vacía, y si eso cae al default el formato
+    sigue saliendo los lunes después de que el dueño lo apagó. Solo la ausencia
+    de la fila —nunca se configuró— usa el default."""
+    row = db.query(Configuracion).filter(
+        Configuracion.clave == CLAVE_DIAS_DESECHABLES).first()
+    if row is None:
+        return list(DIAS_DESECHABLES_DEFECTO)
+    crudo = (row.valor or "").strip()
+    if not crudo:
+        return []
+    try:
+        dias = sorted({int(x) for x in crudo.split(",") if x.strip() != ""})
+    except ValueError:
+        return list(DIAS_DESECHABLES_DEFECTO)
+    return [d for d in dias if 0 <= d <= 6]
+
+
+def set_dias_programados(db: Session, dias: list[int], usuario_id: int) -> dict:
+    """Cambia los días. Lista vacía = apagar la programación (queda solo el
+    botón manual), que es distinto de no haberla configurado nunca: por eso se
+    guarda la cadena vacía en vez de borrar la fila, que volvería al default."""
+    limpios = sorted({int(d) for d in dias})
+    fuera = [d for d in limpios if d < 0 or d > 6]
+    if fuera:
+        raise HTTPException(400, f"Días fuera de rango (0=lunes … 6=domingo): {fuera}")
+    row = db.query(Configuracion).filter(
+        Configuracion.clave == CLAVE_DIAS_DESECHABLES).first()
+    antes = row.valor if row else None
+    if row is None:
+        row = Configuracion(clave=CLAVE_DIAS_DESECHABLES, valor=",".join(str(d) for d in limpios))
+        db.add(row)
+    else:
+        row.valor = ",".join(str(d) for d in limpios)
+    audit.registrar(db, accion="desechables_dias_programados", tabla="configuracion",
+                    registro_id=None, usuario_id=usuario_id, tienda_id=None,
+                    datos_antes={"dias": antes},
+                    datos_despues={"dias": row.valor})
+    db.commit()
+    return {"dias": limpios, "nombres": [NOMBRE_DIAS[d] for d in limpios]}
+
+
+def _ya_hubo_solicitud_hoy(db: Session, tienda_id: int) -> bool:
+    """¿Ya se pidió el formato hoy en esta sede? Cuenta CUALQUIER estado.
+
+    Mirar solo las pendientes volvería a crear una en cuanto la barista responde
+    la de la mañana: el formato reaparecería el mismo lunes una y otra vez.
+    El día es el de Colombia, no el UTC: entre las 19:00 y la medianoche local
+    el UTC ya está en el día siguiente, y con la fecha UTC el formato del viernes
+    saldría de nuevo el viernes a las 19:01."""
+    hoy = hoy_col()
+    return db.query(SolicitudConteoDesechables).filter(
+        SolicitudConteoDesechables.tienda_id == tienda_id,
+        SolicitudConteoDesechables.fecha_solicitud >= inicio_dia_col_utc(hoy),
+        SolicitudConteoDesechables.fecha_solicitud <= fin_dia_col_utc(hoy),
+    ).first() is not None
+
+
+def asegurar_solicitud_programada(db: Session, tienda_id: int) -> bool:
+    """Si hoy es día programado y todavía no salió, crea la solicitud. Devuelve
+    si creó una.
+
+    Nunca revienta: la llama el poll del kiosko, y dejar la pantalla de la
+    barista sin respuesta por un problema de la programación sería cambiar un
+    formato que no salió por un turno que no arranca."""
+    try:
+        if hoy_col().weekday() not in dias_programados(db):
+            return False
+        if _ya_hubo_solicitud_hoy(db, tienda_id):
+            return False
+        # La fila exige un usuario y acá no hay nadie apretando: se firma con un
+        # admin real y `automatica=True` deja dicho que no lo pidió esa persona.
+        admin = (db.query(Usuario)
+                 .filter(Usuario.rol == RolEnum.admin, Usuario.activo == True)  # noqa: E712
+                 .order_by(Usuario.id).first())
+        if admin is None:
+            logger.warning("Desechables programado: no hay admin activo, no se crea la solicitud")
+            return False
+        # La fecha se pone EXPLÍCITA, con el mismo reloj que decidió el día. El
+        # default de la columna usa otro `utcnow` y ahí la guarda de «ya salió
+        # hoy» compara contra un instante que no es el que se guardó.
+        s = SolicitudConteoDesechables(tienda_id=tienda_id, solicitada_por_id=admin.id,
+                                       automatica=True, fecha_solicitud=ahora_utc())
+        db.add(s)
+        audit.registrar(db, accion="conteo_desechables_programado",
+                        tabla="solicitudes_conteo_desechables", registro_id=None,
+                        usuario_id=admin.id, tienda_id=tienda_id,
+                        datos_despues={"dia": NOMBRE_DIAS[hoy_col().weekday()]})
+        db.commit()
+        logger.info(f"Formato de desechables programado creado (tienda {tienda_id})")
+        return True
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        logger.warning("No se pudo crear el formato programado de desechables: %s", e)
+        return False
+
+
+# ─── Qué items lleva el formato ──────────────────────────────────────────────
+#
+# El formato son los productos con `grupo_conteo='desechables'`, pero la lista
+# que ve cada sede sale de CRUZARLOS con su tabla de inventario: un desechable
+# sin fila en una sede simplemente no aparece en su formato, y nadie se enteraba
+# porque las dos pantallas se ven bien por separado. Por eso agregar un item
+# crea la fila en TODAS las sedes y `formato()` reporta la cobertura por sede.
+
+def formato(db: Session) -> dict:
+    """Los items del formato + en qué sedes está cada uno."""
+    tiendas = db.query(Tienda).order_by(Tienda.id).all()
+    productos = (db.query(Producto)
+                 .filter(Producto.grupo_conteo == "desechables")
+                 .order_by(Producto.proveedor.asc(), Producto.nombre.asc()).all())
+    ids = [p.id for p in productos]
+    filas = (db.query(Inventario)
+             .filter(Inventario.producto_id.in_(ids)).all()) if ids else []
+    por_prod: dict[int, set] = {}
+    for f in filas:
+        por_prod.setdefault(f.producto_id, set()).add(f.tienda_id)
+    return {
+        "tiendas": [{"id": t.id, "nombre": t.nombre} for t in tiendas],
+        "dias": dias_programados(db),
+        "nombres_dias": NOMBRE_DIAS,
+        "items": [{
+            "producto_id": p.id,
+            "nombre": p.nombre,
+            "unidad_medida": p.unidad_medida,
+            "proveedor": p.proveedor or "Sin proveedor",
+            "tienda_ids": sorted(por_prod.get(p.id, set())),
+            # Si esto es False el formato NO es el mismo en las dos sedes
+            "en_todas": len(por_prod.get(p.id, set())) == len(tiendas),
+        } for p in productos],
+    }
+
+
+def agregar_item(db: Session, producto_id: int, usuario_id: int) -> dict:
+    """Mete un producto al formato y le asegura fila de inventario en TODAS las
+    sedes: si falta en una, el formato de esa sede sale sin el item y las dos
+    sedes dejan de contar lo mismo sin que nadie lo note."""
+    p = db.query(Producto).filter(Producto.id == producto_id).first()
+    if not p:
+        raise HTTPException(404, "Producto no encontrado")
+    if p.grupo_conteo == "desechables":
+        raise HTTPException(400, f"«{p.nombre}» ya está en el formato")
+    p.grupo_conteo = "desechables"
+    # Los desechables no entran al conteo diario: es la razón de que exista este
+    # formato aparte. Marcarlo acá evita que el mismo producto aparezca en los
+    # dos conteos y se cuente dos veces.
+    p.incluir_en_conteo = False
+    creadas = []
+    for t in db.query(Tienda).order_by(Tienda.id).all():
+        existe = db.query(Inventario).filter_by(producto_id=p.id, tienda_id=t.id).first()
+        if not existe:
+            db.add(Inventario(producto_id=p.id, tienda_id=t.id, stock_actual=0))
+            creadas.append(t.nombre)
+    audit.registrar(db, accion="desechables_item_agregado", tabla="productos",
+                    registro_id=p.id, usuario_id=usuario_id, tienda_id=None,
+                    datos_despues={"producto": p.nombre, "sedes_creadas": creadas})
+    db.commit()
+    return formato(db)
+
+
+def quitar_item(db: Session, producto_id: int, usuario_id: int) -> dict:
+    """Saca un producto del formato.
+
+    NO borra su fila de inventario ni sus movimientos: el stock y el histórico
+    del producto siguen siendo ciertos, lo único que cambia es que deja de
+    pedirse en este conteo. Borrar el inventario perdería la existencia real de
+    algo que sigue en la bodega."""
+    p = db.query(Producto).filter(Producto.id == producto_id).first()
+    if not p:
+        raise HTTPException(404, "Producto no encontrado")
+    if p.grupo_conteo != "desechables":
+        raise HTTPException(400, f"«{p.nombre}» no está en el formato")
+    p.grupo_conteo = None
+    audit.registrar(db, accion="desechables_item_quitado", tabla="productos",
+                    registro_id=p.id, usuario_id=usuario_id, tienda_id=None,
+                    datos_antes={"producto": p.nombre, "grupo_conteo": "desechables"})
+    db.commit()
+    return formato(db)
+
+
+def sincronizar_sedes(db: Session, usuario_id: int) -> dict:
+    """Le crea fila de inventario en las sedes que le falten a CADA item del
+    formato. Es el arreglo de un formato que ya divergió."""
+    tiendas = db.query(Tienda).order_by(Tienda.id).all()
+    productos = db.query(Producto).filter(Producto.grupo_conteo == "desechables").all()
+    creadas = []
+    for p in productos:
+        for t in tiendas:
+            if not db.query(Inventario).filter_by(producto_id=p.id, tienda_id=t.id).first():
+                db.add(Inventario(producto_id=p.id, tienda_id=t.id, stock_actual=0))
+                creadas.append(f"{p.nombre} → {t.nombre}")
+    if creadas:
+        audit.registrar(db, accion="desechables_formato_sincronizado", tabla="productos",
+                        registro_id=None, usuario_id=usuario_id, tienda_id=None,
+                        datos_despues={"filas_creadas": creadas[:50],
+                                       "total": len(creadas)})
+    db.commit()
+    return {**formato(db), "filas_creadas": creadas}

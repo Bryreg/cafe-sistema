@@ -601,6 +601,10 @@ class SolicitudConteoDesechables(Base):
     # Barista REAL que respondió (plano, sin FK — AmbiguousForeignKeysError).
     barista_id = Column(Integer, nullable=True)
     barista_nombre = Column(String(100), nullable=True)
+    # True = la creó la programación (lunes y viernes), no una persona. Sin esta
+    # marca, «¿por qué apareció el formato hoy?» no se puede contestar: la fila
+    # queda firmada por un admin que no apretó nada.
+    automatica = Column(Boolean, default=False, nullable=False)
 
 
 class PasteleriaDiaria(Base):

@@ -19,6 +19,17 @@ from datetime import datetime, date, timedelta
 COL_OFFSET = timedelta(hours=5)  # Colombia UTC-5, sin horario de verano
 
 
+def ahora_utc() -> datetime:
+    """El instante actual en UTC, que es como se ALMACENA todo.
+
+    Existe para que el instante que se guarda y el día Colombia que se calcula
+    salgan del MISMO reloj. Usar `datetime.utcnow()` suelto en cada lado los
+    desacopla, y ahí una guarda de tipo «¿ya pasó hoy?» compara una fecha
+    contra un timestamp que vino de otra parte.
+    """
+    return datetime.utcnow()
+
+
 def hoy_col() -> date:
     """Fecha de 'hoy' en hora Colombia."""
     return (datetime.utcnow() - COL_OFFSET).date()

@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Query, Form
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Form
 from sqlalchemy.orm import Session
 from datetime import date
 from app.database import get_db
@@ -106,6 +108,52 @@ def solicitar_desechables(tienda_id: int = Form(...), db: Session = Depends(get_
                           user: Usuario = Depends(require_admin)):
     """Admin: pide el formato de desechables a la sede."""
     return svc.solicitar_conteo_desechables(db, tienda_id, user.id)
+
+
+@router.get("/desechables/formato")
+def formato_desechables(db: Session = Depends(get_db), user: Usuario = Depends(require_admin)):
+    """Qué items lleva el formato de desechables y en qué sedes está cada uno.
+
+    `en_todas=False` en un item significa que ese renglón NO le llega a todas
+    las sedes: falta su fila de inventario en alguna, y las dos sedes dejan de
+    contar lo mismo sin que se note desde ninguna de las dos pantallas."""
+    return svc.formato(db)
+
+
+@router.post("/desechables/formato/items")
+def agregar_item_desechables(producto_id: int = Form(...), db: Session = Depends(get_db),
+                             user: Usuario = Depends(require_admin)):
+    """Mete un producto al formato (y le crea fila de inventario en todas las sedes)."""
+    return svc.agregar_item(db, producto_id, user.id)
+
+
+@router.delete("/desechables/formato/items/{producto_id}")
+def quitar_item_desechables(producto_id: int, db: Session = Depends(get_db),
+                            user: Usuario = Depends(require_admin)):
+    """Saca un producto del formato. No borra su stock ni su histórico."""
+    return svc.quitar_item(db, producto_id, user.id)
+
+
+@router.post("/desechables/formato/sincronizar")
+def sincronizar_formato_desechables(db: Session = Depends(get_db),
+                                    user: Usuario = Depends(require_admin)):
+    """Arregla un formato ya divergido: crea las filas de inventario que falten."""
+    return svc.sincronizar_sedes(db, user.id)
+
+
+@router.put("/desechables/programacion")
+def set_programacion_desechables(dias: str = Form(...), db: Session = Depends(get_db),
+                                 user: Usuario = Depends(require_admin)):
+    """Días en que el formato sale solo. `dias` = lista JSON (0=lunes … 6=domingo).
+    Lista vacía apaga la programación y deja solo el botón manual."""
+    try:
+        parsed = json.loads(dias)
+        if not isinstance(parsed, list):
+            raise ValueError
+        limpios = [int(x) for x in parsed]
+    except (ValueError, TypeError):
+        raise HTTPException(400, "dias debe ser una lista JSON de enteros 0-6")
+    return svc.set_dias_programados(db, limpios, user.id)
 
 
 @router.get("/desechables/pendiente/{tienda_id}")

@@ -593,7 +593,12 @@ class SolicitudConteoDesechables(Base):
     __tablename__ = "solicitudes_conteo_desechables"
     id = Column(Integer, primary_key=True)
     tienda_id = Column(Integer, ForeignKey("tiendas.id"), nullable=False, index=True)
-    estado = Column(String(20), default="pendiente", nullable=False)  # pendiente | respondida
+    # pendiente | respondida | cancelada.
+    # «cancelada» existe porque no había forma de retirar un formato que se pidió
+    # y ya no aplica: la única salida era marcarlo respondida, o sea inventar un
+    # conteo que nadie hizo. Un formato viejo colgado tampoco es inofensivo — le
+    # queda en ámbar a la barista y bloquea el arranque de uno nuevo.
+    estado = Column(String(20), default="pendiente", nullable=False)
     fecha_solicitud = Column(DateTime, default=datetime.utcnow)
     solicitada_por_id = Column(Integer, ForeignKey("usuarios.id", ondelete="RESTRICT"), nullable=False)
     conteo_id = Column(Integer, ForeignKey("conteos_fisicos.id", ondelete="RESTRICT"), nullable=True)

@@ -1009,3 +1009,30 @@ def iniciar_por_barista(db: Session, tienda_id: int, usuario_id: int,
     logger.info(f"Conteo desechables iniciado por barista (tienda {tienda_id})")
     return {"ok": True, "solicitud_id": s.id, "ya_estaba": False}
 
+def cancelar_solicitud_desechables(db: Session, tienda_id: int, usuario_id: int,
+                                   motivo: str | None = None) -> dict:
+    """Retira el formato pendiente de una sede sin inventarle un conteo.
+
+    Antes no se podía: el estado solo admitía «pendiente» y «respondida», así que
+    sacar de la pantalla un formato que ya no aplicaba obligaba a marcarlo como
+    respondido — un conteo que nadie hizo, con su fecha y todo, metido en el
+    historial que después se usa para medir. Queda «cancelada», que es lo que
+    realmente pasó.
+
+    Solo se cancela lo PENDIENTE. Un formato ya respondido es una medición y no
+    se retira por acá.
+    """
+    s = db.query(SolicitudConteoDesechables).filter_by(
+        tienda_id=tienda_id, estado="pendiente").first()
+    if s is None:
+        raise HTTPException(400, "Esa sede no tiene un formato de desechables pendiente")
+    s.estado = "cancelada"
+    audit.registrar(db, accion="conteo_desechables_cancelado",
+                    tabla="solicitudes_conteo_desechables", registro_id=s.id,
+                    usuario_id=usuario_id, tienda_id=tienda_id,
+                    datos_antes={"estado": "pendiente",
+                                 "pedido": s.fecha_solicitud.isoformat() if s.fecha_solicitud else None},
+                    datos_despues={"estado": "cancelada", "motivo": motivo})
+    db.commit()
+    return {"ok": True, "solicitud_id": s.id, "estado": "cancelada"}
+

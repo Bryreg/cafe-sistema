@@ -22,6 +22,7 @@ interface Formato {
   items: Item[]
 }
 interface ProductoOpt { id: number; nombre: string; unidad_medida: string; grupo_conteo: string | null }
+interface Pendiente { pendiente: boolean; solicitud_id?: number; automatica?: boolean; fecha_solicitud?: string }
 
 const DIAS_CORTOS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
 
@@ -47,6 +48,10 @@ export default function FormatoDesechables() {
   const [msg, setMsg] = useState('')
   const [buscar, setBuscar] = useState('')
   const [agregando, setAgregando] = useState(false)
+  // Qué tiene abierto cada sede ahora mismo. Un formato pedido y nunca
+  // respondido le queda en ámbar a la barista y bloquea el arranque de uno
+  // nuevo, así que hay que poder verlo y retirarlo desde acá.
+  const [abiertos, setAbiertos] = useState<Record<number, Pendiente>>({})
 
   const cargar = async () => {
     try {
@@ -56,6 +61,11 @@ export default function FormatoDesechables() {
       ])
       setF(ff.data)
       setProductos(pp.data)
+      const estados = await Promise.all(ff.data.tiendas.map(t =>
+        api.get<Pendiente>(`/conteos/desechables/pendiente/${t.id}`)
+          .then(r => [t.id, r.data] as const)
+          .catch(() => [t.id, { pendiente: false }] as const)))
+      setAbiertos(Object.fromEntries(estados))
     } catch {
       setError('No se pudo cargar el formato')
     } finally { setLoading(false) }
@@ -112,6 +122,22 @@ export default function FormatoDesechables() {
         : 'Ya estaba igual en todas las sedes')
     } catch (e: any) {
       setError(e.response?.data?.detail || 'No se pudo sincronizar')
+    } finally { setOcupado(false) }
+  }
+
+  const cancelar = async (sede: Sede) => {
+    if (!window.confirm(`¿Retirar el formato pendiente de ${sede.nombre}?\n\n`
+      + 'Le desaparece de la pantalla a la barista y NO queda como contado: '
+      + 'esos días no van a tener medición, y así es como debe verse.')) return
+    setOcupado(true); setError('')
+    try {
+      const fd = new FormData()
+      fd.append('tienda_id', String(sede.id))
+      await api.post('/conteos/desechables/cancelar', fd)
+      setAbiertos(a => ({ ...a, [sede.id]: { pendiente: false } }))
+      avisar(`Formato de ${sede.nombre} retirado`)
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'No se pudo cancelar')
     } finally { setOcupado(false) }
   }
 
@@ -193,6 +219,41 @@ export default function FormatoDesechables() {
             Apagada. El formato sale cuando la barista lo arranca, o cuando lo pedís desde Conteos.
           </p>
         )}
+      </div>
+
+      {/* ── Qué tiene abierto cada sede ────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-5">
+        <p className="text-sm font-bold text-gray-800">Formatos abiertos ahora</p>
+        <p className="text-xs text-gray-400 mt-1 mb-3">
+          Un formato pedido y nunca respondido le queda en ámbar a la barista y le bloquea
+          arrancar uno nuevo. Retirarlo no lo cuenta como hecho.
+        </p>
+        <div className="space-y-2">
+          {f.tiendas.map(t => {
+            const p = abiertos[t.id]
+            return (
+              <div key={t.id} className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm font-semibold text-gray-700 w-24">{t.nombre}</span>
+                {p?.pendiente ? (
+                  <>
+                    <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-amber-100 text-amber-700">
+                      pendiente desde {p.fecha_solicitud
+                        ? new Date(p.fecha_solicitud).toLocaleString('es-CO',
+                            { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+                        : '—'}
+                    </span>
+                    <button onClick={() => cancelar(t)} disabled={ocupado}
+                      className="text-xs font-semibold px-3 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50">
+                      Retirar
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-xs text-gray-400">sin formato abierto</span>
+                )}
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       {/* ── Divergencia entre sedes ────────────────────────────────────── */}

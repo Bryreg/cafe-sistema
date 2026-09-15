@@ -297,6 +297,45 @@ class FormatoDesechablesTest(unittest.TestCase):
             self.assertFalse(svc.asegurar_solicitud_programada(self.db, self.vida.id))
         self.assertEqual(self.db.query(SolicitudConteoDesechables).count(), 1)
 
+    # ── Cancelar un formato que ya no aplica ──────────────────────────────────
+    def test_cancelar_no_inventa_un_conteo(self):
+        """El punto de que exista «cancelada»: marcarlo respondido metería en el
+        historial un conteo que nadie hizo, y ese historial es con el que
+        después se mide."""
+        svc.iniciar_por_barista(self.db, self.palmetto.id, self.admin.id)
+        r = svc.cancelar_solicitud_desechables(self.db, self.palmetto.id, self.admin.id,
+                                               motivo="quedó de la semana pasada")
+        self.assertEqual(r["estado"], "cancelada")
+        s = self.db.query(SolicitudConteoDesechables).filter_by(id=r["solicitud_id"]).first()
+        self.assertEqual(s.estado, "cancelada")
+        self.assertIsNone(s.conteo_id)
+
+    def test_cancelado_desaparece_del_kiosko(self):
+        svc.iniciar_por_barista(self.db, self.palmetto.id, self.admin.id)
+        svc.cancelar_solicitud_desechables(self.db, self.palmetto.id, self.admin.id)
+        self.assertFalse(svc.get_solicitud_desechables(self.db, self.palmetto.id)["pendiente"])
+
+    def test_cancelar_libera_el_arranque(self):
+        """Un formato colgado bloqueaba arrancar uno nuevo."""
+        svc.iniciar_por_barista(self.db, self.palmetto.id, self.admin.id)
+        svc.cancelar_solicitud_desechables(self.db, self.palmetto.id, self.admin.id)
+        r = svc.iniciar_por_barista(self.db, self.palmetto.id, self.admin.id)
+        self.assertFalse(r["ya_estaba"])
+
+    def test_no_se_cancela_lo_que_no_esta_pendiente(self):
+        with self.assertRaises(HTTPException) as ctx:
+            svc.cancelar_solicitud_desechables(self.db, self.vida.id, self.admin.id)
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_un_formato_respondido_no_se_cancela(self):
+        """Ya es una medición: no se retira por acá."""
+        svc.iniciar_por_barista(self.db, self.vida.id, self.admin.id)
+        s = self.db.query(SolicitudConteoDesechables).first()
+        s.estado = "respondida"
+        self.db.commit()
+        with self.assertRaises(HTTPException):
+            svc.cancelar_solicitud_desechables(self.db, self.vida.id, self.admin.id)
+
     # ── Items del formato, iguales en las dos sedes ───────────────────────────
     def test_el_formato_reporta_cobertura_por_sede(self):
         f = svc.formato(self.db)

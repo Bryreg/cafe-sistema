@@ -169,6 +169,18 @@ def iniciar_desechables(tienda_id: int = Form(...), db: Session = Depends(get_db
     return svc.iniciar_por_barista(db, tienda_id, user.id, barista[0], barista[1])
 
 
+@router.post("/desechables/cancelar")
+def cancelar_desechables(tienda_id: int = Form(...), motivo: str | None = Form(None),
+                         db: Session = Depends(get_db),
+                         user: Usuario = Depends(require_admin)):
+    """Admin: retira el formato pendiente de una sede.
+
+    Queda como «cancelada», no como respondida: marcarlo respondido metería en el
+    historial un conteo que nadie hizo, y ese historial es con el que después se
+    mide. Solo se puede cancelar lo pendiente."""
+    return svc.cancelar_solicitud_desechables(db, tienda_id, user.id, motivo)
+
+
 @router.get("/desechables/pendiente/{tienda_id}")
 def desechables_pendiente(tienda_id: int, db: Session = Depends(get_db),
                           user: Usuario = Depends(get_current_user)):

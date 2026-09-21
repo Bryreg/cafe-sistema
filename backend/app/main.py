@@ -135,6 +135,9 @@ with engine.connect() as _conn:
         # Movimientos de inventario: atribución de barista en kiosko compartido (plano, sin FK).
         "ALTER TABLE movimientos_inventario ADD COLUMN barista_id INTEGER",
         "ALTER TABLE movimientos_inventario ADD COLUMN barista_nombre VARCHAR(100)",
+        # Sello de la merma que originó el movimiento: sin él, anular una merma
+        # tiene que adivinar qué revertir emparejando por motivo y por hora.
+        "ALTER TABLE movimientos_inventario ADD COLUMN merma_id INTEGER",
         # Limpieza semanal: barista REAL que marcó (antes solo el usuario del kiosko).
         "ALTER TABLE limpieza_semanal ADD COLUMN barista_id INTEGER",
         "ALTER TABLE limpieza_semanal ADD COLUMN barista_nombre VARCHAR(100)",

@@ -343,6 +343,13 @@ class MovimientoInventario(Base):
     # para no introducir un segundo ForeignKey a usuarios (AmbiguousForeignKeysError).
     barista_id = Column(Integer, nullable=True)
     barista_nombre = Column(String(100), nullable=True)
+    # Merma que originó este movimiento, para poder anularla devolviendo lo que
+    # descontó DE VERDAD y no lo que dice la receta (la cascada al sustituto hace
+    # que no sean lo mismo). PLANO y sin FK a propósito: anular una merma BORRA
+    # la fila de `mermas`, y una FK obligaría a un ON DELETE SET NULL o trabaría
+    # el delete. El movimiento queda en el libro con el id de una merma que ya no
+    # existe, que es exactamente lo que se quiere para auditar.
+    merma_id = Column(Integer, nullable=True, index=True)
     producto = relationship("Producto", back_populates="movimientos_inv")
     tienda = relationship("Tienda", back_populates="movimientos_inv")
     usuario = relationship("Usuario", back_populates="movimientos_inv")

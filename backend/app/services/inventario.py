@@ -111,7 +111,8 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
                           allow_negative: bool = False,
                           numero_lote: str | None = None, proveedor: str | None = None,
                           fecha_fabricacion: datetime | None = None, factura_id: int | None = None,
-                          barista_id: int | None = None, barista_nombre: str | None = None):
+                          barista_id: int | None = None, barista_nombre: str | None = None,
+                          merma_id: int | None = None):
     if tipo not in {"entrada", "salida", "ajuste"}:
         raise HTTPException(status_code=400, detail="tipo debe ser entrada, salida o ajuste")
     if tipo in {"entrada", "salida"} and cantidad <= 0:
@@ -199,6 +200,7 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
         producto_id=producto_id, tienda_id=tienda_id, tipo=tipo,
         cantidad=cantidad, usuario_id=usuario_id, motivo=motivo,
         barista_id=barista_id, barista_nombre=barista_nombre,
+        merma_id=merma_id,
     )
     db.add(mov)
 
@@ -244,7 +246,8 @@ def registrar_movimiento(db: Session, producto_id: int, tienda_id: int, tipo: st
 
 def consumir_insumo(db: Session, producto_id: int, tienda_id: int, cantidad: float,
                     motivo: str, usuario_id: int, barista_id: int | None = None,
-                    barista_nombre: str | None = None, _visitados=None):
+                    barista_nombre: str | None = None, merma_id: int | None = None,
+                    _visitados=None):
     """Descuenta `cantidad` de un insumo por receta con CASCADA a su sustituto.
     Si el insumo tiene sustituto_id y su stock no alcanza, saca lo disponible
     (hasta 0) y el resto lo descuenta del sustituto (que puede tener el suyo →
@@ -264,7 +267,8 @@ def consumir_insumo(db: Session, producto_id: int, tienda_id: int, cantidad: flo
         registrar_movimiento(db, producto_id=producto_id, tienda_id=tienda_id,
                              tipo="salida", cantidad=cantidad, motivo=motivo,
                              usuario_id=usuario_id, commit=False, allow_negative=True,
-                             barista_id=barista_id, barista_nombre=barista_nombre)
+                             barista_id=barista_id, barista_nombre=barista_nombre,
+                             merma_id=merma_id)
         return
 
     # No alcanza: tomar lo disponible (hasta 0) y el resto del sustituto.
@@ -274,13 +278,14 @@ def consumir_insumo(db: Session, producto_id: int, tienda_id: int, cantidad: flo
         registrar_movimiento(db, producto_id=producto_id, tienda_id=tienda_id,
                              tipo="salida", cantidad=tomar, motivo=motivo,
                              usuario_id=usuario_id, commit=False, allow_negative=True,
-                             barista_id=barista_id, barista_nombre=barista_nombre)
+                             barista_id=barista_id, barista_nombre=barista_nombre,
+                             merma_id=merma_id)
     resto = round(cantidad - tomar, 4)
     if resto > 0:
         consumir_insumo(db, sustituto_id, tienda_id, resto,
                         f"{motivo} (reserva de #{producto_id})", usuario_id,
                         barista_id=barista_id, barista_nombre=barista_nombre,
-                        _visitados=_visitados)
+                        merma_id=merma_id, _visitados=_visitados)
 
 
 def agregar_lote(db: Session, producto_id: int, tienda_id: int,

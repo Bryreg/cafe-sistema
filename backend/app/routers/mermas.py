@@ -76,10 +76,17 @@ def confirmar_recibo(merma_id: int, db: Session = Depends(get_db),
 
 
 @router.delete("/{merma_id}/anular")
-def anular_traslado(merma_id: int, db: Session = Depends(get_db),
-                    admin: Usuario = Depends(require_admin)):
-    """Admin: anula un traslado revirtiendo su efecto exacto en ambas sedes."""
-    return svc.anular_traslado(db, merma_id, admin.id)
+def anular(merma_id: int, db: Session = Depends(get_db),
+           admin: Usuario = Depends(require_admin)):
+    """Admin: anula una merma devolviendo lo que descontó y borra el registro.
+
+    Sirve para las tres: un traslado revierte su efecto en ambas sedes, y un
+    consumo o un daño devuelven los movimientos exactos que dejaron en el libro
+    (ver `svc.anular_merma`). Es la salida para el doble toque en el formulario,
+    que antes quedaba descontado sin forma de deshacerlo.
+    """
+    ensure_tienda_access(admin, svc.tienda_de(db, merma_id))
+    return svc.anular_merma(db, merma_id, admin.id)
 
 
 @router.post("/admin/traslado")

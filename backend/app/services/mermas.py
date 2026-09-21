@@ -413,7 +413,12 @@ def anular_merma(db: Session, merma_id: int, usuario_id: int):
         return _devolver_y_borrar(db, merma, movs, usuario_id, sellados=True)
 
     # Camino de compatibilidad: mermas registradas ANTES de que existiera
-    # `movimientos_inventario.merma_id`. Se emparejan por motivo y por hora.
+    # `movimientos_inventario.merma_id`. Hay que emparejarlas por motivo y hora.
+    #
+    # `merma_id IS NULL` no es un detalle: al revertir, el movimiento queda
+    # SELLADO con la merma que lo reclamó (abajo), así que un movimiento no puede
+    # devolverse dos veces ni aunque el emparejamiento se equivoque. Sin ese
+    # candado el 21-sep devolví el doble en producción.
     desde = merma.fecha_registro - timedelta(seconds=VENTANA_REVERSA_SEG)
     hasta = merma.fecha_registro + timedelta(seconds=VENTANA_REVERSA_SEG)
     candidatos = (
@@ -421,23 +426,44 @@ def anular_merma(db: Session, merma_id: int, usuario_id: int):
         .filter(
             MovimientoInventario.tienda_id == tienda_id,
             MovimientoInventario.tipo == TipoMovInvEnum.salida,
+            MovimientoInventario.merma_id.is_(None),
             MovimientoInventario.fecha >= desde,
             MovimientoInventario.fecha <= hasta,
         )
         .all()
     )
-    # `startswith` en Python y no LIKE en SQL: el motivo lo escribe la barista y
-    # un `%` o un `_` suelto ensancharían el LIKE. La ventana es de segundos, así
-    # que traer los candidatos y filtrarlos acá no cuesta nada.
-    movs = [m for m in candidatos if (m.motivo or "").startswith(mov_motivo)]
 
-    # Dos mermas idénticas pueden caer dentro de la ventana, y entonces hay que
-    # devolver las de UNA sola. Se separan por tandas en vez de por cantidad de
-    # renglones: los movimientos de una misma merma nacen en la misma
-    # transacción, con milisegundos entre uno y otro, mientras que dos envíos
-    # distintos quedan a segundos. Contar renglones no serviría, porque una
-    # cascada parcial (el insumo alcanza para la mitad y el resto sale del
-    # sustituto) deja DOS movimientos para un solo renglón de receta.
+    # El motivo se compara COMPLETO, con el nombre del producto incluido, no por
+    # el prefijo común. Un envío del formulario registra VARIAS mermas en el
+    # mismo instante —2 mokaccinos y 2 cappuccinos van juntos— y sus movimientos
+    # comparten prefijo ("Consumo (jueces): visita de los jueces") pero no el
+    # sufijo "— insumo de <bebida>". Emparejar por prefijo le daba a cada una de
+    # las dos mermas los cinco movimientos del envío: devolvía el doble. Pasó en
+    # producción el 21-sep, con estas mismas diez.
+    if controla:
+        # Producto con stock propio: un solo movimiento, con el motivo pelado.
+        def coincide(m):
+            return (m.motivo or "") == mov_motivo
+    else:
+        # Bebida preparada: un movimiento por insumo. La cascada al sustituto le
+        # agrega " (reserva de #N)" al final, así que el nombre va como prefijo.
+        esperado = f"{mov_motivo} — insumo de {producto.nombre if producto else ''}"
+
+        def coincide(m):
+            return (m.motivo or "").startswith(esperado)
+
+    # `coincide` en Python y no LIKE en SQL: el motivo lo escribe la barista y un
+    # `%` o un `_` suelto ensancharían el LIKE. La ventana es de segundos, así que
+    # traer los candidatos y filtrarlos acá no cuesta nada.
+    movs = [m for m in candidatos if coincide(m)]
+
+    # Todavía puede haber DOS mermas del MISMO producto dentro de la ventana (la
+    # barista guardó dos veces el mismo formulario). Ahí sí se separan por tanda:
+    # los movimientos de una merma nacen en la misma transacción, con
+    # milisegundos entre uno y otro, mientras que dos envíos distintos quedan a
+    # segundos. No se cuentan renglones de receta porque una cascada parcial —el
+    # insumo alcanza para la mitad y el resto sale del sustituto— deja DOS
+    # movimientos para un solo renglón.
     movs.sort(key=lambda m: m.fecha)
     tandas: list[list[MovimientoInventario]] = []
     for m in movs:
@@ -448,6 +474,29 @@ def anular_merma(db: Session, merma_id: int, usuario_id: int):
     if len(tandas) > 1:
         movs = min(tandas, key=lambda t: min(
             abs((x.fecha - merma.fecha_registro).total_seconds()) for x in t))
+
+    # Y todavía queda el caso que el tiempo NO puede separar: dos mermas del
+    # mismo producto, con el mismo motivo y en el mismo instante (doble toque de
+    # medio segundo). Las dos caen en la misma tanda, así que la tanda se reparte
+    # en partes iguales y cada merma se lleva la suya. Cierra solo: anular borra
+    # la merma y sella sus movimientos, así que en la llamada siguiente hay una
+    # hermana menos y exactamente esa parte menos para repartir.
+    q_hermanas = db.query(Merma).filter(
+        Merma.id != merma_id,
+        Merma.tienda_id == tienda_id,
+        Merma.producto_id == pid,
+        Merma.cantidad == cant,
+        Merma.motivo == merma.motivo,
+        Merma.fecha_registro >= desde,
+        Merma.fecha_registro <= hasta,
+    )
+    # `== None` no compara en SQL: NULL nunca es igual a nada, ni a NULL.
+    q_hermanas = q_hermanas.filter(
+        Merma.quien.is_(None) if merma.quien is None else Merma.quien == merma.quien
+    )
+    hermanas = 1 + q_hermanas.count()
+    if hermanas > 1 and movs and len(movs) % hermanas == 0:
+        movs = movs[: len(movs) // hermanas]
 
     if movs:
         return _devolver_y_borrar(db, merma, movs, usuario_id, sellados=False)
@@ -475,6 +524,13 @@ def _devolver_y_borrar(db: Session, merma: Merma, movs, usuario_id: int, *,
     tipo = merma.tipo.value if hasattr(merma.tipo, "value") else str(merma.tipo)
     motivo_reversa = f"Anulación {tipo} #{merma_id}: devuelve lo descontado"
     plan = por_receta if movs is None else [(m.producto_id, m.cantidad) for m in movs]
+
+    # Reclamar los movimientos: quedan sellados con esta merma, así que ninguna
+    # otra anulación puede volver a devolverlos. El sello sobrevive al borrado de
+    # la fila de `mermas` —la columna es plana, sin FK— y eso es justo lo que lo
+    # hace un candado y no un apunte más.
+    for m in (movs or []):
+        m.merma_id = merma_id
 
     devuelto: list[dict] = []
     for producto_id, cantidad in plan:

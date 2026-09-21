@@ -82,11 +82,17 @@ class MermaAnularTest(unittest.TestCase):
         self.torta = Producto(nombre="Torta de Chocolate",
                               categoria=CategoriaProductoEnum.pasteleria,
                               unidad_medida="und", controla_stock=True)
-        self.db.add_all([self.entera, self.salsa, self.bebida, self.torta])
+        # Segunda bebida SIN salsa: es la que viaja junto al mokaccino en el
+        # mismo envío del formulario y comparte instante y prefijo de motivo.
+        self.capuccino = Producto(nombre="Cappuccino Tradicional Medium",
+                                  categoria=CategoriaProductoEnum.bebida,
+                                  unidad_medida="und", controla_stock=False)
+        self.db.add_all([self.entera, self.salsa, self.bebida, self.torta, self.capuccino])
         self.db.flush()
         self.db.add_all([
             ProductoInsumo(producto_id=self.bebida.id, insumo_id=self.entera.id, cantidad=0.2),
             ProductoInsumo(producto_id=self.bebida.id, insumo_id=self.salsa.id, cantidad=34),
+            ProductoInsumo(producto_id=self.capuccino.id, insumo_id=self.entera.id, cantidad=0.2),
         ])
         self.db.add_all([
             Inventario(producto_id=self.entera.id, tienda_id=self.t1.id, stock_actual=0),
@@ -148,6 +154,65 @@ class MermaAnularTest(unittest.TestCase):
         self.assertAlmostEqual(self._stock(self.deslactosada), 10)    # ni más ni menos
         self.assertEqual(self._stock(self.salsa), 1000)
         self.assertEqual(self.db.query(Merma).count(), 0)
+
+    def test_un_envio_registra_VARIAS_mermas_y_cada_una_devuelve_lo_suyo(self):
+        """El bug que me llevé puesto en producción el 21-sep.
+
+        Un envío del formulario registra UNA merma por bebida, todas en el mismo
+        instante: 2 mokaccinos y 2 cappuccinos salen juntos y sus movimientos
+        comparten el segundo y el prefijo del motivo ("Consumo (jueces): visita
+        de los jueces"). Emparejar por ese prefijo le daba a CADA una de las dos
+        mermas los CINCO movimientos del envío, así que anular las dos devolvía
+        el doble. Lo que separa a una de otra es el sufijo con el nombre de la
+        bebida, y por eso el motivo se compara completo.
+        """
+        moka = svc.registrar_merma(self.db, self.t1.id, self.bebida.id, 2,
+                                   "visita de los jueces", self.admin.id,
+                                   tipo="consumo", quien="jueces")
+        capu = svc.registrar_merma(self.db, self.t1.id, self.capuccino.id, 2,
+                                   "visita de los jueces", self.admin.id,
+                                   tipo="consumo", quien="jueces")
+        # Simular el estado previo a la columna: es el camino que se equivocaba.
+        for mov in self.db.query(MovimientoInventario).filter(
+                MovimientoInventario.merma_id.isnot(None)).all():
+            mov.merma_id = None
+        self.db.commit()
+
+        # 4 bebidas: 0.4 + 0.4 de leche, 68 gr de salsa (solo el mokaccino).
+        self.assertAlmostEqual(self._stock(self.deslactosada), 9.2)
+        self.assertEqual(self._stock(self.salsa), 932)
+
+        svc.anular_merma(self.db, moka.id, self.admin.id)
+        svc.anular_merma(self.db, capu.id, self.admin.id)
+
+        self.assertAlmostEqual(self._stock(self.deslactosada), 10)   # NO 10.8
+        self.assertEqual(self._stock(self.salsa), 1000)              # NO 1068
+
+    def test_un_movimiento_no_se_puede_devolver_dos_veces(self):
+        """Candado de último recurso: al revertir, el movimiento queda sellado
+        con la merma que lo reclamó, así que ni un emparejamiento equivocado
+        puede devolverlo de nuevo."""
+        moka = svc.registrar_merma(self.db, self.t1.id, self.bebida.id, 2,
+                                   "mismo motivo", self.admin.id,
+                                   tipo="consumo", quien="x")
+        otra = svc.registrar_merma(self.db, self.t1.id, self.bebida.id, 2,
+                                   "mismo motivo", self.admin.id,
+                                   tipo="consumo", quien="x")
+        for mov in self.db.query(MovimientoInventario).filter(
+                MovimientoInventario.merma_id.isnot(None)).all():
+            mov.merma_id = None
+        self.db.commit()
+        self.assertAlmostEqual(self._stock(self.deslactosada), 9.2)
+
+        r1 = svc.anular_merma(self.db, moka.id, self.admin.id)
+        r2 = svc.anular_merma(self.db, otra.id, self.admin.id)
+
+        # Cada una devolvió una tanda distinta: en total 4 bebidas, no 8.
+        self.assertAlmostEqual(self._stock(self.deslactosada), 10)
+        self.assertEqual(self._stock(self.salsa), 1000)
+        ids1 = {(d["producto_id"], d["cantidad"]) for d in r1["devuelto"]}
+        self.assertTrue(ids1)
+        self.assertTrue(r2["devuelto"])
 
     def test_producto_con_stock_propio_vuelve_a_su_valor(self):
         m = svc.registrar_merma(self.db, self.t1.id, self.torta.id, 3,

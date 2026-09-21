@@ -159,7 +159,13 @@ export default function Ingresos() {
   const [flujoCaja, setFlujoCaja] = useState<number | null>(null)
 
   useEffect(() => {
-    api.get('/inventario/productos').then(r => setProductos(r.data))
+    // solo_stock: SOLO lo que lleva inventario. Darle entrada de mercancía a algo
+    // que no lleva stock no suma en ninguna parte, y ofrecerlo es tender una
+    // trampa: el 15-sep la factura #379 cargó cuatro líneas contra las BEBIDAS
+    // de aromática en vez del insumo «(bolsitas)» —nombres casi idénticos— y
+    // 180 bolsitas quedaron pagadas y fuera del inventario.
+    api.get('/inventario/productos', { params: { solo_stock: true } })
+      .then(r => setProductos(r.data))
     if (user?.tienda_id) {
       api.get(`/facturas/proveedores/${user.tienda_id}`)
         .then(r => setHistorialProv(r.data))

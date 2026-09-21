@@ -120,7 +120,24 @@ def inventario_desechables(tienda_id: int, db: Session = Depends(get_db),
 
 
 @router.get("/productos")
-def productos(db: Session = Depends(get_db), user: Usuario = Depends(get_current_user)):
+def productos(solo_stock: bool = Query(False), db: Session = Depends(get_db),
+              user: Usuario = Depends(get_current_user)):
+    """Catálogo de productos.
+
+    `solo_stock=true` devuelve ÚNICAMENTE lo que lleva inventario. Lo usa el
+    buscador de Ingresos: darle entrada de mercancía a algo que no lleva stock
+    no significa nada, y ofrecerlo es tender una trampa.
+
+    Ese es el caso que costó 180 bolsitas de aromática el 15-sep: el 1-sep las
+    bebidas de aromática pasaron a consumir la bolsita como insumo y dejaron de
+    llevar stock propio, pero siguieron apareciendo en el buscador con un nombre
+    casi idéntico al del insumo («Aromatica de Cidron» vs «Aromatica de Cidron
+    (bolsitas)»). La factura #379 cargó cuatro líneas contra las bebidas y esa
+    mercancía no entró a ningún inventario.
+
+    El filtro de archivados de abajo ya se había puesto por el MISMO error con el
+    agua con gas el 2-jul, pero dejaba pasar a propósito lo que tiene precio de
+    venta — y las bebidas del POS lo tienen. Trataba el síntoma."""
     rows = db.query(Producto).order_by(Producto.categoria, Producto.nombre).all()
     # Archivados FUERA (firma: no controla stock + excluido del conteo + sin precio de
     # venta). Las bebidas preparadas del POS también tienen controla_stock=False pero
@@ -129,6 +146,8 @@ def productos(db: Session = Depends(get_db), user: Usuario = Depends(get_current
     rows = [p for p in rows if not (
         not p.controla_stock and p.incluir_en_conteo is False and not (p.precio_venta or 0)
     )]
+    if solo_stock:
+        rows = [p for p in rows if p.controla_stock]
     return [{"id": p.id, "nombre": p.nombre, "categoria": p.categoria.value,
              "unidad_medida": p.unidad_medida, "controla_stock": p.controla_stock,
              # Para el modo "Existencia" del kiosko: distinguir lo que NO entra al

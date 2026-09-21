@@ -249,6 +249,33 @@ def crear_factura(db: Session, data, imagen_url: str | None, usuario_id: int,
         # ── Conversión empaques → gr/ml ──────────────────────────────────────
         # La fuga #1 de la auditoría: botella de Baileys registrada como "1 gr".
         cantidad = item.cantidad
+        # NO SE RECIBE LO QUE NO LLEVA INVENTARIO. La entrada se registraría como
+        # movimiento y no acumularía en ninguna parte: la mercancía queda pagada,
+        # con su factura, y fuera del stock — invisible hasta que un conteo la
+        # encuentra semanas después y parece un sobrante inexplicable.
+        #
+        # Pasó el 15-sep con la factura #379 de Éxito: cuatro líneas cargadas
+        # contra las BEBIDAS de aromática (que el 1-sep dejaron de llevar stock y
+        # pasaron a gastar la bolsita) en vez de contra el insumo «(bolsitas)».
+        # 180 bolsitas nunca entraron al inventario, y el conteo de Vida las
+        # marcó como sobrante todos los días desde entonces.
+        #
+        # El buscador de Ingresos ya pide `solo_stock=true`, pero la guarda va
+        # también acá: el payload puede venir del OCR, de una edición a mano o de
+        # un front viejo, y la factura es la puerta por la que entra el stock.
+        if prod is not None and not prod.controla_stock:
+            similar = (
+                db.query(Producto)
+                .filter(Producto.controla_stock == True,  # noqa: E712
+                        Producto.nombre.ilike(f"%{prod.nombre.strip()}%"),
+                        Producto.id != prod.id)
+                .order_by(Producto.nombre).first()
+            )
+            sugerencia = f" ¿Querías «{similar.nombre}»?" if similar else ""
+            raise HTTPException(400, (
+                f"«{prod.nombre}» no lleva inventario, así que darle entrada no suma "
+                f"stock en ninguna parte.{sugerencia}"))
+
         if getattr(item, "en_empaques", False):
             cpe = float(prod.contenido_por_empaque or 0) if prod else 0
             if cpe <= 0:

@@ -12,6 +12,36 @@ logger = logging.getLogger(__name__)
 
 TIPOS_VALIDOS = {"consumo", "traslado", "daño"}
 
+# Ventana para emparejar una merma con los movimientos que dejó en el libro.
+# Nacen en la MISMA transacción, milisegundos después de `fecha_registro`, así
+# que sobran unos pocos segundos — y tiene que ser CORTA: cuando una barista
+# guarda el mismo formulario varias veces seguidas (pasó el 21-sep en Palmetto,
+# cinco envíos con 11 segundos entre uno y otro), una ventana ancha se llevaría
+# los movimientos del envío vecino y la anulación devolvería el doble.
+VENTANA_REVERSA_SEG = 5
+
+# Hueco máximo entre dos movimientos para considerarlos de la MISMA merma. Los
+# de una merma salen de una sola transacción (milisegundos); dos envíos del
+# formulario quedan a segundos de distancia.
+CORTE_TANDA_SEG = 1.0
+
+
+def _motivo_movimiento(tipo: str, motivo: str, quien: str | None,
+                       tienda_destino_nombre: str | None = None) -> str:
+    """El motivo que lleva el MovimientoInventario que genera una merma.
+
+    Vive acá y no suelto dentro de `registrar_merma` porque `anular_merma` tiene
+    que reconstruirlo EXACTO para encontrar qué revertir. Si las dos copias se
+    separan, la anulación no encuentra nada y cae al camino por receta, que es
+    justo el que se equivoca cuando hubo cascada al sustituto.
+    """
+    sufijo = f" ({quien})" if quien else ""
+    if tipo == "consumo":
+        return f"Consumo{sufijo}: {motivo}"
+    if tipo == "daño":
+        return f"Daño: {motivo}"
+    return f"Traslado a {tienda_destino_nombre}: {motivo}"
+
 
 def registrar_merma(db: Session, tienda_id: int, producto_id: int,
                     cantidad: float, motivo: str, usuario_id: int,
@@ -71,13 +101,11 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
     db.add(merma)
     db.flush()   # obtener merma.id para referenciarlo en la auditoría
 
-    sufijo_quien = f" ({quien})" if quien else ""
-    if tipo == "consumo":
-        mov_motivo = f"Consumo{sufijo_quien}: {motivo}"
-    elif tipo == "daño":
-        mov_motivo = f"Daño: {motivo}"
-    else:  # traslado — usar el nombre de la sede destino, no el id
-        mov_motivo = f"Traslado a {tienda_destino.nombre}: {motivo}"
+    # OJO: `anular_merma` reconstruye este mismo string para saber qué revertir.
+    mov_motivo = _motivo_movimiento(
+        tipo, motivo, quien,
+        tienda_destino.nombre if tipo == "traslado" else None,
+    )
 
     if producto.controla_stock:
         # Producto con stock propio: salida directa + FIFO (camino clásico).
@@ -102,6 +130,7 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
             cantidad=cantidad,
             usuario_id=usuario_id,
             motivo=mov_motivo,
+            merma_id=merma.id,   # para que `anular_merma` sepa qué revertir
         )
         db.add(mov)
 
@@ -158,6 +187,7 @@ def registrar_merma(db: Session, tienda_id: int, producto_id: int,
                     motivo=f"{mov_motivo} — insumo de {producto.nombre}",
                     usuario_id=usuario_id,
                     barista_id=barista_id, barista_nombre=barista_nombre,
+                    merma_id=merma.id,   # la cascada lo propaga al sustituto
                 )
             except HTTPException as e:
                 if e.status_code == 404:
@@ -318,6 +348,168 @@ def anular_traslado(db: Session, merma_id: int, usuario_id: int):
     return {"anulado": merma_id, "producto_id": pid, "cantidad": cant,
             "revirtio_recibo": bool(estaba_recibido and destino_id),
             "revirtio_envio": controla}
+
+
+def tienda_de(db: Session, merma_id: int) -> int:
+    """Sede de origen de una merma, para que el router pueda validar el acceso
+    ANTES de tocar nada. Sin esto un admin con una sola sede asignada podía
+    anular la merma de la otra: `require_admin` gatea el rol, no la sede."""
+    merma = db.query(Merma).filter(Merma.id == merma_id).first()
+    if not merma:
+        raise HTTPException(404, "Merma no encontrada")
+    return merma.tienda_id
+
+
+def anular_merma(db: Session, merma_id: int, usuario_id: int):
+    """Anula un consumo o un daño devolviendo EXACTAMENTE lo que descontó, y
+    borra el registro. Si la merma es un traslado delega en `anular_traslado`,
+    que además tiene que deshacer el recibo en la sede destino.
+
+    Es la respuesta a la única forma que tenía el sistema de perder stock sin
+    vuelta: una merma mal registrada no se podía deshacer por ningún lado —ni
+    endpoint ni botón—, así que un doble toque quedaba descontado para siempre y
+    el conteo aparecía con un faltante que nadie podía explicar.
+
+    Revierte los MOVIMIENTOS que la merma dejó en el libro, NO la receta del
+    producto. La diferencia no es cosmética: para una bebida sin stock propio el
+    descuento pasa por `consumir_insumo`, que cae al sustituto cuando el insumo
+    principal está en cero. Devolver por receta le sumaría al insumo que nunca
+    se tocó y dejaría al sustituto corto para siempre. Pasó exactamente así con
+    los diez consumos duplicados del 21-sep en Palmetto: la receta dice leche
+    entera y los veinticinco movimientos fueron a DESLACTOSADA.
+
+    Los movimientos nuevos vienen SELLADOS con `merma_id`, así que la reversa es
+    exacta. Para las mermas anteriores a esa columna quedan dos respaldos, y la
+    respuesta dice cuál se usó (`sellados`, `por_receta`): emparejar por motivo y
+    hora, y si eso tampoco encuentra nada, devolver por receta. Devolver
+    aproximado es mejor que no devolver nada, pero el llamador tiene que poder
+    distinguir los tres casos.
+    """
+    merma = db.query(Merma).filter(Merma.id == merma_id).first()
+    if not merma:
+        raise HTTPException(404, "Merma no encontrada")
+
+    tipo = merma.tipo.value if hasattr(merma.tipo, "value") else str(merma.tipo)
+    if tipo == "traslado":
+        return anular_traslado(db, merma_id, usuario_id)
+
+    # Capturar antes de borrar: la fila queda expirada tras el delete/commit.
+    pid, cant, tienda_id = merma.producto_id, merma.cantidad, merma.tienda_id
+    producto = db.query(Producto).filter_by(id=pid).first()
+    controla = bool(producto and producto.controla_stock)
+    mov_motivo = _motivo_movimiento(tipo, merma.motivo, merma.quien)
+
+    # Camino exacto: los movimientos que la merma SELLÓ con su id. Sin ventanas,
+    # sin adivinar y sin riesgo de devolver dos veces.
+    movs = (
+        db.query(MovimientoInventario)
+        .filter(
+            MovimientoInventario.merma_id == merma_id,
+            MovimientoInventario.tipo == TipoMovInvEnum.salida,
+        )
+        .all()
+    )
+    if movs:
+        return _devolver_y_borrar(db, merma, movs, usuario_id, sellados=True)
+
+    # Camino de compatibilidad: mermas registradas ANTES de que existiera
+    # `movimientos_inventario.merma_id`. Se emparejan por motivo y por hora.
+    desde = merma.fecha_registro - timedelta(seconds=VENTANA_REVERSA_SEG)
+    hasta = merma.fecha_registro + timedelta(seconds=VENTANA_REVERSA_SEG)
+    candidatos = (
+        db.query(MovimientoInventario)
+        .filter(
+            MovimientoInventario.tienda_id == tienda_id,
+            MovimientoInventario.tipo == TipoMovInvEnum.salida,
+            MovimientoInventario.fecha >= desde,
+            MovimientoInventario.fecha <= hasta,
+        )
+        .all()
+    )
+    # `startswith` en Python y no LIKE en SQL: el motivo lo escribe la barista y
+    # un `%` o un `_` suelto ensancharían el LIKE. La ventana es de segundos, así
+    # que traer los candidatos y filtrarlos acá no cuesta nada.
+    movs = [m for m in candidatos if (m.motivo or "").startswith(mov_motivo)]
+
+    # Dos mermas idénticas pueden caer dentro de la ventana, y entonces hay que
+    # devolver las de UNA sola. Se separan por tandas en vez de por cantidad de
+    # renglones: los movimientos de una misma merma nacen en la misma
+    # transacción, con milisegundos entre uno y otro, mientras que dos envíos
+    # distintos quedan a segundos. Contar renglones no serviría, porque una
+    # cascada parcial (el insumo alcanza para la mitad y el resto sale del
+    # sustituto) deja DOS movimientos para un solo renglón de receta.
+    movs.sort(key=lambda m: m.fecha)
+    tandas: list[list[MovimientoInventario]] = []
+    for m in movs:
+        if tandas and (m.fecha - tandas[-1][-1].fecha).total_seconds() <= CORTE_TANDA_SEG:
+            tandas[-1].append(m)
+        else:
+            tandas.append([m])
+    if len(tandas) > 1:
+        movs = min(tandas, key=lambda t: min(
+            abs((x.fecha - merma.fecha_registro).total_seconds()) for x in t))
+
+    if movs:
+        return _devolver_y_borrar(db, merma, movs, usuario_id, sellados=False)
+
+    # Ni sello ni movimientos: no queda de dónde leer lo que salió, así que se
+    # devuelve por receta (o el producto mismo) y la respuesta lo avisa.
+    if controla:
+        fallback = [(pid, cant)]
+    else:
+        fallback = [
+            (r.insumo_id, r.cantidad * cant)
+            for r in db.query(ProductoInsumo).filter(ProductoInsumo.producto_id == pid).all()
+        ]
+    return _devolver_y_borrar(db, merma, None, usuario_id, sellados=False,
+                              por_receta=fallback)
+
+
+def _devolver_y_borrar(db: Session, merma: Merma, movs, usuario_id: int, *,
+                       sellados: bool, por_receta: list[tuple[int, float]] | None = None):
+    """Compensa con entradas lo que la merma descontó, borra el registro y audita.
+    `movs` son los movimientos a revertir uno por uno; `por_receta` es el plan de
+    respaldo (producto, cantidad) cuando no hay movimientos de dónde leer."""
+    merma_id, tienda_id = merma.id, merma.tienda_id
+    pid, cant = merma.producto_id, merma.cantidad
+    tipo = merma.tipo.value if hasattr(merma.tipo, "value") else str(merma.tipo)
+    motivo_reversa = f"Anulación {tipo} #{merma_id}: devuelve lo descontado"
+    plan = por_receta if movs is None else [(m.producto_id, m.cantidad) for m in movs]
+
+    devuelto: list[dict] = []
+    for producto_id, cantidad in plan:
+        if cantidad <= 0:
+            continue
+        try:
+            registrar_movimiento(
+                db, producto_id=producto_id, tienda_id=tienda_id,
+                tipo="entrada", cantidad=cantidad,
+                motivo=motivo_reversa, usuario_id=usuario_id, commit=False,
+            )
+            devuelto.append({"producto_id": producto_id, "cantidad": cantidad})
+        except HTTPException as e:
+            # 404 = el insumo no tiene fila de inventario en esta sede, igual que
+            # cuando se salteó al descontar. No es motivo para abortar la reversa.
+            if e.status_code != 404:
+                raise
+            logger.warning(
+                f"Anular merma {merma_id}: producto {producto_id} sin inventario "
+                f"en tienda {tienda_id}, devolución salteada"
+            )
+
+    audit.registrar(
+        db, accion="anular_merma", tabla="mermas",
+        registro_id=merma_id, usuario_id=usuario_id, tienda_id=tienda_id,
+        datos_antes={"producto_id": pid, "cantidad": cant, "tipo": tipo,
+                     "motivo": merma.motivo, "quien": merma.quien},
+        datos_despues={"devuelto": devuelto, "sellados": sellados,
+                       "por_receta": por_receta is not None},
+    )
+    db.delete(merma)
+    db.commit()
+    return {"anulado": merma_id, "producto_id": pid, "cantidad": cant, "tipo": tipo,
+            "devuelto": devuelto, "sellados": sellados,
+            "por_receta": por_receta is not None}
 
 
 def get_mermas_tienda(db: Session, tienda_id: int):

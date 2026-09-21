@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext'
 import api from '../api/client'
 import {
   Trash2, AlertTriangle, Check, PackageCheck, ArrowRight, Search,
-  Coffee, ArrowLeftRight, HeartCrack, ChevronLeft, X, User,
+  Coffee, ArrowLeftRight, HeartCrack, ChevronLeft, X, User, Undo2,
 } from 'lucide-react'
 import BaristaLayout from '../components/BaristaLayout'
 
@@ -59,6 +59,11 @@ export default function Mermas() {
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [recibiendoId, setRecibiendoId] = useState<number | null>(null)
+  const [anulandoId, setAnulandoId] = useState<number | null>(null)
+  const [confirmarAnular, setConfirmarAnular] = useState<Merma | null>(null)
+  // Anular es solo del admin (el endpoint también lo exige): devuelve stock y
+  // borra el registro, así que no es una acción de operación diaria.
+  const esAdmin = user?.rol === 'admin'
 
   // Formulario del tipo activo
   const [quien, setQuien] = useState('')
@@ -159,6 +164,20 @@ export default function Mermas() {
       load()
     } catch (e: any) { setError(e.response?.data?.detail || 'Error al confirmar') }
     finally { setRecibiendoId(null) }
+  }
+
+  // Anular devuelve al inventario lo que la merma descontó y borra el registro.
+  // Existe por el doble toque: guardar el mismo formulario dos veces descontaba
+  // dos veces y no había forma de deshacerlo, así que el faltante aparecía días
+  // después en un conteo sin que nadie pudiera explicarlo.
+  const anular = async (m: Merma) => {
+    setAnulandoId(m.id)
+    setConfirmarAnular(null)
+    try {
+      await api.delete(`/mermas/${m.id}/anular`)
+      load()
+    } catch (e: any) { setError(e.response?.data?.detail || 'Error al anular') }
+    finally { setAnulandoId(null) }
   }
 
   const norm = (s: string) => s.toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -390,12 +409,62 @@ export default function Mermas() {
                     <span className="text-sm font-bold font-mono text-gray-700 shrink-0">
                       {m.cantidad} {m.unidad_medida ?? ''}
                     </span>
+                    {esAdmin && (
+                      <button
+                        onClick={() => setConfirmarAnular(m)}
+                        disabled={anulandoId === m.id}
+                        title="Anular y devolver al inventario"
+                        className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center border transition-colors disabled:opacity-40"
+                        style={{ borderColor: 'oklch(88% 0.01 75)', color: 'oklch(52% 0.13 25)' }}
+                      >
+                        <Undo2 size={15} />
+                      </button>
+                    )}
                   </div>
                 )
               })}
             </div>
           )}
         </div>
+
+        {/* Confirmar anulación: devuelve stock y borra el registro, así que se pregunta. */}
+        {confirmarAnular && (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-4 pb-6 sm:pb-0"
+            style={{ background: 'rgba(0,0,0,0.35)' }} onClick={() => setConfirmarAnular(null)}>
+            <div className="w-full max-w-sm rounded-2xl bg-white p-5" onClick={e => e.stopPropagation()}>
+              <div className="flex items-start gap-3 mb-3">
+                <span className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                  style={{ background: 'oklch(95% 0.03 25)' }}>
+                  <Undo2 size={18} style={{ color: 'oklch(52% 0.13 25)' }} />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[15px] font-bold text-gray-800">Anular esta merma</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {confirmarAnular.producto_nombre ?? `#${confirmarAnular.producto_id}`}
+                    {' · '}{confirmarAnular.cantidad} {confirmarAnular.unidad_medida ?? ''}
+                  </p>
+                </div>
+              </div>
+              <p className="text-[13px] text-gray-600 mb-4">
+                Devuelve al inventario exactamente lo que descontó y borra el registro.
+                Queda en el historial de movimientos como «Anulación».
+              </p>
+              <div className="flex gap-2">
+                <button onClick={() => setConfirmarAnular(null)}
+                  className="flex-1 py-2.5 rounded-xl border text-sm font-semibold text-gray-600"
+                  style={{ borderColor: 'oklch(90% 0.008 75)' }}>
+                  Cancelar
+                </button>
+                <button onClick={() => anular(confirmarAnular)}
+                  disabled={anulandoId === confirmarAnular.id}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-50"
+                  style={{ background: 'oklch(52% 0.13 25)' }}>
+                  {anulandoId === confirmarAnular.id ? 'Anulando...' : 'Anular'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </BaristaLayout>
   )

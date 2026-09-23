@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertCircle, Camera, CalendarClock, CheckCircle, Clock, Download, Pencil,
-  Receipt, Search, Trash2, Wallet,
+  AlertCircle, Camera, CalendarClock, CheckCircle, Clock, Download, FileSpreadsheet,
+  Pencil, Receipt, Search, Trash2, Wallet,
 } from 'lucide-react'
 import api from '../../api/client'
 import { conMiles, soloDigitos } from '../../utils/plata'
@@ -24,6 +24,34 @@ const ESTADO: Record<string, { label: string; cls: string; Icon: typeof CheckCir
 /** Los timestamps del backend llegan como medianoche COLOMBIA en UTC: cortar a
  *  YYYY-MM-DD y leer ese día tal cual evita que el navegador lo corra un día. */
 const dia = (s: string | null) => (s ? s.slice(0, 10) : null)
+
+const TIPO_PAGO_LABEL: Record<string, string> = {
+  contado: 'Contado', transferencia: 'Transferencia', credito: 'Crédito',
+}
+const capitalizar = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+/** SheetJS cargado bajo demanda: es la única pantalla del módulo que exporta,
+ *  y el resto de la app no paga su peso si no la abre. Mismo patrón que
+ *  `CuadreTurnos`/`Informes`/`ConteosAdmin` — no hay un helper compartido
+ *  todavía, así que cada pantalla que exporta lo trae por su cuenta.
+ *  Los montos van CRUDOS (número, no «$ 1.234»): la planilla es para sumar y
+ *  filtrar, no para leer — formatearlos acá le quitaría eso en Excel. */
+async function exportarExcel(nombre: string, cabeceras: string[], filas: (string | number | null)[][]) {
+  const XLSX = await import('xlsx')
+  const ws = XLSX.utils.aoa_to_sheet([cabeceras, ...filas])
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Facturas')
+  XLSX.writeFile(wb, `${nombre}.xlsx`)
+}
+
+function BtnExcel({ onClick }: { onClick: () => void }) {
+  return (
+    <button onClick={onClick}
+      className="flex items-center gap-1.5 text-[11px] font-bold text-white bg-success-600 hover:bg-success-700 px-3 min-h-[34px] rounded-full">
+      <FileSpreadsheet size={13} /> Excel
+    </button>
+  )
+}
 
 /**
  * ═════════════════════════════════════════════════════════════════════════════
@@ -70,6 +98,11 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
   const [fProveedor, setFProveedor] = useState('')
   // '' = todas · 'deuda' = lo que todavía se debe (el DEFAULT) · un estado exacto.
   const [fEstado, setFEstado] = useState<'' | 'deuda' | 'pagado' | 'parcial' | 'pendiente'>('deuda')
+  // `tipo_pago` (contado/transferencia/crédito) es el trato PACTADO con el
+  // proveedor — el mismo campo que edita «Corregir la factura». No es
+  // `forma_pago_real` (con qué se saldó): esa es la respuesta a «cómo la pagué»,
+  // esta es la respuesta a «cómo la facturé», y son preguntas distintas.
+  const [fTipoPago, setFTipoPago] = useState<'' | 'contado' | 'transferencia' | 'credito'>('')
 
   const [abierta, setAbierta] = useState<number | null>(null)
   const [pagando, setPagando] = useState<number | null>(null)
@@ -99,15 +132,15 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
   // Llegó desde «Vencido»: abrir esa factura, ofrecer el pago y bajar hasta ella.
   // Se sacan los filtros que podrían estarla escondiendo — mandar al dueño a una
   // fila que no está en pantalla es peor que no mandarlo.
-  // LOS SEIS FILTROS, no tres. Se limpiaban solo los de cliente (búsqueda,
-  // proveedor, estado) y quedaban los de SERVIDOR —sede y el rango de
-  // «Recibidas»—, que son justamente los que recortan la respuesta del backend:
-  // con cualquiera puesto, el salto hacía scroll a una lista donde la factura
-  // NO estaba, abría un id que no se renderiza, y no decía nada. El comentario
-  // prometía lo contrario de lo que hacía el código.
+  // LOS SIETE FILTROS, no tres. Se limpiaban solo los de cliente (búsqueda,
+  // proveedor, estado, tipo de pago) y quedaban los de SERVIDOR —sede y el
+  // rango de «Recibidas»—, que son justamente los que recortan la respuesta
+  // del backend: con cualquiera puesto, el salto hacía scroll a una lista
+  // donde la factura NO estaba, abría un id que no se renderiza, y no decía
+  // nada. El comentario prometía lo contrario de lo que hacía el código.
   useEffect(() => {
     if (facturaObjetivo == null) return
-    setBusqueda(''); setFProveedor(''); setFEstado('')
+    setBusqueda(''); setFProveedor(''); setFEstado(''); setFTipoPago('')
     setTiendaId(null); setDesde(''); setHasta('')
     setAbierta(facturaObjetivo); setPagando(facturaObjetivo)
     onObjetivoAtendido()
@@ -126,6 +159,7 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
     const filtradas = d.facturas.filter(f =>
       (!fProveedor || f.proveedor === fProveedor)
       && (fEstado === '' || (fEstado === 'deuda' ? f.estado_pago !== 'pagado' : f.estado_pago === fEstado))
+      && (!fTipoPago || f.tipo_pago === fTipoPago)
       && (!q || f.proveedor.toLowerCase().includes(q)
         || (f.numero_factura || '').toLowerCase().includes(q)
         || f.items.some(i => i.producto_nombre.toLowerCase().includes(q))))
@@ -136,7 +170,7 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
     const clave = (f: Factura) => dia(f.fecha_programada) ?? dia(f.fecha_vencimiento) ?? '9999-12-31'
     return [...filtradas].sort((a, b) =>
       Number(b.vencida) - Number(a.vencida) || clave(a).localeCompare(clave(b)))
-  }), [datos, busqueda, fProveedor, fEstado])
+  }), [datos, busqueda, fProveedor, fEstado, fTipoPago])
 
   const eliminar = async (f: Factura) => {
     setBorrando(null); setError('')
@@ -147,7 +181,36 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
   // `tiendaId` va acá aunque filtre en el SERVIDOR: la frase de abajo dice «a
   // ningún proveedor», y con una sede elegida eso es más ancho que lo que se
   // midió. Era la última afirmación tranquilizadora que quedaba en el módulo.
-  const hayFiltrosDeCliente = !!busqueda || !!fProveedor || tiendaId !== null
+  const hayFiltrosDeCliente = !!busqueda || !!fProveedor || !!fTipoPago || tiendaId !== null
+
+  // Exporta EXACTAMENTE lo que la lista de abajo está mostrando: los mismos
+  // siete filtros (sede y rango van al servidor; búsqueda, proveedor, estado y
+  // tipo de pago se aplican acá) y el mismo orden — vencidas primero. Nunca la
+  // respuesta cruda del backend: eso sería «descargar todo» cuando el dueño
+  // filtró para ver una parte, y la planilla mentiría sobre lo que pidió.
+  const exportar = () => {
+    if (facturas.estado !== 'listo' || facturas.valor.length === 0) return
+    exportarExcel(
+      `pago_a_proveedores_${desde || 'inicio'}_${hasta || 'hoy'}`,
+      ['Proveedor', 'N° factura', 'Sede', 'Fecha recibida', 'Tipo de pago', 'Forma de pago',
+        'Estado', 'Total', 'Pagado', 'Saldo', 'Vence/programada', 'Vencida', 'Cargada por'],
+      facturas.valor.map(f => [
+        f.proveedor,
+        f.numero_factura ?? '',
+        f.tienda_nombre ?? '',
+        dia(f.fecha_recibido) ?? '',
+        TIPO_PAGO_LABEL[f.tipo_pago] ?? f.tipo_pago,
+        f.forma_pago_real ? capitalizar(f.forma_pago_real) : '',
+        ESTADO[f.estado_pago]?.label ?? f.estado_pago,
+        f.valor_total,
+        f.valor_pagado,
+        f.saldo,
+        dia(f.fecha_programada) ?? dia(f.fecha_vencimiento) ?? '',
+        f.vencida ? 'Sí' : 'No',
+        f.barista_nombre,
+      ]),
+    )
+  }
 
   // La cabecera del banner —el «falta pagar», el conteo de vencidas y el
   // «% pagado» de la derecha— son VEREDICTOS y por eso viven todos adentro de la
@@ -173,10 +236,19 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
         : datos.estado === 'cargando'
           ? 'Leyendo las facturas…'
           : 'No se pudo leer cuánto les debés — mirá el detalle acá abajo'}
-      accion={datos.estado === 'listo' && datos.valor.totales.facturado > 0 && (
-        <span className="text-xs font-mono font-bold tabular-nums text-success-600">
-          {Math.round(datos.valor.totales.pagado / datos.valor.totales.facturado * 100)}% pagado
-        </span>
+      accion={(
+        <div className="flex items-center gap-2">
+          {/* Independiente del «% pagado»: exporta aunque el rango no tenga
+              nada facturado (ej. solo pendientes de un proveedor puntual). */}
+          {facturas.estado === 'listo' && facturas.valor.length > 0 && (
+            <BtnExcel onClick={exportar} />
+          )}
+          {datos.estado === 'listo' && datos.valor.totales.facturado > 0 && (
+            <span className="text-xs font-mono font-bold tabular-nums text-success-600">
+              {Math.round(datos.valor.totales.pagado / datos.valor.totales.facturado * 100)}% pagado
+            </span>
+          )}
+        </div>
       )}
     >
       {/* Filtros. La caja de búsqueda arriba de todo: es lo único que hace usable
@@ -207,6 +279,17 @@ export default function BannerProveedores({ tiendas, facturaObjetivo, onObjetivo
             {datos.estado === 'listo'
               && [...new Set(datos.valor.facturas.map(f => f.proveedor))].sort()
                 .map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+          {/* `tipo_pago` es el trato pactado (Contado/Transferencia/Crédito), el
+              mismo que edita «Corregir la factura» — no `forma_pago_real` (con
+              qué se saldó, que ya tiene su propia etiqueta en cada fila). */}
+          <select value={fTipoPago} onChange={e => setFTipoPago(e.target.value as typeof fTipoPago)}
+            aria-label="Tipo de pago"
+            className="min-h-[38px] border border-warm-200 rounded-full px-3 text-[11px] font-bold bg-white text-warm-600">
+            <option value="">Cualquier tipo de pago</option>
+            <option value="contado">Contado</option>
+            <option value="transferencia">Transferencia</option>
+            <option value="credito">Crédito</option>
           </select>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
